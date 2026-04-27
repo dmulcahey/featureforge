@@ -1,0 +1,215 @@
+use std::fs;
+use std::path::Path;
+
+const FORBIDDEN_FILES: &[&str] = &[
+    "src/execution/state.rs",
+    "src/execution/query.rs",
+    "src/execution/router.rs",
+    "src/execution/next_action.rs",
+    "src/execution/review_state.rs",
+    "src/execution/closure_graph.rs",
+    "src/execution/mutate.rs",
+];
+
+const FORBIDDEN_GATE_CALLS: &[&str] = &[
+    "preflight_from_context(",
+    "gate_review_from_context(",
+    "gate_finish_from_context(",
+];
+
+const FORBIDDEN_STALE_RECOMPUTATION_FILES: &[&str] = &[
+    "src/execution/query.rs",
+    "src/execution/router.rs",
+    "src/execution/next_action.rs",
+    "src/execution/review_state.rs",
+    "src/execution/closure_graph.rs",
+    "src/execution/mutate.rs",
+];
+
+const FORBIDDEN_STALE_RECOMPUTATION_CALLS: &[&str] = &[
+    "stale_current_task_closure_record_ids(",
+    "execution_reentry_current_task_closure_targets(",
+];
+
+const FORBIDDEN_STALE_TARGET_RECOMPUTATION_FILES: &[&str] = &[
+    "src/execution/query.rs",
+    "src/execution/router.rs",
+    "src/execution/next_action.rs",
+    "src/execution/review_state.rs",
+    "src/execution/closure_graph.rs",
+];
+
+const FORBIDDEN_STALE_TARGET_RECOMPUTATION_CALLS: &[&str] = &[
+    "task_closure_baseline_repair_candidate(",
+    "earliest_unresolved_stale_task_from_closure_graph(",
+];
+
+const FORBIDDEN_STALE_TARGET_RECOMPUTATION_FUNCTIONS: &[(&str, &str)] = &[(
+    "src/execution/state.rs",
+    "project_public_route_mutation_targets",
+)];
+
+const FORBIDDEN_STALE_TARGET_FABRICATION_PATTERNS: &[(&str, &str)] = &[
+    (
+        "src/execution/next_action.rs",
+        "earliest_stale_task: status.blocking_task",
+    ),
+    (
+        "src/execution/next_action.rs",
+        "status.execution_reentry_target_source.as_deref() == Some(\"closure_graph_stale_target\")",
+    ),
+    (
+        "src/execution/state.rs",
+        "earliest_stale_task: derived_stale_task",
+    ),
+];
+
+const STATE_DIRECT_GATE_COMMAND_BODIES: &[&str] = &[
+    "preflight_gate_with_mode",
+    "review_gate",
+    "finish_gate",
+    "gate_review_command_phase_gate",
+    "preflight_from_context",
+    "gate_review_from_context",
+    "gate_finish_from_context",
+];
+
+#[test]
+fn gate_and_stale_decisioning_do_not_split_after_reducer() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut violations = Vec::new();
+    for relative in FORBIDDEN_FILES {
+        let path = repo_root.join(relative);
+        let mut source = fs::read_to_string(&path).expect("runtime source should be readable");
+        if *relative == "src/execution/state.rs" {
+            for function_name in STATE_DIRECT_GATE_COMMAND_BODIES {
+                source = strip_rust_function_body(&source, function_name);
+            }
+        }
+        for forbidden_call in FORBIDDEN_GATE_CALLS {
+            if source.contains(forbidden_call) {
+                violations.push(format!("{relative} contains `{forbidden_call}`"));
+            }
+        }
+    }
+    for relative in FORBIDDEN_STALE_RECOMPUTATION_FILES {
+        let path = repo_root.join(relative);
+        let source = fs::read_to_string(&path).expect("runtime source should be readable");
+        for forbidden_call in FORBIDDEN_STALE_RECOMPUTATION_CALLS {
+            if source.contains(forbidden_call) {
+                violations.push(format!("{relative} contains `{forbidden_call}`"));
+            }
+        }
+    }
+    for relative in FORBIDDEN_STALE_TARGET_RECOMPUTATION_FILES {
+        let path = repo_root.join(relative);
+        let source = fs::read_to_string(&path).expect("runtime source should be readable");
+        for forbidden_call in FORBIDDEN_STALE_TARGET_RECOMPUTATION_CALLS {
+            if source.contains(forbidden_call) {
+                violations.push(format!("{relative} contains `{forbidden_call}`"));
+            }
+        }
+    }
+    for (relative, function_name) in FORBIDDEN_STALE_TARGET_RECOMPUTATION_FUNCTIONS {
+        let path = repo_root.join(relative);
+        let source = fs::read_to_string(&path).expect("runtime source should be readable");
+        let function_body = rust_function_body(&source, function_name)
+            .unwrap_or_else(|| panic!("{relative} should contain `{function_name}`"));
+        for forbidden_call in FORBIDDEN_STALE_TARGET_RECOMPUTATION_CALLS {
+            if function_body.contains(forbidden_call) {
+                violations.push(format!(
+                    "{relative}::{function_name} contains `{forbidden_call}`"
+                ));
+            }
+        }
+    }
+    for (relative, forbidden_pattern) in FORBIDDEN_STALE_TARGET_FABRICATION_PATTERNS {
+        let path = repo_root.join(relative);
+        let source = fs::read_to_string(&path).expect("runtime source should be readable");
+        if source.contains(forbidden_pattern) {
+            violations.push(format!(
+                "{relative} fabricates a stale target with `{forbidden_pattern}`"
+            ));
+        }
+    }
+    let next_action = fs::read_to_string(repo_root.join("src/execution/next_action.rs"))
+        .expect("next_action source should be readable");
+    let execution_reentry_target = rust_function_body(&next_action, "execution_reentry_target")
+        .expect("next_action should contain `execution_reentry_target`");
+    if execution_reentry_target.contains("ExecutionReentryTargetSource::ClosureGraphStaleTarget")
+        && execution_reentry_target.contains("status.blocking_task")
+    {
+        violations.push(String::from(
+            "src/execution/next_action.rs::execution_reentry_target fabricates closure-graph stale targets from status.blocking_task",
+        ));
+    }
+    assert!(
+        violations.is_empty(),
+        "gate/stale truth must flow from reducer output, not direct gate recomputation:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn target_bound_repair_follow_up_bindings_cover_task_scoped_kinds() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let review_state = fs::read_to_string(repo_root.join("src/execution/review_state.rs"))
+        .expect("review_state source should be readable");
+    let target_binding = rust_function_body(&review_state, "repair_follow_up_target_binding")
+        .expect("review_state should contain repair_follow_up_target_binding");
+    assert!(
+        target_binding.contains("Some(\"record_task_closure\")")
+            && target_binding.contains("close_task_repair_follow_up_target"),
+        "record_task_closure follow-ups must bind a task target through the shared close-task helper"
+    );
+    let close_task_target = rust_function_body(&review_state, "close_task_repair_follow_up_target")
+        .expect("review_state should contain close_task_repair_follow_up_target");
+    assert!(
+        close_task_target.contains("repair_plan\n        .target_task")
+            && close_task_target.contains("post_repair_route_action.task_number")
+            && close_task_target.contains("post_repair_route_action.blocking_task"),
+        "close-task repair follow-up binding must derive a deterministic task target from repair-plan routing state"
+    );
+}
+
+fn strip_rust_function_body(source: &str, function_name: &str) -> String {
+    let Some(signature_start) = source.find(&format!("fn {function_name}(")) else {
+        return source.to_owned();
+    };
+    let Some(open_brace_offset) = source[signature_start..].find('{') else {
+        return source.to_owned();
+    };
+    let open_brace = signature_start + open_brace_offset;
+    let Some(close_brace) = matching_close_brace(source, open_brace) else {
+        return source.to_owned();
+    };
+    let mut stripped = String::with_capacity(source.len());
+    stripped.push_str(&source[..signature_start]);
+    stripped.push_str(&source[close_brace + 1..]);
+    stripped
+}
+
+fn rust_function_body<'a>(source: &'a str, function_name: &str) -> Option<&'a str> {
+    let signature_start = source.find(&format!("fn {function_name}("))?;
+    let open_brace_offset = source[signature_start..].find('{')?;
+    let open_brace = signature_start + open_brace_offset;
+    let close_brace = matching_close_brace(source, open_brace)?;
+    source.get(open_brace..=close_brace)
+}
+
+fn matching_close_brace(source: &str, open_brace: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, byte) in source.as_bytes().iter().enumerate().skip(open_brace) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}

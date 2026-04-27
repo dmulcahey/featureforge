@@ -153,8 +153,8 @@ cargo nextest run --all-targets --all-features --no-fail-fast
 ## Runtime Churn Cutover Validation
 
 Runtime churn fixes must prove that public routing advances, reports a precise
-diagnostic, or returns `already_current` without mutating tracked projection
-files. Use targeted iteration while repairing a known failure, but the final
+diagnostic, or returns `already_current` without mutating approved files or
+repo-local projection exports. Use targeted iteration while repairing a known failure, but the final
 cutover proof must include the Rust, Node/doc, and source-archive checks below:
 
 ```bash
@@ -185,16 +185,17 @@ expose a different true blocker, emit a deterministic diagnostic, nor resolve an
 
 Normal `begin`, `complete`, `reopen`, `transfer`, `close-current-task`,
 `repair-review-state`, `advance-late-stage`, `workflow operator`, and
-`plan execution status` commands must leave tracked plan/evidence/review
-projection files untouched. Runtime read models live under the state directory.
-Tracked human-readable exports are explicit:
+`plan execution status` commands must leave approved plan/evidence/review files
+and repo-local projection exports untouched. Runtime read models live under the
+state directory. Repo-local human-readable exports are explicit:
 
 ```bash
-featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all --tracked
+featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all
 ```
 
-Materialization is projection-only and must not be recommended by operator
-routing as required progress.
+Materialization writes repo-local projection exports without modifying approved
+plan or evidence files. It is projection-only and must not be recommended by
+operator routing as required progress.
 
 Historical final-remediation plans used targeted Rust subsets while closing specific failures. For branch proof, task-completion gates, plan-task review loops, and pre-merge verification, use the full Rust nextest suite instead:
 

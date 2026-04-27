@@ -61,6 +61,7 @@ pub(crate) struct ClosureGraphSignals {
     pub(crate) current_branch_closure_id: Option<String>,
     pub(crate) overlay_current_branch_closure_id: Option<String>,
     pub(crate) finish_review_gate_pass_branch_closure_id: Option<String>,
+    pub(crate) current_release_readiness_branch_closure_id: Option<String>,
     pub(crate) current_final_review_branch_closure_id: Option<String>,
     pub(crate) current_qa_branch_closure_id: Option<String>,
     pub(crate) late_stage_stale_unreviewed: bool,
@@ -81,6 +82,9 @@ impl ClosureGraphSignals {
             .map(|identity| identity.branch_closure_id);
         let finish_review_gate_pass_branch_closure_id = authoritative_state
             .and_then(AuthoritativeTransitionState::finish_review_gate_pass_branch_closure_id);
+        let current_release_readiness_branch_closure_id = authoritative_state
+            .and_then(AuthoritativeTransitionState::current_release_readiness_record)
+            .map(|record| record.branch_closure_id);
         let current_final_review_branch_closure_id = authoritative_state
             .and_then(AuthoritativeTransitionState::current_final_review_record)
             .map(|record| record.branch_closure_id)
@@ -104,6 +108,7 @@ impl ClosureGraphSignals {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned),
             finish_review_gate_pass_branch_closure_id,
+            current_release_readiness_branch_closure_id,
             current_final_review_branch_closure_id,
             current_qa_branch_closure_id,
             late_stage_stale_unreviewed,
@@ -242,6 +247,25 @@ impl AuthoritativeClosureGraph {
             }
         }
         stale_record_ids
+    }
+
+    pub(crate) fn stale_unreviewed_evaluations(&self) -> Vec<ClosureEvaluation> {
+        self.evaluations
+            .iter()
+            .filter(|(record_id, evaluation)| {
+                evaluation.freshness == ClosureFreshness::StaleUnreviewed
+                    && !self.superseded_by.contains_key(record_id.as_str())
+            })
+            .map(|(_, evaluation)| evaluation.clone())
+            .collect()
+    }
+
+    pub(crate) fn stale_projection_only_record_ids(&self) -> Vec<String> {
+        self.stale_projection_only_record_ids
+            .iter()
+            .filter(|record_id| !self.superseded_by.contains_key(record_id.as_str()))
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn earliest_unresolved_stale_task_number(&self) -> Option<u32> {
@@ -516,6 +540,11 @@ impl AuthoritativeClosureGraph {
     fn apply_late_stage_stale_projection(&mut self, signals: &ClosureGraphSignals) {
         if !(signals.late_stage_stale_unreviewed
             || signals.missing_current_closure_stale_provenance)
+            || signals.stale_reason_codes.is_empty()
+            || !signals
+                .stale_reason_codes
+                .iter()
+                .any(|reason_code| reason_code_indicates_stale_unreviewed(reason_code))
         {
             return;
         }
@@ -790,6 +819,9 @@ fn late_stage_candidate_closure_ids_from_signals(signals: &ClosureGraphSignals) 
         signals.current_branch_closure_id.as_deref(),
         signals.overlay_current_branch_closure_id.as_deref(),
         signals.finish_review_gate_pass_branch_closure_id.as_deref(),
+        signals
+            .current_release_readiness_branch_closure_id
+            .as_deref(),
         signals.current_final_review_branch_closure_id.as_deref(),
         signals.current_qa_branch_closure_id.as_deref(),
     ]

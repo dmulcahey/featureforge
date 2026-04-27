@@ -397,8 +397,8 @@ fn status_fails_closed_when_authoritative_state_is_unreadable() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stderr.contains("Could not inspect authoritative harness state")
-            || stdout.contains("Could not inspect authoritative harness state"),
+        authoritative_state_inspection_failure_visible(&stderr)
+            || authoritative_state_inspection_failure_visible(&stdout),
         "status should surface the unreadable authoritative state failure"
     );
 }
@@ -431,11 +431,16 @@ fn preflight_fails_closed_when_write_authority_lock_is_unreadable() {
     let failure = run_internal_preflight_failure_json(repo, state, PLAN_REL);
     assert_eq!(failure["error_class"], "MalformedExecutionState");
     assert!(
-        failure["message"].as_str().is_some_and(
-            |message| message.contains("Could not inspect authoritative harness state")
-        ),
+        failure["message"]
+            .as_str()
+            .is_some_and(authoritative_state_inspection_failure_visible),
         "preflight should surface authoritative-state inspection failure when hidden-gate migration cannot inspect state: {failure:?}"
     );
+}
+
+fn authoritative_state_inspection_failure_visible(message: &str) -> bool {
+    message.contains("Could not inspect authoritative harness state")
+        || message.contains("Could not inspect Authoritative event log")
 }
 
 #[cfg(unix)]

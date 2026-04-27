@@ -106,6 +106,7 @@
     },
     "WorkflowOperatorPhaseDetailSchema": {
       "enum": [
+        "blocked_runtime_bug",
         "execution_in_progress",
         "execution_reentry_required",
         "task_review_dispatch_required",
@@ -129,6 +130,7 @@
     },
     "WorkflowOperatorPhaseSchema": {
       "enum": [
+        "blocked",
         "executing",
         "task_closure_pending",
         "document_release_pending",

@@ -29,6 +29,8 @@ use featureforge::cli::plan_execution::{
 use featureforge::execution::final_review::{
     parse_final_review_receipt, resolve_release_base_branch,
 };
+use featureforge::execution::follow_up::execution_step_repair_target_id;
+use featureforge::execution::query::query_workflow_routing_state_for_runtime;
 use featureforge::execution::semantic_identity::{
     branch_definition_identity_for_context, task_definition_identity_for_task,
 };
@@ -48,7 +50,7 @@ use runtime_json_support::{discover_execution_runtime, plan_execution_status_jso
 use runtime_surfaces_support::{
     workflow_gate_finish_json, workflow_gate_review_json, workflow_operator_json,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsStr;
@@ -2760,8 +2762,8 @@ fn normal_execution_commands_do_not_dirty_tracked_projection_files() {
 }
 
 #[test]
-fn materialize_projections_tracked_is_explicit_and_does_not_change_runtime_truth() {
-    let (repo_dir, state_dir) = init_repo("materialize-projections-explicit-tracked");
+fn materialize_projections_default_export_does_not_change_runtime_truth_or_approved_files() {
+    let (repo_dir, state_dir) = init_repo("materialize-projections-default-export");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = WORKFLOW_FIXTURE_PLAN_REL;
@@ -2786,6 +2788,28 @@ fn materialize_projections_tracked_is_explicit_and_does_not_change_runtime_truth
         "plan execution preflight before explicit materialization fixture",
     );
     assert_eq!(preflight["allowed"], true);
+    let pre_begin_materialized = run_plan_execution_json(
+        repo,
+        state,
+        &["materialize-projections", "--plan", plan_rel],
+        "default projection export materialization should be available for pre-begin inspection",
+    );
+    assert_eq!(pre_begin_materialized["action"], "materialized");
+    assert_eq!(
+        pre_begin_materialized["projection_mode"],
+        "projection_export"
+    );
+    let pre_begin_materialized_rerun = run_plan_execution_json(
+        repo,
+        state,
+        &["materialize-projections", "--plan", plan_rel],
+        "default projection export materialization rerun should not require a repair route",
+    );
+    assert_eq!(pre_begin_materialized_rerun["action"], "materialized");
+    assert_eq!(
+        pre_begin_materialized_rerun["projection_mode"],
+        "projection_export"
+    );
     let begin = run_plan_execution_json(
         repo,
         state,
@@ -2838,14 +2862,14 @@ fn materialize_projections_tracked_is_explicit_and_does_not_change_runtime_truth
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "status before explicit tracked materialization",
+        "status before explicit projection export materialization",
     );
     let operator_before = run_featureforge_with_env_json(
         repo,
         state,
         &["workflow", "operator", "--plan", plan_rel, "--json"],
         &[],
-        "workflow operator before explicit tracked materialization",
+        "workflow operator before explicit projection export materialization",
     );
     let route_before = public_route_snapshot(&status_before);
     let operator_route_before = public_route_snapshot(&operator_before);
@@ -2856,9 +2880,15 @@ fn materialize_projections_tracked_is_explicit_and_does_not_change_runtime_truth
         .filter_map(Value::as_str)
         .map(|path| (path.to_owned(), fs::read_to_string(repo.join(path)).ok()))
         .collect::<HashMap<_, _>>();
+    let approved_plan_before =
+        fs::read_to_string(repo.join(plan_rel)).expect("approved plan should be readable");
+    let approved_evidence_rel = status_before["evidence_path"]
+        .as_str()
+        .expect("status should expose evidence_path");
+    let approved_evidence_before = fs::read_to_string(repo.join(approved_evidence_rel)).ok();
     assert_eq!(
         operator_route_before, route_before,
-        "operator and status should agree before tracked materialization"
+        "operator and status should agree before projection export materialization"
     );
     assert_eq!(
         status_before["tracked_projections_current"], false,
@@ -2868,10 +2898,17 @@ fn materialize_projections_tracked_is_explicit_and_does_not_change_runtime_truth
     let materialized = run_plan_execution_json(
         repo,
         state,
-        &["materialize-projections", "--plan", plan_rel, "--tracked"],
-        "explicit tracked projection materialization",
+        &["materialize-projections", "--plan", plan_rel],
+        "default projection export materialization",
     );
     assert_eq!(materialized["action"], "materialized");
+    assert_eq!(materialized["projection_mode"], "projection_export");
+    assert!(
+        materialized["trace_summary"].as_str().is_some_and(
+            |summary| summary.contains("approved plan/evidence files were not modified")
+        ),
+        "default materialization should report approved-file preservation: {materialized}"
+    );
     assert_eq!(
         materialized["runtime_truth_changed"], false,
         "materialization must not mutate runtime truth"
@@ -2883,15 +2920,23 @@ fn materialize_projections_tracked_is_explicit_and_does_not_change_runtime_truth
         .filter_map(Value::as_str)
         .collect::<Vec<_>>();
     assert!(
-        written_paths.contains(&plan_rel)
+        written_paths
+            .iter()
+            .all(|path| path.starts_with("docs/featureforge/projections/")),
+        "default materialization should only report projection export paths, paths={written_paths:?}"
+    );
+    assert!(
+        written_paths
+            .iter()
+            .any(|path| path.ends_with("/execution-plan.md"))
             && written_paths
                 .iter()
-                .any(|path| path.contains("docs/featureforge/execution-evidence/")),
-        "explicit materialization should report tracked plan and evidence projections, paths={written_paths:?}"
+                .any(|path| path.ends_with("/execution-evidence.md")),
+        "default materialization should report plan and evidence projection exports, paths={written_paths:?}"
     );
     assert!(
         written_paths.iter().all(|path| repo.join(path).is_file()),
-        "explicit tracked materialization should write every reported projection file, paths={written_paths:?}"
+        "default materialization should write every reported projection file, paths={written_paths:?}"
     );
     assert!(
         written_paths.iter().any(|path| {
@@ -2903,20 +2948,30 @@ fn materialize_projections_tracked_is_explicit_and_does_not_change_runtime_truth
             });
             before != Some(after.as_str())
         }),
-        "explicit tracked materialization should change tracked projection file contents"
+        "default materialization should change projection export file contents"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join(plan_rel)).expect("approved plan should remain readable"),
+        approved_plan_before,
+        "projection export must not modify the approved plan file"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join(approved_evidence_rel)).ok(),
+        approved_evidence_before,
+        "projection export must not create or modify the approved execution evidence file"
     );
     let status_after = run_plan_execution_json(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "status after explicit tracked materialization",
+        "status after explicit projection export materialization",
     );
     let operator_after = run_featureforge_with_env_json(
         repo,
         state,
         &["workflow", "operator", "--plan", plan_rel, "--json"],
         &[],
-        "workflow operator after explicit tracked materialization",
+        "workflow operator after explicit projection export materialization",
     );
     assert_eq!(
         status_after["tracked_projections_current"], true,
@@ -2924,7 +2979,7 @@ fn materialize_projections_tracked_is_explicit_and_does_not_change_runtime_truth
     );
     assert_eq!(
         status_after["execution_fingerprint"], status_before["execution_fingerprint"],
-        "tracked projection materialization must not change the execution fingerprint"
+        "projection export materialization must not change the execution fingerprint"
     );
     assert_eq!(
         operator_after["projection_mode"], status_after["projection_mode"],
@@ -2946,11 +3001,11 @@ fn materialize_projections_tracked_is_explicit_and_does_not_change_runtime_truth
     let operator_route_after = public_route_snapshot(&operator_after);
     assert_eq!(
         operator_route_after, route_before,
-        "operator routing must not change after tracked materialization"
+        "operator routing must not change after projection export materialization"
     );
     assert_eq!(
         route_after, route_before,
-        "tracked projection materialization must not change routing truth"
+        "projection export materialization must not change routing truth"
     );
 }
 
@@ -3033,13 +3088,9 @@ fn tampered_state_dir_projection_is_not_materialized_as_current() {
         &["status", "--plan", plan_rel],
         "status before state-dir projection tamper",
     );
-    let evidence_rel = status_after_complete["tracked_projection_paths"]
-        .as_array()
-        .expect("status should expose tracked projection paths")
-        .iter()
-        .filter_map(Value::as_str)
-        .find(|path| path.contains("docs/featureforge/execution-evidence/"))
-        .expect("status should expose tracked evidence projection path");
+    let evidence_rel = status_after_complete["evidence_path"]
+        .as_str()
+        .expect("status should expose approved evidence path");
     projection_support::write_state_dir_projection(
         &status_after_complete,
         evidence_rel,
@@ -3169,13 +3220,12 @@ fn deleting_tracked_projection_files_does_not_change_routing() {
         .expect("status should expose tracked projection paths")
         .iter()
         .filter_map(Value::as_str)
-        .filter(|path| *path != plan_rel)
         .map(str::to_owned)
         .collect::<Vec<_>>();
     assert!(
         tracked_projection_paths
             .iter()
-            .any(|path| path.contains("docs/featureforge/execution-evidence/")),
+            .any(|path| path.ends_with("/execution-evidence.md")),
         "fixture should expose a deletable tracked evidence projection path: {tracked_projection_paths:?}"
     );
     for rel_path in &tracked_projection_paths {
@@ -3258,17 +3308,20 @@ fn missing_state_dir_projection_does_not_promote_tracked_evidence_export() {
             .is_some_and(|attempts| !attempts.is_empty()),
         "fixture should persist authoritative execution evidence attempts"
     );
-    let evidence_rel = status_before_delete["tracked_projection_paths"]
+    let evidence_rel = status_before_delete["evidence_path"]
+        .as_str()
+        .expect("status should expose approved evidence path");
+    let evidence_export_rel = status_before_delete["tracked_projection_paths"]
         .as_array()
         .expect("status should expose tracked projection paths")
         .iter()
         .filter_map(Value::as_str)
-        .find(|path| path.contains("docs/featureforge/execution-evidence/"))
-        .expect("status should expose a tracked evidence projection path");
-    let evidence_path = repo.join(evidence_rel);
+        .find(|path| path.ends_with("/execution-evidence.md"))
+        .expect("status should expose a tracked evidence projection export path");
+    let evidence_path = repo.join(evidence_export_rel);
     let evidence_source = fs::read_to_string(&evidence_path).unwrap_or_else(|error| {
         panic!(
-            "tracked evidence projection {} should be readable: {error}",
+            "tracked evidence projection export {} should be readable: {error}",
             evidence_path.display()
         )
     });
@@ -3282,7 +3335,7 @@ fn missing_state_dir_projection_does_not_promote_tracked_evidence_export() {
     );
     fs::write(&evidence_path, stale_evidence_source).unwrap_or_else(|error| {
         panic!(
-            "tracked evidence projection {} should be writable: {error}",
+            "tracked evidence projection export {} should be writable: {error}",
             evidence_path.display()
         )
     });
@@ -3460,6 +3513,33 @@ fn update_authoritative_harness_state(repo: &Path, state_dir: &Path, updates: &[
         );
     }
     write_authoritative_harness_state(repo, state_dir, &payload);
+}
+
+fn bind_explicit_reopen_repair_target(repo: &Path, state_dir: &Path, task: u32, step: u32) {
+    update_authoritative_harness_state(
+        repo,
+        state_dir,
+        &[
+            (
+                "explicit_reopen_repair_targets",
+                json!([{
+                    "target_task": task,
+                    "target_step": step,
+                    "target_record_id": execution_step_repair_target_id(task, step),
+                    "created_sequence": 1,
+                    "expires_on_plan_fingerprint_change": true
+                }]),
+            ),
+            ("review_state_repair_follow_up_record", Value::Null),
+            ("review_state_repair_follow_up", Value::Null),
+            ("review_state_repair_follow_up_task", Value::Null),
+            ("review_state_repair_follow_up_step", Value::Null),
+            (
+                "review_state_repair_follow_up_closure_record_id",
+                Value::Null,
+            ),
+        ],
+    );
 }
 
 fn authoritative_harness_state(repo: &Path, state_dir: &Path) -> Value {
@@ -8342,7 +8422,7 @@ fn plan_execution_transfer_blocks_when_requested_scope_mismatches_current_decisi
     );
     assert!(operator_before_transfer.get("follow_up_override").is_none());
 
-    let transfer_json = run_plan_execution_json_real_cli(
+    let transfer_json = run_plan_execution_failure_json_real_cli(
         repo,
         state,
         &[
@@ -8358,22 +8438,17 @@ fn plan_execution_transfer_blocks_when_requested_scope_mismatches_current_decisi
         ],
         "transfer should fail closed when requested scope mismatches current handoff decision scope",
     );
-    assert_eq!(transfer_json["action"], "blocked");
-    assert_eq!(transfer_json["scope"], "branch");
-    assert_eq!(transfer_json["code"], Value::Null);
-    assert_eq!(
-        transfer_json["trace_summary"],
-        Value::from(
-            "transfer failed closed because the requested scope does not satisfy the current handoff decision scope.",
-        )
+    assert_eq!(transfer_json["error_class"], "ExecutionStateNotReady");
+    assert!(
+        transfer_json["message"].as_str().is_some_and(|message| {
+            message.contains("transfer failed closed")
+                && message.contains("reason_code=mutation_not_route_authorized")
+                && message.contains(&format!(
+                    "Next public action: featureforge plan execution transfer --plan {plan_rel} --scope task --to <owner> --reason <reason>"
+                ))
+        }),
+        "mismatched transfer scope should fail through the shared mutation oracle, got {transfer_json:?}"
     );
-    assert_eq!(
-        transfer_json["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution transfer --plan {plan_rel} --scope task --to <owner> --reason <reason>"
-        ))
-    );
-    assert_eq!(transfer_json["rederive_via_workflow_operator"], Value::Null);
 
     let operator_after_transfer = run_featureforge_with_env_json(
         repo,
@@ -8622,8 +8697,53 @@ fn plan_execution_transfer_routed_handoff_shape_is_executable_and_clears_overrid
     assert_eq!(
         operator_after_fail["recommended_command"],
         Value::from(format!(
-            "featureforge plan execution transfer --plan {plan_rel} --scope task|branch --to <owner> --reason <reason>"
+            "featureforge plan execution transfer --plan {plan_rel} --scope task --to <owner> --reason <reason>"
         ))
+    );
+
+    let status_before_transfer = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status before routed handoff transfer should expose exact transfer scope",
+    );
+    let legacy_transfer_failure = run_plan_execution_failure_json_real_cli(
+        repo,
+        state,
+        &[
+            "transfer",
+            "--plan",
+            plan_rel,
+            "--repair-task",
+            "1",
+            "--repair-step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--reason",
+            "legacy repair transfer must not satisfy routed handoff transfer",
+            "--expect-execution-fingerprint",
+            status_before_transfer["execution_fingerprint"]
+                .as_str()
+                .expect("status should expose execution fingerprint before legacy transfer"),
+        ],
+        "legacy transfer repair shape should not satisfy routed handoff transfer route",
+    );
+    assert_eq!(
+        legacy_transfer_failure["error_class"],
+        "ExecutionStateNotReady"
+    );
+    assert!(
+        legacy_transfer_failure["message"]
+            .as_str()
+            .is_some_and(|message| {
+                message.contains("transfer failed closed")
+                    && message.contains("reason_code=mutation_not_route_authorized")
+                    && message.contains(&format!(
+                        "Next public action: featureforge plan execution transfer --plan {plan_rel} --scope task --to <owner> --reason <reason>"
+                    ))
+            }),
+        "legacy repair transfer should fail through the shared mutation oracle, got {legacy_transfer_failure:?}"
     );
 
     let transfer_json = run_plan_execution_json_real_cli(
@@ -8652,7 +8772,7 @@ fn plan_execution_transfer_routed_handoff_shape_is_executable_and_clears_overrid
         "routed transfer should expose a persisted runtime-owned record path"
     );
 
-    let transfer_rerun = run_plan_execution_json_real_cli(
+    let transfer_rerun = run_plan_execution_failure_json_real_cli(
         repo,
         state,
         &[
@@ -8668,12 +8788,15 @@ fn plan_execution_transfer_routed_handoff_shape_is_executable_and_clears_overrid
         ],
         "routed transfer handoff command idempotent rerun",
     );
-    assert_eq!(transfer_rerun["action"], "blocked");
-    assert_eq!(transfer_rerun["code"], "out_of_phase_requery_required");
-    assert_eq!(transfer_rerun["rederive_via_workflow_operator"], true);
-    assert_eq!(
-        transfer_rerun["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+    assert_eq!(transfer_rerun["error_class"], "ExecutionStateNotReady");
+    assert!(
+        transfer_rerun["message"].as_str().is_some_and(|message| {
+            message.contains("transfer failed closed")
+                && message
+                    .contains("Next public action: featureforge plan execution close-current-task")
+                && message.contains("reason_code=mutation_not_route_authorized")
+        }),
+        "routed transfer rerun should fail closed through the shared mutation oracle after the route moves on: {transfer_rerun:?}"
     );
 
     let operator_after_transfer = run_featureforge_with_env_json(
@@ -12997,7 +13120,7 @@ fn workflow_operator_keeps_execution_scope_when_resume_task_exists_despite_late_
         ],
         "begin task 2 step 1 for reopened execution routing",
     );
-    let complete_task_2_step_1 = run_plan_execution_json(
+    let _complete_task_2_step_1 = run_plan_execution_json(
         repo,
         state,
         &[
@@ -13023,35 +13146,22 @@ fn workflow_operator_keeps_execution_scope_when_resume_task_exists_despite_late_
         ],
         "complete task 2 step 1 for reopened execution routing",
     );
-    let reopened = run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "reopen",
-            "--plan",
-            plan_rel,
-            "--task",
-            "2",
-            "--step",
-            "1",
-            "--source",
-            "featureforge:executing-plans",
-            "--reason",
-            "Task 2 Step 1 needs remediation before late-stage progression.",
-            "--expect-execution-fingerprint",
-            complete_task_2_step_1["execution_fingerprint"]
-                .as_str()
-                .expect("task 2 complete should expose execution fingerprint for reopen"),
-        ],
-        "reopen task 2 step 1 for reopened execution routing",
-    );
-    assert_eq!(reopened["resume_task"], Value::from(2));
-    assert_eq!(reopened["resume_step"], Value::from(1));
-
     update_authoritative_harness_state(
         repo,
         state,
         &[
+            (
+                "current_open_step_state",
+                serde_json::json!({
+                    "task": 2,
+                    "step": 1,
+                    "note_state": "Interrupted",
+                    "note_summary": "Task 2 Step 1 needs remediation before late-stage progression.",
+                    "source_plan_path": plan_rel,
+                    "source_plan_revision": 1,
+                    "authoritative_sequence": 1
+                }),
+            ),
             ("harness_phase", Value::from("document_release_pending")),
             ("current_branch_closure_id", Value::Null),
             ("current_branch_closure_reviewed_state_id", Value::Null),
@@ -13075,6 +13185,21 @@ fn workflow_operator_keeps_execution_scope_when_resume_task_exists_despite_late_
         Value::from(Vec::<String>::new())
     );
     assert!(
+        status_json["execution_command_context"].is_null(),
+        "targetless stale status must not expose an execution reentry command context: {status_json}"
+    );
+    assert!(
+        status_json["execution_reentry_target_source"].is_null(),
+        "targetless stale status must not fabricate a reentry target source: {status_json}"
+    );
+    assert!(
+        !status_json["recommended_command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("reopen"),
+        "targetless stale status must not route to reopen: {status_json}"
+    );
+    assert!(
         status_json["reason_codes"]
             .as_array()
             .is_some_and(|codes| codes
@@ -13084,9 +13209,97 @@ fn workflow_operator_keeps_execution_scope_when_resume_task_exists_despite_late_
     );
     assert_eq!(
         status_json["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution repair-review-state --plan {plan_rel}"
-        ))
+        Value::Null,
+        "targetless stale status must not recommend repair when no authoritative target exists: {status_json}"
+    );
+    for (command, args) in [
+        (
+            "begin",
+            vec![
+                "begin",
+                "--plan",
+                plan_rel,
+                "--task",
+                "2",
+                "--step",
+                "1",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                status_json["execution_fingerprint"]
+                    .as_str()
+                    .expect("targetless stale status should expose execution fingerprint"),
+            ],
+        ),
+        (
+            "reopen",
+            vec![
+                "reopen",
+                "--plan",
+                plan_rel,
+                "--task",
+                "2",
+                "--step",
+                "1",
+                "--source",
+                "featureforge:executing-plans",
+                "--reason",
+                "Runtime reconcile must block non-routed reopen.",
+                "--expect-execution-fingerprint",
+                status_json["execution_fingerprint"]
+                    .as_str()
+                    .expect("targetless stale status should expose execution fingerprint"),
+            ],
+        ),
+        (
+            "transfer",
+            vec![
+                "transfer",
+                "--plan",
+                plan_rel,
+                "--repair-task",
+                "2",
+                "--repair-step",
+                "1",
+                "--source",
+                "featureforge:executing-plans",
+                "--reason",
+                "Runtime reconcile must block non-routed transfer.",
+                "--expect-execution-fingerprint",
+                status_json["execution_fingerprint"]
+                    .as_str()
+                    .expect("targetless stale status should expose execution fingerprint"),
+            ],
+        ),
+    ] {
+        let failure = run_plan_execution_failure_json(
+            repo,
+            state,
+            &args,
+            "runtime_reconcile_required should block non-routed mutation",
+        );
+        let message = failure["message"]
+            .as_str()
+            .expect("failure should expose a message");
+        assert!(
+            message.contains(&format!("{command} failed closed")),
+            "runtime_reconcile_required should block {command}, got {failure}"
+        );
+        assert!(
+            message.contains("runtime_reconcile_required=true"),
+            "runtime_reconcile_required rejection should identify reconcile state, got {failure}"
+        );
+    }
+    let status_blocking_records = status_json["blocking_records"]
+        .as_array()
+        .expect("targetless stale status should expose blocking_records");
+    assert!(
+        status_blocking_records.iter().all(|record| {
+            record["required_follow_up"].is_null()
+                && record["code"] == "stale_unreviewed_target_missing"
+                && record["scope_key"] != "current"
+        }),
+        "targetless stale blocking records must not synthesize current-target repair guidance: {status_json}"
     );
 
     let operator_json = run_featureforge_with_env_json(
@@ -13100,6 +13313,15 @@ fn workflow_operator_keeps_execution_scope_when_resume_task_exists_despite_late_
     assert_eq!(operator_json["phase_detail"], "runtime_reconcile_required");
     assert_eq!(operator_json["review_state_status"], "stale_unreviewed");
     assert!(
+        operator_json["execution_command_context"].is_null(),
+        "targetless stale operator must not expose an execution reentry command context: {operator_json}"
+    );
+    assert_eq!(
+        operator_json["recommended_command"],
+        Value::Null,
+        "targetless stale operator must not recommend repair when no authoritative target exists: {operator_json}"
+    );
+    assert!(
         operator_json["blocking_reason_codes"]
             .as_array()
             .is_some_and(|codes| codes
@@ -13107,12 +13329,57 @@ fn workflow_operator_keeps_execution_scope_when_resume_task_exists_despite_late_
                 .any(|code| code == "stale_unreviewed_target_missing")),
         "workflow operator should carry the targetless stale diagnostic: {operator_json}"
     );
-    let operator_recommended_command = operator_json["recommended_command"].as_str().expect(
-        "workflow operator should return a concrete repair command for targetless stale state",
-    );
     assert!(
-        operator_recommended_command.starts_with("featureforge plan execution "),
-        "workflow operator should return an executable plan execution command, got {operator_json}"
+        operator_json["blockers"]
+            .as_array()
+            .is_some_and(|blockers| blockers
+                .iter()
+                .all(|blocker| blocker["next_public_action"].is_null())),
+        "targetless stale operator blockers must not synthesize a repair or reopen action: {operator_json}"
+    );
+
+    let branch_closure_json = run_internal_record_branch_closure_json(
+        repo,
+        state,
+        plan_rel,
+        "record-branch-closure should not classify targetless stale as repair-review-state follow-up",
+    );
+    assert_eq!(branch_closure_json["action"], "blocked");
+    assert_eq!(
+        branch_closure_json["required_follow_up"],
+        Value::Null,
+        "targetless stale shared routing follow-up must not rederive repair_review_state: {branch_closure_json}"
+    );
+
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "targetless stale routing query read-surface invariant",
+    );
+    let routing =
+        query_workflow_routing_state_for_runtime(&runtime, Some(Path::new(plan_rel)), false)
+            .expect("targetless stale routing query should succeed");
+    let routing_json =
+        serde_json::to_value(&routing).expect("targetless stale routing should serialize");
+    assert_eq!(routing_json["phase_detail"], "runtime_reconcile_required");
+    assert_eq!(
+        routing_json["execution_status"]["phase_detail"],
+        "runtime_reconcile_required"
+    );
+    assert_eq!(
+        routing_json["recommended_command"],
+        routing_json["execution_status"]["recommended_command"],
+        "routing query top-level command must stay synchronized with sanitized status: {routing_json}"
+    );
+    assert_eq!(
+        routing_json["recommended_command"],
+        Value::Null,
+        "routing query must not synthesize a targetless stale repair command: {routing_json}"
+    );
+    assert_eq!(
+        routing_json["execution_command_context"],
+        routing_json["execution_status"]["execution_command_context"],
+        "routing query top-level context must stay synchronized with sanitized status: {routing_json}"
     );
 
     let repair_json = run_plan_execution_json(
@@ -13122,6 +13389,16 @@ fn workflow_operator_keeps_execution_scope_when_resume_task_exists_despite_late_
         "repair-review-state should preserve targetless stale reconcile diagnostics after mutation requery",
     );
     assert_eq!(repair_json["phase_detail"], "runtime_reconcile_required");
+    assert_eq!(
+        repair_json["recommended_command"],
+        Value::Null,
+        "repair-review-state must not loop on repair when no authoritative stale target exists: {repair_json}"
+    );
+    assert_eq!(
+        repair_json["required_follow_up"],
+        Value::Null,
+        "repair-review-state must not expose repair follow-up when no authoritative stale target exists: {repair_json}"
+    );
     assert!(
         repair_json["blocking_reason_codes"]
             .as_array()
@@ -14021,7 +14298,7 @@ fn plan_execution_record_branch_closure_allows_already_current_for_valid_empty_l
 }
 
 #[test]
-fn plan_execution_record_branch_closure_blocks_late_stage_surface_exemption_rerecord_without_current_task_closure_baseline()
+fn plan_execution_record_branch_closure_rerecords_late_stage_surface_exemption_without_current_task_closure_baseline()
  {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) =
@@ -14120,28 +14397,30 @@ fn plan_execution_record_branch_closure_blocks_late_stage_surface_exemption_rere
         "repair-review-state should reroute stale empty-lineage late-stage-surface-only branch drift to the shared public progress edge",
     );
     assert_eq!(repair_json["action"], "blocked");
-    assert!(
-        repair_json["required_follow_up"].is_null(),
-        "repair json: {repair_json}"
+    assert_eq!(repair_json["required_follow_up"], "advance_late_stage");
+    assert_eq!(
+        repair_json["phase_detail"],
+        "branch_closure_recording_required_for_release_readiness"
     );
-    assert_eq!(repair_json["phase_detail"], "task_closure_recording_ready");
-    assert!(
-        repair_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| {
-                command.contains("close-current-task") && command.contains("--task 1")
-            }),
-        "repair json: {repair_json}"
+    assert_eq!(
+        repair_json["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution advance-late-stage --plan {plan_rel}"
+        )),
+        "repair-review-state must not fabricate a task closure target when no current task closure baseline exists: {repair_json}"
     );
 
     let record_json = run_internal_record_branch_closure_json(
         repo,
         state,
         plan_rel,
-        "record-branch-closure should fail closed while repair-review-state routes stale empty-lineage drift to task closure recording",
+        "record-branch-closure should rerecord stale empty-lineage drift without fabricating a task closure target",
     );
-    assert_eq!(record_json["action"], "blocked", "json: {record_json}");
-    assert!(record_json["required_follow_up"].is_null());
+    assert_eq!(record_json["action"], "recorded", "json: {record_json}");
+    assert_eq!(
+        record_json["superseded_branch_closure_ids"],
+        Value::from(vec![String::from(branch_closure_id)])
+    );
 }
 
 #[test]
@@ -22965,6 +23244,7 @@ fn fs20_reopening_downstream_stale_task_does_not_unwind_upstream_current_closure
         ],
         "FS-20 complete downstream task before reopen churn",
     );
+    bind_explicit_reopen_repair_target(repo, state, 2, 1);
     run_plan_execution_json_real_cli(
         repo,
         state,
@@ -23328,14 +23608,13 @@ fn fs11_operator_and_begin_target_parity_after_rebase_resume() {
     let begin_message = begin_failure["message"]
         .as_str()
         .expect("FS-11 shell-smoke begin failure should expose message text");
-    if begin_error_class == "InvalidStepTransition" {
-        assert!(
-            begin_message.contains("next legal action is"),
-            "FS-11 shell-smoke invalid-step rejection should explain next-action mismatch: {begin_failure:?}",
-        );
-    }
     assert!(
-        begin_message.contains("task Some(2)") || begin_message.contains("Task 2"),
+        begin_message.contains("Next public action: featureforge plan execution")
+            && begin_message.contains("reason_code=mutation_not_route_authorized"),
+        "FS-11 shell-smoke rejection should explain the shared mutation-oracle mismatch: {begin_failure:?}",
+    );
+    assert!(
+        begin_message.contains("--task 2"),
         "FS-11 shell-smoke begin failure should preserve Task 2 as authoritative target: {begin_failure:?}",
     );
 }
@@ -23575,6 +23854,7 @@ fn fs12_recovery_path_does_not_require_hidden_preflight_when_run_identity_exists
         "FS-12 status should keep authoritative execution_run_id without preflight acceptance: {status_without_preflight}"
     );
 
+    bind_explicit_reopen_repair_target(repo, state, 1, 1);
     let reopened = run_plan_execution_json_real_cli(
         repo,
         state,

@@ -903,6 +903,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_enum!(
         "phase_detail",
         [
+            "blocked_runtime_bug",
             "branch_closure_recording_required_for_release_readiness",
             "execution_in_progress",
             "execution_reentry_required",
@@ -968,10 +969,29 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     );
     check_types!("recording_context", ["object"], optional);
     check_types!("execution_command_context", ["object"], optional);
+    check_types!(
+        "execution_reentry_target_source",
+        ["string", "null"],
+        optional
+    );
     assert_schema_pointer_enum(
         &schema,
         "/$defs/PublicExecutionCommandContext/properties/command_kind",
         &["begin", "complete", "reopen"],
+        &mut issues,
+    );
+    assert_schema_pointer_enum(
+        &schema,
+        "/$defs/PublicRepairTarget/properties/command_kind",
+        &[
+            "begin",
+            "complete",
+            "reopen",
+            "transfer",
+            "close-current-task",
+            "repair-review-state",
+            "advance-late-stage",
+        ],
         &mut issues,
     );
     assert_schema_pointer_required(
@@ -1311,6 +1331,7 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
     assert_eq!(properties["schema_version"]["minimum"], Value::from(3));
     assert_eq!(properties["schema_version"]["maximum"], Value::from(3));
     for phase in [
+        "blocked",
         "executing",
         "task_closure_pending",
         "document_release_pending",

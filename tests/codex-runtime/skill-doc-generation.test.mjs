@@ -38,8 +38,8 @@ test('every generated skill has a template and SKILL.md artifact', () => {
 
 test('every generated SKILL.md preserves expected frontmatter semantics', () => {
   for (const skill of listGeneratedSkills()) {
-    const generatedFrontmatter = parseFrontmatter(readUtf8(path.join(SKILLS_DIR, skill, 'SKILL.md')));
-    const templateFrontmatter = parseFrontmatter(readUtf8(path.join(SKILLS_DIR, skill, 'SKILL.md.tmpl')));
+    const generatedFrontmatter = parseFrontmatter(readUtf8(path.join(SKILLS_DIR, skill, 'SKILL.md'))).frontmatter;
+    const templateFrontmatter = parseFrontmatter(readUtf8(path.join(SKILLS_DIR, skill, 'SKILL.md.tmpl'))).frontmatter;
     assert.ok(generatedFrontmatter, `${skill} should have YAML frontmatter`);
     assert.ok(templateFrontmatter, `${skill} template should have YAML frontmatter`);
     assert.equal(generatedFrontmatter.name, skill, `${skill} should declare a frontmatter name that matches its directory`);

@@ -10,7 +10,9 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
 const gate = requireEvalEnv();
-const testFn = evalsEnabled() && gate.enabled ? test : test.skip;
+const testFn = evalsEnabled() && gate.enabled
+  ? test
+  : (name, fn) => test(name, { skip: gate.reason }, fn);
 
 testFn('interactive question format preserves context, recommendation, and options', async () => {
   const content = fs.readFileSync(path.join(REPO_ROOT, 'skills/using-featureforge/SKILL.md'), 'utf8');

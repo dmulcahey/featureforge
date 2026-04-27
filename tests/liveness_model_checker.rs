@@ -55,6 +55,7 @@ struct SyntheticState {
     runtime_projection_dirtiness_present: bool,
     summary_hash_drift_present: bool,
     targetless_stale_present: bool,
+    current_stale_overlap_present: bool,
     resume_exact_disagreement_present: bool,
 }
 
@@ -75,6 +76,7 @@ impl SyntheticState {
             runtime_projection_dirtiness_present: false,
             summary_hash_drift_present: false,
             targetless_stale_present: false,
+            current_stale_overlap_present: false,
             resume_exact_disagreement_present: false,
         }
     }
@@ -299,7 +301,13 @@ fn write_variant_harness_state(fixture: &SyntheticFixtureContext<'_>, synthetic:
             .as_str()
             .map(str::to_owned)
             .unwrap_or_else(|| format!("closure-{task}"));
-        history_records.insert(history_key, record);
+        let mut history_record = record;
+        if synthetic.current_stale_overlap_present && task == boundary_task {
+            history_record["closure_status"] = Value::from("stale_unreviewed");
+            history_record["record_status"] = Value::from("stale_unreviewed");
+            history_record["record_sequence"] = Value::from(0_u64);
+        }
+        history_records.insert(history_key, history_record);
         if !synthetic.dispatch_lineage_missing {
             dispatch_lineage.insert(
                 format!("task-{task}"),
@@ -649,6 +657,29 @@ fn contains_hidden_command_token(command: &str) -> bool {
     .any(|token| command.contains(token))
 }
 
+fn targetless_stale_reconcile_status(status: &PlanExecutionStatus) -> bool {
+    status.phase_detail == "runtime_reconcile_required"
+        && status
+            .reason_codes
+            .iter()
+            .any(|reason| reason == "stale_unreviewed_target_missing")
+        && status
+            .blocking_reason_codes
+            .iter()
+            .any(|reason| reason == "missing_authoritative_stale_target")
+}
+
+fn current_stale_overlap_runtime_diagnostic(status: &PlanExecutionStatus) -> bool {
+    matches!(
+        status.phase_detail.as_str(),
+        "blocked_runtime_bug" | "runtime_reconcile_required"
+    ) && status
+        .reason_codes
+        .iter()
+        .chain(status.blocking_reason_codes.iter())
+        .any(|reason| reason == "current_stale_closure_overlap")
+}
+
 fn progress_metric_from_status(status: &PlanExecutionStatus, total_tasks: u8) -> ProgressMetric {
     let recommended_command = materialized_status_command(status);
     let hidden_command_exposure = u8::from(
@@ -659,10 +690,7 @@ fn progress_metric_from_status(status: &PlanExecutionStatus, total_tasks: u8) ->
     let targetless_stale_without_diagnostic = u8::from(
         status.review_state_status == "stale_unreviewed"
             && status.stale_unreviewed_closures.is_empty()
-            && !status
-                .reason_codes
-                .iter()
-                .any(|reason| reason == "stale_unreviewed_target_missing"),
+            && !targetless_stale_reconcile_status(status),
     );
     let cycle_break_blockers = u8::from(
         status
@@ -1047,6 +1075,10 @@ fn production_loop_liveness_cases(total_tasks: u8) -> Vec<SyntheticState> {
     let completed = total_tasks.max(1);
     vec![
         SyntheticState {
+            current_stale_overlap_present: true,
+            ..SyntheticState::base(active_completed)
+        },
+        SyntheticState {
             stale_cycle_break_overlay_present: true,
             ..SyntheticState::base(active_completed)
         },
@@ -1072,6 +1104,12 @@ fn production_loop_liveness_cases(total_tasks: u8) -> Vec<SyntheticState> {
         SyntheticState {
             stale_boundary_present: true,
             downstream_stale_step_present: true,
+            ..SyntheticState::base(active_completed)
+        },
+        SyntheticState {
+            stale_boundary_present: true,
+            downstream_stale_step_present: true,
+            runtime_projection_dirtiness_present: true,
             ..SyntheticState::base(active_completed)
         },
         SyntheticState {
@@ -1118,6 +1156,7 @@ fn synthetic_liveness_generator_covers_full_legal_variant_space() {
                                     && !case.runtime_projection_dirtiness_present
                                     && !case.summary_hash_drift_present
                                     && !case.targetless_stale_present
+                                    && !case.current_stale_overlap_present
                                     && !case.resume_exact_disagreement_present
                             }),
                             "missing active legal variant for {total_tasks} tasks / {completed_tasks} completed"
@@ -1146,6 +1185,7 @@ fn synthetic_liveness_generator_covers_full_legal_variant_space() {
                                     && !case.runtime_projection_dirtiness_present
                                     && !case.summary_hash_drift_present
                                     && !case.targetless_stale_present
+                                    && !case.current_stale_overlap_present
                                     && !case.resume_exact_disagreement_present
                             }),
                             "missing completed legal variant for {total_tasks} tasks"
@@ -1164,6 +1204,7 @@ fn synthetic_liveness_generator_covers_full_legal_variant_space() {
                         && !case.structural_blocker_present
                         && !case.dispatch_lineage_missing
                         && !case.runtime_projection_dirtiness_present
+                        && !case.current_stale_overlap_present
                 })
                 .count(),
             1,
@@ -1172,6 +1213,10 @@ fn synthetic_liveness_generator_covers_full_legal_variant_space() {
         assert!(
             cases.iter().any(|case| case.steps_per_task > 1),
             "missing multi-step production-loop liveness variant for {total_tasks} tasks"
+        );
+        assert!(
+            cases.iter().any(|case| case.current_stale_overlap_present),
+            "missing current/stale overlap production-loop variant for {total_tasks} tasks"
         );
         assert!(
             cases
@@ -1230,6 +1275,13 @@ fn assert_production_loop_case_is_modeled(
 }
 
 #[test]
+fn liveness_current_stale_overlap_blocks_without_reopen_or_hidden_command() {
+    assert_production_loop_case_is_modeled("current/stale closure overlap", |case| {
+        case.completed_tasks > 0 && case.current_stale_overlap_present
+    });
+}
+
+#[test]
 fn liveness_already_current_cycle_break_clears_or_routes_forward() {
     assert_production_loop_case_is_modeled("FS-01 already-current cycle-break", |case| {
         case.completed_tasks > 0 && case.stale_cycle_break_overlay_present
@@ -1268,6 +1320,22 @@ fn liveness_summary_hash_drift_does_not_reenter_execution() {
 fn liveness_downstream_stale_step_after_prior_closure_routes_to_downstream_not_prior_task() {
     assert_production_loop_case_is_modeled("downstream stale step", |case| {
         case.stale_boundary_present && case.downstream_stale_step_present
+    });
+}
+
+#[test]
+fn liveness_downstream_stale_with_projection_churn_routes_forward() {
+    assert_production_loop_case_is_modeled("downstream stale with projection churn", |case| {
+        case.stale_boundary_present
+            && case.downstream_stale_step_present
+            && case.runtime_projection_dirtiness_present
+    });
+}
+
+#[test]
+fn liveness_token_only_repair_follow_up_diagnostics_not_reopen() {
+    assert_production_loop_case_is_modeled("token-only repair follow-up", |case| {
+        case.targetless_stale_present && !case.stale_boundary_present
     });
 }
 
@@ -1359,6 +1427,38 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                     assert!(
                         recommended_command.is_none(),
                         "waiting states must not expose a public command: {status:?}"
+                    );
+                    continue;
+                }
+
+                if targetless_stale_reconcile_status(&status) {
+                    assert!(
+                        recommended_command.is_none()
+                            && status.next_public_action.is_none()
+                            && status
+                                .blockers
+                                .iter()
+                                .all(|blocker| blocker.next_public_action.is_none()),
+                        "targetless stale reconcile must not synthesize a repair or reopen loop: {status:?}"
+                    );
+                    continue;
+                }
+
+                if current_stale_overlap_runtime_diagnostic(&status) {
+                    let public_output = format!("{status:?}");
+                    assert!(
+                        recommended_command.is_none()
+                            && status.next_public_action.is_none()
+                            && status
+                                .blockers
+                                .iter()
+                                .all(|blocker| blocker.next_public_action.is_none()),
+                        "current/stale overlap diagnostic must not synthesize an unsafe mutation: {status:?}"
+                    );
+                    assert!(
+                        !public_output.contains(" reopen ")
+                            && !contains_hidden_command_token(&public_output),
+                        "current/stale overlap diagnostic must not expose reopen or hidden helper lanes: {status:?}"
                     );
                     continue;
                 }

@@ -16,12 +16,9 @@ use crate::execution::query::{
 };
 use crate::execution::router::{
     Blocker as RuntimeBlocker, NextPublicAction as RuntimeNextPublicAction,
-    RouteDecision as RuntimeRouteDecision, project_runtime_routing_state,
-    route_decision_from_routing,
+    RouteDecision as RuntimeRouteDecision, route_decision_from_routing,
 };
-use crate::execution::state::{
-    ExecutionRuntime, GateResult, PlanExecutionStatus, load_execution_read_scope,
-};
+use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
 use crate::execution::topology::RecommendOutput;
 use crate::workflow::status::{WorkflowPhase, WorkflowRoute};
 
@@ -33,6 +30,7 @@ const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum WorkflowOperatorPhaseSchema {
+    Blocked,
     Executing,
     TaskClosurePending,
     DocumentReleasePending,
@@ -46,6 +44,7 @@ enum WorkflowOperatorPhaseSchema {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum WorkflowOperatorPhaseDetailSchema {
+    BlockedRuntimeBug,
     ExecutionInProgress,
     ExecutionReentryRequired,
     TaskReviewDispatchRequired,
@@ -1092,10 +1091,13 @@ fn build_context_with_plan(
             ));
         }
         let runtime = ExecutionRuntime::discover(current_dir)?;
-        let read_scope = load_execution_read_scope(&runtime, plan_path, true)?;
-        let (routing, route_decision) =
-            project_runtime_routing_state(&runtime, &read_scope, external_review_result_ready)?;
-        (routing, Some(route_decision))
+        let routing = query_workflow_routing_state_for_runtime(
+            &runtime,
+            Some(plan_path),
+            external_review_result_ready,
+        )?;
+        let route_decision = routing.route_decision.clone();
+        (routing, route_decision)
     } else {
         let routing =
             query_workflow_routing_state(current_dir, None, external_review_result_ready)?;
@@ -1117,10 +1119,13 @@ fn build_context_with_plan_for_runtime(
                 "Workflow plan override file does not exist.",
             ));
         }
-        let read_scope = load_execution_read_scope(runtime, plan_path, true)?;
-        let (routing, route_decision) =
-            project_runtime_routing_state(runtime, &read_scope, external_review_result_ready)?;
-        (routing, Some(route_decision))
+        let routing = query_workflow_routing_state_for_runtime(
+            runtime,
+            Some(plan_path),
+            external_review_result_ready,
+        )?;
+        let route_decision = routing.route_decision.clone();
+        (routing, route_decision)
     } else {
         let routing =
             query_workflow_routing_state_for_runtime(runtime, None, external_review_result_ready)?;
@@ -1170,7 +1175,26 @@ fn build_context_from_routing(
         current_branch_closure_id,
         ..
     } = routing;
-    let operator_recording_context = match route_decision.phase_detail.as_str() {
+    let operator_phase = execution_status
+        .as_ref()
+        .and_then(|status| status.phase.clone())
+        .unwrap_or_else(|| route_decision.phase.clone());
+    let operator_phase_detail = execution_status
+        .as_ref()
+        .map(|status| status.phase_detail.clone())
+        .unwrap_or_else(|| route_decision.phase_detail.clone());
+    let operator_next_action = execution_status
+        .as_ref()
+        .map(|status| status.next_action.clone())
+        .unwrap_or_else(|| route_decision.next_action.clone());
+    let operator_recommended_command = execution_status
+        .as_ref()
+        .map(|status| status.recommended_command.clone())
+        .unwrap_or_else(|| route_decision.recommended_command.clone());
+    let status_recording_context = execution_status
+        .as_ref()
+        .and_then(|status| status.recording_context.as_ref());
+    let operator_recording_context = match operator_phase_detail.as_str() {
         "final_review_recording_ready" => {
             current_branch_closure_id.as_ref().map(|branch_closure_id| {
                 WorkflowOperatorRecordingContext {
@@ -1181,11 +1205,22 @@ fn build_context_from_routing(
             })
         }
         "task_closure_recording_ready" => {
-            recording_context.map(|context| WorkflowOperatorRecordingContext {
-                task_number: context.task_number,
-                dispatch_id: context.dispatch_id.or(task_review_dispatch_id.clone()),
-                branch_closure_id: context.branch_closure_id,
-            })
+            if let Some(context) = status_recording_context {
+                Some(WorkflowOperatorRecordingContext {
+                    task_number: context.task_number,
+                    dispatch_id: context
+                        .dispatch_id
+                        .clone()
+                        .or(task_review_dispatch_id.clone()),
+                    branch_closure_id: context.branch_closure_id.clone(),
+                })
+            } else {
+                recording_context.map(|context| WorkflowOperatorRecordingContext {
+                    task_number: context.task_number,
+                    dispatch_id: context.dispatch_id.or(task_review_dispatch_id.clone()),
+                    branch_closure_id: context.branch_closure_id,
+                })
+            }
         }
         "release_readiness_recording_ready" | "release_blocker_resolution_required" => {
             current_branch_closure_id.as_ref().map(|branch_closure_id| {
@@ -1196,22 +1231,37 @@ fn build_context_from_routing(
                 }
             })
         }
-        _ => recording_context.map(|context| WorkflowOperatorRecordingContext {
-            task_number: context.task_number,
-            dispatch_id: context.dispatch_id,
-            branch_closure_id: context.branch_closure_id,
-        }),
+        _ => {
+            if let Some(context) = status_recording_context {
+                Some(WorkflowOperatorRecordingContext {
+                    task_number: context.task_number,
+                    dispatch_id: context.dispatch_id.clone(),
+                    branch_closure_id: context.branch_closure_id.clone(),
+                })
+            } else {
+                recording_context.map(|context| WorkflowOperatorRecordingContext {
+                    task_number: context.task_number,
+                    dispatch_id: context.dispatch_id,
+                    branch_closure_id: context.branch_closure_id,
+                })
+            }
+        }
     };
-    let operator_execution_command_context =
-        execution_command_context.map(|context| WorkflowOperatorExecutionCommandContext {
-            command_kind: context.command_kind,
+    let operator_execution_command_context = execution_status
+        .as_ref()
+        .and_then(|status| status.execution_command_context.as_ref())
+        .map(|context| WorkflowOperatorExecutionCommandContext {
+            command_kind: context.command_kind.clone(),
             task_number: context.task_number,
             step_id: context.step_id,
+        })
+        .or_else(|| {
+            execution_command_context.map(|context| WorkflowOperatorExecutionCommandContext {
+                command_kind: context.command_kind,
+                task_number: context.task_number,
+                step_id: context.step_id,
+            })
         });
-    let operator_phase = route_decision.phase.clone();
-    let operator_phase_detail = route_decision.phase_detail.clone();
-    let operator_next_action = route_decision.next_action.clone();
-    let operator_recommended_command = route_decision.recommended_command.clone();
     let preflight_not_started = execution_status
         .as_ref()
         .is_some_and(|status| status.execution_started != "yes");
@@ -1233,8 +1283,26 @@ fn build_context_from_routing(
         routing_phase
     };
     let operator_base_branch = base_branch;
-    let mut operator_blocking_scope = blocking_scope;
-    let mut operator_blocking_task = blocking_task;
+    let operator_review_state_status = execution_status
+        .as_ref()
+        .map(|status| status.review_state_status.clone())
+        .unwrap_or(review_state_status);
+    let mut operator_blocking_scope = execution_status
+        .as_ref()
+        .and_then(|status| status.blocking_scope.clone())
+        .or(blocking_scope);
+    let mut operator_blocking_task = execution_status
+        .as_ref()
+        .and_then(|status| status.blocking_task)
+        .or(blocking_task);
+    let operator_external_wait_state = execution_status
+        .as_ref()
+        .and_then(|status| status.external_wait_state.clone())
+        .or(external_wait_state);
+    let operator_blocking_reason_codes = execution_status
+        .as_ref()
+        .map(|status| status.blocking_reason_codes.clone())
+        .unwrap_or(blocking_reason_codes);
     if operator_phase_detail == "execution_reentry_required"
         && let Some(task_number) = operator_execution_command_context
             .as_ref()
@@ -1260,9 +1328,9 @@ fn build_context_from_routing(
         .as_ref()
         .map(|status| {
             (
-                route_decision.state_kind.clone(),
-                route_decision.next_public_action.clone(),
-                route_decision.blockers.clone(),
+                status.state_kind.clone(),
+                status.next_public_action.clone(),
+                status.blockers.clone(),
                 status.semantic_workspace_tree_id.clone(),
                 status.raw_workspace_tree_id.clone(),
             )
@@ -1293,7 +1361,7 @@ fn build_context_from_routing(
         phase: display_phase,
         operator_phase,
         operator_phase_detail,
-        operator_review_state_status: review_state_status,
+        operator_review_state_status,
         operator_recording_context,
         operator_execution_command_context,
         operator_next_action,
@@ -1301,8 +1369,8 @@ fn build_context_from_routing(
         operator_base_branch,
         operator_blocking_scope,
         operator_blocking_task,
-        operator_external_wait_state: external_wait_state,
-        operator_blocking_reason_codes: blocking_reason_codes,
+        operator_external_wait_state,
+        operator_blocking_reason_codes,
         operator_state_kind,
         operator_next_public_action,
         operator_blockers,

@@ -151,6 +151,7 @@
     },
     "PhaseDetailSchema": {
       "enum": [
+        "blocked_runtime_bug",
         "branch_closure_recording_required_for_release_readiness",
         "execution_in_progress",
         "execution_reentry_required",
@@ -225,6 +226,59 @@
         }
       },
       "type": "object"
+    },
+    "PublicRepairTarget": {
+      "properties": {
+        "command_kind": {
+          "$ref": "#/$defs/PublicRepairTargetCommandKindSchema"
+        },
+        "expires_when_fingerprint_changes": {
+          "type": "boolean"
+        },
+        "reason_code": {
+          "type": "string"
+        },
+        "source_record_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "step": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "task": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "command_kind",
+        "reason_code",
+        "expires_when_fingerprint_changes"
+      ],
+      "type": "object"
+    },
+    "PublicRepairTargetCommandKindSchema": {
+      "enum": [
+        "begin",
+        "complete",
+        "reopen",
+        "transfer",
+        "close-current-task",
+        "repair-review-state",
+        "advance-late-stage"
+      ],
+      "type": "string"
     },
     "PublicReviewStateTaskClosure": {
       "properties": {
@@ -691,6 +745,12 @@
     "execution_mode": {
       "type": "string"
     },
+    "execution_reentry_target_source": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "execution_run_id": {
       "anyOf": [
         {
@@ -827,6 +887,12 @@
     },
     "projection_mode": {
       "type": "string"
+    },
+    "public_repair_targets": {
+      "items": {
+        "$ref": "#/$defs/PublicRepairTarget"
+      },
+      "type": "array"
     },
     "qa_requirement": {
       "anyOf": [

@@ -285,6 +285,21 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
     let _ = fs::remove_file(legacy_backup_path);
 }
 
+fn update_harness_state_fields(repo: &Path, state: &Path, fields: &[(&str, Value)]) {
+    let state_path = harness_state_file_path(repo, state);
+    let mut payload: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path).expect("harness-state fixture should be readable"),
+    )
+    .expect("harness-state fixture should be valid json");
+    let object = payload
+        .as_object_mut()
+        .expect("harness-state fixture should be a json object");
+    for (key, value) in fields {
+        object.insert((*key).to_owned(), value.clone());
+    }
+    write_harness_state_payload(repo, state, &payload);
+}
+
 fn git_head_sha(repo: &Path) -> String {
     current_head_sha(repo).expect("git head sha should resolve")
 }
@@ -1481,6 +1496,18 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
         "seed fixture should carry source handoff fingerprint before reopen"
     );
 
+    update_harness_state_fields(
+        repo,
+        state,
+        &[
+            (
+                "review_state_repair_follow_up",
+                Value::from("execution_reentry"),
+            ),
+            ("review_state_repair_follow_up_task", Value::from(1)),
+            ("review_state_repair_follow_up_step", Value::from(1)),
+        ],
+    );
     let before_reopen = run_plan_execution_json(
         repo,
         state,

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::follow_up::normalize_persisted_repair_follow_up_token;
+use crate::execution::follow_up::RepairFollowUpRecord;
 use crate::execution::reducer::{
     EventAuthoritySnapshot, reduce_event_authority_for_migration_parity,
 };
@@ -124,6 +124,7 @@ const STEP_EVENT_FIELDS: &[&str] = &[
     "harness_phase",
     "handoff_required",
     "aggregate_evaluation_state",
+    "review_state_repair_follow_up_record",
     "review_state_repair_follow_up",
     "strategy_checkpoints",
     "strategy_state",
@@ -185,6 +186,7 @@ const TASK_CLOSURE_EVENT_FIELDS: &[&str] = &[
     "task_closure_negative_result_records",
     "task_closure_negative_result_history",
     "superseded_task_closure_ids",
+    "review_state_repair_follow_up_record",
     "review_state_repair_follow_up",
     "current_task_review_dispatch_id",
     "strategy_review_dispatch_lineage",
@@ -306,7 +308,12 @@ const REPAIR_EVENT_FIELDS: &[&str] = &[
     "current_qa_summary_hash",
     "current_qa_record_id",
     "browser_qa_record_history",
+    "review_state_repair_follow_up_record",
     "review_state_repair_follow_up",
+    "review_state_repair_follow_up_task",
+    "review_state_repair_follow_up_step",
+    "review_state_repair_follow_up_closure_record_id",
+    "explicit_reopen_repair_targets",
     "harness_phase",
     "current_task_review_dispatch_id",
     "current_final_review_dispatch_id",
@@ -412,7 +419,12 @@ const AUTHORITATIVE_EVENT_FIELDS: &[&str] = &[
     "current_qa_result",
     "current_qa_summary_hash",
     "current_qa_record_id",
+    "review_state_repair_follow_up_record",
     "review_state_repair_follow_up",
+    "review_state_repair_follow_up_task",
+    "review_state_repair_follow_up_step",
+    "review_state_repair_follow_up_closure_record_id",
+    "explicit_reopen_repair_targets",
     "current_task_review_dispatch_id",
     "strategy_review_dispatch_lineage",
     "strategy_review_dispatch_lineage_history",
@@ -591,7 +603,12 @@ authoritative_fact_fields! {
     current_qa_result => "current_qa_result",
     current_qa_summary_hash => "current_qa_summary_hash",
     current_qa_record_id => "current_qa_record_id",
+    review_state_repair_follow_up_record => "review_state_repair_follow_up_record",
     review_state_repair_follow_up => "review_state_repair_follow_up",
+    review_state_repair_follow_up_task => "review_state_repair_follow_up_task",
+    review_state_repair_follow_up_step => "review_state_repair_follow_up_step",
+    review_state_repair_follow_up_closure_record_id => "review_state_repair_follow_up_closure_record_id",
+    explicit_reopen_repair_targets => "explicit_reopen_repair_targets",
     current_task_review_dispatch_id => "current_task_review_dispatch_id",
     strategy_review_dispatch_lineage => "strategy_review_dispatch_lineage",
     strategy_review_dispatch_lineage_history => "strategy_review_dispatch_lineage_history",
@@ -666,6 +683,7 @@ event_fact_payload! { StepEventFacts {
     harness_phase => "harness_phase",
     handoff_required => "handoff_required",
     aggregate_evaluation_state => "aggregate_evaluation_state",
+    review_state_repair_follow_up_record => "review_state_repair_follow_up_record",
     review_state_repair_follow_up => "review_state_repair_follow_up",
     strategy_checkpoints => "strategy_checkpoints",
     strategy_state => "strategy_state",
@@ -727,6 +745,7 @@ event_fact_payload! { TaskClosureEventFacts {
     task_closure_negative_result_records => "task_closure_negative_result_records",
     task_closure_negative_result_history => "task_closure_negative_result_history",
     superseded_task_closure_ids => "superseded_task_closure_ids",
+    review_state_repair_follow_up_record => "review_state_repair_follow_up_record",
     review_state_repair_follow_up => "review_state_repair_follow_up",
     current_task_review_dispatch_id => "current_task_review_dispatch_id",
     strategy_review_dispatch_lineage => "strategy_review_dispatch_lineage",
@@ -848,7 +867,12 @@ event_fact_payload! { RepairEventFacts {
     current_qa_summary_hash => "current_qa_summary_hash",
     current_qa_record_id => "current_qa_record_id",
     browser_qa_record_history => "browser_qa_record_history",
+    review_state_repair_follow_up_record => "review_state_repair_follow_up_record",
     review_state_repair_follow_up => "review_state_repair_follow_up",
+    review_state_repair_follow_up_task => "review_state_repair_follow_up_task",
+    review_state_repair_follow_up_step => "review_state_repair_follow_up_step",
+    review_state_repair_follow_up_closure_record_id => "review_state_repair_follow_up_closure_record_id",
+    explicit_reopen_repair_targets => "explicit_reopen_repair_targets",
     harness_phase => "harness_phase",
     current_task_review_dispatch_id => "current_task_review_dispatch_id",
     strategy_review_dispatch_lineage => "strategy_review_dispatch_lineage",
@@ -1006,7 +1030,8 @@ pub(crate) enum ExecutionEvent {
         facts: Box<QaEventFacts>,
     },
     RepairFollowUpSet {
-        follow_up: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        record: Option<RepairFollowUpRecord>,
         facts: Box<RepairEventFacts>,
     },
     RepairFollowUpCleared {
@@ -1993,16 +2018,12 @@ fn migration_replay_events_from_legacy_state(state: &Value) -> Vec<ExecutionEven
         ordinal = ordinal.saturating_add(1);
     }
 
-    if let Some(follow_up) = json_string(state, "review_state_repair_follow_up")
-        .as_deref()
-        .and_then(|follow_up| normalize_persisted_repair_follow_up_token(Some(follow_up)))
-        .map(str::to_owned)
-    {
+    if let Some(record) = repair_follow_up_record_from_state(state) {
         ordered.push((
             0,
             ordinal,
             ExecutionEvent::RepairFollowUpSet {
-                follow_up,
+                record: Some(record),
                 facts: Box::new(migration_repair_state_fields(state).into()),
             },
         ));
@@ -2381,7 +2402,12 @@ fn migration_repair_state_fields(state: &Value) -> AuthoritativeFactBuilder {
     collect_authoritative_fields(
         state,
         &[
+            "review_state_repair_follow_up_record",
             "review_state_repair_follow_up",
+            "review_state_repair_follow_up_task",
+            "review_state_repair_follow_up_step",
+            "review_state_repair_follow_up_closure_record_id",
+            "explicit_reopen_repair_targets",
             "harness_phase",
             "current_open_step_state",
             "current_task_closure_records",
@@ -2396,6 +2422,12 @@ fn migration_repair_state_fields(state: &Value) -> AuthoritativeFactBuilder {
             "superseded_branch_closure_ids",
         ],
     )
+}
+
+fn repair_follow_up_record_from_state(state: &Value) -> Option<RepairFollowUpRecord> {
+    state
+        .get("review_state_repair_follow_up_record")
+        .and_then(|value| serde_json::from_value::<RepairFollowUpRecord>(value.clone()).ok())
 }
 
 fn migration_strategy_state_fields(state: &Value) -> AuthoritativeFactBuilder {
@@ -2916,10 +2948,7 @@ fn event_from_command_authoritative_delta(
         });
     let open_step_note_state =
         json_string_from_path(state, &["current_open_step_state", "note_state"]);
-    let follow_up = json_string(state, "review_state_repair_follow_up")
-        .as_deref()
-        .and_then(|follow_up| normalize_persisted_repair_follow_up_token(Some(follow_up)))
-        .map(str::to_owned);
+    let follow_up_record = repair_follow_up_record_from_state(state);
     let strategy_kind = json_string(state, "strategy_checkpoint_kind");
     let strategy_fingerprint = json_string(state, "last_strategy_checkpoint_fingerprint");
     let step_state = collect_changed_authoritative_fields(current_state, state, STEP_EVENT_FIELDS);
@@ -2995,9 +3024,9 @@ fn event_from_command_authoritative_delta(
             qa_record_id: json_string(state, "current_qa_record_id"),
             facts: Box::new(qa_state.into()),
         }),
-        "repair_review_state" => Ok(match follow_up {
-            Some(follow_up) => ExecutionEvent::RepairFollowUpSet {
-                follow_up,
+        "repair_review_state" => Ok(match follow_up_record {
+            Some(record) => ExecutionEvent::RepairFollowUpSet {
+                record: Some(record),
                 facts: Box::new(repair_state.into()),
             },
             None => ExecutionEvent::RepairFollowUpCleared {
@@ -3201,7 +3230,9 @@ fn migration_parity_projection(state: &Value) -> Value {
         "strategy_review_dispatch_lineage_history",
         "final_review_dispatch_lineage",
         "final_review_dispatch_lineage_history",
+        "review_state_repair_follow_up_record",
         "review_state_repair_follow_up",
+        "explicit_reopen_repair_targets",
         "strategy_checkpoints",
         "strategy_state",
         "strategy_checkpoint_kind",

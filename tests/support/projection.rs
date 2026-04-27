@@ -72,9 +72,18 @@ pub fn normalize_state_dir_projection_paths_for_parity(value: &mut Value) {
                             || source.ends_with(&format!("/{tracked_path}"))
                     })
                     .cloned()
+                    .or_else(|| repo_relative_projection_suffix(source))
                     .unwrap_or_else(|| source.to_owned());
                 *path = Value::String(normalized);
             }
         }
     }
+}
+
+fn repo_relative_projection_suffix(path: &str) -> Option<String> {
+    if path.starts_with("docs/featureforge/") {
+        return Some(path.to_owned());
+    }
+    path.split_once("/docs/featureforge/")
+        .map(|(_, suffix)| format!("docs/featureforge/{suffix}"))
 }

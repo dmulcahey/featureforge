@@ -22,7 +22,11 @@ use featureforge::execution::authority::{
     persist_active_worktree_lease_index, write_authoritative_unit_review_receipt_artifact,
     write_authoritative_worktree_lease_artifact,
 };
+use featureforge::execution::command_eligibility::{
+    MutationEligibilitySource, PublicMutationKind, PublicMutationRequest, decide_public_mutation,
+};
 use featureforge::execution::final_review::resolve_release_base_branch;
+use featureforge::execution::follow_up::execution_step_repair_target_id;
 use featureforge::execution::harness::{
     ChunkId, ExecutionRunId, RunIdentitySnapshot, WorktreeLeaseBindingSnapshot,
 };
@@ -30,9 +34,10 @@ use featureforge::execution::semantic_identity::{
     branch_definition_identity_for_context, task_definition_identity_for_task,
 };
 use featureforge::execution::state::{
-    ExecutionRuntime, TransferRequestMode, current_head_sha as runtime_current_head_sha,
-    gate_finish_from_context, hash_contract_plan, load_execution_context,
-    load_execution_context_for_mutation, normalize_transfer_request, preflight_from_context,
+    ExecutionRuntime, PublicRepairTarget, TransferRequestMode,
+    current_head_sha as runtime_current_head_sha, gate_finish_from_context, hash_contract_plan,
+    load_execution_context, load_execution_context_for_mutation, normalize_transfer_request,
+    preflight_from_context,
 };
 use featureforge::git::{discover_repository, discover_slug_identity};
 use featureforge::paths::{
@@ -1271,6 +1276,40 @@ fn write_non_authoritative_harness_projection_payload(repo: &Path, state: &Path,
     .expect("harness projection payload should be writable without touching event authority");
 }
 
+fn public_repair_targets_include_persisted_follow_up(
+    status: &Value,
+    follow_up: &str,
+    task: Option<u64>,
+    step: Option<u64>,
+    source_record_id: Option<&str>,
+) -> bool {
+    let reason_code = format!("persisted_review_state_repair_follow_up:{follow_up}");
+    status["public_repair_targets"]
+        .as_array()
+        .is_some_and(|targets| {
+            targets.iter().any(|target| {
+                target["reason_code"].as_str() == Some(reason_code.as_str())
+                    && task.is_none_or(|expected| target["task"].as_u64() == Some(expected))
+                    && step.is_none_or(|expected| target["step"].as_u64() == Some(expected))
+                    && source_record_id.is_none_or(|expected| {
+                        target["source_record_id"].as_str() == Some(expected)
+                    })
+            })
+        })
+}
+
+fn public_repair_targets_include_any_persisted_follow_up(status: &Value) -> bool {
+    status["public_repair_targets"]
+        .as_array()
+        .is_some_and(|targets| {
+            targets.iter().any(|target| {
+                target["reason_code"].as_str().is_some_and(|reason| {
+                    reason.starts_with("persisted_review_state_repair_follow_up")
+                })
+            })
+        })
+}
+
 fn set_harness_state_string_field(repo: &Path, state: &Path, field: &str, value: &str) {
     write_harness_state_payload(repo, state, &json!({ field: value }));
 }
@@ -1314,6 +1353,27 @@ fn set_authoritative_open_step_state(
                 "source_plan_revision": 1,
                 "authoritative_sequence": 1
             }
+        }),
+    );
+}
+
+fn bind_explicit_reopen_repair_target(repo: &Path, state: &Path, task: u32, step: u32) {
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "explicit_reopen_repair_targets": [{
+                "target_task": task,
+                "target_step": step,
+                "target_record_id": execution_step_repair_target_id(task, step),
+                "created_sequence": 1,
+                "expires_on_plan_fingerprint_change": true
+            }],
+            "review_state_repair_follow_up_record": null,
+            "review_state_repair_follow_up": null,
+            "review_state_repair_follow_up_task": null,
+            "review_state_repair_follow_up_step": null,
+            "review_state_repair_follow_up_closure_record_id": null,
         }),
     );
 }
@@ -3304,6 +3364,247 @@ fn setup_task_boundary_prior_task_fixture(
         task1_step1_receipt,
         task1_step2_receipt,
     )
+}
+
+fn begin_task_1_step_1_for_mutation_oracle_fixture(repo: &Path, state: &Path) -> Value {
+    write_approved_spec(repo);
+    write_plan(repo, "none");
+    accept_execution_preflight(repo, state, PLAN_REL);
+    let status_before_begin = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before task 1 step 1 mutation oracle fixture begin",
+    );
+    run_rust_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_before_begin["execution_fingerprint"]
+                .as_str()
+                .expect("status should expose fingerprint before mutation oracle begin"),
+        ],
+        "begin task 1 step 1 for mutation oracle fixture",
+    )
+}
+
+fn complete_task_1_step_1_for_mutation_oracle_fixture(repo: &Path, state: &Path) -> Value {
+    let begin = begin_task_1_step_1_for_mutation_oracle_fixture(repo, state);
+    run_rust_json(
+        repo,
+        state,
+        &[
+            "complete",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--claim",
+            "Completed task 1 step 1 for mutation oracle fixture.",
+            "--file",
+            "README.md",
+            "--manual-verify-summary",
+            "Fixture verification for mutation oracle coverage.",
+            "--expect-execution-fingerprint",
+            begin["execution_fingerprint"]
+                .as_str()
+                .expect("begin should expose fingerprint for mutation oracle complete"),
+        ],
+        "complete task 1 step 1 for mutation oracle fixture",
+    )
+}
+
+#[test]
+fn mutation_oracle_rejects_non_exact_reopen_even_when_step_is_completed() {
+    let (repo_dir, state_dir) = init_repo("mutation-oracle-rejects-non-exact-reopen");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let complete = complete_task_1_step_1_for_mutation_oracle_fixture(repo, state);
+    let failure = parse_failure_json(
+        &run_rust(
+            repo,
+            state,
+            &[
+                "reopen",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--source",
+                "featureforge:executing-plans",
+                "--reason",
+                "Attempt to reopen a completed but non-routed step.",
+                "--expect-execution-fingerprint",
+                complete["execution_fingerprint"]
+                    .as_str()
+                    .expect("complete should expose fingerprint for rejected reopen"),
+            ],
+            "non-exact completed-step reopen should fail closed",
+        ),
+        "non-exact completed-step reopen should fail closed",
+    );
+    let message = failure["message"]
+        .as_str()
+        .expect("failure should expose a message");
+    assert!(message.contains("reopen failed closed"), "got {failure}");
+    assert!(
+        message.contains("reason_code=mutation_not_route_authorized"),
+        "got {failure}"
+    );
+    assert!(
+        message.contains("featureforge plan execution begin --plan"),
+        "got {failure}"
+    );
+}
+
+#[test]
+fn mutation_oracle_rejects_non_exact_transfer_even_when_active_step_exists() {
+    let (repo_dir, state_dir) = init_repo("mutation-oracle-rejects-non-exact-transfer");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let begin = begin_task_1_step_1_for_mutation_oracle_fixture(repo, state);
+    let failure = parse_failure_json(
+        &run_rust(
+            repo,
+            state,
+            &[
+                "transfer",
+                "--plan",
+                PLAN_REL,
+                "--repair-task",
+                "1",
+                "--repair-step",
+                "1",
+                "--source",
+                "featureforge:executing-plans",
+                "--reason",
+                "Attempt to transfer without transfer routing.",
+                "--expect-execution-fingerprint",
+                begin["execution_fingerprint"]
+                    .as_str()
+                    .expect("begin should expose fingerprint for rejected transfer"),
+            ],
+            "non-exact active-step transfer should fail closed",
+        ),
+        "non-exact active-step transfer should fail closed",
+    );
+    let message = failure["message"]
+        .as_str()
+        .expect("failure should expose a message");
+    assert!(message.contains("transfer failed closed"), "got {failure}");
+    assert!(
+        message.contains("reason_code=mutation_not_route_authorized"),
+        "got {failure}"
+    );
+}
+
+#[test]
+fn mutation_oracle_allows_explicit_repair_reopen_target() {
+    let (repo_dir, state_dir) = init_repo("mutation-oracle-explicit-repair-reopen");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    complete_task_1_step_1_for_mutation_oracle_fixture(repo, state);
+    let runtime = execution_runtime(repo, state);
+    let mut status = runtime
+        .status(&plan_status_args(PLAN_REL))
+        .expect("status should load for explicit repair target oracle coverage");
+    status.execution_command_context = None;
+    status.public_repair_targets = vec![PublicRepairTarget {
+        command_kind: String::from("reopen"),
+        task: Some(1),
+        step: Some(1),
+        reason_code: String::from("explicit_test_repair_target"),
+        source_record_id: Some(String::from("test-source-record")),
+        expires_when_fingerprint_changes: true,
+    }];
+
+    let decision = decide_public_mutation(
+        &status,
+        &PublicMutationRequest {
+            kind: PublicMutationKind::Reopen,
+            task: Some(1),
+            step: Some(1),
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "reopen",
+        },
+    );
+
+    assert!(decision.allowed, "got {decision:?}");
+    assert_eq!(
+        decision.source,
+        Some(MutationEligibilitySource::ExplicitRepairTarget)
+    );
+}
+
+#[test]
+fn mutation_oracle_rejection_does_not_suggest_hidden_commands() {
+    let (repo_dir, state_dir) = init_repo("mutation-oracle-no-hidden-suggestions");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let complete = complete_task_1_step_1_for_mutation_oracle_fixture(repo, state);
+    let failure = parse_failure_json(
+        &run_rust(
+            repo,
+            state,
+            &[
+                "reopen",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--source",
+                "featureforge:executing-plans",
+                "--reason",
+                "Check fail-closed suggestions.",
+                "--expect-execution-fingerprint",
+                complete["execution_fingerprint"]
+                    .as_str()
+                    .expect("complete should expose fingerprint for hidden suggestion coverage"),
+            ],
+            "mutation oracle hidden suggestion rejection",
+        ),
+        "mutation oracle hidden suggestion rejection",
+    );
+    let message = failure["message"]
+        .as_str()
+        .expect("failure should expose a message");
+    for hidden in [
+        "record-pivot",
+        "record-review-dispatch",
+        "gate-review",
+        "gate-finish",
+        "rebuild-evidence",
+        "plan execution internal",
+        "reconcile-review-state",
+        "plan execution preflight",
+        "plan execution recommend",
+        "workflow recommend",
+        "workflow preflight",
+    ] {
+        assert!(
+            !message.contains(hidden),
+            "hidden command token `{hidden}` leaked in {failure}"
+        );
+    }
 }
 
 fn prepare_fs17_fs18_fs22_task_closure_bridge_fixture(repo: &Path, state: &Path) {
@@ -5827,21 +6128,27 @@ fn canonical_mutator_commands_use_explicit_internal_helpers() {
     );
     assert!(qa.is_object());
 
-    let advance = run_rust_json(
-        repo,
-        state,
-        &[
-            "advance-late-stage",
-            "--plan",
-            PLAN_REL,
-            "--result",
-            "ready",
-            "--summary-file",
-            release_summary_arg.as_str(),
-        ],
-        "public advance-late-stage path",
+    let advance_failure = parse_failure_json(
+        &run_rust(
+            repo,
+            state,
+            &[
+                "advance-late-stage",
+                "--plan",
+                PLAN_REL,
+                "--result",
+                "ready",
+                "--summary-file",
+                release_summary_arg.as_str(),
+            ],
+            "out-of-route public advance-late-stage path",
+        ),
+        "out-of-route public advance-late-stage path",
     );
-    assert!(advance.is_object());
+    assert_eq!(
+        advance_failure["error_class"],
+        Value::from("ExecutionStateNotReady")
+    );
 }
 
 #[test]
@@ -9327,6 +9634,14 @@ fn execution_preflight_ignores_runtime_projection_only_dirty_paths() {
         &repo.join("docs/featureforge/execution-evidence/projection-only.md"),
         "# Projection Baseline\n",
     );
+    write_file(
+        &repo.join("docs/featureforge/projections/preflight-fixture/execution-plan.md"),
+        "# Projection Export\n\nTracked plan export baseline.\n",
+    );
+    write_file(
+        &repo.join("docs/featureforge/projections/preflight-fixture/execution-evidence.md"),
+        "# Projection Export\n\nTracked evidence export baseline.\n",
+    );
     commit_all(repo, "baseline for projection-only preflight coverage");
 
     let plan_path = repo.join(PLAN_REL);
@@ -9341,6 +9656,27 @@ fn execution_preflight_ignores_runtime_projection_only_dirty_paths() {
     write_file(
         &repo.join("docs/featureforge/execution-evidence/projection-only.md"),
         "# Projection Baseline\n\nRuntime-owned projection refresh.\n",
+    );
+    write_file(
+        &repo.join("docs/featureforge/projections/preflight-fixture/execution-plan.md"),
+        "# Projection Export\n\nRuntime-owned plan export refresh.\n",
+    );
+    write_file(
+        &repo.join("docs/featureforge/projections/preflight-fixture/execution-evidence.md"),
+        "# Projection Export\n\nRuntime-owned evidence export refresh.\n",
+    );
+    let mut git_status = Command::new("git");
+    git_status.args(["status", "--short"]).current_dir(repo);
+    let dirty_status_output = run_checked(
+        git_status,
+        "git status --short after projection export dirties",
+    );
+    let dirty_status = String::from_utf8_lossy(&dirty_status_output.stdout);
+    assert!(
+        dirty_status.contains("docs/featureforge/projections/preflight-fixture/execution-plan.md")
+            && dirty_status
+                .contains("docs/featureforge/projections/preflight-fixture/execution-evidence.md"),
+        "fixture should dirty tracked projection export files before preflight: {dirty_status}"
     );
 
     let preflight = run_runtime_preflight_gate_json(
@@ -16341,13 +16677,23 @@ fn canonical_reopen_invalidates_completed_attempt_and_sets_resume_state() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_default_approved_single_step_execution_fixture(repo, state);
+    bind_explicit_reopen_repair_target(repo, state, 1, 1);
 
-    let before = run_rust_json(
+    let status_after_repair = run_rust_json(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status before reopen",
+        "status should expose explicit canonical reopen target",
     );
+    assert!(
+        status_after_repair["public_repair_targets"]
+            .as_array()
+            .is_some_and(|targets| targets.iter().any(|target| {
+                target["command_kind"] == "reopen" && target["task"] == 1 && target["step"] == 1
+            })),
+        "status should expose a typed public repair target for canonical reopen, got {status_after_repair}"
+    );
+
     let reopened = run_rust_json(
         repo,
         state,
@@ -16362,13 +16708,13 @@ fn canonical_reopen_invalidates_completed_attempt_and_sets_resume_state() {
             "--source",
             "featureforge:executing-plans",
             "--reason",
-            "Claim is stale after later repo changes",
+            "Explicit repair target requires execution reentry",
             "--expect-execution-fingerprint",
-            before["execution_fingerprint"]
+            status_after_repair["execution_fingerprint"]
                 .as_str()
-                .expect("fingerprint"),
+                .expect("status should expose execution fingerprint before explicit repair reopen"),
         ],
-        "reopen completed step",
+        "explicit-target canonical reopen",
     );
 
     assert_eq!(reopened["active_task"], Value::Null);
@@ -16378,13 +16724,16 @@ fn canonical_reopen_invalidates_completed_attempt_and_sets_resume_state() {
 
     let plan = projection_support::read_state_dir_projection(&reopened, PLAN_REL);
     assert!(plan.contains("- [ ] **Step 1: Complete the single-step fixture**"));
-    assert!(
-        plan.contains("**Execution Note:** Interrupted - Claim is stale after later repo changes")
-    );
+    assert!(plan.contains(
+        "**Execution Note:** Interrupted - Explicit repair target requires execution reentry"
+    ));
 
     let evidence = projection_support::read_state_dir_projection(&reopened, &evidence_rel_path());
     assert!(evidence.contains("**Status:** Invalidated"));
-    assert!(evidence.contains("**Invalidation Reason:** Claim is stale after later repo changes"));
+    assert!(
+        evidence
+            .contains("**Invalidation Reason:** Explicit repair target requires execution reentry")
+    );
 }
 
 #[test]
@@ -16413,6 +16762,7 @@ fn reopen_auto_records_review_remediation_and_cycle_break_strategy_checkpoints()
     write_event_completed_steps_authority(repo, state, &[(1, 1)]);
 
     for cycle in 1..=3 {
+        bind_explicit_reopen_repair_target(repo, state, 1, 1);
         let before = run_rust_json(
             repo,
             state,
@@ -17337,6 +17687,7 @@ fn runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_stat
         "FS-13 complete task 2 step 1 should clear authoritative open-step state",
     );
 
+    bind_explicit_reopen_repair_target(repo, state, 2, 1);
     let reopened_task2_step1 = run_rust_json(
         repo,
         state,
@@ -17640,7 +17991,6 @@ fn fs17_close_current_task_converges_after_truthful_replay_without_second_reopen
             && repair_recommended_command.contains("--task 1"),
         "FS-17 repair should route to close-current-task --task 1, got {repair_recommended_command}"
     );
-
     runtime_management_commands += 1;
     let close_json = run_recommended_command_json(
         repo,
@@ -18613,6 +18963,7 @@ fn gate_review_dispatch_bound_credit_does_not_accumulate_or_leak_across_tasks() 
         "bound dispatch should not pre-credit unrelated tasks"
     );
 
+    bind_explicit_reopen_repair_target(repo, state, reopen_task, reopen_step);
     let status = run_rust_json(
         repo,
         state,
@@ -19492,6 +19843,7 @@ fn reopen_after_same_task_bound_dispatch_records_refresh_checkpoint() {
     let bound_task_str = bound_task.to_string();
     let reopen_step_str = reopen_step.to_string();
 
+    bind_explicit_reopen_repair_target(repo, state, bound_task, reopen_step);
     let status = run_rust_json(
         repo,
         state,
@@ -19600,6 +19952,7 @@ fn task4_reopen_stales_active_evaluation_handoff_and_downstream_provenance() {
         }),
     );
 
+    bind_explicit_reopen_repair_target(repo, state, 1, 1);
     let status_before = run_rust_json(
         repo,
         state,
@@ -19716,6 +20069,7 @@ fn task4_reopen_rolls_back_plan_evidence_and_harness_state_when_state_publish_fa
         false,
     );
 
+    bind_explicit_reopen_repair_target(repo, state, 1, 1);
     let status_before = run_rust_json(
         repo,
         state,
@@ -19802,6 +20156,7 @@ fn task4_reopen_keeps_plan_and_evidence_when_projection_refresh_fails_after_even
         false,
     );
 
+    bind_explicit_reopen_repair_target(repo, state, 1, 1);
     let status_before = run_rust_json(
         repo,
         state,
@@ -20041,6 +20396,7 @@ fn canonical_transfer_parks_active_step_and_reopens_repair_step() {
         "complete repair step after step 1 completion",
     );
 
+    bind_explicit_reopen_repair_target(repo, state, 1, 1);
     let before_reopen_step1 = run_rust_json(
         repo,
         state,
@@ -20103,63 +20459,40 @@ fn canonical_transfer_parks_active_step_and_reopens_repair_step() {
         &["status", "--plan", PLAN_REL],
         "status before transfer",
     );
-    let transferred = run_rust_json(
-        repo,
-        state,
-        &[
-            "transfer",
-            "--plan",
-            PLAN_REL,
-            "--repair-task",
-            "1",
-            "--repair-step",
-            "2",
-            "--source",
-            "featureforge:executing-plans",
-            "--reason",
-            "Current work invalidated an earlier completed step",
-            "--expect-execution-fingerprint",
-            before_transfer["execution_fingerprint"]
-                .as_str()
-                .expect("fingerprint"),
-        ],
-        "transfer to completed repair step",
-    );
-
-    assert_eq!(transferred["active_task"], Value::Null);
-    assert_eq!(transferred["active_step"], Value::Null);
-    assert_eq!(transferred["resume_task"], Value::from(1));
-    assert_eq!(transferred["resume_step"], Value::from(1));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(harness_state_file_path(repo, state))
-            .expect("authoritative state should be readable after transfer"),
-    )
-    .expect("authoritative state should remain valid json after transfer");
-    assert_eq!(
-        authoritative_state["current_open_step_state"]["task"],
-        Value::from(1_u64)
+    let transfer_failure = parse_failure_json(
+        &run_rust(
+            repo,
+            state,
+            &[
+                "transfer",
+                "--plan",
+                PLAN_REL,
+                "--repair-task",
+                "1",
+                "--repair-step",
+                "2",
+                "--source",
+                "featureforge:executing-plans",
+                "--reason",
+                "Current work invalidated an earlier completed step",
+                "--expect-execution-fingerprint",
+                before_transfer["execution_fingerprint"]
+                    .as_str()
+                    .expect("fingerprint"),
+            ],
+            "non-routed transfer to completed repair step",
+        ),
+        "non-routed transfer to completed repair step",
     );
     assert_eq!(
-        authoritative_state["current_open_step_state"]["step"],
-        Value::from(1_u64)
+        transfer_failure["error_class"],
+        Value::from("ExecutionStateNotReady")
     );
-    assert_eq!(
-        authoritative_state["current_open_step_state"]["note_state"],
-        Value::from("Interrupted")
-    );
-
-    let plan = projection_support::read_state_dir_projection(&transferred, PLAN_REL);
-    assert!(plan.contains("- [ ] **Step 2: Validate the generated output**"));
-    assert!(plan.contains("**Execution Note:** Interrupted - Parked for repair of Task 1 Step 2"));
-
-    let evidence =
-        projection_support::read_state_dir_projection(&transferred, &evidence_rel_path());
-    assert!(evidence.contains("### Task 1 Step 2"));
-    assert!(evidence.contains("**Status:** Invalidated"));
     assert!(
-        evidence.contains(
-            "**Invalidation Reason:** Current work invalidated an earlier completed step"
-        )
+        transfer_failure["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("reason_code=mutation_not_route_authorized")),
+        "non-routed transfer should fail through the shared mutation oracle: {transfer_failure}"
     );
 }
 
@@ -21428,6 +21761,588 @@ fn late_stage_status_ignores_stale_execution_reentry_follow_up_when_current_trut
             "featureforge plan execution repair-review-state --plan {PLAN_REL}"
         )),
         "status should not keep recommending repair-review-state after live truth is already current: {status}",
+    );
+}
+
+#[test]
+fn legacy_record_branch_closure_follow_up_token_is_non_actionable_when_unbound() {
+    for legacy_token in ["record_branch_closure", "advance_late_stage"] {
+        let (repo_dir, state_dir) = init_repo(&format!(
+            "legacy-branch-follow-up-token-unbound-{}",
+            legacy_token.replace('_', "-")
+        ));
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+        let base_branch = branch_name(repo);
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+        let baseline_status = run_rust_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status baseline before injecting unbound legacy branch follow-up token",
+        );
+        write_harness_state_payload(
+            repo,
+            state,
+            &json!({
+                "review_state_repair_follow_up": legacy_token
+            }),
+        );
+
+        let status = run_rust_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status should quarantine unbound legacy branch follow-up token",
+        );
+
+        assert_eq!(status["phase"], baseline_status["phase"], "json: {status}");
+        assert_eq!(
+            status["phase_detail"], baseline_status["phase_detail"],
+            "json: {status}"
+        );
+        assert_ne!(
+            status["recommended_command"],
+            Value::from(format!(
+                "featureforge plan execution advance-late-stage --plan {PLAN_REL}"
+            )),
+            "legacy {legacy_token} token must not reactivate late-stage routing: {status}"
+        );
+        assert!(
+            status["warning_codes"]
+                .as_array()
+                .is_some_and(|warnings| warnings
+                    .iter()
+                    .any(|warning| warning == &Value::from("legacy_follow_up_unbound"))),
+            "legacy unbound token should be marked diagnostic-only: {status}"
+        );
+        assert!(
+            !public_repair_targets_include_any_persisted_follow_up(&status),
+            "legacy unbound token must not create actionable public repair targets: {status}"
+        );
+    }
+}
+
+#[test]
+fn target_bound_branch_closure_follow_up_routes_only_while_exact_target_bound() {
+    let (repo_dir, state_dir) = init_repo("target-bound-branch-closure-follow-up-bound-target");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let baseline_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status baseline before injecting target-bound branch follow-up",
+    );
+    let semantic_workspace_id = baseline_status["semantic_workspace_tree_id"]
+        .as_str()
+        .expect("baseline status should expose semantic workspace id")
+        .to_owned();
+    let state_json: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should be readable before branch follow-up injection"),
+    )
+    .expect("harness state should remain valid json before branch follow-up injection");
+    let branch_closure_id = state_json["current_branch_closure_id"]
+        .as_str()
+        .expect("finished fixture should expose a current branch closure id")
+        .to_owned();
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "current_branch_closure_id": Value::Null,
+            "review_state_repair_follow_up_record": {
+                "kind": "record_branch_closure",
+                "target_scope": "branch_closure",
+                "target_record_id": branch_closure_id,
+                "semantic_workspace_state_id": semantic_workspace_id,
+                "source_route_decision_hash": "prior-route-decision-for-bound-branch-target",
+                "created_sequence": 18,
+                "expires_on_plan_fingerprint_change": true
+            },
+            "review_state_repair_follow_up": null
+        }),
+    );
+    let injected_state: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should be readable after branch follow-up injection"),
+    )
+    .expect("harness state should remain valid json after branch follow-up injection");
+    assert_eq!(
+        injected_state["review_state_repair_follow_up_record"]["kind"],
+        Value::from("record_branch_closure"),
+        "structured branch follow-up should retain its authoritative kind: {injected_state}",
+    );
+    assert_eq!(
+        injected_state["review_state_repair_follow_up_record"]["target_scope"],
+        Value::from("branch_closure"),
+        "structured branch follow-up should bind to branch scope: {injected_state}",
+    );
+
+    let bound_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should surface target-bound branch follow-up while branch target remains bound",
+    );
+
+    assert!(
+        public_repair_targets_include_persisted_follow_up(
+            &bound_status,
+            "advance_late_stage",
+            None,
+            None,
+            Some(&branch_closure_id),
+        ),
+        "target-bound branch follow-up should remain public while exact branch target is bound: {bound_status}",
+    );
+    assert!(
+        !bound_status["warning_codes"]
+            .as_array()
+            .is_some_and(|warnings| warnings
+                .iter()
+                .any(|warning| warning == &Value::from("legacy_follow_up_unbound"))),
+        "structured branch follow-up should not be quarantined as a legacy token: {bound_status}",
+    );
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "branch_closure_records": {},
+            "current_branch_closure_id": Value::Null
+        }),
+    );
+
+    let unbound_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should expire target-bound branch follow-up once exact branch target is gone",
+    );
+
+    assert!(
+        !public_repair_targets_include_persisted_follow_up(
+            &unbound_status,
+            "advance_late_stage",
+            None,
+            None,
+            Some(&branch_closure_id),
+        ),
+        "target-bound branch follow-up must expire when exact branch target is no longer bound: {unbound_status}",
+    );
+}
+
+#[test]
+fn empty_lineage_branch_rerecord_requires_exact_target_bound_follow_up() {
+    let (repo_dir, state_dir) = init_repo("empty-lineage-branch-rerecord-requires-bound-follow-up");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    write_file(
+        &repo.join("docs/example-output.md"),
+        "late-stage-only output after branch closure\n",
+    );
+    let mut payload: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should be readable before empty-lineage rewrite"),
+    )
+    .expect("harness state should remain valid json before empty-lineage rewrite");
+    let branch_closure_id = payload["current_branch_closure_id"]
+        .as_str()
+        .expect("finished fixture should expose current branch closure id")
+        .to_owned();
+    payload["current_task_closure_records"] = json!({});
+    payload["task_closure_record_history"] = json!({});
+    payload["branch_closure_records"][&branch_closure_id]["source_task_closure_ids"] =
+        Value::Array(Vec::new());
+    payload["branch_closure_records"][&branch_closure_id]["provenance_basis"] =
+        Value::from("task_closure_lineage_plus_late_stage_surface_exemption");
+    payload["branch_closure_records"][&branch_closure_id]["effective_reviewed_branch_surface"] =
+        Value::from(format!(
+            "late_stage_surface_only:{PLAN_REL},docs/example-output.md"
+        ));
+    payload["review_state_repair_follow_up_record"] = json!({
+        "kind": "record_branch_closure",
+        "target_scope": "branch_closure",
+        "target_record_id": "superseded-branch-closure",
+        "source_route_decision_hash": "prior-route-decision-for-different-branch-target",
+        "created_sequence": 18,
+        "expires_on_plan_fingerprint_change": true
+    });
+    payload["review_state_repair_follow_up"] = Value::Null;
+    write_harness_state_payload(repo, state, &payload);
+
+    let rerecord = run_internal_record_branch_closure_json(
+        repo,
+        state,
+        record_branch_closure_args(PLAN_REL),
+        "record-branch-closure should not use mismatched target-bound follow-up for empty-lineage exemption",
+    );
+
+    assert_ne!(
+        rerecord["action"],
+        Value::from("already_current"),
+        "mismatched target-bound follow-up must not unlock empty-lineage branch rerecording: {rerecord}",
+    );
+    assert_eq!(
+        rerecord["action"],
+        Value::from("blocked"),
+        "mismatched target-bound follow-up should fail closed instead of producing an allowed branch rerecord: {rerecord}",
+    );
+    assert_eq!(
+        rerecord["required_follow_up"],
+        Value::from("repair_review_state"),
+        "mismatched target-bound follow-up should route through review-state repair: {rerecord}",
+    );
+}
+
+#[test]
+fn repair_review_state_persists_target_bound_execution_reentry_follow_up_record() {
+    let (repo_dir, state_dir) = init_repo("target-bound-execution-reentry-follow-up-record");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+
+    advance_repo_head_empty_commit(repo, "head drift before target-bound repair follow-up");
+    write_file(
+        &repo.join("docs/example-output.md"),
+        "rebased output after target-bound repair follow-up\n",
+    );
+    commit_repo_changes(repo, "record target-bound repair follow-up source change");
+
+    let repair = run_rust_json(
+        repo,
+        state,
+        &["repair-review-state", "--plan", PLAN_REL],
+        "repair-review-state should persist a target-bound execution reentry follow-up",
+    );
+    assert_eq!(
+        repair["required_follow_up"],
+        Value::from("execution_reentry"),
+        "json: {repair}"
+    );
+
+    let state_json: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should be readable after target-bound repair follow-up"),
+    )
+    .expect("harness state should remain valid json after target-bound repair follow-up");
+    let record = &state_json["review_state_repair_follow_up_record"];
+    assert_eq!(state_json["review_state_repair_follow_up"], Value::Null);
+    assert_eq!(record["kind"], Value::from("execution_reentry"));
+    assert_eq!(record["target_scope"], Value::from("execution_step"));
+    assert_eq!(record["target_task"], Value::from(1));
+    assert_eq!(record["target_step"], Value::from(1));
+    assert!(record["semantic_workspace_state_id"].as_str().is_some());
+    assert!(record["source_route_decision_hash"].as_str().is_some());
+    assert!(
+        record["created_sequence"]
+            .as_u64()
+            .is_some_and(|sequence| sequence > 0)
+    );
+
+    let events_path = harness_state_file_path(repo, state).with_file_name("events.jsonl");
+    let events_text = fs::read_to_string(&events_path)
+        .expect("event log should be readable after target-bound repair follow-up");
+    let repair_follow_up_event: Value = events_text
+        .lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|event| event["payload"]["kind"].as_str() == Some("repair_follow_up_set"))
+        .expect("repair follow-up set event should be recorded");
+    assert_eq!(
+        repair_follow_up_event["payload"]["record"]["kind"],
+        Value::from("execution_reentry"),
+        "repair follow-up set event must persist the structured target-bound record: {repair_follow_up_event}"
+    );
+    assert!(
+        repair_follow_up_event["payload"].get("follow_up").is_none(),
+        "repair follow-up set event must not persist a bare follow-up token: {repair_follow_up_event}"
+    );
+}
+
+#[test]
+fn target_bound_execution_reentry_follow_up_expires_after_current_closure_repair() {
+    let (repo_dir, state_dir) = init_repo("target-bound-follow-up-expires-after-current-closure");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let baseline_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status baseline before injecting target-bound follow-up for already-current closure",
+    );
+    let state_path = harness_state_file_path(repo, state);
+    let state_json: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path)
+            .expect("harness state should be readable before structured follow-up injection"),
+    )
+    .expect("harness state should remain valid json before structured follow-up injection");
+    let current_closure = &state_json["current_task_closure_records"]["task-1"];
+    let closure_record_id = current_closure["closure_record_id"]
+        .as_str()
+        .expect("finished fixture should have a current task closure id");
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "review_state_repair_follow_up_record": {
+                "kind": "execution_reentry",
+                "target_scope": "execution_step",
+                "target_task": 1,
+                "target_step": 1,
+                "target_record_id": execution_step_repair_target_id(1, 1),
+                "source_route_decision_hash": "route-hash-before-current-closure-repair",
+                "created_sequence": 1,
+                "expires_on_plan_fingerprint_change": true
+            },
+            "review_state_repair_follow_up": null
+        }),
+    );
+    assert_eq!(
+        closure_record_id, "task-1-closure",
+        "fixture should keep the current closure target concrete before testing synthetic execution-step expiry",
+    );
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should expire target-bound follow-up once target task closure is current pass/pass",
+    );
+
+    assert_eq!(
+        status["phase_detail"], baseline_status["phase_detail"],
+        "json: {status}"
+    );
+    assert!(
+        !public_repair_targets_include_any_persisted_follow_up(&status),
+        "expired target-bound follow-up must not be public/actionable: {status}"
+    );
+}
+
+#[test]
+fn legacy_task_follow_up_without_step_expires_after_current_closure_repair() {
+    let (repo_dir, state_dir) = init_repo("legacy-task-follow-up-expires-after-current-closure");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let baseline_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status baseline before injecting legacy task-scoped follow-up",
+    );
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "review_state_repair_follow_up": "execution_reentry",
+            "review_state_repair_follow_up_task": 1,
+            "review_state_repair_follow_up_step": Value::Null,
+            "review_state_repair_follow_up_closure_record_id": Value::Null
+        }),
+    );
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should expire legacy task-scoped follow-up once current closure is pass/pass",
+    );
+
+    assert_eq!(
+        status["phase_detail"], baseline_status["phase_detail"],
+        "json: {status}"
+    );
+    assert!(
+        !public_repair_targets_include_any_persisted_follow_up(&status),
+        "legacy task-scoped follow-up must not remain actionable after current pass/pass closure repair: {status}",
+    );
+}
+
+#[test]
+fn legacy_step_follow_up_expires_after_current_closure_repair() {
+    let (repo_dir, state_dir) = init_repo("legacy-step-follow-up-expires-after-current-closure");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let baseline_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status baseline before injecting legacy step-scoped follow-up",
+    );
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "review_state_repair_follow_up": "execution_reentry",
+            "review_state_repair_follow_up_task": 1,
+            "review_state_repair_follow_up_step": 1,
+            "review_state_repair_follow_up_closure_record_id": Value::Null
+        }),
+    );
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should expire legacy step-scoped follow-up once current closure is pass/pass",
+    );
+
+    assert_eq!(
+        status["phase_detail"], baseline_status["phase_detail"],
+        "json: {status}"
+    );
+    assert!(
+        !public_repair_targets_include_any_persisted_follow_up(&status),
+        "legacy step-scoped follow-up must not remain actionable after current pass/pass closure repair: {status}",
+    );
+}
+
+#[test]
+fn target_bound_follow_up_expires_on_semantic_workspace_change() {
+    let (repo_dir, state_dir) = init_repo("target-bound-follow-up-semantic-workspace-change");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let baseline_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status baseline before injecting semantic-mismatched follow-up",
+    );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "review_state_repair_follow_up_record": {
+                "kind": "execution_reentry",
+                "target_scope": "execution_step",
+                "target_task": 1,
+                "target_step": 1,
+                "target_record_id": "task-1",
+                "semantic_workspace_state_id": "semantic_tree:not-current",
+                "created_sequence": 1,
+                "expires_on_plan_fingerprint_change": true
+            },
+            "review_state_repair_follow_up": null
+        }),
+    );
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should ignore target-bound follow-up after semantic workspace change",
+    );
+
+    assert_eq!(
+        status["phase_detail"], baseline_status["phase_detail"],
+        "json: {status}"
+    );
+    assert_ne!(
+        status["phase_detail"],
+        Value::from("execution_reentry_required"),
+        "semantic-mismatched follow-up must not reroute execution: {status}"
+    );
+}
+
+#[test]
+fn target_bound_follow_up_survives_projection_only_change_with_same_semantic_workspace() {
+    let (repo_dir, state_dir) = init_repo("target-bound-follow-up-projection-only-change");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let baseline_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status baseline before injecting projection-stable follow-up",
+    );
+    let semantic_workspace_id = baseline_status["semantic_workspace_tree_id"]
+        .as_str()
+        .expect("baseline status should expose semantic workspace id")
+        .to_owned();
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "current_task_closure_records": {},
+            "task_closure_record_history": {},
+            "review_state_repair_follow_up_record": {
+                "kind": "execution_reentry",
+                "target_scope": "execution_step",
+                "target_task": 1,
+                "target_step": 1,
+                "target_record_id": "task-1",
+                "semantic_workspace_state_id": semantic_workspace_id,
+                "source_route_decision_hash": "route-hash-from-before-projection-only-change",
+                "created_sequence": 1,
+                "expires_on_plan_fingerprint_change": true
+            },
+            "review_state_repair_follow_up": null
+        }),
+    );
+    let evidence_rel = baseline_status["evidence_path"]
+        .as_str()
+        .expect("baseline status should expose evidence path");
+    let evidence_projection_path =
+        projection_support::state_dir_projection_path(&baseline_status, evidence_rel);
+    if let Some(parent) = evidence_projection_path.parent() {
+        fs::create_dir_all(parent).expect("state-dir projection parent should be creatable");
+    }
+    write_file(
+        &evidence_projection_path,
+        "<!-- projection-only follow-up churn -->\n",
+    );
+    let plan_path = repo.join(PLAN_REL);
+    let plan_source = fs::read_to_string(&plan_path).expect("plan fixture should be readable");
+    write_file(
+        &plan_path,
+        &plan_source.replace(
+            "- [ ] **Step 1: Complete the single-step fixture**",
+            "  - [x] **Step 1: Complete the single-step fixture**\n\n    **Execution Note:** Interrupted - Runtime projection note wraps\n      across an indented continuation line.",
+        ),
+    );
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should keep target-bound follow-up across projection-only churn",
+    );
+
+    assert_eq!(
+        status["semantic_workspace_tree_id"],
+        Value::from(semantic_workspace_id),
+        "projection-only churn must not change semantic workspace identity: {status}"
+    );
+    assert!(
+        public_repair_targets_include_persisted_follow_up(
+            &status,
+            "execution_reentry",
+            Some(1),
+            Some(1),
+            None,
+        ),
+        "target-bound follow-up should remain matched by semantic identity across projection-only churn: {status}"
     );
 }
 

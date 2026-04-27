@@ -64,8 +64,8 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 - Coordinators and subagents may prepare candidate artifacts (for example task packets, coverage matrix context, and handoff drafts), but they must not directly invoke these commands; the runtime helper owns and executes execution-state mutations.
 - On the first `begin` for a revision whose plan still says `**Execution Mode:** none`, initialize execution with `--execution-mode featureforge:executing-plans`
 - The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.
-- Runtime read models are rendered under the state directory during normal execution. Tracked approved-plan checklist and evidence markdown are optional exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.
-- Use `featureforge plan execution materialize-projections --plan <approved-plan-path> --tracked` only when the user explicitly needs tracked human-readable exports. Materialization is never required normal progress. Add `--scope execution|late-stage|all` only when a non-default export scope is needed.
+- Runtime read models are rendered under the state directory during normal execution. Repo-local projection files under `docs/featureforge/projections/` are optional human-readable exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.
+- Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` only when the user explicitly needs repo-local human-readable projection exports. Approved plan and evidence files are not modified, and materialization is never required for normal progress. Add `--scope execution|late-stage|all` only when a non-default export scope is needed.
 
 ## Runtime Strategy Checkpoints (Automatic, Runtime-Owned)
 

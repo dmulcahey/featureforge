@@ -8,34 +8,29 @@ use serde::Serialize;
 
 use crate::cli::plan_execution::StatusArgs;
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::closure_graph::{
-    AuthoritativeClosureGraph, ClosureGraphSignals, reason_code_indicates_stale_unreviewed,
-};
+use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
 #[cfg(test)]
 use crate::execution::current_truth::late_stage_stale_unreviewed as shared_late_stage_stale_unreviewed;
 use crate::execution::current_truth::{
     BranchRerecordingUnsupportedReason, ReviewStateRepairReroute,
     branch_closure_refresh_missing_current_closure as shared_branch_closure_refresh_missing_current_closure,
     branch_closure_rerecording_assessment,
-    current_branch_closure_has_tracked_drift as shared_current_branch_closure_has_tracked_drift,
     current_task_negative_result_task as shared_current_task_negative_result_task,
-    execution_state_has_open_steps as shared_execution_state_has_open_steps,
-    late_stage_missing_current_closure_stale_provenance_present as shared_late_stage_missing_current_closure_stale_provenance_present,
     late_stage_qa_blocked as shared_late_stage_qa_blocked,
     late_stage_release_blocked as shared_late_stage_release_blocked,
     late_stage_release_truth_blocked as shared_late_stage_release_truth_blocked,
     late_stage_review_blocked as shared_late_stage_review_blocked,
     late_stage_review_truth_blocked as shared_late_stage_review_truth_blocked,
     normalized_plan_qa_requirement as shared_normalized_plan_qa_requirement,
-    public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
-    public_review_state_stale_unreviewed_for_reroute as shared_public_review_state_stale_unreviewed_for_reroute,
     task_review_result_requires_verification_reason_codes,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
     task_scope_stale_review_state_reason_present as shared_task_scope_stale_review_state_reason_present,
 };
 #[cfg(test)]
 use crate::execution::current_truth::{
-    FollowUpOverrideInputs, resolve_follow_up_override as resolve_shared_follow_up_override,
+    FollowUpOverrideInputs,
+    public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
+    resolve_follow_up_override as resolve_shared_follow_up_override,
 };
 use crate::execution::follow_up::{
     normalize_persisted_repair_follow_up_token, normalize_public_routing_follow_up_token,
@@ -50,10 +45,10 @@ use crate::execution::router::{
 };
 use crate::execution::state::{
     ExecutionContext, ExecutionReadScope, ExecutionRuntime, GateResult, PlanExecutionStatus,
-    current_branch_closure_structural_review_state_reason, gate_finish_from_context,
-    gate_review_from_context, load_execution_read_scope, missing_derived_review_state_fields,
-    qa_pending_requires_test_plan_refresh, shared_repair_review_state_reroute_decision,
-    stale_current_task_closure_record_ids, still_current_task_closure_records,
+    apply_shared_routing_projection_to_read_scope_with_routing,
+    current_branch_closure_structural_review_state_reason, load_execution_read_scope,
+    missing_derived_review_state_fields, qa_pending_requires_test_plan_refresh,
+    shared_repair_review_state_reroute_decision, still_current_task_closure_records,
     task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
@@ -227,7 +222,8 @@ fn query_review_state_internal(
     plan_path: &std::path::Path,
     exact_plan_override: bool,
 ) -> Result<ReviewStateSnapshot, JsonFailure> {
-    let read_scope = load_execution_read_scope(runtime, plan_path, exact_plan_override)?;
+    let mut read_scope = load_execution_read_scope(runtime, plan_path, exact_plan_override)?;
+    apply_shared_routing_projection_to_read_scope_with_routing(&mut read_scope, false, false)?;
     review_state_snapshot_from_read_scope_with_status(&read_scope, &read_scope.status)
 }
 
@@ -235,28 +231,31 @@ pub(crate) fn review_state_snapshot_from_read_scope_with_status(
     read_scope: &ExecutionReadScope,
     status: &PlanExecutionStatus,
 ) -> Result<ReviewStateSnapshot, JsonFailure> {
+    let runtime_state = read_scope.runtime_state.as_ref().ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "review-state query requires reducer output before stale closure projection.",
+        )
+    })?;
+    review_state_snapshot_from_read_scope_with_runtime_state(read_scope, status, runtime_state)
+}
+
+fn review_state_snapshot_from_read_scope_with_runtime_state(
+    read_scope: &ExecutionReadScope,
+    status: &PlanExecutionStatus,
+    runtime_state: &RuntimeState,
+) -> Result<ReviewStateSnapshot, JsonFailure> {
     let context = &read_scope.context;
     let overlay = read_scope.overlay.as_ref();
     let authoritative_state = read_scope.authoritative_state.as_ref();
-    let branch_closure_tracked_drift =
-        shared_current_branch_closure_has_tracked_drift(context, authoritative_state)?;
-    let gate_review = gate_review_from_context(context);
-    let gate_finish = gate_finish_from_context(context);
-    let late_stage_stale_unreviewed = shared_public_review_state_stale_unreviewed_for_reroute(
-        context,
-        authoritative_state,
-        status,
-        Some(&gate_review),
-        Some(&gate_finish),
-    )
-    .unwrap_or_else(|_| review_state_is_stale_unreviewed(context, status));
-    let late_stage_missing_current_closure_public_truth = status.review_state_status
-        == "missing_current_closure"
-        && shared_late_stage_missing_current_closure_stale_provenance_present(context, status)?;
+    let gate_snapshot = &runtime_state.gate_snapshot;
+    let late_stage_stale_unreviewed = gate_snapshot.late_stage_stale_unreviewed;
+    let late_stage_missing_current_closure_public_truth =
+        gate_snapshot.missing_current_closure_stale_provenance;
     let status_reports_stale_unreviewed_closures = !status.stale_unreviewed_closures.is_empty();
     let late_stage_stale_projection_active = late_stage_stale_unreviewed
         || late_stage_missing_current_closure_public_truth
-        || (branch_closure_tracked_drift
+        || (gate_snapshot.branch_closure_tracked_drift
             && (status.review_state_status != "missing_current_closure"
                 || status_reports_stale_unreviewed_closures));
     let task_scope_stale_unreviewed = task_scope_review_state_is_stale_unreviewed(status);
@@ -268,9 +267,9 @@ pub(crate) fn review_state_snapshot_from_read_scope_with_status(
         &ClosureGraphSignals::from_authoritative_state(
             authoritative_state,
             overlay.and_then(|overlay| overlay.current_branch_closure_id.as_deref()),
-            late_stage_stale_unreviewed || branch_closure_tracked_drift,
+            late_stage_stale_unreviewed,
             late_stage_missing_current_closure_public_truth,
-            stale_reason_codes_from_gate_results(&gate_review, &gate_finish),
+            gate_snapshot.stale_reason_codes.clone(),
         ),
     );
     let current_task_closures = still_current_task_closure_records(context)?
@@ -320,15 +319,20 @@ pub(crate) fn review_state_snapshot_from_read_scope_with_status(
             .cmp(&closure_graph.superseded_by(right))
             .then(left.cmp(right))
     });
-    let late_stage_stale_unreviewed_closures = closure_graph.stale_unreviewed_record_ids();
+    let late_stage_stale_unreviewed_closures = if status.stale_unreviewed_closures.is_empty() {
+        closure_graph.stale_unreviewed_record_ids()
+    } else {
+        status.stale_unreviewed_closures.clone()
+    };
+    let reducer_task_stale_record_ids = gate_snapshot.task_stale_record_ids();
     let stale_unreviewed_closures = if task_scope_structural_reason.is_some() {
-        stale_current_task_closure_record_ids(context)?
-    } else if branch_scope_structural_reason.is_some() {
-        Vec::new()
+        reducer_task_stale_record_ids.clone()
     } else if late_stage_stale_projection_active {
         late_stage_stale_unreviewed_closures
+    } else if branch_scope_structural_reason.is_some() {
+        Vec::new()
     } else if task_scope_stale_unreviewed {
-        stale_current_task_closure_record_ids(context)?
+        reducer_task_stale_record_ids
     } else {
         Vec::new()
     };
@@ -398,25 +402,6 @@ pub(crate) fn review_state_snapshot_from_read_scope_with_status(
     })
 }
 
-fn stale_reason_codes_from_gate_results(
-    gate_review: &GateResult,
-    gate_finish: &GateResult,
-) -> Vec<String> {
-    let mut reason_codes = Vec::new();
-    for reason_code in gate_review
-        .reason_codes
-        .iter()
-        .chain(gate_finish.reason_codes.iter())
-    {
-        if reason_code_indicates_stale_unreviewed(reason_code)
-            && !reason_codes.iter().any(|existing| existing == reason_code)
-        {
-            reason_codes.push(reason_code.clone());
-        }
-    }
-    reason_codes
-}
-
 pub fn query_workflow_execution_state(
     runtime: &ExecutionRuntime,
     plan_path: &str,
@@ -452,8 +437,11 @@ pub(crate) fn workflow_execution_state_from_runtime_state(
 ) -> Result<WorkflowExecutionState, JsonFailure> {
     let context = runtime_state.context.clone();
     let projected_execution_status = runtime_state.status.clone();
-    let review_state_snapshot =
-        review_state_snapshot_from_read_scope_with_status(read_scope, &projected_execution_status)?;
+    let review_state_snapshot = review_state_snapshot_from_read_scope_with_runtime_state(
+        read_scope,
+        &projected_execution_status,
+        runtime_state,
+    )?;
     let execution_status = runtime_state.status.clone();
     let overlay = read_scope.overlay.clone();
     let authoritative_state = read_scope.authoritative_state.as_ref();
@@ -481,9 +469,7 @@ pub(crate) fn workflow_execution_state_from_runtime_state(
     let authoritative_current_branch_closure_id = runtime_state
         .authoritative_current_branch_closure_id
         .clone();
-    let additional_branch_drift_signal =
-        shared_current_branch_closure_has_tracked_drift(&context, authoritative_state)
-            .unwrap_or(false);
+    let additional_branch_drift_signal = runtime_state.gate_snapshot.branch_closure_tracked_drift;
     let repair_route_decision = shared_repair_review_state_reroute_decision(
         &context,
         &execution_status,
@@ -598,15 +584,20 @@ fn query_workflow_routing_state_internal(
     _require_exact_execution_command: bool,
 ) -> Result<ExecutionRoutingState, JsonFailure> {
     if let (Some(runtime), Some(plan_override)) = (runtime_override, plan_override) {
-        let owned_read_scope;
-        let read_scope = if let Some(preloaded_read_scope) = preloaded_read_scope {
-            preloaded_read_scope
-        } else {
-            owned_read_scope = load_execution_read_scope(runtime, plan_override, true)?;
-            &owned_read_scope
-        };
-        let (routing, _) =
-            project_runtime_routing_state(runtime, read_scope, external_review_result_ready)?;
+        if let Some(read_scope) = preloaded_read_scope {
+            let (mut routing, _) =
+                project_runtime_routing_state(runtime, read_scope, external_review_result_ready)?;
+            apply_read_surface_invariants_to_routing(&mut routing);
+            return Ok(routing);
+        }
+        let mut read_scope = load_execution_read_scope(runtime, plan_override, true)?;
+        let (mut routing, _) = apply_shared_routing_projection_to_read_scope_with_routing(
+            &mut read_scope,
+            external_review_result_ready,
+            false,
+        )?;
+        routing.execution_status = Some(read_scope.status);
+        apply_read_surface_invariants_to_routing(&mut routing);
         return Ok(routing);
     }
 
@@ -648,24 +639,88 @@ fn query_workflow_routing_state_internal(
         let runtime = runtime_override
             .cloned()
             .unwrap_or(ExecutionRuntime::discover(current_dir)?);
-        let owned_read_scope;
-        let read_scope = if let Some(preloaded_read_scope) = preloaded_read_scope {
-            preloaded_read_scope
-        } else {
-            owned_read_scope = load_execution_read_scope(
-                &runtime,
-                std::path::Path::new(&route.plan_path),
-                explicit_plan_query,
-            )?;
-            &owned_read_scope
-        };
-        let (routing, _) =
-            project_runtime_routing_state(&runtime, read_scope, external_review_result_ready)?;
+        if let Some(read_scope) = preloaded_read_scope {
+            let (mut routing, _) =
+                project_runtime_routing_state(&runtime, read_scope, external_review_result_ready)?;
+            apply_read_surface_invariants_to_routing(&mut routing);
+            return Ok(routing);
+        }
+        let mut read_scope = load_execution_read_scope(
+            &runtime,
+            std::path::Path::new(&route.plan_path),
+            explicit_plan_query,
+        )?;
+        let (mut routing, _) = apply_shared_routing_projection_to_read_scope_with_routing(
+            &mut read_scope,
+            external_review_result_ready,
+            false,
+        )?;
+        routing.execution_status = Some(read_scope.status);
+        apply_read_surface_invariants_to_routing(&mut routing);
         return Ok(routing);
     }
     let (routing, _) =
         project_non_runtime_workflow_routing_state(route, external_review_result_ready)?;
     Ok(routing)
+}
+
+pub fn apply_read_surface_invariants_to_routing(routing: &mut ExecutionRoutingState) {
+    let Some(status) = routing.execution_status.as_mut() else {
+        return;
+    };
+    crate::execution::invariants::inject_read_surface_invariant_test_violation(status);
+    let invariant_projection_already_active =
+        crate::execution::invariants::read_surface_invariant_projection_active(status);
+    let before = status.clone();
+    crate::execution::invariants::apply_read_surface_invariants(status);
+    if *status == before && !invariant_projection_already_active {
+        return;
+    }
+    let status = status.clone();
+    sync_routing_surface_from_status(routing, &status);
+}
+
+fn sync_routing_surface_from_status(
+    routing: &mut ExecutionRoutingState,
+    status: &PlanExecutionStatus,
+) {
+    routing.route_decision = None;
+    if let Some(phase) = status.phase.clone() {
+        routing.workflow_phase = phase.clone();
+        routing.phase = phase;
+    }
+    routing.phase_detail.clone_from(&status.phase_detail);
+    routing
+        .review_state_status
+        .clone_from(&status.review_state_status);
+    routing.recording_context =
+        status
+            .recording_context
+            .as_ref()
+            .map(|context| ExecutionRoutingRecordingContext {
+                task_number: context.task_number,
+                dispatch_id: context.dispatch_id.clone(),
+                branch_closure_id: context.branch_closure_id.clone(),
+            });
+    routing.execution_command_context = status.execution_command_context.as_ref().map(|context| {
+        ExecutionRoutingExecutionCommandContext {
+            command_kind: context.command_kind.clone(),
+            task_number: context.task_number,
+            step_id: context.step_id,
+        }
+    });
+    routing.next_action.clone_from(&status.next_action);
+    routing
+        .recommended_command
+        .clone_from(&status.recommended_command);
+    routing.blocking_scope.clone_from(&status.blocking_scope);
+    routing.blocking_task = status.blocking_task;
+    routing
+        .external_wait_state
+        .clone_from(&status.external_wait_state);
+    routing
+        .blocking_reason_codes
+        .clone_from(&status.blocking_reason_codes);
 }
 
 pub(crate) fn default_phase_for_status(status: &PlanExecutionStatus) -> String {
@@ -934,19 +989,6 @@ pub(crate) fn compact_operator_reason_codes(
         }
     }
     reason_codes
-}
-
-fn review_state_is_stale_unreviewed(
-    context: &ExecutionContext,
-    status: &PlanExecutionStatus,
-) -> bool {
-    if status.execution_started != "yes" || shared_execution_state_has_open_steps(status) {
-        return false;
-    }
-
-    let gate_review = gate_review_from_context(context);
-    let gate_finish = gate_finish_from_context(context);
-    shared_public_late_stage_stale_unreviewed(status, Some(&gate_review), Some(&gate_finish))
 }
 
 pub(crate) fn late_stage_observability_for_phase(

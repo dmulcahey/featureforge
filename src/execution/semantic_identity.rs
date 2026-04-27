@@ -3,11 +3,14 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::contracts::task_contract::{
+    RuntimeExecutionNoteProjectionBlock, known_runtime_step_projection_lines,
+};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::current_truth::{
     is_runtime_owned_execution_control_plane_path, normalized_late_stage_surface,
 };
-use crate::execution::state::ExecutionContext;
+use crate::execution::state::{ExecutionContext, parse_step_line};
 use crate::git::discover_repository;
 use crate::git::sha256_hex;
 
@@ -242,60 +245,154 @@ pub(crate) fn normalized_plan_source_for_approved_plan_preflight(plan_source: &s
 fn normalized_plan_source(plan_source: &str, mode: PlanSourceNormalizationMode) -> String {
     // Runtime-injected execution headers and control-plane comments must not turn the whole
     // approved plan file into semantic drift.
-    let mut skipping_runtime_step_note = false;
-    let normalized = plan_source
-        .lines()
-        .filter_map(|line| {
-            if skipping_runtime_step_note {
-                if line.trim().is_empty() || line.trim_start().starts_with("**Execution Note:**") {
-                    return None;
-                }
-                skipping_runtime_step_note = false;
-            }
-            let trimmed = line.trim();
-            let runtime_owned_comment = trimmed.starts_with("<!--")
-                && trimmed.ends_with("-->")
-                && (trimmed.contains("runtime-owned")
-                    || trimmed.contains("featureforge:")
-                    || trimmed.contains("codex:"));
-            let runtime_owned_execution_metadata = matches!(
-                trimmed,
-                l if l.starts_with("**Execution Mode:**")
-                    || l.starts_with("**Chunking Strategy:**")
-                    || l.starts_with("**Evaluator Policy:**")
-                    || l.starts_with("**Reset Policy:**")
-                    || l.starts_with("**Review Stack:**")
-            );
-            if trimmed.starts_with("**Execution Fingerprint:**")
-                || runtime_owned_comment
-                || (mode == PlanSourceNormalizationMode::WorkspaceIdentity
-                    && runtime_owned_execution_metadata)
-            {
-                return None;
-            }
-            if let Some(normalized_step) = normalize_runtime_step_projection_line(line) {
-                skipping_runtime_step_note = true;
-                return Some(normalized_step);
-            }
-            Some(line.to_owned())
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let known_runtime_steps = known_runtime_step_projection_lines(plan_source);
+    let mut normalizer = PlanSourceProjectionNormalizer::new(mode, known_runtime_steps);
+    for line in plan_source.lines() {
+        normalizer.push_line(line);
+    }
+    let normalized = normalizer.finish();
     normalized
         .trim_end_matches('\n')
         .trim_end_matches(|ch: char| ch.is_ascii_whitespace() && ch != '\n')
         .to_owned()
 }
 
-fn normalize_runtime_step_projection_line(line: &str) -> Option<String> {
-    let rest = line.strip_prefix("- [")?;
-    let mark = rest.chars().next()?;
-    if mark != 'x' && mark != ' ' {
-        return None;
+struct PlanSourceProjectionNormalizer {
+    mode: PlanSourceNormalizationMode,
+    known_runtime_steps: BTreeMap<(u32, u32), String>,
+    normalized: Vec<String>,
+    current_task: Option<u32>,
+    current_task_files_seen: bool,
+    in_fenced_block: bool,
+    pending_runtime_note_after_step: bool,
+    skipping_runtime_note_block: Option<RuntimeExecutionNoteProjectionBlock>,
+}
+
+impl PlanSourceProjectionNormalizer {
+    fn new(
+        mode: PlanSourceNormalizationMode,
+        known_runtime_steps: BTreeMap<(u32, u32), String>,
+    ) -> Self {
+        Self {
+            mode,
+            known_runtime_steps,
+            normalized: Vec::new(),
+            current_task: None,
+            current_task_files_seen: false,
+            in_fenced_block: false,
+            pending_runtime_note_after_step: false,
+            skipping_runtime_note_block: None,
+        }
     }
-    let rest = &rest[mark.len_utf8()..];
-    let rest = rest.strip_prefix("] **Step ")?;
-    Some(format!("- [ ] **Step {rest}"))
+
+    fn push_line(&mut self, line: &str) {
+        if self.consume_runtime_note_block_line(line) {
+            return;
+        }
+        if self.consume_pending_runtime_note_line(line) {
+            return;
+        }
+        if self.update_task_position(line) {
+            self.normalized.push(line.to_owned());
+            return;
+        }
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            self.in_fenced_block = !self.in_fenced_block;
+            self.normalized.push(line.to_owned());
+            return;
+        }
+        let runtime_owned_comment = trimmed.starts_with("<!--")
+            && trimmed.ends_with("-->")
+            && (trimmed.contains("runtime-owned")
+                || trimmed.contains("featureforge:")
+                || trimmed.contains("codex:"));
+        let runtime_owned_execution_metadata = matches!(
+            trimmed,
+            l if l.starts_with("**Execution Mode:**")
+                || l.starts_with("**Chunking Strategy:**")
+                || l.starts_with("**Evaluator Policy:**")
+                || l.starts_with("**Reset Policy:**")
+                || l.starts_with("**Review Stack:**")
+        );
+        if trimmed.starts_with("**Execution Fingerprint:**")
+            || runtime_owned_comment
+            || (self.mode == PlanSourceNormalizationMode::WorkspaceIdentity
+                && runtime_owned_execution_metadata)
+        {
+            return;
+        }
+        if let Some(normalized_step) = self.normalize_runtime_step_projection_line(line) {
+            self.pending_runtime_note_after_step = true;
+            self.normalized.push(normalized_step);
+            return;
+        }
+        self.normalized.push(line.to_owned());
+    }
+
+    fn update_task_position(&mut self, line: &str) -> bool {
+        if let Some(rest) = line.strip_prefix("## Task ") {
+            self.current_task = rest
+                .split(':')
+                .next()
+                .and_then(|value| value.parse::<u32>().ok());
+            self.current_task_files_seen = false;
+            self.in_fenced_block = false;
+            return true;
+        }
+        if line.starts_with("## ") {
+            self.current_task = None;
+            self.current_task_files_seen = false;
+            self.in_fenced_block = false;
+            return false;
+        }
+        if line.trim() == "**Files:**" {
+            self.current_task_files_seen = true;
+        }
+        false
+    }
+
+    fn consume_pending_runtime_note_line(&mut self, line: &str) -> bool {
+        if !self.pending_runtime_note_after_step {
+            return false;
+        }
+        if line.trim().is_empty() {
+            return true;
+        }
+        self.pending_runtime_note_after_step = false;
+        if let Some(note_block) = RuntimeExecutionNoteProjectionBlock::start(line) {
+            self.skipping_runtime_note_block = Some(note_block);
+            return true;
+        }
+        false
+    }
+
+    fn consume_runtime_note_block_line(&mut self, line: &str) -> bool {
+        if let Some(note_block) = self.skipping_runtime_note_block {
+            if note_block.continues(line) {
+                return true;
+            }
+            self.skipping_runtime_note_block = None;
+        }
+        false
+    }
+
+    fn normalize_runtime_step_projection_line(&self, line: &str) -> Option<String> {
+        if self.in_fenced_block || !self.current_task_files_seen {
+            return None;
+        }
+        let task_number = self.current_task?;
+        let (_, step_number, title) = parse_step_line(line)?;
+        let known_title = self.known_runtime_steps.get(&(task_number, step_number))?;
+        if known_title != &title {
+            return None;
+        }
+        Some(format!("- [ ] **Step {step_number}: {title}**"))
+    }
+
+    fn finish(self) -> String {
+        self.normalized.join("\n")
+    }
 }
 
 fn compute_plan_definition_identity(context: &ExecutionContext) -> String {
@@ -358,7 +455,27 @@ fn normalize_repo_relative_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::execution::state::hash_contract_plan;
+
     use super::normalized_plan_source_for_semantic_identity;
+
+    fn valid_task_source(done_when: &str, step_projection: &str) -> String {
+        format!(
+            "# Plan\n\
+## Task 1: Build\n\
+**Spec Coverage:** REQ-1\n\
+**Goal:** Build the thing.\n\
+**Context:**\n\
+- The plan has enough context for deterministic execution.\n\
+**Constraints:**\n\
+- Preserve semantic identity boundaries.\n\
+**Done when:**\n\
+- {done_when}\n\
+**Files:**\n\
+- Modify: `src/lib.rs`\n\
+{step_projection}"
+        )
+    }
 
     #[test]
     fn normalized_plan_source_ignores_runtime_execution_headers_and_comments() {
@@ -391,18 +508,104 @@ mod tests {
 
     #[test]
     fn normalized_plan_source_ignores_runtime_step_projection_marks_and_notes() {
-        let normalized = normalized_plan_source_for_semantic_identity(
-            "# Plan\n\
-            ## Task 1\n\
-            - [x] **Step 1: Build the thing**\n\
-            \n\
-              **Execution Note:** Active - Runtime-owned note.\n\
-            - [ ] **Step 2: Verify the thing**\n",
-        );
+        let normalized = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "The implementation is verified.",
+            "- [x] **Step 1: Build the thing**\n\n  **Execution Note:** Active - Runtime-owned note.\n- [ ] **Step 2: Verify the thing**\n",
+        ));
         assert_eq!(
             normalized,
-            "# Plan\n## Task 1\n- [ ] **Step 1: Build the thing**\n- [ ] **Step 2: Verify the thing**"
+            valid_task_source(
+                "The implementation is verified.",
+                "- [ ] **Step 1: Build the thing**\n- [ ] **Step 2: Verify the thing**"
+            )
         );
+    }
+
+    #[test]
+    fn normalized_plan_source_normalizes_indented_runtime_step_projection_marks() {
+        let checked = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "The implementation is verified.",
+            "  - [x] **Step 6: Build the thing**\n",
+        ));
+        let unchecked = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "The implementation is verified.",
+            "  - [ ] **Step 6: Build the thing**\n",
+        ));
+        assert_eq!(checked, unchecked);
+        assert_eq!(
+            checked,
+            valid_task_source(
+                "The implementation is verified.",
+                "- [ ] **Step 6: Build the thing**"
+            )
+        );
+    }
+
+    #[test]
+    fn normalized_plan_source_suppresses_multiline_runtime_execution_note_blocks() {
+        let without_note = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "The implementation is verified.",
+            "- [ ] **Step 1: Build the thing**\n",
+        ));
+        let with_wrapped_note = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "The implementation is verified.",
+            "- [x] **Step 1: Build the thing**\n\n  **Execution Note:** Active - Runtime-owned note starts here\n    and wraps across an indented continuation line.\n",
+        ));
+        assert_eq!(with_wrapped_note, without_note);
+    }
+
+    #[test]
+    fn normalized_plan_source_keeps_task_contract_changes_semantic() {
+        let baseline = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "original reviewable condition",
+            "- [ ] **Step 1: Build the thing**\n",
+        ));
+        let changed = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "changed reviewable condition",
+            "- [ ] **Step 1: Build the thing**\n",
+        ));
+        assert_ne!(baseline, changed);
+    }
+
+    #[test]
+    fn normalized_plan_source_keeps_step_shaped_content_outside_runtime_steps_semantic() {
+        let checked = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "The implementation is verified.",
+            "- [ ] **Step 1: Build the thing**\n```\n  - [x] **Step 1: Build the thing**\n```\n",
+        ));
+        let unchecked = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "The implementation is verified.",
+            "- [ ] **Step 1: Build the thing**\n```\n  - [ ] **Step 1: Build the thing**\n```\n",
+        ));
+        assert_ne!(checked, unchecked);
+        assert!(checked.contains("  - [x] **Step 1: Build the thing**"));
+    }
+
+    #[test]
+    fn contract_plan_hash_keeps_step_shaped_content_outside_runtime_steps_semantic() {
+        let checked = hash_contract_plan(&valid_task_source(
+            "The implementation is verified.",
+            "- [ ] **Step 1: Build the thing**\n```\n  - [x] **Step 1: Build the thing**\n```\n",
+        ));
+        let unchecked = hash_contract_plan(&valid_task_source(
+            "The implementation is verified.",
+            "- [ ] **Step 1: Build the thing**\n```\n  - [ ] **Step 1: Build the thing**\n```\n",
+        ));
+        assert_ne!(checked, unchecked);
+    }
+
+    #[test]
+    fn normalized_plan_source_keeps_non_note_indented_content_after_execution_note_semantic() {
+        let baseline = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "The implementation is verified.",
+            "- [ ] **Step 1: Build the thing**\n",
+        ));
+        let changed = normalized_plan_source_for_semantic_identity(&valid_task_source(
+            "The implementation is verified.",
+            "- [x] **Step 1: Build the thing**\n  **Execution Note:** Active - Runtime-owned note.\n  user-authored post-step content\n",
+        ));
+        assert_ne!(baseline, changed);
+        assert!(changed.contains("user-authored post-step content"));
     }
 
     #[test]

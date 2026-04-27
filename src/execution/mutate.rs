@@ -18,9 +18,10 @@ use crate::cli::plan_execution::{
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::authority::write_authoritative_unit_review_receipt_artifact;
 use crate::execution::command_eligibility::{
-    blocked_follow_up_for_operator, close_current_task_required_follow_up,
-    late_stage_required_follow_up, negative_result_follow_up,
-    operator_requires_review_state_repair, release_readiness_required_follow_up,
+    PublicMutationKind, PublicMutationRequest, PublicTransferMode, blocked_follow_up_for_operator,
+    close_current_task_required_follow_up, decide_public_mutation, late_stage_required_follow_up,
+    negative_result_follow_up, operator_requires_review_state_repair,
+    release_readiness_required_follow_up, require_public_mutation,
 };
 use crate::execution::current_truth::{
     BranchRerecordingUnsupportedReason, branch_closure_rerecording_assessment,
@@ -45,6 +46,7 @@ use crate::execution::handoff::{
     current_workflow_transfer_record_path, latest_matching_workflow_transfer_request_record,
     write_workflow_transfer_record,
 };
+use crate::execution::invariants::{InvariantEnforcementMode, check_runtime_status_invariants};
 use crate::execution::leases::{
     StatusAuthoritativeOverlay,
     authoritative_matching_execution_topology_downgrade_records_checked,
@@ -63,16 +65,15 @@ use crate::execution::projection_renderer::{
 use crate::execution::query::ExecutionRoutingState;
 use crate::execution::recording::{
     BranchClosureWrite, BrowserQaWrite, CurrentTaskClosureWrite, FinalReviewWrite,
-    NegativeTaskClosureWrite, ReleaseReadinessWrite, record_browser_qa,
+    NegativeTaskClosureWrite, ReleaseReadinessWrite,
+    current_task_closure_postconditions_would_mutate, record_browser_qa,
     record_current_branch_closure, record_current_task_closure,
     record_final_review as persist_final_review_record, record_negative_task_closure,
     record_release_readiness as persist_release_readiness_record,
     resolve_current_task_closure_postconditions,
 };
-use crate::execution::router::{
-    command_invokes_hidden_lane, command_is_legal_public_command, project_runtime_routing_state,
-    router_allows_public_execution_mutation, router_allows_public_transfer_mutation,
-};
+use crate::execution::reducer::{RuntimeGateSnapshot, RuntimeState};
+use crate::execution::router::project_runtime_routing_state_with_reduced_state;
 use crate::execution::semantic_identity::{
     branch_definition_identity_for_context, semantic_paths_changed_between_raw_trees,
     semantic_workspace_snapshot, task_definition_identity_for_task,
@@ -83,15 +84,15 @@ use crate::execution::state::{
     RebuildEvidenceFilter, RebuildEvidenceOutput, RebuildEvidenceTarget,
     branch_closure_record_matches_plan_exemption, current_file_proof, current_head_sha,
     current_review_dispatch_id_candidate, current_test_plan_artifact_path_for_qa_recording,
-    discover_rebuild_candidates, ensure_current_review_dispatch_id, gate_finish_from_context,
-    gate_review_from_context, load_execution_context_for_exact_plan,
-    load_execution_context_for_mutation, load_execution_context_for_rebuild,
-    load_execution_read_scope_for_mutation, normalize_begin_request, normalize_complete_request,
-    normalize_note_request, normalize_rebuild_evidence_request, normalize_reopen_request,
-    normalize_source, normalize_transfer_request, require_normalized_text,
-    require_preflight_acceptance, require_prior_task_closure_for_begin,
-    status_from_context_with_shared_routing, still_current_task_closure_records,
-    structural_current_task_closure_failures, task_closure_baseline_repair_candidate,
+    discover_rebuild_candidates, ensure_current_review_dispatch_id,
+    load_execution_context_for_exact_plan, load_execution_context_for_mutation,
+    load_execution_context_for_rebuild, load_execution_read_scope_for_mutation,
+    normalize_begin_request, normalize_complete_request, normalize_note_request,
+    normalize_rebuild_evidence_request, normalize_reopen_request, normalize_source,
+    normalize_transfer_request, require_normalized_text, require_preflight_acceptance,
+    require_prior_task_closure_for_begin, status_from_context_with_shared_routing,
+    still_current_task_closure_records, structural_current_task_closure_failures,
+    task_closure_baseline_repair_candidate,
     task_closure_negative_result_blocks_current_reviewed_state,
     task_completion_lineage_fingerprint, task_packet_fingerprint,
     usable_current_branch_closure_identity, validate_expected_fingerprint,
@@ -343,7 +344,10 @@ fn consume_execution_reentry_repair_follow_up(
     let Some(authoritative_state) = authoritative_state else {
         return Ok(false);
     };
-    if authoritative_state.review_state_repair_follow_up() != Some("execution_reentry") {
+    if authoritative_state
+        .review_state_repair_follow_up_record()
+        .is_none_or(|record| record.kind.public_token() != "execution_reentry")
+    {
         return Ok(false);
     }
     authoritative_state.set_review_state_repair_follow_up(None)?;
@@ -486,6 +490,26 @@ pub fn begin(
         .find(|step| step.note_state == Some(crate::execution::state::NoteState::Active))
     {
         if active.task_number == request.task && active.step_number == request.step {
+            let would_consume_execution_reentry_follow_up =
+                authoritative_state.as_ref().is_some_and(|state| {
+                    state
+                        .review_state_repair_follow_up_record()
+                        .is_some_and(|record| record.kind.public_token() == "execution_reentry")
+                });
+            if would_consume_execution_reentry_follow_up {
+                require_public_mutation(
+                    &begin_status,
+                    PublicMutationRequest {
+                        kind: PublicMutationKind::Begin,
+                        task: Some(request.task),
+                        step: Some(request.step),
+                        transfer_mode: None,
+                        transfer_scope: None,
+                        command_name: "begin",
+                    },
+                    begin_failure_class_from_status(&begin_status),
+                )?;
+            }
             let consumed_execution_reentry_follow_up =
                 consume_execution_reentry_repair_follow_up(authoritative_state.as_mut())?;
             if consumed_execution_reentry_follow_up
@@ -503,49 +527,18 @@ pub fn begin(
         ));
     }
 
-    let begin_allowed = begin_status
-        .execution_command_context
-        .as_ref()
-        .is_some_and(|context| {
-            context.command_kind == "begin"
-                && context.task_number == Some(request.task)
-                && context.step_id == Some(request.step)
-        });
-    if !begin_allowed {
-        let blocking_task = begin_status
-            .blocking_task
-            .map_or_else(|| String::from("none"), |value| format!("Task {value}"));
-        let begin_reason_codes = begin_failure_reason_codes(&begin_status);
-        let blocking_reason_codes = if begin_reason_codes.is_empty() {
-            String::from("none")
-        } else {
-            begin_reason_codes.join(", ")
-        };
-        let failure_class = begin_failure_class_from_status(&begin_status);
-        let recommended_command = begin_status
-            .recommended_command
-            .as_deref()
-            .unwrap_or("none");
-        return Err(JsonFailure::new(
-            failure_class,
-            format!(
-                "begin failed closed because the next legal action is `{}` via `{}` (phase_detail `{}`; task {:?}; step {:?}; blocking_task {}; reason_codes [{}]).",
-                begin_status.next_action,
-                recommended_command,
-                begin_status.phase_detail,
-                begin_status
-                    .execution_command_context
-                    .as_ref()
-                    .and_then(|context| context.task_number),
-                begin_status
-                    .execution_command_context
-                    .as_ref()
-                    .and_then(|context| context.step_id),
-                blocking_task,
-                blocking_reason_codes,
-            ),
-        ));
-    }
+    require_public_mutation(
+        &begin_status,
+        PublicMutationRequest {
+            kind: PublicMutationKind::Begin,
+            task: Some(request.task),
+            step: Some(request.step),
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "begin",
+        },
+        begin_failure_class_from_status(&begin_status),
+    )?;
     if context.steps[step_index].checked {
         return Err(JsonFailure::new(
             FailureClass::InvalidStepTransition,
@@ -628,66 +621,6 @@ pub fn begin(
     status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
 }
 
-fn require_router_execution_command(
-    status: &PlanExecutionStatus,
-    command_kind: &str,
-    task: u32,
-    step: Option<u32>,
-    explicit_target_is_reopenable: bool,
-) -> Result<(), JsonFailure> {
-    if router_allows_public_execution_mutation(
-        status,
-        command_kind,
-        task,
-        step,
-        explicit_target_is_reopenable,
-    ) {
-        return Ok(());
-    }
-    let recommended_command = status
-        .recommended_command
-        .as_deref()
-        .or_else(|| {
-            status
-                .next_public_action
-                .as_ref()
-                .map(|action| action.command.as_str())
-        })
-        .unwrap_or("none");
-    Err(JsonFailure::new(
-        FailureClass::ExecutionStateNotReady,
-        format!(
-            "{command_kind} failed closed because the router's next legal public action is `{}` via `{recommended_command}` (phase_detail `{}`; routed command context {:?}).",
-            status.next_action, status.phase_detail, status.execution_command_context,
-        ),
-    ))
-}
-
-fn require_router_transfer_mutation(status: &PlanExecutionStatus) -> Result<(), JsonFailure> {
-    if router_allows_public_transfer_mutation(status) {
-        return Ok(());
-    }
-    let command = status
-        .recommended_command
-        .as_deref()
-        .or_else(|| {
-            status
-                .next_public_action
-                .as_ref()
-                .map(|action| action.command.as_str())
-        })
-        .unwrap_or_default();
-    Err(JsonFailure::new(
-        FailureClass::ExecutionStateNotReady,
-        format!(
-            "transfer failed closed because the router's next legal public action is `{}` via `{}` (phase_detail `{}`).",
-            status.next_action,
-            if command.is_empty() { "none" } else { command },
-            status.phase_detail,
-        ),
-    ))
-}
-
 pub fn complete(
     runtime: &ExecutionRuntime,
     args: &CompleteArgs,
@@ -707,12 +640,17 @@ pub fn complete(
         request.step,
     )?;
     let complete_status = status_from_context_with_shared_routing(runtime, &context, false)?;
-    require_router_execution_command(
+    require_public_mutation(
         &complete_status,
-        "complete",
-        request.task,
-        Some(request.step),
-        false,
+        PublicMutationRequest {
+            kind: PublicMutationKind::Complete,
+            task: Some(request.task),
+            step: Some(request.step),
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "complete",
+        },
+        FailureClass::ExecutionStateNotReady,
     )?;
     let provenance = authoritative_state
         .as_ref()
@@ -926,6 +864,19 @@ pub fn reopen(
             "Requested task/step does not exist in the approved plan.",
         )
     })?;
+    let reopen_status = status_from_context_with_shared_routing(runtime, &context, false)?;
+    require_public_mutation(
+        &reopen_status,
+        PublicMutationRequest {
+            kind: PublicMutationKind::Reopen,
+            task: Some(request.task),
+            step: Some(request.step),
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "reopen",
+        },
+        FailureClass::ExecutionStateNotReady,
+    )?;
     if let Some(existing_interrupted_index) = context
         .steps
         .iter()
@@ -954,16 +905,6 @@ pub fn reopen(
         .as_ref()
         .and_then(|state| state.current_task_closure_result(request.task))
         .is_some();
-    let explicit_target_is_reopenable =
-        context.steps[step_index].checked || authoritative_task_closure_current;
-    let reopen_status = status_from_context_with_shared_routing(runtime, &context, false)?;
-    require_router_execution_command(
-        &reopen_status,
-        "reopen",
-        request.task,
-        Some(request.step),
-        explicit_target_is_reopenable,
-    )?;
     if !context.steps[step_index].checked && !authoritative_task_closure_current {
         return Err(JsonFailure::new(
             FailureClass::InvalidStepTransition,
@@ -1093,6 +1034,19 @@ fn transfer_repair_step(
     let mut context = load_execution_context_for_mutation(runtime, plan)?;
     validate_expected_fingerprint(&context, expect_execution_fingerprint)?;
     normalize_source(source, &context.plan_document.execution_mode)?;
+    let transfer_status = status_from_context_with_shared_routing(runtime, &context, false)?;
+    require_public_mutation(
+        &transfer_status,
+        PublicMutationRequest {
+            kind: PublicMutationKind::Transfer,
+            task: Some(repair_task),
+            step: Some(repair_step),
+            transfer_mode: Some(PublicTransferMode::RepairStep),
+            transfer_scope: None,
+            command_name: "transfer",
+        },
+        FailureClass::ExecutionStateNotReady,
+    )?;
     let mut authoritative_state = load_authoritative_transition_state(&context)?;
     enforce_authoritative_phase(authoritative_state.as_ref(), StepCommand::Transfer)?;
     enforce_active_contract_scope(
@@ -1101,8 +1055,6 @@ fn transfer_repair_step(
         repair_task,
         repair_step,
     )?;
-    let transfer_status = status_from_context_with_shared_routing(runtime, &context, false)?;
-    require_router_transfer_mutation(&transfer_status)?;
 
     let active_index = context
         .steps
@@ -1183,18 +1135,24 @@ fn status_with_shared_routing_or_context(
     plan: &Path,
     fallback_context: &ExecutionContext,
 ) -> Result<PlanExecutionStatus, JsonFailure> {
-    let baseline_status =
+    let unsanitized_post_status =
         status_from_context_with_shared_routing(runtime, fallback_context, false).ok();
+    if let Some(status) = unsanitized_post_status.as_ref() {
+        enforce_post_mutation_shared_status_invariants(status)?;
+    }
     let args = StatusArgs {
         plan: plan.to_path_buf(),
         external_review_result_ready: false,
     };
     match runtime.status(&args) {
         Ok(status) => {
-            enforce_post_mutation_status_invariants(
+            if unsanitized_post_status.is_none() {
+                enforce_post_mutation_shared_status_invariants(&status)?;
+            }
+            enforce_post_mutation_semantic_workspace_invariant(
                 fallback_context,
+                unsanitized_post_status.as_ref(),
                 &status,
-                baseline_status.as_ref(),
             )?;
             Ok(status)
         }
@@ -1227,7 +1185,7 @@ fn status_with_shared_routing_or_context(
                 enforce_post_mutation_status_invariants(
                     fallback_context,
                     &fallback_status,
-                    baseline_status.as_ref(),
+                    unsanitized_post_status.as_ref(),
                 )?;
                 return Ok(fallback_status);
             }
@@ -1241,78 +1199,47 @@ fn enforce_post_mutation_status_invariants(
     status: &PlanExecutionStatus,
     baseline_status: Option<&PlanExecutionStatus>,
 ) -> Result<(), JsonFailure> {
-    let mut current_ids = BTreeSet::new();
-    for closure in &status.current_task_closures {
-        current_ids.insert(closure.closure_record_id.as_str());
-    }
-    let stale_contains_current = status
-        .stale_unreviewed_closures
-        .iter()
-        .any(|closure_id| current_ids.contains(closure_id.as_str()));
-    if stale_contains_current {
-        let overlapping_ids = status
-            .stale_unreviewed_closures
+    enforce_post_mutation_shared_status_invariants(status)?;
+    enforce_post_mutation_semantic_workspace_invariant(context, baseline_status, status)
+}
+
+fn enforce_post_mutation_shared_status_invariants(
+    status: &PlanExecutionStatus,
+) -> Result<(), JsonFailure> {
+    let injected_status =
+        if std::env::var("FEATUREFORGE_PLAN_EXECUTION_POST_MUTATION_INVARIANT_TEST_INJECTION")
+            .is_ok()
+        {
+            let mut injected_status = status.clone();
+            crate::execution::invariants::inject_post_mutation_invariant_test_violation(
+                &mut injected_status,
+            );
+            Some(injected_status)
+        } else {
+            None
+        };
+    let status = injected_status.as_ref().unwrap_or(status);
+    let violations =
+        check_runtime_status_invariants(status, InvariantEnforcementMode::PostMutation);
+    if !violations.is_empty() {
+        let details = violations
             .iter()
-            .filter(|closure_id| current_ids.contains(closure_id.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
+            .map(|violation| format!("{}: {}", violation.code, violation.detail))
+            .collect::<Vec<_>>()
+            .join("; ");
         return Err(JsonFailure::new(
             FailureClass::MalformedExecutionState,
-            format!(
-                "Post-mutation invariant violated: current and stale task-closure sets must be disjoint. overlapping_ids={overlapping_ids:?}"
-            ),
+            format!("Post-mutation invariant violated: {details}"),
         ));
     }
-    if status.review_state_status == "stale_unreviewed"
-        && status.stale_unreviewed_closures.is_empty()
-        && !targetless_stale_reconcile_diagnostic(status)
-    {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            "Post-mutation invariant violated: stale_unreviewed state must include concrete stale targets.",
-        ));
-    }
-    if let Some(next_public_action) = status.next_public_action.as_ref()
-        && command_invokes_hidden_lane(next_public_action.command.as_str())
-    {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Post-mutation invariant violated: next public action must remain on public lanes, got `{}`.",
-                next_public_action.command
-            ),
-        ));
-    }
-    if let Some(next_public_action) = status.next_public_action.as_ref()
-        && !command_is_legal_public_command(next_public_action.command.as_str())
-    {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Post-mutation invariant violated: next public action must be one legal public command shape, got `{}`.",
-                next_public_action.command
-            ),
-        ));
-    }
-    if status.state_kind == "terminal" && status.recommended_command.is_some() {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            "Post-mutation invariant violated: terminal states must not emit a recommended command.",
-        ));
-    }
-    if let (Some(recommended_command), Some(next_public_action)) = (
-        status.recommended_command.as_deref(),
-        status.next_public_action.as_ref(),
-    ) && recommended_command != next_public_action.command
-    {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Post-mutation invariant violated: recommended command `{recommended_command}` must match router next public action `{}`.",
-                next_public_action.command
-            ),
-        ));
-    }
+    Ok(())
+}
+
+fn enforce_post_mutation_semantic_workspace_invariant(
+    context: &ExecutionContext,
+    baseline_status: Option<&PlanExecutionStatus>,
+    status: &PlanExecutionStatus,
+) -> Result<(), JsonFailure> {
     if let Some(baseline_status) = baseline_status {
         let semantic_workspace_changed =
             baseline_status.semantic_workspace_tree_id != status.semantic_workspace_tree_id;
@@ -1326,18 +1253,6 @@ fn enforce_post_mutation_status_invariants(
         }
     }
     Ok(())
-}
-
-fn targetless_stale_reconcile_diagnostic(status: &PlanExecutionStatus) -> bool {
-    status.phase_detail == "runtime_reconcile_required"
-        && status
-            .reason_codes
-            .iter()
-            .any(|reason_code| reason_code == "stale_unreviewed_target_missing")
-        && status
-            .blocking_reason_codes
-            .iter()
-            .any(|reason_code| reason_code == "stale_unreviewed_target_missing")
 }
 
 fn semantic_changed_paths_between_statuses(
@@ -1380,6 +1295,18 @@ fn record_workflow_transfer(
         ));
     };
     let status = status_with_shared_routing_or_context(runtime, plan, &context)?;
+    require_public_mutation(
+        &status,
+        PublicMutationRequest {
+            kind: PublicMutationKind::Transfer,
+            task: None,
+            step: None,
+            transfer_mode: Some(PublicTransferMode::WorkflowHandoff),
+            transfer_scope: Some(scope.to_owned()),
+            command_name: "transfer",
+        },
+        FailureClass::ExecutionStateNotReady,
+    )?;
     let operator = current_workflow_operator(runtime, plan, false)?;
     let head_sha = current_head_sha(&runtime.repo_root)?;
     let decision_scope = shared_handoff_decision_scope(
@@ -1509,6 +1436,39 @@ fn record_workflow_transfer(
     })
 }
 
+fn require_close_current_task_public_mutation(
+    status: &PlanExecutionStatus,
+    task: u32,
+) -> Result<(), JsonFailure> {
+    require_public_mutation(
+        status,
+        PublicMutationRequest {
+            kind: PublicMutationKind::CloseCurrentTask,
+            task: Some(task),
+            step: None,
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "close-current-task",
+        },
+        FailureClass::ExecutionStateNotReady,
+    )
+}
+
+fn close_current_task_public_mutation_allowed(status: &PlanExecutionStatus, task: u32) -> bool {
+    decide_public_mutation(
+        status,
+        &PublicMutationRequest {
+            kind: PublicMutationKind::CloseCurrentTask,
+            task: Some(task),
+            step: None,
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "close-current-task",
+        },
+    )
+    .allowed
+}
+
 pub fn close_current_task(
     runtime: &ExecutionRuntime,
     args: &CloseCurrentTaskArgs,
@@ -1624,13 +1584,26 @@ pub fn close_current_task(
                 && current_record.verification_summary_hash == verification_summary_hash.as_str()
             {
                 if !projection_refresh_only_candidate {
-                    let _write_authority = claim_step_write_authority(runtime)?;
-                    let reason_codes = resolve_already_current_task_closure_postconditions(
-                        authoritative_state,
-                        args.task,
-                        &initial_closure_record_id,
-                        &current_record.reviewed_state_id,
-                    )?;
+                    let postconditions_would_mutate =
+                        current_task_closure_postconditions_would_mutate(
+                            authoritative_state,
+                            args.task,
+                            &initial_closure_record_id,
+                            &current_record.reviewed_state_id,
+                        );
+                    let reason_codes = if postconditions_would_mutate
+                        && close_current_task_public_mutation_allowed(&status, args.task)
+                    {
+                        let _write_authority = claim_step_write_authority(runtime)?;
+                        resolve_already_current_task_closure_postconditions(
+                            authoritative_state,
+                            args.task,
+                            &initial_closure_record_id,
+                            &current_record.reviewed_state_id,
+                        )?
+                    } else {
+                        Vec::new()
+                    };
                     return Ok(close_current_task_already_current_output(
                         args.task,
                         initial_closure_record_id,
@@ -1645,13 +1618,25 @@ pub fn close_current_task(
                     verification_result,
                 )
             {
-                let _write_authority = claim_step_write_authority(runtime)?;
-                let mut reason_codes = resolve_already_current_task_closure_postconditions(
+                let postconditions_would_mutate = current_task_closure_postconditions_would_mutate(
                     authoritative_state,
                     args.task,
                     &initial_closure_record_id,
                     &current_record.reviewed_state_id,
-                )?;
+                );
+                let mut reason_codes = if postconditions_would_mutate
+                    && close_current_task_public_mutation_allowed(&status, args.task)
+                {
+                    let _write_authority = claim_step_write_authority(runtime)?;
+                    resolve_already_current_task_closure_postconditions(
+                        authoritative_state,
+                        args.task,
+                        &initial_closure_record_id,
+                        &current_record.reviewed_state_id,
+                    )?
+                } else {
+                    Vec::new()
+                };
                 reason_codes.push(String::from("summary_hash_drift_ignored"));
                 return Ok(close_current_task_already_current_output(
                     args.task,
@@ -1753,7 +1738,6 @@ pub fn close_current_task(
         .as_ref()
         .expect("summary hashes should exist after summary validation");
     {
-        let _write_authority = claim_step_write_authority(runtime)?;
         let mut authoritative_state = load_authoritative_transition_state(&context)?;
         let Some(authoritative_state) = authoritative_state.as_mut() else {
             return Err(JsonFailure::new(
@@ -1794,12 +1778,26 @@ pub fn close_current_task(
                 && current_record.verification_summary_hash == verification_summary_hash.as_str()
             {
                 if !projection_refresh_only_candidate {
-                    let reason_codes = resolve_already_current_task_closure_postconditions(
-                        authoritative_state,
-                        args.task,
-                        &closure_record_id,
-                        &current_record.reviewed_state_id,
-                    )?;
+                    let postconditions_would_mutate =
+                        current_task_closure_postconditions_would_mutate(
+                            authoritative_state,
+                            args.task,
+                            &closure_record_id,
+                            &current_record.reviewed_state_id,
+                        );
+                    let reason_codes = if postconditions_would_mutate
+                        && close_current_task_public_mutation_allowed(&status, args.task)
+                    {
+                        let _write_authority = claim_step_write_authority(runtime)?;
+                        resolve_already_current_task_closure_postconditions(
+                            authoritative_state,
+                            args.task,
+                            &closure_record_id,
+                            &current_record.reviewed_state_id,
+                        )?
+                    } else {
+                        Vec::new()
+                    };
                     return Ok(close_current_task_already_current_output(
                         args.task,
                         closure_record_id,
@@ -1814,12 +1812,25 @@ pub fn close_current_task(
                     verification_result,
                 )
             {
-                let mut reason_codes = resolve_already_current_task_closure_postconditions(
+                let postconditions_would_mutate = current_task_closure_postconditions_would_mutate(
                     authoritative_state,
                     args.task,
                     &closure_record_id,
                     &current_record.reviewed_state_id,
-                )?;
+                );
+                let mut reason_codes = if postconditions_would_mutate
+                    && close_current_task_public_mutation_allowed(&status, args.task)
+                {
+                    let _write_authority = claim_step_write_authority(runtime)?;
+                    resolve_already_current_task_closure_postconditions(
+                        authoritative_state,
+                        args.task,
+                        &closure_record_id,
+                        &current_record.reviewed_state_id,
+                    )?
+                } else {
+                    Vec::new()
+                };
                 reason_codes.push(String::from("summary_hash_drift_ignored"));
                 return Ok(close_current_task_already_current_output(
                     args.task,
@@ -1849,6 +1860,7 @@ pub fn close_current_task(
         CloseCurrentTaskOutcomeClass::Positive => {
             let effective_reviewed_surface_paths =
                 current_task_effective_reviewed_surface_paths(&context, args.task)?;
+            require_close_current_task_public_mutation(&status, args.task)?;
             refresh_task_closure_projections_with_context(
                 runtime,
                 &context,
@@ -2015,6 +2027,7 @@ pub fn close_current_task(
             })
         }
         CloseCurrentTaskOutcomeClass::Negative => {
+            require_close_current_task_public_mutation(&status, args.task)?;
             let _write_authority = claim_step_write_authority(runtime)?;
             let mut authoritative_state = load_authoritative_transition_state(&context)?;
             let Some(authoritative_state) = authoritative_state.as_mut() else {
@@ -2364,12 +2377,30 @@ fn require_advance_late_stage_summary_file<'a>(
     })
 }
 
+fn require_advance_late_stage_public_mutation(
+    status: &PlanExecutionStatus,
+) -> Result<(), JsonFailure> {
+    require_public_mutation(
+        status,
+        PublicMutationRequest {
+            kind: PublicMutationKind::AdvanceLateStage,
+            task: None,
+            step: None,
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "advance-late-stage",
+        },
+        FailureClass::ExecutionStateNotReady,
+    )
+}
+
 pub fn advance_late_stage(
     runtime: &ExecutionRuntime,
     args: &AdvanceLateStageArgs,
 ) -> Result<AdvanceLateStageOutput, JsonFailure> {
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     require_preflight_acceptance(&context)?;
+    let status = status_with_shared_routing_or_context(runtime, &args.plan, &context)?;
     let supplied_result_label = advance_late_stage_result_label(args.result);
     let current_branch_closure = current_authoritative_branch_closure_binding_optional(&context)?;
     let branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
@@ -2512,6 +2543,7 @@ pub fn advance_late_stage(
                 },
             ));
         }
+        require_advance_late_stage_public_mutation(&status)?;
         let summary = read_nonempty_summary_file(summary_file, "summary")?;
         let normalized_summary_hash = summary_hash(&summary);
         let dispatch_id = if let Some(dispatch_id) = candidate_dispatch_id {
@@ -2883,6 +2915,7 @@ pub fn advance_late_stage(
                 },
             ));
         }
+        require_advance_late_stage_public_mutation(&status)?;
         let output = record_branch_closure(
             runtime,
             &RecordBranchClosureArgs {
@@ -2918,6 +2951,7 @@ pub fn advance_late_stage(
             }
         };
         let summary_file = require_advance_late_stage_summary_file(args, "QA")?;
+        require_advance_late_stage_public_mutation(&status)?;
         let output = record_qa(
             runtime,
             &RecordQaArgs {
@@ -2971,6 +3005,20 @@ pub fn advance_late_stage(
         {
             return Ok(output);
         }
+        if current_branch_closure.is_none() {
+            require_public_mutation(
+                &status,
+                PublicMutationRequest {
+                    kind: PublicMutationKind::AdvanceLateStage,
+                    task: None,
+                    step: None,
+                    transfer_mode: None,
+                    transfer_scope: None,
+                    command_name: "advance-late-stage",
+                },
+                FailureClass::ExecutionStateNotReady,
+            )?;
+        }
         return Ok(release_readiness_follow_up_or_requery_output(
             &operator,
             &args.plan,
@@ -2985,6 +3033,7 @@ pub fn advance_late_stage(
             },
         ));
     }
+    require_advance_late_stage_public_mutation(&status)?;
     let summary = read_nonempty_summary_file(summary_file, "summary")?;
     let normalized_summary_hash = summary_hash(&summary);
     let current_branch_closure = authoritative_current_branch_closure_binding(
@@ -3219,7 +3268,8 @@ pub fn record_qa(
     let current_branch_closure = current_authoritative_branch_closure_binding_optional(&context)?;
     let branch_closure_id =
         current_authoritative_branch_closure_id_optional(&context)?.unwrap_or_default();
-    let operator = current_workflow_operator(runtime, &args.plan, false)?;
+    let (operator, runtime_state) =
+        current_workflow_operator_with_runtime_state(runtime, &args.plan, false)?;
     let mut required_follow_up = blocked_follow_up_for_operator(&operator);
     if required_follow_up.is_none()
         && operator.phase == "executing"
@@ -3234,7 +3284,7 @@ pub fn record_qa(
         required_follow_up = Some(String::from("repair_review_state"));
     }
     let qa_refresh_reroute_active =
-        shared_finish_requires_test_plan_refresh(Some(&gate_finish_from_context(&context)))
+        shared_finish_requires_test_plan_refresh(runtime_state.gate_snapshot.gate_finish.as_ref())
             || (operator.phase == "qa_pending"
                 && operator.phase_detail == "test_plan_refresh_required");
     if qa_refresh_reroute_active {
@@ -3326,6 +3376,7 @@ pub fn record_qa(
             && let Some(output) = equivalent_current_browser_qa_rerun(
                 &context,
                 current_branch_closure,
+                &runtime_state.gate_snapshot,
                 args.result.as_str(),
                 &args.summary_file,
                 (args.result == ReviewOutcomeArg::Fail)
@@ -3755,10 +3806,10 @@ pub fn materialize_projections(
     args: &MaterializeProjectionsArgs,
 ) -> Result<MaterializeProjectionsOutput, JsonFailure> {
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    let mode = if args.tracked {
-        ProjectionWriteMode::TrackedMaterialization
-    } else {
+    let mode = if args.state_dir {
         ProjectionWriteMode::StateDirOnly
+    } else {
+        ProjectionWriteMode::ProjectionExport
     };
     let mut written_paths = Vec::new();
     if matches!(
@@ -3793,8 +3844,11 @@ pub fn materialize_projections(
         written_paths,
         runtime_truth_changed: false,
         trace_summary: match mode {
-            ProjectionWriteMode::TrackedMaterialization => String::from(
-                "Materialized tracked projection files from authoritative runtime state.",
+            ProjectionWriteMode::ProjectionExport if args.tracked => String::from(
+                "Materialized projection export files from authoritative runtime state; `--tracked` is a deprecated alias and approved plan/evidence files were not modified.",
+            ),
+            ProjectionWriteMode::ProjectionExport => String::from(
+                "Materialized projection export files from authoritative runtime state; approved plan/evidence files were not modified.",
             ),
             ProjectionWriteMode::StateDirOnly => String::from(
                 "Materialized state-dir projection files from authoritative runtime state.",
@@ -4222,6 +4276,7 @@ fn equivalent_current_final_review_rerun(
 fn equivalent_current_browser_qa_rerun(
     context: &ExecutionContext,
     current_branch_closure: &CurrentBranchClosureBinding,
+    gate_snapshot: &RuntimeGateSnapshot,
     result: &str,
     summary_file: &Path,
     required_follow_up: Option<String>,
@@ -4240,9 +4295,10 @@ fn equivalent_current_browser_qa_rerun(
     if !matches_current_record {
         return Ok(None);
     }
-    let gate_review = gate_review_from_context(context);
-    let gate_finish = gate_finish_from_context(context);
-    if rerun_invalidated_by_repo_writes(&gate_review, &gate_finish) {
+    if rerun_invalidated_by_repo_writes(
+        gate_snapshot.gate_review.as_ref(),
+        gate_snapshot.gate_finish.as_ref(),
+    ) {
         return Ok(None);
     }
     let current_record = authoritative_state.current_browser_qa_record();
@@ -4300,18 +4356,20 @@ fn equivalent_current_browser_qa_rerun_allowed(
 }
 
 fn rerun_invalidated_by_repo_writes(
-    gate_review: &crate::execution::state::GateResult,
-    gate_finish: &crate::execution::state::GateResult,
+    gate_review: Option<&crate::execution::state::GateResult>,
+    gate_finish: Option<&crate::execution::state::GateResult>,
 ) -> bool {
     const REPO_WRITE_INVALIDATION_CODES: &[&str] = &[
         "review_artifact_worktree_dirty",
         REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED,
     ];
-    let gate_has_reason = |gate: &crate::execution::state::GateResult| {
-        gate.reason_codes.iter().any(|code| {
-            REPO_WRITE_INVALIDATION_CODES
-                .iter()
-                .any(|expected| code == expected)
+    let gate_has_reason = |gate: Option<&crate::execution::state::GateResult>| {
+        gate.is_some_and(|gate| {
+            gate.reason_codes.iter().any(|code| {
+                REPO_WRITE_INVALIDATION_CODES
+                    .iter()
+                    .any(|expected| code == expected)
+            })
         })
     };
     gate_has_reason(gate_review) || gate_has_reason(gate_finish)
@@ -4351,18 +4409,32 @@ fn current_workflow_operator(
     plan: &Path,
     external_review_result_ready: bool,
 ) -> Result<ExecutionRoutingState, JsonFailure> {
+    let (routing, _) =
+        current_workflow_operator_with_runtime_state(runtime, plan, external_review_result_ready)?;
+    Ok(routing)
+}
+
+fn current_workflow_operator_with_runtime_state(
+    runtime: &ExecutionRuntime,
+    plan: &Path,
+    external_review_result_ready: bool,
+) -> Result<(ExecutionRoutingState, RuntimeState), JsonFailure> {
     // Mutators consume the execution-owned routing boundary here instead of calling
     // `query_workflow_routing_state_for_runtime` directly, but they still project the same
     // execution query contract through the shared router decision.
     let read_scope = load_execution_read_scope_for_mutation(runtime, plan, true)?;
-    let (mut routing, route_decision) =
-        project_runtime_routing_state(runtime, &read_scope, external_review_result_ready)?;
+    let (mut routing, route_decision, runtime_state) =
+        project_runtime_routing_state_with_reduced_state(
+            &read_scope,
+            external_review_result_ready,
+            false,
+        )?;
     routing.phase = route_decision.phase;
     routing.phase_detail = route_decision.phase_detail;
     routing.review_state_status = route_decision.review_state_status;
     routing.next_action = route_decision.next_action;
     routing.recommended_command = route_decision.recommended_command;
-    Ok(routing)
+    Ok((routing, runtime_state))
 }
 
 fn negative_result_required_follow_up(
@@ -5288,9 +5360,15 @@ fn final_review_dispatch_lineage_is_current_for_rerun(
     expected_branch_closure_id: &str,
     expected_dispatch_id: &str,
 ) -> Result<bool, JsonFailure> {
-    let gate_review = gate_review_from_context(context);
-    let gate_finish = gate_finish_from_context(context);
-    if shared_final_review_dispatch_still_current(Some(&gate_review), Some(&gate_finish)) {
+    let runtime_state = crate::execution::reducer::reduce_runtime_state(
+        context,
+        Some(authoritative_state),
+        semantic_workspace_snapshot(context)?,
+    )?;
+    if shared_final_review_dispatch_still_current(
+        runtime_state.gate_snapshot.gate_review.as_ref(),
+        runtime_state.gate_snapshot.gate_finish.as_ref(),
+    ) {
         return match ensure_final_review_dispatch_id_matches(context, expected_dispatch_id) {
             Ok(_) => Ok(true),
             Err(error)

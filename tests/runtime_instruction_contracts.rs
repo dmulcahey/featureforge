@@ -927,7 +927,7 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_ne
 
     assert_contains(
         &readme_content,
-        "the approved plan checklist and execution-evidence markdown are optional materialized projections; normal runtime commands render current read models under the runtime state directory instead of mutating tracked docs paths",
+        "normal runtime commands render current read models under the runtime state directory; explicit materialization writes repo-local human-readable exports under `docs/featureforge/projections/` instead of mutating approved plan or evidence files",
         "README.md",
     );
     assert_not_contains(
@@ -937,12 +937,12 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_ne
     );
     assert_contains(
         &subagent_skill,
-        "Runtime read models are rendered under the state directory during normal execution. Tracked approved-plan checklist and evidence markdown are optional exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.",
+        "Runtime read models are rendered under the state directory during normal execution. Repo-local projection files under `docs/featureforge/projections/` are optional human-readable exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.",
         "skills/subagent-driven-development/SKILL.md",
     );
     assert_contains(
         &subagent_skill,
-        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path> --tracked` only when the user explicitly needs tracked human-readable exports. Materialization is never required normal progress.",
+        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` only when the user explicitly needs repo-local human-readable projection exports. Approved plan and evidence files are not modified, and materialization is never required for normal progress.",
         "skills/subagent-driven-development/SKILL.md",
     );
     assert_not_contains(
@@ -952,12 +952,12 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_ne
     );
     assert_contains(
         &executing_plans_skill,
-        "Runtime read models are rendered under the state directory during normal execution. Tracked approved-plan checklist and evidence markdown are optional exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.",
+        "Runtime read models are rendered under the state directory during normal execution. Repo-local projection files under `docs/featureforge/projections/` are optional human-readable exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.",
         "skills/executing-plans/SKILL.md",
     );
     assert_contains(
         &executing_plans_skill,
-        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path> --tracked` only when the user explicitly needs tracked human-readable exports. Materialization is never required normal progress.",
+        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` only when the user explicitly needs repo-local human-readable projection exports. Approved plan and evidence files are not modified, and materialization is never required for normal progress.",
         "skills/executing-plans/SKILL.md",
     );
     assert_not_contains(

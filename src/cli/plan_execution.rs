@@ -333,9 +333,16 @@ pub struct MaterializeProjectionsArgs {
     pub plan: PathBuf,
     #[arg(long, value_enum, default_value = "execution")]
     pub scope: MaterializeProjectionScopeArg,
-    #[arg(long = "tracked", conflicts_with = "state_dir")]
+    #[arg(
+        long = "tracked",
+        conflicts_with = "state_dir",
+        help = "Deprecated alias for repo-local projection export; approved plan and evidence files are not modified."
+    )]
     pub tracked: bool,
-    #[arg(long = "state-dir")]
+    #[arg(
+        long = "state-dir",
+        help = "Write projections only under the runtime state directory."
+    )]
     pub state_dir: bool,
 }
 

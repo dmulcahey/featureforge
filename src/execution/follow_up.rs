@@ -1,5 +1,9 @@
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
+use crate::git::sha256_hex;
+
 use crate::execution::workflow_operator_requery_command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +25,66 @@ pub(crate) enum FollowUpKind {
 pub(crate) enum FollowUpAliasContext {
     PublicRouting,
     PersistedRepairState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct RepairFollowUpRecord {
+    pub(crate) kind: RepairFollowUpKind,
+    pub(crate) target_scope: RepairTargetScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) target_task: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) target_step: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) target_record_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) semantic_workspace_state_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_route_decision_hash: Option<String>,
+    pub(crate) created_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) created_at: Option<String>,
+    pub(crate) expires_on_plan_fingerprint_change: bool,
+}
+
+pub(crate) fn repair_follow_up_source_decision_hash(decision: &impl Serialize) -> Option<String> {
+    serde_json::to_vec(decision)
+        .ok()
+        .map(|serialized| sha256_hex(&serialized))
+}
+
+pub fn execution_step_repair_target_id(task: u32, step: u32) -> String {
+    format!("execution-step-{task}-{step}")
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RepairFollowUpKind {
+    RecordBranchClosure,
+    AdvanceLateStage,
+    RecordFinalReview,
+    RecordQa,
+    CloseTask,
+    RepairReviewState,
+    ExecutionReentry,
+    RequestExternalReview,
+    WaitForExternalReviewResult,
+    RunVerification,
+    ResolveReleaseBlocker,
+    RecordHandoff,
+    GateReview,
+    GateFinish,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RepairTargetScope {
+    TaskClosure,
+    BranchClosure,
+    ReleaseReadiness,
+    FinalReview,
+    Qa,
+    ExecutionStep,
 }
 
 struct FollowUpAliasRule {
@@ -175,6 +239,69 @@ impl FollowUpKind {
                 external_review_result_ready,
             )),
             Self::CloseCurrentTask => None,
+        }
+    }
+}
+
+impl RepairFollowUpKind {
+    pub(crate) fn from_public_follow_up(kind: FollowUpKind) -> Self {
+        match kind {
+            FollowUpKind::RepairReviewState => Self::RepairReviewState,
+            FollowUpKind::AdvanceLateStage => Self::AdvanceLateStage,
+            FollowUpKind::ExecutionReentry => Self::ExecutionReentry,
+            FollowUpKind::CloseCurrentTask => Self::CloseTask,
+            FollowUpKind::RequestExternalReview => Self::RequestExternalReview,
+            FollowUpKind::WaitForExternalReviewResult => Self::WaitForExternalReviewResult,
+            FollowUpKind::RunVerification => Self::RunVerification,
+            FollowUpKind::ResolveReleaseBlocker => Self::ResolveReleaseBlocker,
+            FollowUpKind::RecordHandoff => Self::RecordHandoff,
+            FollowUpKind::GateReview => Self::GateReview,
+            FollowUpKind::GateFinish => Self::GateFinish,
+        }
+    }
+
+    pub(crate) fn from_persisted_token(token: &str) -> Option<Self> {
+        match token.trim() {
+            "record_branch_closure" | "branch_closure" => Some(Self::RecordBranchClosure),
+            "advance_late_stage" => Some(Self::AdvanceLateStage),
+            "record_task_closure" | "close_current_task" => Some(Self::CloseTask),
+            "execution_reentry" => Some(Self::ExecutionReentry),
+            "repair_review_state" | "record_pivot" => Some(Self::RepairReviewState),
+            "request_external_review" => Some(Self::RequestExternalReview),
+            "wait_for_external_review_result" => Some(Self::WaitForExternalReviewResult),
+            "run_verification" => Some(Self::RunVerification),
+            "resolve_release_blocker" => Some(Self::ResolveReleaseBlocker),
+            "record_handoff" => Some(Self::RecordHandoff),
+            "gate_review" => Some(Self::GateReview),
+            "gate_finish" => Some(Self::GateFinish),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn persisted_token(self) -> &'static str {
+        match self {
+            Self::RecordBranchClosure => "record_branch_closure",
+            Self::AdvanceLateStage => "advance_late_stage",
+            Self::RecordFinalReview => "record_final_review",
+            Self::RecordQa => "record_qa",
+            Self::CloseTask => "record_task_closure",
+            Self::RepairReviewState => "repair_review_state",
+            Self::ExecutionReentry => "execution_reentry",
+            Self::RequestExternalReview => "request_external_review",
+            Self::WaitForExternalReviewResult => "wait_for_external_review_result",
+            Self::RunVerification => "run_verification",
+            Self::ResolveReleaseBlocker => "resolve_release_blocker",
+            Self::RecordHandoff => "record_handoff",
+            Self::GateReview => "gate_review",
+            Self::GateFinish => "gate_finish",
+        }
+    }
+
+    pub(crate) fn public_token(self) -> &'static str {
+        match self {
+            Self::RecordBranchClosure | Self::AdvanceLateStage => "advance_late_stage",
+            Self::CloseTask => "close_current_task",
+            other => other.persisted_token(),
         }
     }
 }

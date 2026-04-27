@@ -5,6 +5,9 @@ use std::path::{Component, Path, PathBuf};
 use jiff::Timestamp;
 use sha2::{Digest, Sha256};
 
+use crate::contracts::task_contract::{
+    RuntimeExecutionNoteProjectionBlock, known_runtime_step_projection_lines,
+};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::final_review::{
     authoritative_strategy_checkpoint_fingerprint_checked, parse_artifact_document,
@@ -22,11 +25,16 @@ use crate::paths::{
 };
 
 const REGENERATED_ARTIFACT_GENERATED_AT: &str = "1970-01-01T00:00:00Z";
+pub(crate) const PROJECTION_EXPORT_ROOT_REL: &str = "docs/featureforge/projections/";
+
+pub(crate) fn is_projection_export_path(path: &str) -> bool {
+    path.starts_with(PROJECTION_EXPORT_ROOT_REL)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProjectionWriteMode {
     StateDirOnly,
-    TrackedMaterialization,
+    ProjectionExport,
     Disabled,
 }
 
@@ -34,7 +42,7 @@ impl ProjectionWriteMode {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::StateDirOnly => "state_dir_only",
-            Self::TrackedMaterialization => "tracked_materialization",
+            Self::ProjectionExport => "projection_export",
             Self::Disabled => "disabled",
         }
     }
@@ -47,9 +55,13 @@ pub(crate) fn normal_projection_write_mode() -> Result<ProjectionWriteMode, Json
             "tracked" | "tracked-materialization" | "tracked_materialization" => {
                 Err(JsonFailure::new(
                     FailureClass::InvalidCommandInput,
-                    "FEATUREFORGE_PROJECTION_WRITE_MODE=tracked is not valid for normal commands; use `featureforge plan execution materialize-projections --tracked` for tracked exports.",
+                    "FEATUREFORGE_PROJECTION_WRITE_MODE=tracked is not valid for normal commands; use `featureforge plan execution materialize-projections` for projection exports.",
                 ))
             }
+            "projection-export" | "projection_export" => Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "FEATUREFORGE_PROJECTION_WRITE_MODE=projection-export is not valid for normal commands; projection exports are explicit materialize-projections output only.",
+            )),
             "disabled" => Ok(ProjectionWriteMode::Disabled),
             _ => Err(JsonFailure::new(
                 FailureClass::InvalidCommandInput,
@@ -178,11 +190,17 @@ pub(crate) fn execution_projection_read_model_metadata(
             .to_string_lossy()
             .into_owned(),
     ];
-    let mut tracked_projection_paths = vec![context.plan_rel.clone(), context.evidence_rel.clone()];
+    let plan_export_path = execution_plan_projection_export_rel_path(&context.plan_rel)?;
+    let evidence_export_path = execution_evidence_projection_export_rel_path(&context.plan_rel)?;
+    let mut tracked_projection_paths = vec![plan_export_path.clone(), evidence_export_path.clone()];
     let rendered = render_execution_projections(context);
-    let mut tracked_projections_current =
-        tracked_projection_matches(&context.plan_abs, &rendered.plan)?
-            && tracked_projection_matches(&context.evidence_abs, &rendered.evidence)?;
+    let mut tracked_projections_current = tracked_projection_matches(
+        &context.runtime.repo_root.join(&plan_export_path),
+        &rendered.plan,
+    )? && tracked_projection_matches(
+        &context.runtime.repo_root.join(&evidence_export_path),
+        &rendered.evidence,
+    )?;
     if let Some(authoritative_state) = load_authoritative_transition_state_relaxed(context)? {
         let late_state_dir = late_stage_projection_artifact_read_models(
             &context.runtime,
@@ -196,7 +214,7 @@ pub(crate) fn execution_projection_read_model_metadata(
             &context.runtime,
             context,
             &authoritative_state,
-            ProjectionWriteMode::TrackedMaterialization,
+            ProjectionWriteMode::ProjectionExport,
             false,
         )?;
         for artifact in late_tracked {
@@ -232,19 +250,21 @@ pub(crate) fn write_execution_projection_read_models(
             )?;
             written.push(evidence_path.to_string_lossy().into_owned());
         }
-        ProjectionWriteMode::TrackedMaterialization => {
-            write_atomic(
-                &context.plan_abs,
+        ProjectionWriteMode::ProjectionExport => {
+            let plan_path = write_execution_projection_export(
+                &context.runtime,
+                &context.plan_rel,
+                "execution-plan.md",
                 &rendered.plan,
-                "Could not write tracked plan projection",
             )?;
-            written.push(context.plan_rel.clone());
-            write_atomic(
-                &context.evidence_abs,
+            written.push(plan_path);
+            let evidence_path = write_execution_projection_export(
+                &context.runtime,
+                &context.plan_rel,
+                "execution-evidence.md",
                 &rendered.evidence,
-                "Could not write tracked execution evidence projection",
             )?;
-            written.push(context.evidence_rel.clone());
+            written.push(evidence_path);
         }
         ProjectionWriteMode::Disabled => {}
     }
@@ -540,6 +560,7 @@ fn render_plan_projection_source(
     execution_mode: &str,
     steps: &[PlanStepState],
 ) -> String {
+    let known_runtime_steps = known_runtime_step_projection_lines(original_source);
     let step_map = steps
         .iter()
         .map(|step| ((step.task_number, step.step_number), step))
@@ -547,14 +568,27 @@ fn render_plan_projection_source(
     let lines = original_source.lines().collect::<Vec<_>>();
     let mut rendered = Vec::new();
     let mut current_task = None::<u32>;
-    let mut suppress_note = false;
+    let mut current_task_files_seen = false;
+    let mut in_fenced_block = false;
+    let mut pending_note_after_step = false;
+    let mut suppress_note_block = None::<RuntimeExecutionNoteProjectionBlock>;
 
     for line in lines {
-        if suppress_note {
-            if line.is_empty() || line.trim_start().starts_with("**Execution Note:**") {
+        if let Some(note_block) = suppress_note_block {
+            if note_block.continues(line) {
                 continue;
             }
-            suppress_note = false;
+            suppress_note_block = None;
+        }
+        if pending_note_after_step {
+            if line.trim().is_empty() {
+                continue;
+            }
+            pending_note_after_step = false;
+            if let Some(note_block) = RuntimeExecutionNoteProjectionBlock::start(line) {
+                suppress_note_block = Some(note_block);
+                continue;
+            }
         }
 
         if line.starts_with("**Execution Mode:** ") {
@@ -567,12 +601,34 @@ fn render_plan_projection_source(
                 .split(':')
                 .next()
                 .and_then(|value| value.parse::<u32>().ok());
+            current_task_files_seen = false;
+            in_fenced_block = false;
             rendered.push(line.to_owned());
             continue;
         }
 
-        if let Some((_, step_number, _)) = parse_step_line(line)
+        if line.starts_with("## ") {
+            current_task = None;
+            current_task_files_seen = false;
+            in_fenced_block = false;
+        }
+        let trimmed = line.trim();
+        if trimmed == "**Files:**" {
+            current_task_files_seen = true;
+        }
+        if trimmed.starts_with("```") {
+            in_fenced_block = !in_fenced_block;
+            rendered.push(line.to_owned());
+            continue;
+        }
+
+        if let Some((_, step_number, title)) = parse_step_line(line)
             && let Some(task_number) = current_task
+            && !in_fenced_block
+            && current_task_files_seen
+            && known_runtime_steps
+                .get(&(task_number, step_number))
+                .is_some_and(|known_title| known_title == &title)
             && let Some(step) = step_map.get(&(task_number, step_number))
         {
             let mark = if step.checked { 'x' } else { ' ' };
@@ -588,7 +644,7 @@ fn render_plan_projection_source(
                     step.note_summary
                 ));
             }
-            suppress_note = true;
+            pending_note_after_step = true;
             continue;
         }
 
@@ -838,6 +894,66 @@ pub(crate) fn state_dir_projection_path(
         .join("tracked-projections")
         .join(&runtime.safe_branch)
         .join(relative_path))
+}
+
+fn execution_projection_export_plan_stem(plan_rel: &str) -> Result<String, JsonFailure> {
+    projection_repo_relative_path(plan_rel)?
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|stem| !stem.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                format!("Projection export plan path must have a file stem, got {plan_rel}."),
+            )
+        })
+}
+
+fn execution_projection_export_rel_path(
+    plan_rel: &str,
+    file_name: &str,
+) -> Result<String, JsonFailure> {
+    let stem = execution_projection_export_plan_stem(plan_rel)?;
+    normalize_repo_relative_path(
+        &Path::new(PROJECTION_EXPORT_ROOT_REL)
+            .join(stem)
+            .join(file_name)
+            .to_string_lossy(),
+    )
+    .map_err(JsonFailure::from)
+}
+
+fn execution_plan_projection_export_rel_path(plan_rel: &str) -> Result<String, JsonFailure> {
+    execution_projection_export_rel_path(plan_rel, "execution-plan.md")
+}
+
+fn execution_evidence_projection_export_rel_path(plan_rel: &str) -> Result<String, JsonFailure> {
+    execution_projection_export_rel_path(plan_rel, "execution-evidence.md")
+}
+
+fn write_execution_projection_export(
+    runtime: &ExecutionRuntime,
+    plan_rel: &str,
+    file_name: &str,
+    source: &str,
+) -> Result<String, JsonFailure> {
+    let rel_path = execution_projection_export_rel_path(plan_rel, file_name)?;
+    let base_rel = Path::new(&rel_path).parent().ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            format!("Projection export path {rel_path} has no parent directory."),
+        )
+    })?;
+    let base = runtime.repo_root.join(base_rel);
+    let target = normalize_project_artifact_target(&base, Path::new(file_name))?;
+    write_runtime_owned_project_artifact(
+        &base,
+        &target,
+        source,
+        "Could not write projection export",
+    )?;
+    Ok(rel_path)
 }
 
 pub(crate) fn read_state_dir_projection(
@@ -1768,10 +1884,8 @@ fn late_stage_projection_base_dir(
         ProjectionWriteMode::StateDirOnly | ProjectionWriteMode::Disabled => {
             project_artifact_dir(runtime)
         }
-        ProjectionWriteMode::TrackedMaterialization => repo_root
-            .join("docs")
-            .join("featureforge")
-            .join("projections")
+        ProjectionWriteMode::ProjectionExport => repo_root
+            .join(PROJECTION_EXPORT_ROOT_REL)
             .join(&runtime.safe_branch),
     }
 }
@@ -1797,14 +1911,14 @@ fn write_late_stage_projection_artifact(
                 source: source.to_owned(),
             })
         }
-        ProjectionWriteMode::TrackedMaterialization => {
+        ProjectionWriteMode::ProjectionExport => {
             let base = late_stage_projection_base_dir(runtime, repo_root, mode);
             let target = normalize_project_artifact_target(&base, Path::new(artifact_name))?;
             if write {
                 write_atomic(
                     &target,
                     source,
-                    "Could not write tracked late-stage projection",
+                    "Could not write late-stage projection export",
                 )?;
             }
             let repo_relative = target.strip_prefix(repo_root).map_err(|_| {
@@ -1955,6 +2069,47 @@ mod tests {
             safe_branch: String::from("feature-runtime"),
             state_dir: root.join("state"),
         }
+    }
+
+    fn valid_task_source(step_projection: &str) -> String {
+        format!(
+            "# Plan\n\
+## Task 1: Build\n\
+**Spec Coverage:** REQ-1\n\
+**Goal:** Build the thing.\n\
+**Context:**\n\
+- The plan has enough context for deterministic execution.\n\
+**Constraints:**\n\
+- Preserve projection boundaries.\n\
+**Done when:**\n\
+- The projection is verified.\n\
+**Files:**\n\
+- Modify: `src/lib.rs`\n\
+{step_projection}"
+        )
+    }
+
+    #[test]
+    fn plan_projection_renderer_leaves_fenced_step_shaped_content_semantic() {
+        let source = valid_task_source(
+            "- [ ] **Step 1: Build the thing**\n```\n  - [x] **Step 1: Build the thing**\n```\n",
+        );
+        let rendered = render_plan_projection_source(
+            &source,
+            "featureforge:executing-plans",
+            &[PlanStepState {
+                task_number: 1,
+                step_number: 1,
+                title: String::from("Build the thing"),
+                checked: true,
+                note_state: None,
+                note_summary: String::new(),
+            }],
+        );
+
+        assert!(rendered.contains(
+            "- [x] **Step 1: Build the thing**\n```\n  - [x] **Step 1: Build the thing**\n```"
+        ));
     }
 
     #[test]

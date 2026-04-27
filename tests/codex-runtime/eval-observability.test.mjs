@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { getEvalDir } from '../evals/helpers/eval-observability.mjs';
+import { evalsEnabled, requireEvalEnv, runJsonJudgeEval } from '../evals/helpers/openai-judge.mjs';
 import {
   REPO_ROOT,
   readUtf8,
@@ -447,6 +448,39 @@ test('getEvalDir honors FEATUREFORGE_STATE_DIR', () => {
   } finally {
     restoreEnv('FEATUREFORGE_STATE_DIR', originalFeatureForgeStateDir);
   }
+});
+
+test('getEvalDir treats whitespace FEATUREFORGE_STATE_DIR as absent', () => {
+  assert.equal(getEvalDir({ FEATUREFORGE_STATE_DIR: '  ' }), path.join(os.homedir(), '.featureforge', 'evals'));
+});
+
+test('eval judge helpers gate deterministic eval execution without live credentials', async () => {
+  assert.equal(evalsEnabled({ FEATUREFORGE_RUN_EVALS: '1' }), true);
+  assert.equal(evalsEnabled({ RUN_EVALS: '1' }), true);
+  assert.equal(evalsEnabled({ EVALS: '1' }), true);
+  assert.equal(evalsEnabled({ FEATUREFORGE_RUN_EVALS: '0', RUN_EVALS: '0', EVALS: '0' }), false);
+
+  assert.deepEqual(requireEvalEnv({}), {
+    enabled: false,
+    reason: 'evaluator disabled; set FEATUREFORGE_RUN_EVALS=1, RUN_EVALS=1, or EVALS=1',
+  });
+  assert.deepEqual(requireEvalEnv({ FEATUREFORGE_RUN_EVALS: '1' }), {
+    enabled: false,
+    reason: 'OPENAI_API_KEY missing',
+  });
+  assert.deepEqual(requireEvalEnv({ FEATUREFORGE_RUN_EVALS: '1', OPENAI_API_KEY: 'test-key' }), {
+    enabled: false,
+    reason: 'OPENAI_EVAL_MODEL or EVAL_MODEL missing',
+  });
+  assert.deepEqual(requireEvalEnv({
+    FEATUREFORGE_RUN_EVALS: '1',
+    OPENAI_API_KEY: 'test-key',
+    OPENAI_EVAL_MODEL: 'test-model',
+  }), { enabled: true });
+
+  const result = await runJsonJudgeEval({ name: 'disabled-eval', system: '', prompt: '' }, {});
+  assert.equal(result.skipped, true);
+  assert.match(result.reason, /evaluator disabled/);
 });
 
 test('observability case payloads allow variant-specific structured details while preserving envelope ownership', () => {
