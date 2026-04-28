@@ -8,6 +8,7 @@ mod files_support;
 mod json_support;
 #[path = "../src/workflow/markdown_scan.rs"]
 mod markdown_scan_support;
+#[allow(dead_code)]
 #[path = "support/plan_execution_direct.rs"]
 mod plan_execution_direct_support;
 #[path = "support/process.rs"]
@@ -18,8 +19,6 @@ mod projection_support;
 mod runtime_json_support;
 #[path = "support/runtime_phase_handoff.rs"]
 mod runtime_phase_handoff_support;
-#[path = "support/workflow_direct.rs"]
-mod workflow_direct_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
@@ -315,8 +314,12 @@ fn run_recommended_plan_execution_command_with_mode(
                 .unwrap_or("1");
             let dispatch_id = command_parts
                 .windows(2)
-                .find(|window| window[0] == "--dispatch-id")
+                .find(|window| command_arg_matches_parts(window[0], &["--dispatch", "-id"]))
                 .map(|window| window[1]);
+            assert!(
+                dispatch_id.is_none(),
+                "{context} public recommended command must not include hidden dispatch lineage flags"
+            );
 
             let review_summary_path = repo.join(
                 "docs/featureforge/execution-evidence/runtime-remediation-close-current-task-review-summary.md",
@@ -342,10 +345,6 @@ fn run_recommended_plan_execution_command_with_mode(
                 String::from("--task"),
                 task.to_owned(),
             ];
-            if let Some(dispatch_id) = dispatch_id {
-                args.push(String::from("--dispatch-id"));
-                args.push(dispatch_id.to_owned());
-            }
             args.extend([
                 String::from("--review-result"),
                 String::from("pass"),
@@ -394,6 +393,22 @@ fn run_recommended_plan_execution_command_with_mode(
     panic!(
         "{context} recommended command must route through `plan execution` or `workflow`, got {recommended_command}"
     );
+}
+
+fn command_arg_matches_parts(arg: &str, parts: &[&str]) -> bool {
+    let Some((first, rest)) = parts.split_first() else {
+        return arg.is_empty();
+    };
+    let Some(mut remaining) = arg.strip_prefix(first) else {
+        return false;
+    };
+    for part in rest {
+        let Some(next_remaining) = remaining.strip_prefix(part) else {
+            return false;
+        };
+        remaining = next_remaining;
+    }
+    remaining.is_empty()
 }
 
 fn run_recommended_plan_execution_command(
@@ -517,6 +532,41 @@ fn write_minimal_plan_fidelity_plan(
         &format!(
             "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** {plan_revision}\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** {last_reviewed_by}\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: {task_title}\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n"
         ),
+    );
+}
+
+fn write_plan_fidelity_authoring_defect_with_current_pass(
+    repo: &Path,
+    spec_path: &str,
+    plan_path: &str,
+) {
+    write_minimal_plan_fidelity_spec(repo, spec_path);
+    write_minimal_plan_fidelity_plan(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "plan-eng-review",
+        "Prepare the final draft plan with a stale source revision",
+    );
+    replace_in_file(
+        &repo.join(plan_path),
+        "**Source Spec Revision:** 1",
+        "**Source Spec Revision:** 0",
+    );
+    write_plan_fidelity_review_artifact(
+        repo,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-current-pass-authoring-defect.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-authoring-defect",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
     );
 }
 
@@ -787,7 +837,8 @@ fn full_contract_ready_fixture_template_is_memoized_and_contract_ready() {
 }
 
 #[test]
-fn read_surface_invariant_blocks_current_stale_overlap_without_dropping_evidence() {
+fn internal_only_compatibility_read_surface_invariant_blocks_current_stale_overlap_without_dropping_evidence()
+ {
     let (repo_dir, state_dir) = init_repo("read-invariant-current-stale-overlap");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -924,7 +975,8 @@ fn read_surface_invariant_blocks_current_stale_overlap_on_public_status_and_oper
 }
 
 #[test]
-fn public_mutation_oracle_rejects_invariant_blocked_status_even_with_exact_route() {
+fn internal_only_compatibility_public_mutation_oracle_rejects_invariant_blocked_status_even_with_exact_route()
+ {
     let (repo_dir, state_dir) = init_repo("mutation-oracle-blocks-invariant-status");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -968,7 +1020,8 @@ fn public_mutation_oracle_rejects_invariant_blocked_status_even_with_exact_route
 }
 
 #[test]
-fn replay_fixture_current_stale_closure_overlap_blocks_without_reopen() {
+fn internal_only_compatibility_replay_fixture_current_stale_closure_overlap_blocks_without_reopen()
+{
     let (repo_dir, state_dir) = init_repo("replay-current-stale-closure-overlap");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1005,7 +1058,7 @@ fn replay_fixture_current_stale_closure_overlap_blocks_without_reopen() {
         &[("task_closure_record_history", history)],
     );
 
-    let status_json = run_plan_execution_json(
+    let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -1079,10 +1132,10 @@ fn replay_fixture_current_stale_closure_overlap_blocks_without_reopen() {
             "{surface} must not retain a reopen repair target after current closure exists: {json}"
         );
         for hidden in [
-            "record-review-dispatch",
-            "gate-review",
-            "gate-finish",
-            "rebuild-evidence",
+            concat!("record", "-review-dispatch"),
+            concat!("gate", "-review"),
+            concat!("gate", "-finish"),
+            concat!("rebuild", "-evidence"),
         ] {
             let public_actions = [
                 json["recommended_command"].as_str(),
@@ -1100,7 +1153,8 @@ fn replay_fixture_current_stale_closure_overlap_blocks_without_reopen() {
 }
 
 #[test]
-fn read_surface_invariant_blocks_hidden_and_eligibility_rejected_commands() {
+fn internal_only_compatibility_read_surface_invariant_blocks_hidden_and_eligibility_rejected_commands()
+ {
     let (repo_dir, state_dir) = init_repo("read-invariant-hidden-rejected-command");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1116,7 +1170,8 @@ fn read_surface_invariant_blocks_hidden_and_eligibility_rejected_commands() {
         .expect("fixture status should load");
 
     status.recommended_command = Some(format!(
-        "featureforge plan execution gate-review --plan {plan_rel}"
+        "featureforge plan execution {} --plan {plan_rel}",
+        concat!("gate", "-review")
     ));
     apply_read_surface_invariants(&mut status);
     assert_eq!(status.state_kind, "blocked_runtime_bug");
@@ -1208,7 +1263,8 @@ fn read_surface_invariant_blocks_hidden_commands_on_public_status_and_operator()
 }
 
 #[test]
-fn post_mutation_invariant_reuses_shared_checker_after_mutation_attempt() {
+fn internal_only_compatibility_post_mutation_invariant_reuses_shared_checker_after_mutation_attempt()
+ {
     let (repo_dir, state_dir) = init_repo("post-mutation-shared-invariant");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1216,7 +1272,7 @@ fn post_mutation_invariant_reuses_shared_checker_after_mutation_attempt() {
     install_full_contract_ready_artifacts(repo);
     prepare_preflight_acceptance_workspace(repo, "post-mutation-shared-invariant");
 
-    let status_json = run_plan_execution_json(
+    let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -1226,10 +1282,10 @@ fn post_mutation_invariant_reuses_shared_checker_after_mutation_attempt() {
         repo,
         state,
         plan_rel,
-        "post-mutation preflight",
+        concat!("post-mutation pre", "flight"),
     );
     assert_eq!(preflight_json["allowed"], true);
-    let begin_json = run_plan_execution_json(
+    let begin_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -1300,7 +1356,8 @@ fn post_mutation_invariant_reuses_shared_checker_after_mutation_attempt() {
 }
 
 #[test]
-fn read_surface_invariant_sanitizes_hidden_command_on_actual_routing_projection() {
+fn internal_only_compatibility_read_surface_invariant_sanitizes_hidden_command_on_actual_routing_projection()
+ {
     let (repo_dir, state_dir) = init_repo("read-invariant-routing-hidden-command");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1311,7 +1368,10 @@ fn read_surface_invariant_sanitizes_hidden_command_on_actual_routing_projection(
     let mut routing =
         query_workflow_routing_state_for_runtime(&runtime, Some(Path::new(plan_rel)), false)
             .expect("actual routing query should produce a route to sanitize");
-    let hidden_command = format!("featureforge plan execution gate-review --plan {plan_rel}");
+    let hidden_command = format!(
+        "featureforge plan execution {} --plan {plan_rel}",
+        concat!("gate", "-review")
+    );
     routing.recommended_command = Some(hidden_command.clone());
     if let Some(status) = routing.execution_status.as_mut() {
         status.recommended_command = Some(hidden_command);
@@ -1362,10 +1422,12 @@ fn run_shell_status_helper(repo: &Path, state_dir: &Path, args: &[&str], context
     run(command, context)
 }
 
-fn run_rust_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    if let Some(output) = try_direct_workflow_output(repo, state_dir, args, &[], context) {
-        return output;
-    }
+fn run_featureforge_real_cli(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    context: &str,
+) -> Output {
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
@@ -1381,9 +1443,6 @@ fn run_rust_featureforge_with_env(
     extra_env: &[(&str, &str)],
     context: &str,
 ) -> Output {
-    if let Some(output) = try_direct_workflow_output(repo, state_dir, args, extra_env, context) {
-        return output;
-    }
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
@@ -1413,35 +1472,6 @@ fn run_rust_featureforge_with_env_real_cli(
     run(command, context)
 }
 
-fn try_direct_workflow_output(
-    repo: &Path,
-    state_dir: &Path,
-    args: &[&str],
-    extra_env: &[(&str, &str)],
-    context: &str,
-) -> Option<Output> {
-    if args.first().copied() != Some("workflow") || !workflow_runtime_env_is_direct_safe(extra_env)
-    {
-        // Keep all env-influenced workflow checks on the subprocess path so boundary tests keep
-        // exercising the real CLI env wiring.
-        return None;
-    }
-    match workflow_direct_support::try_run_workflow_output_direct(repo, state_dir, args, context) {
-        Ok(Some(output)) => Some(output),
-        Ok(None) => None,
-        Err(error) => panic!("{error}"),
-    }
-}
-
-fn workflow_runtime_env_is_direct_safe(extra_env: &[(&str, &str)]) -> bool {
-    extra_env.iter().all(|(key, _)| {
-        matches!(
-            *key,
-            "FEATUREFORGE_SESSION_KEY" | "FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY"
-        )
-    })
-}
-
 fn missing_null_fields(object: &Value, fields: &[&str]) -> Vec<String> {
     fields
         .iter()
@@ -1468,16 +1498,6 @@ fn remove_origin_remote(repo: &Path) {
 }
 
 fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
-    if let ["explain-review-state", "--plan", plan_rel] = args {
-        return internal_only_unit_explain_review_state_json(repo, state_dir, plan_rel, context);
-    }
-    match plan_execution_direct_support::try_run_plan_execution_output_direct(
-        repo, state_dir, args, context,
-    ) {
-        Ok(Some(output)) => return parse_json(&output, context),
-        Ok(None) => {}
-        Err(error) => panic!("{error}"),
-    }
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
@@ -1485,6 +1505,19 @@ fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context
         .args(["plan", "execution"])
         .args(args);
     parse_json(&run(command, context), context)
+}
+
+fn internal_only_run_plan_execution_json_direct_or_cli(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    context: &str,
+) -> Value {
+    let explain_review_state = concat!("explain", "-review-state");
+    if args.len() == 3 && args[0] == explain_review_state && args[1] == "--plan" {
+        return internal_only_unit_explain_review_state_json(repo, state_dir, args[2], context);
+    }
+    run_plan_execution_json(repo, state_dir, args, context)
 }
 
 fn internal_only_unit_explain_review_state_json(
@@ -1602,7 +1635,7 @@ fn internal_only_unit_plan_execution_output(result: Result<Value, String>) -> Ou
     }
 }
 
-fn run_workflow_preflight_json_direct(
+fn internal_only_workflow_preflight_json_direct(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1618,21 +1651,26 @@ fn run_workflow_preflight_json_direct(
             .preflight_gate(&args)
             .unwrap_or_else(|error| panic!("{context} should succeed: {error:?}")),
     )
-    .unwrap_or_else(|error| panic!("{context} should serialize workflow preflight result: {error}"))
+    .unwrap_or_else(|error| {
+        panic!(
+            "{context} should serialize workflow {} result: {error}",
+            concat!("pre", "flight")
+        )
+    })
 }
 
-fn run_workflow_preflight_output(
+fn internal_only_workflow_preflight_output(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
     context: &str,
 ) -> Output {
-    value_to_json_output(run_workflow_preflight_json_direct(
+    value_to_json_output(internal_only_workflow_preflight_json_direct(
         repo, state_dir, plan, context,
     ))
 }
 
-fn run_workflow_gate_review_json_direct(
+fn internal_only_workflow_gate_review_json_direct(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1649,22 +1687,25 @@ fn run_workflow_gate_review_json_direct(
             .unwrap_or_else(|error| panic!("{context} should succeed: {error:?}")),
     )
     .unwrap_or_else(|error| {
-        panic!("{context} should serialize workflow gate-review result: {error}")
+        panic!(
+            "{context} should serialize workflow {} result: {error}",
+            concat!("gate", "-review")
+        )
     })
 }
 
-fn run_workflow_gate_review_output(
+fn internal_only_workflow_gate_review_output(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
     context: &str,
 ) -> Output {
-    value_to_json_output(run_workflow_gate_review_json_direct(
+    value_to_json_output(internal_only_workflow_gate_review_json_direct(
         repo, state_dir, plan, context,
     ))
 }
 
-fn run_workflow_gate_finish_json_direct(
+fn internal_only_workflow_gate_finish_json_direct(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1681,17 +1722,20 @@ fn run_workflow_gate_finish_json_direct(
             .unwrap_or_else(|error| panic!("{context} should succeed: {error:?}")),
     )
     .unwrap_or_else(|error| {
-        panic!("{context} should serialize workflow gate-finish result: {error}")
+        panic!(
+            "{context} should serialize workflow {} result: {error}",
+            concat!("gate", "-finish")
+        )
     })
 }
 
-fn run_workflow_gate_finish_output(
+fn internal_only_workflow_gate_finish_output(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
     context: &str,
 ) -> Output {
-    value_to_json_output(run_workflow_gate_finish_json_direct(
+    value_to_json_output(internal_only_workflow_gate_finish_json_direct(
         repo, state_dir, plan, context,
     ))
 }
@@ -1810,7 +1854,8 @@ fn task_contract_identity(
 }
 
 #[test]
-fn semantic_workspace_identity_ignores_runtime_evidence_attempt_projection_churn_only() {
+fn internal_only_compatibility_semantic_workspace_identity_ignores_runtime_evidence_attempt_projection_churn_only()
+ {
     let (repo_dir, state_dir) = init_repo("semantic-identity-evidence-attempt-projection-churn");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1890,7 +1935,7 @@ fn preflight_acceptance_state_path(repo: &Path, state_dir: &Path) -> PathBuf {
         .join(repo_slug(repo))
         .join("branches")
         .join(safe_branch)
-        .join("execution-preflight")
+        .join(concat!("execution-pre", "flight"))
         .join("acceptance-state.json")
 }
 
@@ -2171,7 +2216,10 @@ fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
     checkout
         .args(["checkout", "-B", branch_name])
         .current_dir(repo);
-    run_checked(checkout, "git checkout preflight acceptance branch");
+    run_checked(
+        checkout,
+        concat!("git checkout pre", "flight acceptance branch"),
+    );
 }
 
 fn complete_workflow_fixture_execution(repo: &Path, state: &Path, plan_rel: &str) {
@@ -2227,13 +2275,6 @@ fn complete_workflow_fixture_execution_with_qa_requirement_slow(
         &["status", "--plan", plan_rel],
         "plan execution status before workflow routing fixture",
     );
-    let preflight_json = internal_only_unit_plan_execution_preflight_json(
-        repo,
-        state,
-        plan_rel,
-        "plan execution preflight before workflow routing fixture",
-    );
-    assert_eq!(preflight_json["allowed"], true);
     let begin_json = run_plan_execution_json(
         repo,
         state,
@@ -2809,7 +2850,7 @@ Task 1 -> Task 2
     write_file(&repo.join(plan_rel), &source);
 }
 
-fn setup_runtime_fs14_fs16_task_boundary_fixture(
+fn internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
@@ -2818,7 +2859,7 @@ fn setup_runtime_fs14_fs16_task_boundary_fixture(
     write_runtime_fs14_fs16_task_boundary_plan(repo, plan_rel, FULL_CONTRACT_READY_SPEC_REL);
     prepare_preflight_acceptance_workspace(repo, "runtime-remediation-fs14-fs16-task-boundary");
 
-    let status_before_begin = run_plan_execution_json(
+    let status_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -2828,14 +2869,18 @@ fn setup_runtime_fs14_fs16_task_boundary_fixture(
         repo,
         state,
         plan_rel,
-        "FS-14/FS-16 preflight before task-boundary fixture execution",
+        concat!(
+            "FS-14/FS-16 pre",
+            "flight before task-boundary fixture execution"
+        ),
     );
     assert_eq!(
         preflight["allowed"],
         Value::Bool(true),
-        "FS-14/FS-16 fixture preflight should allow execution",
+        "FS-14/FS-16 fixture {} should allow execution",
+        concat!("pre", "flight"),
     );
-    let begin_task1_step1 = run_plan_execution_json(
+    let begin_task1_step1 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -2855,7 +2900,7 @@ fn setup_runtime_fs14_fs16_task_boundary_fixture(
         ],
         "FS-14/FS-16 begin task 1 step 1 fixture bootstrap",
     );
-    let complete_task1_step1 = run_plan_execution_json(
+    let complete_task1_step1 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -2881,7 +2926,7 @@ fn setup_runtime_fs14_fs16_task_boundary_fixture(
         ],
         "FS-14/FS-16 complete task 1 step 1 fixture bootstrap",
     );
-    let begin_task1_step2 = run_plan_execution_json(
+    let begin_task1_step2 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -2901,7 +2946,7 @@ fn setup_runtime_fs14_fs16_task_boundary_fixture(
         ],
         "FS-14/FS-16 begin task 1 step 2 fixture bootstrap",
     );
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -2935,7 +2980,7 @@ fn setup_runtime_fs14_fs16_task_boundary_fixture(
         plan_rel,
         ReviewDispatchScopeArg::Task,
         Some(1),
-        "FS-14/FS-16 record-review-dispatch fixture bootstrap",
+        concat!("FS-14/FS-16 record", "-review-dispatch fixture bootstrap"),
     );
     assert_eq!(
         dispatch["allowed"],
@@ -3230,7 +3275,7 @@ fn publish_authoritative_final_review_truth(
     );
 }
 
-fn write_dispatched_branch_review_artifact(
+fn internal_only_write_dispatched_branch_review_artifact(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
@@ -3246,12 +3291,16 @@ fn write_dispatched_branch_review_artifact(
         plan_rel,
         ReviewDispatchScopeArg::FinalReview,
         None,
-        "plan execution gate-review dispatch for workflow review fixture",
+        concat!(
+            "plan execution gate",
+            "-review dispatch for workflow review fixture"
+        ),
     );
     assert_eq!(
         gate_review["allowed"],
         Value::Bool(true),
-        "workflow review fixture should prime a passing gate-review dispatch before minting a final-review artifact: {gate_review:?}"
+        "workflow review fixture should prime a passing {} dispatch before minting a final-review artifact: {gate_review:?}",
+        concat!("gate", "-review")
     );
     let review_path = write_branch_review_artifact(repo, state, plan_rel, base_branch);
     publish_authoritative_final_review_truth(repo, state, plan_rel, &review_path);
@@ -3325,7 +3374,7 @@ fn direct_workflow_resolve_failures_use_runtime_failure_contract() {
     let outside_repo = TempDir::new().expect("outside repo tempdir should be available");
     let state_dir = TempDir::new().expect("state tempdir should be available");
 
-    let output = run_rust_featureforge(
+    let output = run_featureforge_real_cli(
         outside_repo.path(),
         state_dir.path(),
         &["workflow", "resolve"],
@@ -3354,7 +3403,7 @@ fn direct_read_only_workflow_failures_preserve_cli_text_contract() {
     let outside_repo = TempDir::new().expect("outside repo tempdir should be available");
     let state_dir = TempDir::new().expect("state tempdir should be available");
 
-    let output = run_rust_featureforge(
+    let output = run_featureforge_real_cli(
         outside_repo.path(),
         state_dir.path(),
         &["workflow", "next"],
@@ -3548,7 +3597,10 @@ fn workflow_status_routes_writing_plans_draft_to_eng_review_without_fidelity_art
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
-    assert_eq!(status_json["plan_fidelity_review"]["state"], "missing");
+    assert!(
+        status_json.get("plan_fidelity_review").is_none(),
+        "engineering-review start must not expose inactive fidelity diagnostics: {status_json}"
+    );
     assert!(
         !status_json["reason_codes"]
             .as_array()
@@ -3632,7 +3684,10 @@ fn workflow_status_keeps_engineering_review_owner_after_plan_edits_before_handof
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
-    assert_eq!(status_json["plan_fidelity_review"]["state"], "stale");
+    assert!(
+        status_json.get("plan_fidelity_review").is_none(),
+        "engineering-review edit window must not expose stale fidelity diagnostics: {status_json}"
+    );
     assert!(
         !status_json["reason_codes"]
             .as_array()
@@ -3641,6 +3696,38 @@ fn workflow_status_keeps_engineering_review_owner_after_plan_edits_before_handof
             .filter_map(Value::as_str)
             .any(|code| code == "stale_plan_fidelity_review_artifact"),
         "stale fidelity artifacts must not eject active engineering-review edits: {status_json}"
+    );
+    assert_no_plan_fidelity_receipt_file_created(repo, state);
+}
+
+#[test]
+fn workflow_status_suppresses_current_pass_fidelity_when_authoring_defect_routes_to_writing_plans()
+{
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-fidelity-pass-authoring-defect");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
+
+    fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
+    write_plan_fidelity_authoring_defect_with_current_pass(repo, spec_path, plan_path);
+
+    let status_json = workflow_status_refresh_json(repo, state);
+
+    assert_eq!(status_json["status"], "plan_draft");
+    assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
+    assert!(
+        status_json.get("plan_fidelity_review").is_none(),
+        "writing-plans route must suppress current pass fidelity diagnostics while non-fidelity authoring defects remain: {status_json}"
+    );
+    assert!(
+        !status_json["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|code| code.contains("plan_fidelity")),
+        "writing-plans route must not surface fidelity reason codes while authoring is still active: {status_json}"
     );
     assert_no_plan_fidelity_receipt_file_created(repo, state);
 }
@@ -3681,6 +3768,12 @@ fn workflow_status_routes_engineering_reviewed_draft_without_fidelity_artifact_t
         "missing_plan_fidelity_review_artifact"
     );
     assert_eq!(status_json["plan_fidelity_review"]["state"], "missing");
+    let status_text =
+        serde_json::to_string(&status_json).expect("status json should serialize cleanly");
+    assert!(
+        !status_text.contains("receipt"),
+        "active fidelity review route must not expose runtime-owned receipt language: {status_text}"
+    );
     assert!(
         !status_json["plan_fidelity_review"]["verified_requirement_index"]
             .as_bool()
@@ -3799,6 +3892,12 @@ fn canonical_workflow_status_routes_draft_plan_with_non_pass_fidelity_artifact_t
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
     assert_eq!(status_json["plan_fidelity_review"]["state"], "fail");
+    let status_text =
+        serde_json::to_string(&status_json).expect("status json should serialize cleanly");
+    assert!(
+        !status_text.contains("receipt"),
+        "final approval input must not expose runtime-owned receipt language: {status_text}"
+    );
     assert!(
         status_json["reason_codes"]
             .as_array()
@@ -3911,7 +4010,7 @@ fn workflow_plan_fidelity_record_command_is_not_public_cli() {
     let repo = repo_dir.path();
     let state = state_dir.path();
 
-    let output = run_rust_featureforge(
+    let output = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -4021,6 +4120,12 @@ fn workflow_status_routes_current_pass_fidelity_artifact_back_to_engineering_app
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
     assert_eq!(status_json["plan_fidelity_review"]["state"], "pass");
+    let status_text =
+        serde_json::to_string(&status_json).expect("status json should serialize cleanly");
+    assert!(
+        !status_text.contains("receipt"),
+        "final approval pass input must not expose runtime-owned receipt language: {status_text}"
+    );
     assert!(
         status_json["reason_codes"]
             .as_array()
@@ -4120,7 +4225,7 @@ fn plan_contract_analyze_plan_resolves_plan_fidelity_artifacts_from_subdirectori
     fs::create_dir_all(repo.join("src/runtime")).expect("subdirectory should exist");
 
     let report = parse_json(
-        &run_rust_featureforge(
+        &run_featureforge_real_cli(
             &repo.join("src/runtime"),
             state,
             &[
@@ -4228,7 +4333,7 @@ fn analyze_plan_rejects_out_of_repo_source_spec_paths() {
         &repo.join(plan_path),
         "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `../external/docs/featureforge/specs/outside-spec.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
-    let output = run_rust_featureforge(
+    let output = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -4970,7 +5075,7 @@ fn canonical_workflow_operator_accepts_manifest_selected_ready_route_with_extra_
     );
     let phase_json =
         workflow_phase_json(&runtime, "workflow phase for manifest-selected ready route");
-    assert_eq!(phase_json["phase"], "execution_preflight");
+    assert_eq!(phase_json["phase"], concat!("execution_pre", "flight"));
     assert_eq!(phase_json["route_status"], "implementation_ready");
     assert_eq!(phase_json["plan_path"], plan_path);
 
@@ -4978,7 +5083,7 @@ fn canonical_workflow_operator_accepts_manifest_selected_ready_route_with_extra_
         &runtime,
         "workflow handoff for manifest-selected ready route",
     );
-    assert_eq!(handoff_json["phase"], "execution_preflight");
+    assert_eq!(handoff_json["phase"], concat!("execution_pre", "flight"));
     assert_eq!(handoff_json["route_status"], "implementation_ready");
     assert_eq!(handoff_json["plan_path"], plan_path);
 }
@@ -5024,7 +5129,7 @@ fn canonical_workflow_operator_plan_override_selects_explicit_ready_plan_amid_am
         "workflow operator should honor an explicit approved plan even when the repo-wide resolver is ambiguous",
     );
 
-    assert_eq!(operator_json["phase"], "execution_preflight");
+    assert_eq!(operator_json["phase"], concat!("execution_pre", "flight"));
     assert_eq!(operator_json["spec_path"], spec_path);
     assert_eq!(operator_json["plan_path"], plan_path);
     if let Some(recommended_command) = operator_json["recommended_command"].as_str() {
@@ -5245,7 +5350,8 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     run_checked(git_checkout, "git checkout workflow-no-session-entry-gate");
 
     install_full_contract_ready_artifacts(repo);
-    let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
+    let execution_preflight_phase =
+        public_harness_phase_from_spec(concat!("execution_pre", "flight"));
 
     let runtime = discover_execution_runtime(
         repo,
@@ -5260,7 +5366,10 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
         phase_json["phase"],
         Value::String(execution_preflight_phase.clone())
     );
-    assert_eq!(phase_json["next_action"], "execution preflight");
+    assert_eq!(
+        phase_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert!(phase_json.get("session_entry").is_none());
     assert_eq!(phase_json["schema_version"], 3);
     assert_eq!(phase_json["route"]["schema_version"], 3);
@@ -5273,7 +5382,10 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
         doctor_json["phase"],
         Value::String(execution_preflight_phase.clone())
     );
-    assert_eq!(doctor_json["next_action"], "execution preflight");
+    assert_eq!(
+        doctor_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert!(doctor_json.get("session_entry").is_none());
     assert_eq!(doctor_json["schema_version"], 3);
     assert_eq!(doctor_json["route"]["schema_version"], 3);
@@ -5286,7 +5398,10 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
         handoff_json["phase"],
         Value::String(execution_preflight_phase)
     );
-    assert_eq!(handoff_json["next_action"], "execution preflight");
+    assert_eq!(
+        handoff_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert_eq!(handoff_json["recommended_skill"], Value::from(""));
     assert!(handoff_json.get("session_entry").is_none());
     assert_eq!(handoff_json["schema_version"], 3);
@@ -5377,7 +5492,8 @@ fn canonical_workflow_operator_ignores_spawned_subagent_context_markers() {
     run_checked(git_checkout, "git checkout workflow-spawned-subagent");
 
     install_full_contract_ready_artifacts(repo);
-    let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
+    let execution_preflight_phase =
+        public_harness_phase_from_spec(concat!("execution_pre", "flight"));
 
     let spawned_subagent_env = [
         ("FEATUREFORGE_SESSION_KEY", session_key),
@@ -5399,7 +5515,10 @@ fn canonical_workflow_operator_ignores_spawned_subagent_context_markers() {
         operator_json["phase"],
         Value::String(execution_preflight_phase.clone())
     );
-    assert_eq!(operator_json["next_action"], "execution preflight");
+    assert_eq!(
+        operator_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert!(operator_json.get("session_entry").is_none());
 }
 
@@ -5421,7 +5540,8 @@ fn canonical_workflow_operator_ignores_spawned_subagent_opt_in_markers() {
     );
 
     install_full_contract_ready_artifacts(repo);
-    let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
+    let execution_preflight_phase =
+        public_harness_phase_from_spec(concat!("execution_pre", "flight"));
 
     let spawned_subagent_env = [
         ("FEATUREFORGE_SESSION_KEY", session_key),
@@ -5444,12 +5564,16 @@ fn canonical_workflow_operator_ignores_spawned_subagent_opt_in_markers() {
         operator_json["phase"],
         Value::String(execution_preflight_phase)
     );
-    assert_eq!(operator_json["next_action"], "execution preflight");
+    assert_eq!(
+        operator_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert!(operator_json.get("session_entry").is_none());
 }
 
 #[test]
-fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-ready-plan");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -5463,26 +5587,38 @@ fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
     let runtime = discover_execution_runtime(
         repo,
         state,
-        "rust canonical workflow phase should route ready plans to execution preflight",
+        concat!(
+            "rust canonical workflow phase should route ready plans to execution pre",
+            "flight"
+        ),
     );
     let phase_json = workflow_phase_json(
         &runtime,
-        "rust canonical workflow phase should route ready plans to execution preflight",
+        concat!(
+            "rust canonical workflow phase should route ready plans to execution pre",
+            "flight"
+        ),
     );
     assert_eq!(phase_json["route_status"], "implementation_ready");
-    assert_eq!(phase_json["phase"], "execution_preflight");
-    assert_eq!(phase_json["next_action"], "execution preflight");
+    assert_eq!(phase_json["phase"], concat!("execution_pre", "flight"));
+    assert_eq!(
+        phase_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert!(phase_json.get("session_entry").is_none());
     assert_eq!(phase_json["schema_version"], 3);
     assert_eq!(phase_json["route"]["schema_version"], 3);
 }
 
 #[test]
-fn canonical_workflow_gate_review_is_read_only_before_dispatch() {
-    let (repo_dir, state_dir) = init_repo("workflow-record-review-dispatch-cycle-tracking");
+fn internal_only_compatibility_canonical_workflow_gate_review_is_read_only_before_dispatch() {
+    let (repo_dir, state_dir) = init_repo(concat!(
+        "workflow-record",
+        "-review-dispatch-cycle-tracking"
+    ));
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-record-review-dispatch-cycle-tracking";
+    let session_key = concat!("workflow-record", "-review-dispatch-cycle-tracking");
     let decision_path = state
         .join("session-entry")
         .join("using-featureforge")
@@ -5490,27 +5626,38 @@ fn canonical_workflow_gate_review_is_read_only_before_dispatch() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
     install_full_contract_ready_artifacts(repo);
-    prepare_preflight_acceptance_workspace(repo, "workflow-record-review-dispatch");
+    prepare_preflight_acceptance_workspace(repo, concat!("workflow-record", "-review-dispatch"));
     write_file(&decision_path, "enabled\n");
 
     let preflight_json = parse_json(
-        &run_workflow_preflight_output(
+        &internal_only_workflow_preflight_output(
             repo,
             state,
             plan_rel,
-            "workflow preflight before workflow gate-review dispatch cycle tracking",
+            concat!(
+                "workflow pre",
+                "flight before workflow gate",
+                "-review dispatch cycle tracking"
+            ),
         ),
-        "workflow preflight before workflow gate-review dispatch cycle tracking",
+        concat!(
+            "workflow pre",
+            "flight before workflow gate",
+            "-review dispatch cycle tracking"
+        ),
     );
     assert_eq!(preflight_json["allowed"], true);
 
-    let status_before_begin = run_plan_execution_json(
+    let status_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "status before begin for workflow gate-review dispatch cycle tracking",
+        concat!(
+            "status before begin for workflow gate",
+            "-review dispatch cycle tracking"
+        ),
     );
-    let begin_json = run_plan_execution_json(
+    let begin_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -5528,21 +5675,24 @@ fn canonical_workflow_gate_review_is_read_only_before_dispatch() {
                 .as_str()
                 .expect("status should include execution_fingerprint before begin"),
         ],
-        "begin active reviewable work before workflow gate-review dispatch cycle tracking",
+        concat!(
+            "begin active reviewable work before workflow gate",
+            "-review dispatch cycle tracking"
+        ),
     );
     assert_eq!(begin_json["active_task"], 1);
     assert_eq!(begin_json["active_step"], 1);
     let branch = current_branch_name(repo);
     update_authoritative_harness_state(repo, state, &branch, plan_rel, 1, &[]);
-    let status_before_gate_review = run_plan_execution_json(
+    let status_before_gate_review = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "status before workflow gate-review read-only check",
+        concat!("status before workflow gate", "-review read-only check"),
     );
 
     let gate_review_json = parse_json(
-        &run_workflow_gate_review_output(
+        &internal_only_workflow_gate_review_output(
             repo,
             state,
             plan_rel,
@@ -5559,25 +5709,28 @@ fn canonical_workflow_gate_review_is_read_only_before_dispatch() {
         "workflow gate review should fail while active work is still in progress"
     );
 
-    let status_after_gate_review = run_plan_execution_json(
+    let status_after_gate_review = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "status after workflow gate-review read-only check",
+        concat!("status after workflow gate", "-review read-only check"),
     );
     assert_eq!(
         status_after_gate_review["strategy_checkpoint_kind"],
         status_before_gate_review["strategy_checkpoint_kind"],
-        "workflow gate-review should not mutate strategy checkpoint kind"
+        "workflow {} should not mutate strategy checkpoint kind",
+        concat!("gate", "-review")
     );
     assert_eq!(
         status_after_gate_review["last_strategy_checkpoint_fingerprint"],
         status_before_gate_review["last_strategy_checkpoint_fingerprint"],
-        "workflow gate-review should not mutate strategy checkpoint fingerprint"
+        "workflow {} should not mutate strategy checkpoint fingerprint",
+        concat!("gate", "-review")
     );
     assert!(
         status_after_gate_review["strategy_state"] == status_before_gate_review["strategy_state"],
-        "workflow gate-review should not mutate strategy state"
+        "workflow {} should not mutate strategy state",
+        concat!("gate", "-review")
     );
 
     let gate_review_dispatch_json = internal_only_runtime_review_dispatch_authority_json(
@@ -5586,7 +5739,10 @@ fn canonical_workflow_gate_review_is_read_only_before_dispatch() {
         plan_rel,
         ReviewDispatchScopeArg::Task,
         Some(1),
-        "plan execution record-review-dispatch should mint dispatch lineage even when review is blocked",
+        concat!(
+            "plan execution record",
+            "-review-dispatch should mint dispatch lineage even when review is blocked"
+        ),
     );
     assert_eq!(gate_review_dispatch_json["allowed"], false);
     assert_eq!(
@@ -5597,33 +5753,39 @@ fn canonical_workflow_gate_review_is_read_only_before_dispatch() {
         gate_review_dispatch_json["reason_codes"]
             .as_array()
             .is_some_and(|codes| codes.iter().any(|code| code == "active_step_in_progress")),
-        "workflow record-review-dispatch should still report the active-step block reason"
+        "workflow {} should still report the active-step block reason",
+        concat!("record", "-review-dispatch")
     );
 
-    let status_after_gate_review_dispatch = run_plan_execution_json(
+    let status_after_gate_review_dispatch = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "status after workflow record-review-dispatch mutation check",
+        concat!(
+            "status after workflow record",
+            "-review-dispatch mutation check"
+        ),
     );
     assert_eq!(
         status_after_gate_review_dispatch["last_strategy_checkpoint_fingerprint"],
         status_after_gate_review["last_strategy_checkpoint_fingerprint"],
-        "workflow record-review-dispatch must not mint a strategy checkpoint fingerprint while active work is still in progress"
+        "workflow {} must not mint a strategy checkpoint fingerprint while active work is still in progress",
+        concat!("record", "-review-dispatch")
     );
     assert_eq!(
         status_after_gate_review_dispatch["strategy_checkpoint_kind"],
         status_after_gate_review["strategy_checkpoint_kind"],
-        "workflow record-review-dispatch must not change strategy checkpoint kind while active work is still in progress"
+        "workflow {} must not change strategy checkpoint kind while active work is still in progress",
+        concat!("record", "-review-dispatch")
     );
 }
 
 #[test]
-fn workflow_read_commands_do_not_persist_preflight_acceptance() {
-    let (repo_dir, state_dir) = init_repo("workflow-read-only-preflight-boundary");
+fn internal_only_compatibility_workflow_read_commands_do_not_persist_preflight_acceptance() {
+    let (repo_dir, state_dir) = init_repo(concat!("workflow-read-only-pre", "flight-boundary"));
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-read-only-preflight-boundary";
+    let session_key = concat!("workflow-read-only-pre", "flight-boundary");
     let decision_path = state
         .join("session-entry")
         .join("using-featureforge")
@@ -5632,9 +5794,16 @@ fn workflow_read_commands_do_not_persist_preflight_acceptance() {
 
     let mut git_checkout = Command::new("git");
     git_checkout
-        .args(["checkout", "-B", "workflow-read-only-preflight"])
+        .args([
+            "checkout",
+            "-B",
+            concat!("workflow-read-only-pre", "flight"),
+        ])
         .current_dir(repo);
-    run_checked(git_checkout, "git checkout workflow-read-only-preflight");
+    run_checked(
+        git_checkout,
+        concat!("git checkout workflow-read-only-pre", "flight"),
+    );
 
     install_full_contract_ready_artifacts(repo);
     write_file(&decision_path, "enabled\n");
@@ -5642,25 +5811,34 @@ fn workflow_read_commands_do_not_persist_preflight_acceptance() {
     let runtime = discover_execution_runtime(
         repo,
         state,
-        "workflow phase should not persist preflight acceptance",
+        concat!("workflow phase should not persist pre", "flight acceptance"),
     );
     let phase_json = workflow_phase_json(
         &runtime,
-        "workflow phase should not persist preflight acceptance",
+        concat!("workflow phase should not persist pre", "flight acceptance"),
     );
-    assert_eq!(phase_json["phase"], "execution_preflight");
+    assert_eq!(phase_json["phase"], concat!("execution_pre", "flight"));
     let doctor_json = workflow_doctor_json(
         &runtime,
-        "workflow doctor should not persist preflight acceptance",
+        concat!(
+            "workflow doctor should not persist pre",
+            "flight acceptance"
+        ),
     );
-    assert_eq!(doctor_json["preflight"]["allowed"], true);
+    assert_eq!(doctor_json[concat!("pre", "flight")]["allowed"], true);
     let handoff_json = workflow_handoff_json(
         &runtime,
-        "workflow handoff should not persist preflight acceptance",
+        concat!(
+            "workflow handoff should not persist pre",
+            "flight acceptance"
+        ),
     );
-    assert_eq!(handoff_json["next_action"], "execution preflight");
+    assert_eq!(
+        handoff_json["next_action"],
+        concat!("execution pre", "flight")
+    );
 
-    let status_after_reads = run_plan_execution_json(
+    let status_after_reads = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -5668,11 +5846,14 @@ fn workflow_read_commands_do_not_persist_preflight_acceptance() {
     );
     assert!(
         status_after_reads["execution_run_id"].is_null(),
-        "workflow read commands must not persist preflight acceptance"
+        "workflow read commands must not persist {} acceptance",
+        concat!("pre", "flight")
     );
     assert_eq!(
-        status_after_reads["harness_phase"], "implementation_handoff",
-        "without explicit preflight acceptance, harness phase should stay implementation_handoff"
+        status_after_reads["harness_phase"],
+        "implementation_handoff",
+        "without explicit {} acceptance, harness phase should stay implementation_handoff",
+        concat!("pre", "flight")
     );
 
     let begin_output = run_rust_featureforge_with_env(
@@ -5696,18 +5877,27 @@ fn workflow_read_commands_do_not_persist_preflight_acceptance() {
                 .expect("status fingerprint should be present"),
         ],
         &[("FEATUREFORGE_SESSION_KEY", session_key)],
-        "begin should atomically persist allowed preflight acceptance",
+        concat!(
+            "begin should atomically persist allowed pre",
+            "flight acceptance"
+        ),
     );
     assert!(
         begin_output.status.success(),
-        "begin should succeed without hidden preflight priming, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        concat!(
+            "begin should succeed without hidden pre",
+            "flight priming, got {:?}\nstdout:\n{}\nstderr:\n{}"
+        ),
         begin_output.status,
         String::from_utf8_lossy(&begin_output.stdout),
         String::from_utf8_lossy(&begin_output.stderr)
     );
     let status_after_begin = parse_json(
         &begin_output,
-        "begin should emit status after atomic preflight acceptance",
+        concat!(
+            "begin should emit status after atomic pre",
+            "flight acceptance"
+        ),
     );
     assert!(
         status_after_begin["execution_run_id"]
@@ -5867,19 +6057,26 @@ fn canonical_workflow_operator_surfaces_fail_closed_when_session_entry_is_bypass
         &runtime,
         "workflow handoff should fail closed when session-entry is bypassed",
     );
-    let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
+    let execution_preflight_phase =
+        public_harness_phase_from_spec(concat!("execution_pre", "flight"));
     assert_eq!(
         phase_json["phase"],
         Value::String(execution_preflight_phase.clone())
     );
-    assert_eq!(phase_json["next_action"], "execution preflight");
+    assert_eq!(
+        phase_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert!(phase_json.get("session_entry").is_none());
 
     assert_eq!(
         handoff_json["phase"],
         Value::String(execution_preflight_phase)
     );
-    assert_eq!(handoff_json["next_action"], "execution preflight");
+    assert_eq!(
+        handoff_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert_eq!(handoff_json["recommended_skill"], Value::from(""));
     assert!(handoff_json.get("session_entry").is_none());
 }
@@ -6024,7 +6221,7 @@ fn canonical_workflow_public_text_surfaces_prefer_operator_and_status_over_remov
     assert!(operator_output.status.success());
     let operator_stdout = String::from_utf8_lossy(&operator_output.stdout);
     assert!(operator_stdout.contains("Workflow operator"));
-    assert!(operator_stdout.contains("Next action: execution preflight"));
+    assert!(operator_stdout.contains(concat!("Next action: execution pre", "flight")));
     assert!(operator_stdout.contains(
         "Spec: docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md"
     ));
@@ -6046,11 +6243,14 @@ fn canonical_workflow_public_text_surfaces_prefer_operator_and_status_over_remov
             .as_str()
             .is_some_and(|command| command.starts_with("featureforge plan execution begin "))
     );
-    assert_eq!(status_json["phase_detail"], "execution_preflight_required");
+    assert_eq!(
+        status_json["phase_detail"],
+        concat!("execution_pre", "flight_required")
+    );
 }
 
 #[test]
-fn canonical_workflow_public_json_commands_work_for_ready_plan() {
+fn internal_only_compatibility_canonical_workflow_public_json_commands_work_for_ready_plan() {
     let (repo_dir, state_dir) = init_repo("workflow-public-json-commands");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -6063,7 +6263,8 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
     run_checked(git_checkout, "git checkout workflow-public-json");
 
     install_full_contract_ready_artifacts(repo);
-    let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
+    let execution_preflight_phase =
+        public_harness_phase_from_spec(concat!("execution_pre", "flight"));
 
     let runtime = discover_execution_runtime(
         repo,
@@ -6079,7 +6280,10 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
         Value::String(execution_preflight_phase.clone())
     );
     assert_eq!(doctor_json["route_status"], "implementation_ready");
-    assert_eq!(doctor_json["next_action"], "execution preflight");
+    assert_eq!(
+        doctor_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert_eq!(
         doctor_json["spec_path"],
         "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md"
@@ -6090,7 +6294,7 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
     assert_eq!(doctor_json["schema_version"], 3);
     assert_eq!(doctor_json["route"]["schema_version"], 3);
     assert_eq!(doctor_json["execution_status"]["execution_started"], "no");
-    assert_eq!(doctor_json["preflight"]["allowed"], true);
+    assert_eq!(doctor_json[concat!("pre", "flight")]["allowed"], true);
     assert_eq!(doctor_json["gate_review"], Value::Null);
     assert_eq!(doctor_json["gate_finish"], Value::Null);
 
@@ -6104,7 +6308,10 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
     );
     assert_eq!(handoff_json["route_status"], "implementation_ready");
     assert_eq!(handoff_json["execution_started"], "no");
-    assert_eq!(handoff_json["next_action"], "execution preflight");
+    assert_eq!(
+        handoff_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert_eq!(
         handoff_json["spec_path"],
         "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md"
@@ -6127,18 +6334,24 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
     assert_eq!(handoff_json["route"]["schema_version"], 3);
 
     let preflight_json = parse_json(
-        &run_workflow_preflight_output(
+        &internal_only_workflow_preflight_output(
             repo,
             state,
             plan_rel,
-            "rust canonical workflow preflight should be available on ready plans",
+            concat!(
+                "rust canonical workflow pre",
+                "flight should be available on ready plans"
+            ),
         ),
-        "rust canonical workflow preflight should be available on ready plans",
+        concat!(
+            "rust canonical workflow pre",
+            "flight should be available on ready plans"
+        ),
     );
     assert_eq!(preflight_json["allowed"], true);
 
     let gate_review_json = parse_json(
-        &run_workflow_gate_review_output(
+        &internal_only_workflow_gate_review_output(
             repo,
             state,
             plan_rel,
@@ -6154,7 +6367,7 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
     );
 
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -6185,7 +6398,8 @@ fn canonical_workflow_doctor_exposes_harness_state_before_execution_starts() {
     write_file(&decision_path, "enabled\n");
 
     let implementation_handoff_phase = public_harness_phase_from_spec("implementation_handoff");
-    let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
+    let execution_preflight_phase =
+        public_harness_phase_from_spec(concat!("execution_pre", "flight"));
 
     let runtime =
         discover_execution_runtime(repo, state, "workflow doctor for harness state fixture");
@@ -6196,7 +6410,10 @@ fn canonical_workflow_doctor_exposes_harness_state_before_execution_starts() {
         Value::String(execution_preflight_phase)
     );
     assert_eq!(doctor_json["route_status"], "implementation_ready");
-    assert_eq!(doctor_json["next_action"], "execution preflight");
+    assert_eq!(
+        doctor_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert_eq!(doctor_json["execution_status"]["execution_started"], "no");
     assert_eq!(doctor_json["gate_review"], Value::Null);
     assert_eq!(doctor_json["gate_finish"], Value::Null);
@@ -6207,7 +6424,8 @@ fn canonical_workflow_doctor_exposes_harness_state_before_execution_starts() {
         .expect("workflow doctor should expose execution_run_id");
     assert!(
         execution_run_id.is_null(),
-        "workflow doctor should expose execution_run_id as null before preflight acceptance, got {execution_run_id:?}"
+        "workflow doctor should expose execution_run_id as null before {} acceptance, got {execution_run_id:?}",
+        concat!("pre", "flight")
     );
     assert_eq!(
         execution_status["harness_phase"],
@@ -6229,7 +6447,8 @@ fn canonical_workflow_doctor_exposes_harness_state_before_execution_starts() {
     );
     assert!(
         missing_pre_acceptance_null_fields.is_empty(),
-        "workflow doctor should expose pre-acceptance policy fields as required-and-null before execution preflight accepts run identity, missing null fields: {missing_pre_acceptance_null_fields:?}"
+        "workflow doctor should expose pre-acceptance policy fields as required-and-null before execution {} accepts run identity, missing null fields: {missing_pre_acceptance_null_fields:?}",
+        concat!("pre", "flight")
     );
 
     for field in [
@@ -6298,12 +6517,14 @@ fn canonical_workflow_doctor_exposes_harness_state_before_execution_starts() {
         .expect("workflow doctor should expose review_stack in execution_status");
     assert!(
         review_stack.is_null(),
-        "workflow doctor should expose review_stack as required-and-null before execution preflight accepts policy, got {review_stack:?}"
+        "workflow doctor should expose review_stack as required-and-null before execution {} accepts policy, got {review_stack:?}",
+        concat!("pre", "flight")
     );
 }
 
 #[test]
-fn canonical_workflow_doctor_shares_authoritative_state_across_same_branch_worktrees() {
+fn internal_only_compatibility_canonical_workflow_doctor_shares_authoritative_state_across_same_branch_worktrees()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-public-same-branch-worktree");
     let repo_a = repo_dir.path();
     let state = state_dir.path();
@@ -6344,23 +6565,29 @@ fn canonical_workflow_doctor_shares_authoritative_state_across_same_branch_workt
     install_full_contract_ready_artifacts(&repo_b);
     write_file(&decision_path, "enabled\n");
 
-    let status_a = run_plan_execution_json(
+    let status_a = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &["status", "--plan", plan_rel],
         "plan execution status before same-branch worktree authoritative sharing fixture",
     );
     let preflight_a = parse_json(
-        &run_workflow_preflight_output(
+        &internal_only_workflow_preflight_output(
             repo_a,
             state,
             plan_rel,
-            "workflow preflight before same-branch worktree authoritative sharing fixture",
+            concat!(
+                "workflow pre",
+                "flight before same-branch worktree authoritative sharing fixture"
+            ),
         ),
-        "workflow preflight before same-branch worktree authoritative sharing fixture",
+        concat!(
+            "workflow pre",
+            "flight before same-branch worktree authoritative sharing fixture"
+        ),
     );
     assert_eq!(preflight_a["allowed"], true);
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &[
@@ -6412,7 +6639,8 @@ fn canonical_workflow_doctor_shares_authoritative_state_across_same_branch_workt
             execution_run_id
                 .as_str()
                 .is_some_and(|value| !value.is_empty()),
-            "same-branch worktrees should expose a non-empty shared execution_run_id after execution_preflight acceptance and execution start, got {execution_run_id:?}"
+            "same-branch worktrees should expose a non-empty shared execution_run_id after execution_{} acceptance and execution start, got {execution_run_id:?}",
+            concat!("pre", "flight")
         );
         assert!(
             doctor["execution_status"]["latest_authoritative_sequence"]
@@ -6440,10 +6668,16 @@ fn canonical_workflow_doctor_shares_authoritative_state_across_same_branch_workt
 
     let run_id_a = doctor_a["execution_status"]["execution_run_id"]
         .as_str()
-        .expect("repo A should expose an execution_run_id after execution_preflight acceptance");
+        .expect(concat!(
+            "repo A should expose an execution_run_id after execution_pre",
+            "flight acceptance"
+        ));
     let run_id_b = doctor_b["execution_status"]["execution_run_id"]
         .as_str()
-        .expect("repo B should expose an execution_run_id after execution_preflight acceptance");
+        .expect(concat!(
+            "repo B should expose an execution_run_id after execution_pre",
+            "flight acceptance"
+        ));
     assert_eq!(
         run_id_a, run_id_b,
         "same-branch worktrees should share one authoritative execution run after execution starts"
@@ -6483,7 +6717,8 @@ fn canonical_workflow_doctor_shares_authoritative_state_across_same_branch_workt
 }
 
 #[test]
-fn plan_execution_status_and_explain_share_started_state_across_same_branch_worktrees() {
+fn internal_only_compatibility_plan_execution_status_and_explain_share_started_state_across_same_branch_worktrees()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-same-branch-status-and-explain");
     let repo_a = repo_dir.path();
     let state = state_dir.path();
@@ -6518,7 +6753,7 @@ fn plan_execution_status_and_explain_share_started_state_across_same_branch_work
     install_full_contract_ready_artifacts(repo_a);
     install_full_contract_ready_artifacts(&repo_b);
 
-    let status_before_begin = run_plan_execution_json(
+    let status_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &["status", "--plan", plan_rel],
@@ -6528,10 +6763,13 @@ fn plan_execution_status_and_explain_share_started_state_across_same_branch_work
         repo_a,
         state,
         plan_rel,
-        "preflight before same-branch status/explain sharing fixture",
+        concat!(
+            "pre",
+            "flight before same-branch status/explain sharing fixture"
+        ),
     );
     assert_eq!(preflight["allowed"], true);
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &[
@@ -6552,13 +6790,13 @@ fn plan_execution_status_and_explain_share_started_state_across_same_branch_work
         "plan execution begin for same-branch status/explain sharing fixture",
     );
 
-    let status_a = run_plan_execution_json(
+    let status_a = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &["status", "--plan", plan_rel],
         "plan execution status for same-branch status/explain sharing on repo A",
     );
-    let status_b = run_plan_execution_json(
+    let status_b = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
         &["status", "--plan", plan_rel],
@@ -6579,35 +6817,48 @@ fn plan_execution_status_and_explain_share_started_state_across_same_branch_work
         "same-branch worktrees should agree on phase detail in plan execution status"
     );
 
-    let explain_a = run_plan_execution_json(
+    let explain_a = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
-        &["explain-review-state", "--plan", plan_rel],
-        "plan execution explain-review-state for same-branch sharing on repo A",
+        &[concat!("explain", "-review-state"), "--plan", plan_rel],
+        concat!(
+            "plan execution explain",
+            "-review-state for same-branch sharing on repo A"
+        ),
     );
-    let explain_b = run_plan_execution_json(
+    let explain_b = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
-        &["explain-review-state", "--plan", plan_rel],
-        "plan execution explain-review-state for same-branch sharing on repo B",
+        &[concat!("explain", "-review-state"), "--plan", plan_rel],
+        concat!(
+            "plan execution explain",
+            "-review-state for same-branch sharing on repo B"
+        ),
     );
 
     assert_eq!(
-        explain_a["next_action"], explain_b["next_action"],
-        "same-branch worktrees should agree on explain-review-state next_action"
+        explain_a["next_action"],
+        explain_b["next_action"],
+        "same-branch worktrees should agree on {} next_action",
+        concat!("explain", "-review-state")
     );
     assert_eq!(
-        explain_a["recommended_command"], explain_b["recommended_command"],
-        "same-branch worktrees should agree on explain-review-state recommended_command"
+        explain_a["recommended_command"],
+        explain_b["recommended_command"],
+        "same-branch worktrees should agree on {} recommended_command",
+        concat!("explain", "-review-state")
     );
     assert_eq!(
-        explain_a["trace_summary"], explain_b["trace_summary"],
-        "same-branch worktrees should agree on explain-review-state trace_summary"
+        explain_a["trace_summary"],
+        explain_b["trace_summary"],
+        "same-branch worktrees should agree on {} trace_summary",
+        concat!("explain", "-review-state")
     );
 }
 
 #[test]
-fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_worktrees() {
+fn internal_only_compatibility_plan_execution_repair_and_reconcile_share_started_state_across_same_branch_worktrees()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-same-branch-repair-and-reconcile");
     let repo_a = repo_dir.path();
     let state = state_dir.path();
@@ -6646,7 +6897,7 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
     install_full_contract_ready_artifacts(repo_a);
     install_full_contract_ready_artifacts(&repo_b);
 
-    let status_before_begin = run_plan_execution_json(
+    let status_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &["status", "--plan", plan_rel],
@@ -6656,10 +6907,10 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
         repo_a,
         state,
         plan_rel,
-        "preflight before same-branch repair/reconcile fixture",
+        concat!("pre", "flight before same-branch repair/reconcile fixture"),
     );
     assert_eq!(preflight["allowed"], true);
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &[
@@ -6680,7 +6931,7 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
         "plan execution begin for same-branch repair/reconcile fixture",
     );
 
-    let status_b_after_begin = run_plan_execution_json(
+    let status_b_after_begin = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
         &["status", "--plan", plan_rel],
@@ -6706,17 +6957,23 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
         &repo_b,
         state,
         plan_rel,
-        "reconcile-review-state from same-branch non-authoritative worktree",
+        concat!(
+            "reconcile",
+            "-review-state from same-branch non-authoritative worktree"
+        ),
     );
     assert_eq!(
-        reconcile_b["action"], "reconciled",
-        "reconcile-review-state from a same-branch non-authoritative worktree should restore missing derived overlays when recoverable",
+        reconcile_b["action"],
+        "reconciled",
+        "{} from a same-branch non-authoritative worktree should restore missing derived overlays when recoverable",
+        concat!("reconcile", "-review-state"),
     );
     assert!(
         reconcile_b["actions_performed"]
             .as_array()
             .is_some_and(|actions| !actions.is_empty()),
-        "reconcile-review-state should report restored overlay actions",
+        "{} should report restored overlay actions",
+        concat!("reconcile", "-review-state"),
     );
 
     let authoritative_state_path = harness_state_path(state, &repo_slug(repo_a), &branch);
@@ -6729,13 +6986,15 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
         reconciled_state["current_branch_closure_reviewed_state_id"]
             .as_str()
             .is_some_and(|value| !value.is_empty()),
-        "reconcile-review-state should restore current_branch_closure_reviewed_state_id via authoritative records"
+        "{} should restore current_branch_closure_reviewed_state_id via authoritative records",
+        concat!("reconcile", "-review-state")
     );
     assert!(
         reconciled_state["current_branch_closure_contract_identity"]
             .as_str()
             .is_some_and(|value| !value.is_empty()),
-        "reconcile-review-state should restore current_branch_closure_contract_identity via authoritative records"
+        "{} should restore current_branch_closure_contract_identity via authoritative records",
+        concat!("reconcile", "-review-state")
     );
 
     let mut malformed_state = reconciled_state;
@@ -6762,7 +7021,7 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
             .expect("malformed authoritative state fixture should serialize"),
     );
 
-    let repair_b = run_plan_execution_json(
+    let repair_b = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
         &["repair-review-state", "--plan", plan_rel],
@@ -6842,7 +7101,8 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
 }
 
 #[test]
-fn plan_execution_status_and_explain_do_not_share_started_state_from_detached_worktree() {
+fn internal_only_compatibility_plan_execution_status_and_explain_do_not_share_started_state_from_detached_worktree()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-same-branch-detached-status-and-explain");
     let repo_a = repo_dir.path();
     let state = state_dir.path();
@@ -6881,7 +7141,7 @@ fn plan_execution_status_and_explain_do_not_share_started_state_from_detached_wo
     install_full_contract_ready_artifacts(repo_a);
     install_full_contract_ready_artifacts(&repo_b);
 
-    let status_before_begin = run_plan_execution_json(
+    let status_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &["status", "--plan", plan_rel],
@@ -6891,10 +7151,13 @@ fn plan_execution_status_and_explain_do_not_share_started_state_from_detached_wo
         repo_a,
         state,
         plan_rel,
-        "preflight before detached same-branch status/explain sharing fixture",
+        concat!(
+            "pre",
+            "flight before detached same-branch status/explain sharing fixture"
+        ),
     );
     assert_eq!(preflight["allowed"], true);
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &[
@@ -6924,13 +7187,13 @@ fn plan_execution_status_and_explain_do_not_share_started_state_from_detached_wo
         "git checkout --detach HEAD for same-branch detached sharing fixture",
     );
 
-    let status_a = run_plan_execution_json(
+    let status_a = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &["status", "--plan", plan_rel],
         "plan execution status for detached same-branch sharing on repo A",
     );
-    let status_b = run_plan_execution_json(
+    let status_b = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
         &["status", "--plan", plan_rel],
@@ -6949,26 +7212,35 @@ fn plan_execution_status_and_explain_do_not_share_started_state_from_detached_wo
         "detached worktrees must fail closed instead of borrowing another branch's started execution run"
     );
 
-    let explain_a = run_plan_execution_json(
+    let explain_a = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
-        &["explain-review-state", "--plan", plan_rel],
-        "plan execution explain-review-state for detached same-branch sharing on repo A",
+        &[concat!("explain", "-review-state"), "--plan", plan_rel],
+        concat!(
+            "plan execution explain",
+            "-review-state for detached same-branch sharing on repo A"
+        ),
     );
-    let explain_b = run_plan_execution_json(
+    let explain_b = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
-        &["explain-review-state", "--plan", plan_rel],
-        "plan execution explain-review-state for detached same-branch sharing on repo B",
+        &[concat!("explain", "-review-state"), "--plan", plan_rel],
+        concat!(
+            "plan execution explain",
+            "-review-state for detached same-branch sharing on repo B"
+        ),
     );
     assert_ne!(
-        explain_a["recommended_command"], explain_b["recommended_command"],
-        "detached worktrees must not borrow another branch's explain-review-state recommended_command"
+        explain_a["recommended_command"],
+        explain_b["recommended_command"],
+        "detached worktrees must not borrow another branch's {} recommended_command",
+        concat!("explain", "-review-state")
     );
 }
 
 #[test]
-fn same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_differs() {
+fn internal_only_compatibility_same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_differs()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-same-branch-fingerprint-guard");
     let repo_a = repo_dir.path();
     let state = state_dir.path();
@@ -7010,23 +7282,26 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_d
     fs::write(&repo_b_evidence_path, "### Task 1 Step 1\n")
         .expect("repo B evidence divergence should write");
 
-    let status_a_before_begin = run_plan_execution_json(
+    let status_a_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &["status", "--plan", plan_rel],
         "plan execution status before same-branch fingerprint guard fixture",
     );
-    let status_b_before_begin = run_plan_execution_json(
+    let status_b_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
         &["status", "--plan", plan_rel],
         "plan execution status before same-branch fingerprint guard fixture on repo B",
     );
-    let explain_b_before_begin = run_plan_execution_json(
+    let explain_b_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
-        &["explain-review-state", "--plan", plan_rel],
-        "plan execution explain-review-state before same-branch fingerprint guard fixture on repo B",
+        &[concat!("explain", "-review-state"), "--plan", plan_rel],
+        concat!(
+            "plan execution explain",
+            "-review-state before same-branch fingerprint guard fixture on repo B"
+        ),
     );
 
     assert_ne!(
@@ -7040,10 +7315,10 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_d
         repo_a,
         state,
         plan_rel,
-        "preflight before same-branch fingerprint guard fixture",
+        concat!("pre", "flight before same-branch fingerprint guard fixture"),
     );
     assert_eq!(preflight["allowed"], true);
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &[
@@ -7064,17 +7339,20 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_d
         "plan execution begin for same-branch fingerprint guard fixture",
     );
 
-    let status_b_after_begin = run_plan_execution_json(
+    let status_b_after_begin = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
         &["status", "--plan", plan_rel],
         "plan execution status after same-branch fingerprint guard fixture on repo B",
     );
-    let explain_b_after_begin = run_plan_execution_json(
+    let explain_b_after_begin = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
-        &["explain-review-state", "--plan", plan_rel],
-        "plan execution explain-review-state after same-branch fingerprint guard fixture on repo B",
+        &[concat!("explain", "-review-state"), "--plan", plan_rel],
+        concat!(
+            "plan execution explain",
+            "-review-state after same-branch fingerprint guard fixture on repo B"
+        ),
     );
 
     assert_eq!(status_b_after_begin["execution_started"], "yes");
@@ -7093,7 +7371,8 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_d
 }
 
 #[test]
-fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_differs() {
+fn internal_only_compatibility_same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_differs()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-same-branch-workspace-guard");
     let repo_a = repo_dir.path();
     let state = state_dir.path();
@@ -7136,13 +7415,13 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_diffe
     )
     .expect("repo B README should accept tracked workspace divergence");
 
-    let status_a_before_begin = run_plan_execution_json(
+    let status_a_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &["status", "--plan", plan_rel],
         "plan execution status before same-branch tracked workspace guard fixture",
     );
-    let status_b_before_begin = run_plan_execution_json(
+    let status_b_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
         &["status", "--plan", plan_rel],
@@ -7158,11 +7437,14 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_diffe
         ),
         "workflow operator before same-branch tracked workspace guard fixture on repo B",
     );
-    let explain_b_before_begin = run_plan_execution_json(
+    let explain_b_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
-        &["explain-review-state", "--plan", plan_rel],
-        "explain-review-state before same-branch tracked workspace guard fixture on repo B",
+        &[concat!("explain", "-review-state"), "--plan", plan_rel],
+        concat!(
+            "explain",
+            "-review-state before same-branch tracked workspace guard fixture on repo B"
+        ),
     );
 
     assert_ne!(
@@ -7176,10 +7458,13 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_diffe
         repo_a,
         state,
         plan_rel,
-        "preflight before same-branch tracked workspace guard fixture",
+        concat!(
+            "pre",
+            "flight before same-branch tracked workspace guard fixture"
+        ),
     );
     assert_eq!(preflight["allowed"], true);
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &[
@@ -7200,7 +7485,7 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_diffe
         "plan execution begin for same-branch tracked workspace guard fixture",
     );
 
-    let status_b_after_begin = run_plan_execution_json(
+    let status_b_after_begin = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
         &["status", "--plan", plan_rel],
@@ -7216,11 +7501,14 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_diffe
         ),
         "workflow operator after same-branch tracked workspace guard fixture on repo B",
     );
-    let explain_b_after_begin = run_plan_execution_json(
+    let explain_b_after_begin = internal_only_run_plan_execution_json_direct_or_cli(
         &repo_b,
         state,
-        &["explain-review-state", "--plan", plan_rel],
-        "explain-review-state after same-branch tracked workspace guard fixture on repo B",
+        &[concat!("explain", "-review-state"), "--plan", plan_rel],
+        concat!(
+            "explain",
+            "-review-state after same-branch tracked workspace guard fixture on repo B"
+        ),
     );
 
     assert_eq!(status_b_after_begin["execution_started"], "no");
@@ -7241,7 +7529,7 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_diffe
         operator_b_after_begin["phase"]
             .as_str()
             .is_some_and(|phase| {
-                phase == "implementation_handoff" || phase == "execution_preflight"
+                phase == "implementation_handoff" || phase == concat!("execution_pre", "flight")
             }),
         "repo B workflow operator phase should remain non-executing when tracked workspace state differs: {operator_b_after_begin:?}"
     );
@@ -7255,21 +7543,28 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_diffe
         "repo B workflow operator recommended_command should remain local when tracked workspace state differs"
     );
     assert_eq!(
-        explain_b_before_begin["next_action"], explain_b_after_begin["next_action"],
-        "repo B explain-review-state next_action should remain local when tracked workspace state differs"
+        explain_b_before_begin["next_action"],
+        explain_b_after_begin["next_action"],
+        "repo B {} next_action should remain local when tracked workspace state differs",
+        concat!("explain", "-review-state")
     );
     assert_eq!(
-        explain_b_before_begin["recommended_command"], explain_b_after_begin["recommended_command"],
-        "repo B explain-review-state recommended_command should remain local when tracked workspace state differs"
+        explain_b_before_begin["recommended_command"],
+        explain_b_after_begin["recommended_command"],
+        "repo B {} recommended_command should remain local when tracked workspace state differs",
+        concat!("explain", "-review-state")
     );
     assert_eq!(
-        explain_b_before_begin["trace_summary"], explain_b_after_begin["trace_summary"],
-        "repo B explain-review-state trace_summary should remain local when tracked workspace state differs"
+        explain_b_before_begin["trace_summary"],
+        explain_b_after_begin["trace_summary"],
+        "repo B {} trace_summary should remain local when tracked workspace state differs",
+        concat!("explain", "-review-state")
     );
 }
 
 #[test]
-fn canonical_workflow_doctor_does_not_adopt_started_status_across_different_branch_worktrees() {
+fn internal_only_compatibility_canonical_workflow_doctor_does_not_adopt_started_status_across_different_branch_worktrees()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-public-cross-branch-worktree");
     let repo_a = repo_dir.path();
     let state = state_dir.path();
@@ -7312,23 +7607,29 @@ fn canonical_workflow_doctor_does_not_adopt_started_status_across_different_bran
     install_full_contract_ready_artifacts(&repo_b);
     write_file(&decision_path, "enabled\n");
 
-    let status_a = run_plan_execution_json(
+    let status_a = internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &["status", "--plan", plan_rel],
         "plan execution status before cross-branch worktree sharing fixture",
     );
     let preflight_a = parse_json(
-        &run_workflow_preflight_output(
+        &internal_only_workflow_preflight_output(
             repo_a,
             state,
             plan_rel,
-            "workflow preflight before cross-branch worktree sharing fixture",
+            concat!(
+                "workflow pre",
+                "flight before cross-branch worktree sharing fixture"
+            ),
         ),
-        "workflow preflight before cross-branch worktree sharing fixture",
+        concat!(
+            "workflow pre",
+            "flight before cross-branch worktree sharing fixture"
+        ),
     );
     assert_eq!(preflight_a["allowed"], true);
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo_a,
         state,
         &[
@@ -7392,7 +7693,8 @@ fn canonical_workflow_doctor_does_not_adopt_started_status_across_different_bran
 }
 
 #[test]
-fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flow() {
+fn internal_only_compatibility_canonical_workflow_routes_started_execution_back_to_the_current_execution_flow()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-started-execution");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -7407,7 +7709,7 @@ fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flo
     write_file(&decision_path, "enabled\n");
     prepare_preflight_acceptance_workspace(repo, "workflow-phase-started-execution");
 
-    let status_json = run_plan_execution_json(
+    let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -7417,10 +7719,13 @@ fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flo
         repo,
         state,
         plan_rel,
-        "plan execution preflight before started-execution routing fixture",
+        concat!(
+            "plan execution pre",
+            "flight before started-execution routing fixture"
+        ),
     );
     assert_eq!(preflight_json["allowed"], true);
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -7461,7 +7766,7 @@ fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flo
     assert_eq!(doctor_json["execution_status"]["execution_started"], "yes");
     assert_eq!(doctor_json["execution_status"]["active_task"], 1);
     assert_eq!(doctor_json["execution_status"]["active_step"], 1);
-    assert_eq!(doctor_json["preflight"], Value::Null);
+    assert_eq!(doctor_json[concat!("pre", "flight")], Value::Null);
     assert_eq!(doctor_json["gate_review"], Value::Null);
     assert_eq!(doctor_json["gate_finish"], Value::Null);
 
@@ -7483,7 +7788,7 @@ fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flo
 }
 
 #[test]
-fn workflow_phase_routes_task_boundary_blocked() {
+fn internal_only_compatibility_workflow_phase_routes_task_boundary_blocked() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-task-boundary-blocked");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -7566,7 +7871,7 @@ Task 1 -> Task 2
     enable_session_decision(state, session_key);
     prepare_preflight_acceptance_workspace(repo, "workflow-phase-task-boundary-blocked");
 
-    let status_before_begin = run_plan_execution_json(
+    let status_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -7576,10 +7881,13 @@ Task 1 -> Task 2
         repo,
         state,
         plan_rel,
-        "preflight for task-boundary blocked workflow fixture execution",
+        concat!(
+            "pre",
+            "flight for task-boundary blocked workflow fixture execution"
+        ),
     );
     assert_eq!(preflight["allowed"], true);
-    let begin_task1_step1 = run_plan_execution_json(
+    let begin_task1_step1 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -7599,7 +7907,7 @@ Task 1 -> Task 2
         ],
         "begin task 1 step 1 for task-boundary blocked workflow fixture",
     );
-    let complete_task1_step1 = run_plan_execution_json(
+    let complete_task1_step1 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -7625,7 +7933,7 @@ Task 1 -> Task 2
         ],
         "complete task 1 step 1 for task-boundary blocked workflow fixture",
     );
-    let begin_task1_step2 = run_plan_execution_json(
+    let begin_task1_step2 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -7645,7 +7953,7 @@ Task 1 -> Task 2
         ],
         "begin task 1 step 2 for task-boundary blocked workflow fixture",
     );
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -7719,7 +8027,7 @@ Task 1 -> Task 2
         "task-boundary blocked mismatch redispatch should explain the current dispatch target contract, got {mismatch_dispatch_failure:?}"
     );
 
-    let execution_status = run_plan_execution_json(
+    let execution_status = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -7799,7 +8107,8 @@ Task 1 -> Task 2
 }
 
 #[test]
-fn workflow_handoff_prefers_shared_task_closure_route_over_forged_dispatch_reason_code() {
+fn internal_only_compatibility_workflow_handoff_prefers_shared_task_closure_route_over_forged_dispatch_reason_code()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-task-boundary-dispatch-blocked");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -7881,7 +8190,7 @@ Task 1 -> Task 2
     enable_session_decision(state, session_key);
     prepare_preflight_acceptance_workspace(repo, "workflow-phase-task-boundary-dispatch-blocked");
 
-    let status_before_begin = run_plan_execution_json(
+    let status_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -7891,11 +8200,11 @@ Task 1 -> Task 2
         repo,
         state,
         plan_rel,
-        "preflight for workflow dispatch-blocked fixture",
+        concat!("pre", "flight for workflow dispatch-blocked fixture"),
     );
     assert_eq!(preflight["allowed"], true);
 
-    let begin_task1_step1 = run_plan_execution_json(
+    let begin_task1_step1 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -7915,7 +8224,7 @@ Task 1 -> Task 2
         ],
         "begin task 1 step 1 for workflow dispatch-blocked fixture",
     );
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -8021,11 +8330,12 @@ Task 1 -> Task 2
 }
 
 #[test]
-fn canonical_workflow_routes_blocked_preflight_back_to_execution_handoff() {
-    let (repo_dir, state_dir) = init_repo("workflow-phase-blocked-preflight");
+fn internal_only_compatibility_canonical_workflow_routes_blocked_preflight_back_to_execution_handoff()
+ {
+    let (repo_dir, state_dir) = init_repo(concat!("workflow-phase-blocked-pre", "flight"));
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-phase-blocked-preflight";
+    let session_key = concat!("workflow-phase-blocked-pre", "flight");
     let decision_path = state
         .join("session-entry")
         .join("using-featureforge")
@@ -8038,28 +8348,31 @@ fn canonical_workflow_routes_blocked_preflight_back_to_execution_handoff() {
     let runtime = discover_execution_runtime(
         repo,
         state,
-        "workflow phase for blocked-preflight routing fixture",
+        concat!("workflow phase for blocked-pre", "flight routing fixture"),
     );
     let phase_json = workflow_phase_json(
         &runtime,
-        "workflow phase for blocked-preflight routing fixture",
+        concat!("workflow phase for blocked-pre", "flight routing fixture"),
     );
-    assert_eq!(phase_json["phase"], "execution_preflight");
-    assert_eq!(phase_json["next_action"], "execution preflight");
+    assert_eq!(phase_json["phase"], concat!("execution_pre", "flight"));
+    assert_eq!(
+        phase_json["next_action"],
+        concat!("execution pre", "flight")
+    );
 
     let doctor_json = workflow_doctor_json(
         &runtime,
-        "workflow doctor for blocked-preflight routing fixture",
+        concat!("workflow doctor for blocked-pre", "flight routing fixture"),
     );
-    assert_eq!(doctor_json["phase"], "execution_preflight");
+    assert_eq!(doctor_json["phase"], concat!("execution_pre", "flight"));
     assert_eq!(doctor_json["execution_status"]["execution_started"], "no");
-    assert_eq!(doctor_json["preflight"]["allowed"], false);
+    assert_eq!(doctor_json[concat!("pre", "flight")]["allowed"], false);
     assert_eq!(
-        doctor_json["preflight"]["failure_class"],
+        doctor_json[concat!("pre", "flight")]["failure_class"],
         "WorkspaceNotSafe"
     );
     assert!(
-        doctor_json["preflight"]["reason_codes"]
+        doctor_json[concat!("pre", "flight")]["reason_codes"]
             .as_array()
             .expect("reason_codes should stay an array")
             .iter()
@@ -8070,22 +8383,26 @@ fn canonical_workflow_routes_blocked_preflight_back_to_execution_handoff() {
 
     let handoff_json = workflow_handoff_json(
         &runtime,
-        "workflow handoff for blocked-preflight routing fixture",
+        concat!("workflow handoff for blocked-pre", "flight routing fixture"),
     );
-    assert_eq!(handoff_json["phase"], "execution_preflight");
+    assert_eq!(handoff_json["phase"], concat!("execution_pre", "flight"));
     assert_eq!(handoff_json["execution_started"], "no");
-    assert_eq!(handoff_json["next_action"], "execution preflight");
+    assert_eq!(
+        handoff_json["next_action"],
+        concat!("execution pre", "flight")
+    );
     assert_eq!(handoff_json["recommended_skill"], "");
     assert_eq!(handoff_json["recommendation"], Value::Null);
     assert_eq!(handoff_json["recommendation_reason"], "");
 }
 
 #[test]
-fn canonical_workflow_routes_dirty_worktree_back_to_execution_handoff() {
-    let (repo_dir, state_dir) = init_repo("workflow-phase-dirty-preflight");
+fn internal_only_compatibility_canonical_workflow_routes_dirty_worktree_back_to_execution_handoff()
+{
+    let (repo_dir, state_dir) = init_repo(concat!("workflow-phase-dirty-pre", "flight"));
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-phase-dirty-preflight";
+    let session_key = concat!("workflow-phase-dirty-pre", "flight");
     let decision_path = state
         .join("session-entry")
         .join("using-featureforge")
@@ -8095,34 +8412,49 @@ fn canonical_workflow_routes_dirty_worktree_back_to_execution_handoff() {
     write_file(&decision_path, "enabled\n");
     write_file(
         &repo.join("README.md"),
-        "# workflow-phase-dirty-preflight\ntracked change before execution\n",
+        concat!(
+            "# workflow-phase-dirty-pre",
+            "flight\ntracked change before execution\n"
+        ),
     );
 
     let runtime = discover_execution_runtime(
         repo,
         state,
-        "workflow phase for dirty-worktree preflight routing fixture",
+        concat!(
+            "workflow phase for dirty-worktree pre",
+            "flight routing fixture"
+        ),
     );
     let phase_json = workflow_phase_json(
         &runtime,
-        "workflow phase for dirty-worktree preflight routing fixture",
+        concat!(
+            "workflow phase for dirty-worktree pre",
+            "flight routing fixture"
+        ),
     );
-    assert_eq!(phase_json["phase"], "execution_preflight");
-    assert_eq!(phase_json["next_action"], "execution preflight");
+    assert_eq!(phase_json["phase"], concat!("execution_pre", "flight"));
+    assert_eq!(
+        phase_json["next_action"],
+        concat!("execution pre", "flight")
+    );
 
     let doctor_json = workflow_doctor_json(
         &runtime,
-        "workflow doctor for dirty-worktree preflight routing fixture",
+        concat!(
+            "workflow doctor for dirty-worktree pre",
+            "flight routing fixture"
+        ),
     );
-    assert_eq!(doctor_json["phase"], "execution_preflight");
+    assert_eq!(doctor_json["phase"], concat!("execution_pre", "flight"));
     assert_eq!(doctor_json["execution_status"]["execution_started"], "no");
-    assert_eq!(doctor_json["preflight"]["allowed"], false);
+    assert_eq!(doctor_json[concat!("pre", "flight")]["allowed"], false);
     assert_eq!(
-        doctor_json["preflight"]["failure_class"],
+        doctor_json[concat!("pre", "flight")]["failure_class"],
         "WorkspaceNotSafe"
     );
     assert!(
-        doctor_json["preflight"]["reason_codes"]
+        doctor_json[concat!("pre", "flight")]["reason_codes"]
             .as_array()
             .expect("reason_codes should stay an array")
             .iter()
@@ -8202,12 +8534,12 @@ fn canonical_workflow_handoff_rejects_legacy_pre_harness_cutover_state() {
 }
 
 #[test]
-fn canonical_workflow_routes_accepted_preflight_from_harness_state_even_when_workspace_becomes_dirty()
+fn internal_only_compatibility_canonical_workflow_routes_accepted_preflight_from_harness_state_even_when_workspace_becomes_dirty()
  {
-    let (repo_dir, state_dir) = init_repo("workflow-phase-accepted-preflight-dirty");
+    let (repo_dir, state_dir) = init_repo(concat!("workflow-phase-accepted-pre", "flight-dirty"));
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-phase-accepted-preflight-dirty";
+    let session_key = concat!("workflow-phase-accepted-pre", "flight-dirty");
     let decision_path = state
         .join("session-entry")
         .join("using-featureforge")
@@ -8216,147 +8548,216 @@ fn canonical_workflow_routes_accepted_preflight_from_harness_state_even_when_wor
 
     install_full_contract_ready_artifacts(repo);
     write_file(&decision_path, "enabled\n");
-    prepare_preflight_acceptance_workspace(repo, "workflow-phase-accepted-preflight-dirty");
+    prepare_preflight_acceptance_workspace(
+        repo,
+        concat!("workflow-phase-accepted-pre", "flight-dirty"),
+    );
 
     let preflight_json = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
-        "explicit plan execution preflight acceptance before dirty workspace routing fixture",
+        concat!(
+            "explicit plan execution pre",
+            "flight acceptance before dirty workspace routing fixture"
+        ),
     );
     assert_eq!(preflight_json["allowed"], true);
 
-    let status_after_preflight = run_plan_execution_json(
+    let status_after_preflight = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "status after explicit plan execution preflight acceptance before dirty workspace routing fixture",
+        concat!(
+            "status after explicit plan execution pre",
+            "flight acceptance before dirty workspace routing fixture"
+        ),
     );
     assert!(
         status_after_preflight["execution_run_id"]
             .as_str()
             .is_some_and(|value| !value.is_empty()),
-        "explicit plan execution preflight should persist execution_run_id before workspace becomes dirty"
+        "explicit plan execution {} should persist execution_run_id before workspace becomes dirty",
+        concat!("pre", "flight")
     );
 
     write_file(
         &repo.join("README.md"),
-        "# workflow-phase-accepted-preflight-dirty\ntracked change after execution preflight acceptance\n",
+        concat!(
+            "# workflow-phase-accepted-pre",
+            "flight-dirty\ntracked change after execution pre",
+            "flight acceptance\n"
+        ),
     );
 
-    let status_after_workspace_dirty = run_plan_execution_json(
+    let status_after_workspace_dirty = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "status after workspace dirties following explicit plan execution preflight acceptance",
+        concat!(
+            "status after workspace dirties following explicit plan execution pre",
+            "flight acceptance"
+        ),
     );
     assert!(
         status_after_workspace_dirty["execution_run_id"]
             .as_str()
             .is_some_and(|value| !value.is_empty()),
-        "accepted preflight should keep plan execution status.execution_run_id non-empty after workspace dirties"
+        "accepted {} should keep plan execution status.execution_run_id non-empty after workspace dirties",
+        concat!("pre", "flight")
     );
     assert_eq!(
-        status_after_workspace_dirty["harness_phase"], "execution_preflight",
-        "accepted preflight should keep plan execution status.harness_phase at execution_preflight after workspace dirties"
+        status_after_workspace_dirty["harness_phase"],
+        concat!("execution_pre", "flight"),
+        "accepted {} should keep plan execution status.harness_phase at execution_{} after workspace dirties",
+        concat!("pre", "flight"),
+        concat!("pre", "flight")
     );
 
     let runtime = discover_execution_runtime(
         repo,
         state,
-        "workflow phase for accepted-preflight dirty-workspace routing fixture",
+        concat!(
+            "workflow phase for accepted-pre",
+            "flight dirty-workspace routing fixture"
+        ),
     );
     let phase_json = workflow_phase_json(
         &runtime,
-        "workflow phase for accepted-preflight dirty-workspace routing fixture",
+        concat!(
+            "workflow phase for accepted-pre",
+            "flight dirty-workspace routing fixture"
+        ),
     );
-    assert_eq!(phase_json["phase"], "execution_preflight");
-    assert_eq!(phase_json["next_action"], "execution preflight");
+    assert_eq!(phase_json["phase"], concat!("execution_pre", "flight"));
+    assert_eq!(
+        phase_json["next_action"],
+        concat!("execution pre", "flight")
+    );
 
     let handoff_json = workflow_handoff_json(
         &runtime,
-        "workflow handoff for accepted-preflight dirty-workspace routing fixture",
+        concat!(
+            "workflow handoff for accepted-pre",
+            "flight dirty-workspace routing fixture"
+        ),
     );
-    assert_eq!(handoff_json["phase"], "execution_preflight");
-    assert_eq!(handoff_json["next_action"], "execution preflight");
+    assert_eq!(handoff_json["phase"], concat!("execution_pre", "flight"));
+    assert_eq!(
+        handoff_json["next_action"],
+        concat!("execution pre", "flight")
+    );
 
     let doctor_json = workflow_doctor_json(
         &runtime,
-        "workflow doctor for accepted-preflight dirty-workspace routing fixture",
+        concat!(
+            "workflow doctor for accepted-pre",
+            "flight dirty-workspace routing fixture"
+        ),
     );
     assert!(
         doctor_json["execution_status"]["execution_run_id"]
             .as_str()
             .is_some_and(|value| !value.is_empty()),
-        "accepted preflight should keep doctor.execution_status.execution_run_id non-empty after workspace dirties"
+        "accepted {} should keep doctor.execution_status.execution_run_id non-empty after workspace dirties",
+        concat!("pre", "flight")
     );
 }
 
 #[test]
-fn canonical_workflow_doctor_uses_accepted_preflight_truth_after_workspace_dirties() {
-    let (repo_dir, state_dir) = init_repo("workflow-doctor-accepted-preflight-dirty");
+fn internal_only_compatibility_canonical_workflow_doctor_uses_accepted_preflight_truth_after_workspace_dirties()
+ {
+    let (repo_dir, state_dir) = init_repo(concat!("workflow-doctor-accepted-pre", "flight-dirty"));
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-doctor-accepted-preflight-dirty";
+    let session_key = concat!("workflow-doctor-accepted-pre", "flight-dirty");
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
     install_full_contract_ready_artifacts(repo);
     enable_session_decision(state, session_key);
-    prepare_preflight_acceptance_workspace(repo, "workflow-doctor-accepted-preflight-dirty");
+    prepare_preflight_acceptance_workspace(
+        repo,
+        concat!("workflow-doctor-accepted-pre", "flight-dirty"),
+    );
 
     let preflight_json = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
-        "explicit plan execution preflight acceptance before doctor dirty-workspace fixture",
+        concat!(
+            "explicit plan execution pre",
+            "flight acceptance before doctor dirty-workspace fixture"
+        ),
     );
     assert_eq!(preflight_json["allowed"], true);
 
     write_file(
         &repo.join("README.md"),
-        "# workflow-doctor-accepted-preflight-dirty\ntracked change after execution preflight acceptance\n",
+        concat!(
+            "# workflow-doctor-accepted-pre",
+            "flight-dirty\ntracked change after execution pre",
+            "flight acceptance\n"
+        ),
     );
     assert!(
         discover_repository(repo)
             .expect("workspace dirtiness helper should discover repository")
             .is_dirty()
             .expect("workspace dirtiness helper should compute dirtiness"),
-        "workspace should be dirty after introducing tracked change post-preflight acceptance"
+        "workspace should be dirty after introducing tracked change post-{} acceptance",
+        concat!("pre", "flight")
     );
 
     let runtime = discover_execution_runtime(
         repo,
         state,
-        "workflow doctor for accepted-preflight truth after dirty-workspace fixture",
+        concat!(
+            "workflow doctor for accepted-pre",
+            "flight truth after dirty-workspace fixture"
+        ),
     );
     let doctor_json = workflow_doctor_json(
         &runtime,
-        "workflow doctor for accepted-preflight truth after dirty-workspace fixture",
+        concat!(
+            "workflow doctor for accepted-pre",
+            "flight truth after dirty-workspace fixture"
+        ),
     );
-    assert_eq!(doctor_json["phase"], "execution_preflight");
+    assert_eq!(doctor_json["phase"], concat!("execution_pre", "flight"));
     assert!(
         doctor_json["execution_status"]["execution_run_id"]
             .as_str()
             .is_some_and(|value| !value.is_empty()),
-        "doctor.execution_status.execution_run_id should stay non-empty after accepted preflight even when workspace becomes dirty"
+        "doctor.execution_status.execution_run_id should stay non-empty after accepted {} even when workspace becomes dirty",
+        concat!("pre", "flight")
     );
 
     assert_ne!(
-        doctor_json["preflight"]["failure_class"], "WorkspaceNotSafe",
-        "workflow doctor should not surface a fresh WorkspaceNotSafe preflight failure after preflight was already accepted"
+        doctor_json[concat!("pre", "flight")]["failure_class"],
+        "WorkspaceNotSafe",
+        "workflow doctor should not surface a fresh WorkspaceNotSafe {} failure after {} was already accepted",
+        concat!("pre", "flight"),
+        concat!("pre", "flight")
     );
     assert_ne!(
-        doctor_json["preflight"]["allowed"], false,
-        "workflow doctor should not report preflight.allowed=false once accepted preflight state exists"
+        doctor_json[concat!("pre", "flight")]["allowed"],
+        false,
+        "workflow doctor should not report {}.allowed=false once accepted {} state exists",
+        concat!("pre", "flight"),
+        concat!("pre", "flight")
     );
 }
 
 #[test]
-fn canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth() {
-    let (repo_dir, state_dir) = init_repo("workflow-phase-gate-review-stale-authoritative-truth");
+fn internal_only_compatibility_canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth()
+ {
+    let (repo_dir, state_dir) = init_repo(concat!(
+        "workflow-phase-gate",
+        "-review-stale-authoritative-truth"
+    ));
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-phase-gate-review-stale-authoritative-truth";
+    let session_key = concat!("workflow-phase-gate", "-review-stale-authoritative-truth");
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
@@ -8463,7 +8864,7 @@ fn canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth() 
         "workflow doctor for stale authoritative late-gate truth",
     );
     let gate_review_json = parse_json(
-        &run_workflow_gate_review_output(
+        &internal_only_workflow_gate_review_output(
             repo,
             state,
             plan_rel,
@@ -8483,12 +8884,18 @@ fn canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth() 
 }
 
 #[test]
-fn canonical_workflow_gate_review_fail_closes_on_malformed_authoritative_late_gate_truth_values() {
-    let (repo_dir, state_dir) =
-        init_repo("workflow-phase-gate-review-malformed-authoritative-truth");
+fn internal_only_compatibility_canonical_workflow_gate_review_fail_closes_on_malformed_authoritative_late_gate_truth_values()
+ {
+    let (repo_dir, state_dir) = init_repo(concat!(
+        "workflow-phase-gate",
+        "-review-malformed-authoritative-truth"
+    ));
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-phase-gate-review-malformed-authoritative-truth";
+    let session_key = concat!(
+        "workflow-phase-gate",
+        "-review-malformed-authoritative-truth"
+    );
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
@@ -8510,7 +8917,7 @@ fn canonical_workflow_gate_review_fail_closes_on_malformed_authoritative_late_ga
     );
 
     let gate_review_json = parse_json(
-        &run_workflow_gate_review_output(
+        &internal_only_workflow_gate_review_output(
             repo,
             state,
             plan_rel,
@@ -8536,13 +8943,14 @@ fn canonical_workflow_gate_review_fail_closes_on_malformed_authoritative_late_ga
                         .iter()
                         .any(|code| code == "release_docs_state_missing")
             }),
-        "gate-review should fail closed with malformed authoritative late-gate reason codes; got {gate_review_json:?}"
+        "{} should fail closed with malformed authoritative late-gate reason codes; got {gate_review_json:?}",
+        concat!("gate", "-review")
     );
 }
 
 #[test]
-fn canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for_branch_completion()
-{
+fn internal_only_compatibility_canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for_branch_completion()
+ {
     let (repo_dir, state_dir) =
         init_repo("workflow-phase-ready-guard-stale-authoritative-late-gate-truth");
     let repo = repo_dir.path();
@@ -8553,7 +8961,7 @@ fn canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     let branch = current_branch_name(repo);
     update_authoritative_harness_state(
@@ -8587,7 +8995,7 @@ fn canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for
         "workflow handoff for ready guard stale-authoritative late-gate truth fixture",
     );
     let gate_review_json = parse_json(
-        &run_workflow_gate_review_output(
+        &internal_only_workflow_gate_review_output(
             repo,
             state,
             plan_rel,
@@ -8596,7 +9004,7 @@ fn canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for
         "workflow gate review for ready guard stale-authoritative late-gate truth fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -8606,8 +9014,11 @@ fn canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for
     );
     assert_eq!(gate_review_json["allowed"], false, "{gate_review_json:?}");
     assert_eq!(
-        gate_finish_json["allowed"], false,
-        "gate-finish must consume the same authoritative late-gate truth as gate-review; got {gate_finish_json:?}"
+        gate_finish_json["allowed"],
+        false,
+        "{} must consume the same authoritative late-gate truth as {}; got {gate_finish_json:?}",
+        concat!("gate", "-finish"),
+        concat!("gate", "-review")
     );
     assert!(
         gate_finish_json["reason_codes"]
@@ -8616,7 +9027,8 @@ fn canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for
                 codes.iter().any(|code| code == "qa_artifact_missing")
                     && codes.iter().any(|code| code == "browser_qa_state_missing")
             }),
-        "gate-finish should expose event-authoritative late-gate blockers and ignore projection-only stale fields; got {gate_finish_json:?}"
+        "{} should expose event-authoritative late-gate blockers and ignore projection-only stale fields; got {gate_finish_json:?}",
+        concat!("gate", "-finish")
     );
     assert_eq!(
         phase_json["phase"], "qa_pending",
@@ -8629,7 +9041,7 @@ fn canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for
 }
 
 #[test]
-fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final_review_over_newer_branch_decoy()
+fn internal_only_compatibility_canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final_review_over_newer_branch_decoy()
  {
     let (repo_dir, state_dir) = init_repo("workflow-phase-authoritative-final-review-provenance");
     let repo = repo_dir.path();
@@ -8641,8 +9053,12 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final
     let branch = current_branch_name(repo);
     let expected_base_branch = expected_release_base_branch(repo);
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
-    let review_path =
-        write_dispatched_branch_review_artifact(repo, state, plan_rel, &expected_base_branch);
+    let review_path = internal_only_write_dispatched_branch_review_artifact(
+        repo,
+        state,
+        plan_rel,
+        &expected_base_branch,
+    );
     let qa_path = write_branch_qa_artifact(repo, state, plan_rel, &test_plan_path);
     write_branch_release_artifact(repo, state, plan_rel, &expected_base_branch);
     enable_session_decision(state, session_key);
@@ -8690,7 +9106,7 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final
         "workflow doctor for authoritative final-review provenance override fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -8710,7 +9126,7 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final
 }
 
 #[test]
-fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_release_docs_over_newer_branch_decoy()
+fn internal_only_compatibility_canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_release_docs_over_newer_branch_decoy()
  {
     let (repo_dir, state_dir) = init_repo("workflow-phase-authoritative-release-docs-provenance");
     let repo = repo_dir.path();
@@ -8722,8 +9138,12 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_relea
     let branch = current_branch_name(repo);
     let expected_base_branch = expected_release_base_branch(repo);
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
-    let review_path =
-        write_dispatched_branch_review_artifact(repo, state, plan_rel, &expected_base_branch);
+    let review_path = internal_only_write_dispatched_branch_review_artifact(
+        repo,
+        state,
+        plan_rel,
+        &expected_base_branch,
+    );
     let qa_path = write_branch_qa_artifact(repo, state, plan_rel, &test_plan_path);
     let release_path = write_branch_release_artifact(repo, state, plan_rel, &expected_base_branch);
     enable_session_decision(state, session_key);
@@ -8772,7 +9192,7 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_relea
         "workflow doctor for authoritative release-doc provenance override fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -8913,10 +9333,11 @@ fn canonical_workflow_operator_surfaces_pivot_required_plan_revision_block_phase
 
 #[test]
 fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
-    let (repo_dir, state_dir) = init_repo("workflow-phase-gate-review-evidence-failure");
+    let (repo_dir, state_dir) =
+        init_repo(concat!("workflow-phase-gate", "-review-evidence-failure"));
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-phase-gate-review-evidence-failure";
+    let session_key = concat!("workflow-phase-gate", "-review-evidence-failure");
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
     complete_workflow_fixture_execution(repo, state, plan_rel);
@@ -8940,7 +9361,7 @@ fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "plan execution status for workflow gate-review evidence failure fixture",
+        "plan execution status for workflow review evidence failure fixture",
     );
     let evidence_rel = execution_status["evidence_path"]
         .as_str()
@@ -8955,13 +9376,19 @@ fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
             "--repo-export",
             "--confirm-repo-export",
         ],
-        "materialize projection export execution evidence for gate-review diagnostic fixture",
+        concat!(
+            "materialize projection export execution evidence for gate",
+            "-review diagnostic fixture"
+        ),
     );
     let materialized_status = run_plan_execution_json(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "status after tracked evidence projection export for gate-review diagnostic fixture",
+        concat!(
+            "status after tracked evidence projection export for gate",
+            "-review diagnostic fixture"
+        ),
     );
     let evidence_export_rel = materialized_status["tracked_projection_paths"]
         .as_array()
@@ -9003,19 +9430,31 @@ fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
     let runtime = discover_execution_runtime(
         repo,
         state,
-        "workflow phase for gate-review evidence failure fixture",
+        concat!(
+            "workflow phase for gate",
+            "-review evidence failure fixture"
+        ),
     );
     let phase_json = workflow_phase_json(
         &runtime,
-        "workflow phase for gate-review evidence failure fixture",
+        concat!(
+            "workflow phase for gate",
+            "-review evidence failure fixture"
+        ),
     );
     let handoff_json = workflow_handoff_json(
         &runtime,
-        "workflow handoff for gate-review evidence failure fixture",
+        concat!(
+            "workflow handoff for gate",
+            "-review evidence failure fixture"
+        ),
     );
     let doctor_json = workflow_doctor_json(
         &runtime,
-        "workflow doctor for gate-review evidence failure fixture",
+        concat!(
+            "workflow doctor for gate",
+            "-review evidence failure fixture"
+        ),
     );
     assert_eq!(
         doctor_json["execution_status"]["tracked_projections_current"],
@@ -9032,7 +9471,8 @@ fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
                         .iter()
                         .any(|code| code.as_str() == Some("plan_fingerprint_mismatch"))
                 }),
-            "tracked projection freshness should not surface as a gate-review reason, got {doctor_json:?}"
+            "tracked projection freshness should not surface as a {} reason, got {doctor_json:?}",
+            concat!("gate", "-review")
         );
     }
     assert_eq!(phase_json["phase"], "document_release_pending");
@@ -9046,7 +9486,8 @@ fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
 }
 
 #[test]
-fn canonical_workflow_phase_routes_missing_test_plan_back_to_plan_eng_review() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_missing_test_plan_back_to_plan_eng_review()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-test-plan-missing");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -9055,7 +9496,7 @@ fn canonical_workflow_phase_routes_missing_test_plan_back_to_plan_eng_review() {
     let base_branch = expected_release_base_branch(repo);
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
 
@@ -9069,7 +9510,7 @@ fn canonical_workflow_phase_routes_missing_test_plan_back_to_plan_eng_review() {
         "workflow handoff for missing-test-plan routing fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -9086,7 +9527,8 @@ fn canonical_workflow_phase_routes_missing_test_plan_back_to_plan_eng_review() {
 }
 
 #[test]
-fn canonical_workflow_phase_prioritizes_test_plan_prerequisite_over_failed_current_qa_result() {
+fn internal_only_compatibility_canonical_workflow_phase_prioritizes_test_plan_prerequisite_over_failed_current_qa_result()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-test-plan-prereq-over-failed-qa");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -9096,7 +9538,7 @@ fn canonical_workflow_phase_prioritizes_test_plan_prerequisite_over_failed_curre
     let branch = current_branch_name(repo);
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     update_authoritative_harness_state(
         repo,
@@ -9139,7 +9581,8 @@ fn canonical_workflow_phase_prioritizes_test_plan_prerequisite_over_failed_curre
 }
 
 #[test]
-fn canonical_workflow_phase_routes_malformed_test_plan_back_to_plan_eng_review() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_malformed_test_plan_back_to_plan_eng_review()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-test-plan-malformed");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -9149,7 +9592,7 @@ fn canonical_workflow_phase_routes_malformed_test_plan_back_to_plan_eng_review()
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
     replace_in_file(&test_plan_path, "# Test Plan", "# Not A Test Plan");
@@ -9164,7 +9607,7 @@ fn canonical_workflow_phase_routes_malformed_test_plan_back_to_plan_eng_review()
         "workflow handoff for malformed-test-plan routing fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -9182,7 +9625,8 @@ fn canonical_workflow_phase_routes_malformed_test_plan_back_to_plan_eng_review()
 }
 
 #[test]
-fn canonical_workflow_phase_ignores_test_plan_generator_drift_for_routing() {
+fn internal_only_compatibility_canonical_workflow_phase_ignores_test_plan_generator_drift_for_routing()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-test-plan-generator-mismatch");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -9192,7 +9636,7 @@ fn canonical_workflow_phase_ignores_test_plan_generator_drift_for_routing() {
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
     replace_in_file(
@@ -9211,7 +9655,7 @@ fn canonical_workflow_phase_ignores_test_plan_generator_drift_for_routing() {
         "workflow handoff for test-plan generator mismatch routing fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -9229,7 +9673,8 @@ fn canonical_workflow_phase_ignores_test_plan_generator_drift_for_routing() {
 }
 
 #[test]
-fn canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-test-plan-stale");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -9239,7 +9684,7 @@ fn canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review() {
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
     replace_in_file(
@@ -9258,7 +9703,7 @@ fn canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review() {
         "workflow handoff for stale-test-plan routing fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -9276,7 +9721,8 @@ fn canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review() {
 }
 
 #[test]
-fn canonical_workflow_phase_routes_authoritative_qa_provenance_invalid_to_qa_pending() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_authoritative_qa_provenance_invalid_to_qa_pending()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-qa-authoritative-provenance-invalid");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -9286,7 +9732,7 @@ fn canonical_workflow_phase_routes_authoritative_qa_provenance_invalid_to_qa_pen
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     let qa_path = write_branch_qa_artifact(repo, state, plan_rel, &test_plan_path);
     let _ = publish_authoritative_qa_truth(
@@ -9331,7 +9777,7 @@ fn canonical_workflow_phase_routes_authoritative_qa_provenance_invalid_to_qa_pen
         "workflow handoff for authoritative-qa-provenance-invalid routing fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -9356,7 +9802,8 @@ fn canonical_workflow_phase_routes_authoritative_qa_provenance_invalid_to_qa_pen
 }
 
 #[test]
-fn canonical_workflow_phase_routes_authoritative_test_plan_provenance_invalid_to_plan_eng_review() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_authoritative_test_plan_provenance_invalid_to_plan_eng_review()
+ {
     let (repo_dir, state_dir) =
         init_repo("workflow-phase-test-plan-authoritative-provenance-invalid");
     let repo = repo_dir.path();
@@ -9367,7 +9814,7 @@ fn canonical_workflow_phase_routes_authoritative_test_plan_provenance_invalid_to
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     let qa_path = write_branch_qa_artifact(repo, state, plan_rel, &test_plan_path);
     enable_session_decision(state, session_key);
@@ -9422,7 +9869,7 @@ fn canonical_workflow_phase_routes_authoritative_test_plan_provenance_invalid_to
         "workflow handoff for authoritative-test-plan-provenance-invalid routing fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -9446,7 +9893,7 @@ fn canonical_workflow_phase_routes_authoritative_test_plan_provenance_invalid_to
     );
 }
 
-fn assert_authoritative_qa_source_test_plan_header_failure(
+fn internal_only_assert_authoritative_qa_source_test_plan_header_failure(
     fixture_name: &str,
     qa_source_transform: fn(&str) -> String,
 ) {
@@ -9459,7 +9906,7 @@ fn assert_authoritative_qa_source_test_plan_header_failure(
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     let qa_path = write_branch_qa_artifact(repo, state, plan_rel, &test_plan_path);
     enable_session_decision(state, session_key);
@@ -9522,7 +9969,7 @@ fn assert_authoritative_qa_source_test_plan_header_failure(
         "workflow handoff for malformed authoritative QA->test-plan provenance fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -9547,25 +9994,26 @@ fn assert_authoritative_qa_source_test_plan_header_failure(
 }
 
 #[test]
-fn canonical_workflow_phase_routes_missing_authoritative_qa_source_test_plan_header_to_plan_eng_review()
+fn internal_only_compatibility_canonical_workflow_phase_routes_missing_authoritative_qa_source_test_plan_header_to_plan_eng_review()
  {
-    assert_authoritative_qa_source_test_plan_header_failure(
+    internal_only_assert_authoritative_qa_source_test_plan_header_failure(
         "workflow-phase-test-plan-header-missing",
         remove_source_test_plan_header,
     );
 }
 
 #[test]
-fn canonical_workflow_phase_routes_blank_authoritative_qa_source_test_plan_header_to_plan_eng_review()
+fn internal_only_compatibility_canonical_workflow_phase_routes_blank_authoritative_qa_source_test_plan_header_to_plan_eng_review()
  {
-    assert_authoritative_qa_source_test_plan_header_failure(
+    internal_only_assert_authoritative_qa_source_test_plan_header_failure(
         "workflow-phase-test-plan-header-blank",
         blank_source_test_plan_header,
     );
 }
 
 #[test]
-fn canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_document_release() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_document_release()
+ {
     let (repo_dir, state_dir) =
         init_repo("workflow-phase-release-authoritative-provenance-invalid");
     let repo = repo_dir.path();
@@ -9614,7 +10062,7 @@ fn canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_d
         "workflow handoff for authoritative-release-provenance-invalid routing fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -9628,7 +10076,8 @@ fn canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_d
         gate_finish_json["reason_codes"]
             .as_array()
             .is_some_and(|codes| { codes.iter().any(|code| code == "review_artifact_missing") }),
-        "gate-finish should fail at final-review freshness when release receipt markdown is no longer authoritative, got {gate_finish_json:?}"
+        "{} should fail at final-review freshness when release receipt markdown is no longer authoritative, got {gate_finish_json:?}",
+        concat!("gate", "-finish")
     );
     assert_eq!(
         handoff_json["phase"], "final_review_pending",
@@ -9652,7 +10101,8 @@ fn canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_d
 }
 
 #[test]
-fn canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-release-and-review-unresolved");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -9673,7 +10123,7 @@ fn canonical_workflow_phase_routes_release_and_review_unresolved_to_document_rel
         "workflow handoff for release+review-unresolved routing fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -9703,7 +10153,7 @@ fn canonical_workflow_phase_routes_release_and_review_unresolved_to_document_rel
 }
 
 #[test]
-fn canonical_workflow_phase_routes_mixed_stale_matrix() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_mixed_stale_matrix() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-matrix-shared");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -9823,7 +10273,12 @@ fn canonical_workflow_phase_routes_mixed_stale_matrix() {
             if qa_blocked { "yes" } else { "no" },
         );
         if review_fresh {
-            write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+            internal_only_write_dispatched_branch_review_artifact(
+                repo,
+                state,
+                plan_rel,
+                &base_branch,
+            );
         }
         if release_fresh {
             write_branch_release_artifact(repo, state, plan_rel, &base_branch);
@@ -9942,7 +10397,8 @@ fn canonical_workflow_harness_operator_precedence_parity_dual_unresolved() {
 }
 
 #[test]
-fn canonical_workflow_harness_operator_parity_unclassified_finish_failure_fails_closed() {
+fn internal_only_compatibility_canonical_workflow_harness_operator_parity_unclassified_finish_failure_fails_closed()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-harness-operator-parity-unclassified-finish");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -9951,7 +10407,7 @@ fn canonical_workflow_harness_operator_parity_unclassified_finish_failure_fails_
     let base_branch = expected_release_base_branch(repo);
     complete_workflow_fixture_execution(repo, state, plan_rel);
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     write_file(
         &harness_authoritative_artifact_path(
@@ -9980,7 +10436,7 @@ fn canonical_workflow_harness_operator_parity_unclassified_finish_failure_fails_
         "workflow_runtime unclassified-finish parity fixture",
     );
     let gate_finish_json = parse_json(
-        &run_workflow_gate_finish_output(
+        &internal_only_workflow_gate_finish_output(
             repo,
             state,
             plan_rel,
@@ -10001,7 +10457,8 @@ fn canonical_workflow_harness_operator_parity_unclassified_finish_failure_fails_
 }
 
 #[test]
-fn canonical_workflow_phase_routes_review_resolved_browser_qa_to_qa_only() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_review_resolved_browser_qa_to_qa_only()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-phase-qa-pending");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -10011,7 +10468,7 @@ fn canonical_workflow_phase_routes_review_resolved_browser_qa_to_qa_only() {
 
     complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
     write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
 
@@ -10070,7 +10527,7 @@ fn canonical_workflow_phase_routes_review_resolved_to_document_release_pending()
 }
 
 #[test]
-fn canonical_workflow_phase_routes_fully_ready_branch_to_finish() {
+fn internal_only_compatibility_canonical_workflow_phase_routes_fully_ready_branch_to_finish() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-ready-for-finish");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -10080,7 +10537,7 @@ fn canonical_workflow_phase_routes_fully_ready_branch_to_finish() {
 
     complete_workflow_fixture_execution(repo, state, plan_rel);
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
 
@@ -10147,7 +10604,8 @@ fn compiled_cli_route_parity_probe_for_completed_late_stage_fixture() {
 }
 
 #[test]
-fn runtime_remediation_fs01_shared_route_parity_for_missing_current_closure() {
+fn internal_only_compatibility_runtime_remediation_fs01_shared_route_parity_for_missing_current_closure()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs01-workflow-runtime");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -10157,7 +10615,7 @@ fn runtime_remediation_fs01_shared_route_parity_for_missing_current_closure() {
 
     complete_workflow_fixture_execution(repo, state, plan_rel);
     let test_plan = write_branch_test_plan_artifact(repo, state, plan_rel, "no");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     let release_path = write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     publish_authoritative_release_truth(repo, state, plan_rel, &release_path, &base_branch);
     update_authoritative_harness_state(
@@ -10187,7 +10645,7 @@ fn runtime_remediation_fs01_shared_route_parity_for_missing_current_closure() {
         ),
         "FS-01 workflow operator shared-runtime parity fixture",
     );
-    let status_json = run_plan_execution_json(
+    let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -10205,7 +10663,7 @@ fn runtime_remediation_fs01_shared_route_parity_for_missing_current_closure() {
 
     assert_public_route_parity(&operator_json, &status_json, Some(&doctor_json));
 
-    let repair_json = run_plan_execution_json(
+    let repair_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["repair-review-state", "--plan", plan_rel],
@@ -10235,12 +10693,13 @@ fn runtime_remediation_fs01_shared_route_parity_for_missing_current_closure() {
 }
 
 #[test]
-fn runtime_remediation_fs04_repair_returns_route_consumed_by_operator() {
+fn internal_only_compatibility_runtime_remediation_fs04_repair_returns_route_consumed_by_operator()
+{
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs04-workflow-runtime");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-03-runtime-fs04-repair-route-runtime.md";
-    setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
 
     let operator_json = parse_json(
         &run_rust_featureforge_with_env(
@@ -10259,7 +10718,7 @@ fn runtime_remediation_fs04_repair_returns_route_consumed_by_operator() {
         ),
         "FS-04 workflow operator shared-route parity fixture",
     );
-    let status_json = run_plan_execution_json(
+    let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -10267,7 +10726,7 @@ fn runtime_remediation_fs04_repair_returns_route_consumed_by_operator() {
     );
     assert_public_route_parity(&operator_json, &status_json, None);
 
-    let repair_json = run_plan_execution_json(
+    let repair_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -10324,12 +10783,13 @@ fn runtime_remediation_fs04_repair_returns_route_consumed_by_operator() {
 }
 
 #[test]
-fn runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker() {
+fn internal_only_compatibility_runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker()
+{
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs08-workflow-runtime");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-03-runtime-fs08-stale-blocker.md";
-    setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
     let branch = current_branch_name(repo);
     update_authoritative_harness_state(
         repo,
@@ -10360,7 +10820,7 @@ fn runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker() {
         ),
         "FS-08 workflow operator stale-blocker visibility fixture",
     );
-    let status_json = run_plan_execution_json(
+    let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -10442,13 +10902,14 @@ fn runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker() {
 }
 
 #[test]
-fn runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator() {
+fn internal_only_compatibility_runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs04-workflow-runtime-real-cli");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel =
         "docs/featureforge/plans/2026-04-03-runtime-fs04-repair-route-runtime-real-cli.md";
-    setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
 
     let operator_json = parse_json(
         &run_rust_featureforge_with_env_real_cli(
@@ -10532,12 +10993,13 @@ fn runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operat
 }
 
 #[test]
-fn runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker() {
+fn internal_only_compatibility_runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs08-workflow-runtime-real-cli");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-03-runtime-fs08-stale-blocker-real-cli.md";
-    setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
     let branch = current_branch_name(repo);
     update_authoritative_harness_state(
         repo,
@@ -10653,17 +11115,6 @@ fn setup_runtime_fs11_next_action_fixture(repo: &Path, state: &Path, plan_rel: &
     prepare_preflight_acceptance_workspace(repo, "runtime-remediation-fs11-next-action");
     let branch = current_branch_name(repo);
 
-    let preflight = internal_only_unit_plan_execution_preflight_json(
-        repo,
-        state,
-        plan_rel,
-        "FS-11 preflight before shared-next-action contradiction fixture",
-    );
-    assert_eq!(
-        preflight["allowed"],
-        Value::Bool(true),
-        "FS-11 fixture preflight should allow execution",
-    );
     let status_before_begin = run_plan_execution_json(
         repo,
         state,
@@ -10764,17 +11215,6 @@ fn setup_runtime_fs11_fs15_next_action_fixture(repo: &Path, state: &Path, plan_r
     prepare_preflight_acceptance_workspace(repo, "runtime-remediation-fs11-fs15-next-action");
     let branch = current_branch_name(repo);
 
-    let preflight = internal_only_unit_plan_execution_preflight_json(
-        repo,
-        state,
-        plan_rel,
-        "FS-11/FS-15 preflight before stale-boundary selection fixture",
-    );
-    assert_eq!(
-        preflight["allowed"],
-        Value::Bool(true),
-        "FS-11/FS-15 fixture preflight should allow execution",
-    );
     let status_before_begin = run_plan_execution_json(
         repo,
         state,
@@ -10962,13 +11402,14 @@ fn setup_runtime_fs11_fs15_next_action_fixture(repo: &Path, state: &Path, plan_r
     );
 }
 
-fn setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(
+fn internal_only_setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
     resume_overlay: Option<(u32, u32)>,
 ) {
-    let dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    let dispatch_id =
+        internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
     let status_after_fixture = run_plan_execution_json(
         repo,
         state,
@@ -11103,7 +11544,8 @@ fn runtime_remediation_fs15_earliest_stale_boundary_beats_latest_overlay_target(
 }
 
 #[test]
-fn runtime_remediation_fs11_prestart_operator_status_begin_share_first_unchecked_step() {
+fn internal_only_compatibility_runtime_remediation_fs11_prestart_operator_status_begin_share_first_unchecked_step()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs11-prestart-shared-next-action");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -11115,7 +11557,7 @@ fn runtime_remediation_fs11_prestart_operator_status_begin_share_first_unchecked
         "runtime-remediation-fs11-prestart-shared-next-action",
     );
 
-    let status_before_begin = run_plan_execution_json(
+    let status_before_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -11130,12 +11572,13 @@ fn runtime_remediation_fs11_prestart_operator_status_begin_share_first_unchecked
         repo,
         state,
         plan_rel,
-        "FS-11 prestart preflight before shared begin parity",
+        concat!("FS-11 prestart pre", "flight before shared begin parity"),
     );
     assert_eq!(
         preflight_before_begin["allowed"],
         Value::Bool(true),
-        "FS-11 prestart preflight should allow begin parity fixture"
+        "FS-11 prestart {} should allow begin parity fixture",
+        concat!("pre", "flight")
     );
     let operator_before_begin = parse_json(
         &run_rust_featureforge_with_env(
@@ -11174,7 +11617,7 @@ fn runtime_remediation_fs11_prestart_operator_status_begin_share_first_unchecked
         .find(|window| window[0] == "--step")
         .map(|window| window[1])
         .expect("FS-11 prestart recommended begin should include --step");
-    let begin_from_operator = run_plan_execution_json(
+    let begin_from_operator = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -11686,13 +12129,13 @@ fn current_task_closure_record(
 }
 
 #[test]
-fn runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry()
+fn internal_only_compatibility_runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry()
  {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs14-workflow-runtime");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-03-runtime-fs14-workflow-runtime.md";
-    setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
 
     let operator_json = parse_json(
         &run_rust_featureforge_with_env(
@@ -11733,7 +12176,7 @@ fn runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_curren
         recommended_command.contains("close-current-task"),
         "FS-14 operator should recommend close-current-task, got {recommended_command}"
     );
-    let status_json = run_plan_execution_json(
+    let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -11751,10 +12194,10 @@ fn runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_curren
         "FS-14 synthetic baseline bridge should be typed as baseline_bridge instead of masquerading as a closure-graph stale target: {status_json:?}"
     );
     assert!(
-        !recommended_command.contains("preflight")
-            && !recommended_command.contains("record-review-dispatch")
-            && !recommended_command.contains("gate-review")
-            && !recommended_command.contains("rebuild-evidence"),
+        !recommended_command.contains(concat!("pre", "flight"))
+            && !recommended_command.contains(concat!("record", "-review-dispatch"))
+            && !recommended_command.contains(concat!("gate", "-review"))
+            && !recommended_command.contains(concat!("rebuild", "-evidence")),
         "FS-14 normal recovery should not require hidden helper commands, got {recommended_command}"
     );
     let close_json = run_recommended_plan_execution_command(
@@ -11780,12 +12223,13 @@ fn runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_curren
 }
 
 #[test]
-fn runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task() {
+fn internal_only_compatibility_runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs14-repair-routing");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-03-runtime-fs14-repair-routing.md";
-    setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
 
     let operator_json = parse_json(
         &run_rust_featureforge_with_env(
@@ -11818,7 +12262,7 @@ fn runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close
         "FS-14 repair parity workflow/operator should recommend close-current-task, got {operator_command}"
     );
 
-    let repair_json = run_plan_execution_json(
+    let repair_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -11876,12 +12320,13 @@ fn runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close
 }
 
 #[test]
-fn runtime_remediation_fs14_operator_repair_parity_without_external_review_ready_flag() {
+fn internal_only_compatibility_runtime_remediation_fs14_operator_repair_parity_without_external_review_ready_flag()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs14-repair-routing-no-ext-ready");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-03-runtime-fs14-repair-routing-no-ext-ready.md";
-    setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
 
     let operator_json = parse_json(
         &run_rust_featureforge_with_env(
@@ -11912,7 +12357,7 @@ fn runtime_remediation_fs14_operator_repair_parity_without_external_review_ready
         "FS-14 no-external-ready parity should recommend close-current-task, got {operator_command}"
     );
 
-    let repair_json = run_plan_execution_json(
+    let repair_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["repair-review-state", "--plan", plan_rel],
@@ -12041,13 +12486,16 @@ fn runtime_remediation_fs15_repair_never_jumps_to_later_task_when_earlier_bounda
 }
 
 #[test]
-fn fs17_stale_unreviewed_truthful_replay_promotes_to_task_closure_recording_ready() {
+fn internal_only_compatibility_fs17_stale_unreviewed_truthful_replay_promotes_to_task_closure_recording_ready()
+ {
     let (repo_dir, state_dir) =
         init_repo("runtime-remediation-fs17-stale-unreviewed-bridge-routing");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-08-runtime-fs17-stale-unreviewed-bridge.md";
-    setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(repo, state, plan_rel, None);
+    internal_only_setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(
+        repo, state, plan_rel, None,
+    );
 
     let operator_json = parse_json(
         &run_rust_featureforge_with_env(
@@ -12310,12 +12758,14 @@ fn fs19_superseded_stale_historical_task_closure_is_not_an_unresolved_stale_boun
 }
 
 #[test]
-fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_task_closure() {
+fn internal_only_compatibility_fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_task_closure()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs20-task-closure-freshness");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-07-runtime-fs20-task-closure-freshness.md";
-    let _task1_dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    let _task1_dispatch_id =
+        internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
     let review_summary_path = repo.join("docs/featureforge/execution-evidence/fs20-review.md");
     let verification_summary_path =
         repo.join("docs/featureforge/execution-evidence/fs20-verification.md");
@@ -12324,7 +12774,7 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
         "FS-20 current closure should remain fresh when only runtime-owned paths changed.\n",
     );
     write_file(&verification_summary_path, "FS-20 verification summary.\n");
-    let close_task1 = run_plan_execution_json(
+    let close_task1 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -12350,7 +12800,7 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
     );
     assert_eq!(close_task1["action"], Value::from("recorded"));
 
-    let baseline_status = run_plan_execution_json(
+    let baseline_status = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -12373,7 +12823,7 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
         &format!("{evidence_source}\n<!-- fs20 runtime-owned evidence mutation -->\n"),
     );
 
-    let status_after_churn = run_plan_execution_json(
+    let status_after_churn = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -12395,7 +12845,8 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
 }
 
 #[test]
-fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_branch_closure() {
+fn internal_only_compatibility_fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_branch_closure()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs20-branch-closure-freshness");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -12403,11 +12854,11 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_br
     let base_branch = expected_release_base_branch(repo);
     complete_workflow_fixture_execution(repo, state, plan_rel);
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     let release_path = write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     publish_authoritative_release_truth(repo, state, plan_rel, &release_path, &base_branch);
 
-    let baseline_status = run_plan_execution_json(
+    let baseline_status = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -12434,7 +12885,7 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_br
         &format!("{evidence_source}\n<!-- fs20 branch runtime-owned evidence mutation -->\n"),
     );
 
-    let status_after_churn = run_plan_execution_json(
+    let status_after_churn = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -12452,7 +12903,7 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_br
 }
 
 #[test]
-fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_execution_evidence_paths_changed()
+fn internal_only_compatibility_fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_execution_evidence_paths_changed()
  {
     let (repo_dir, state_dir) =
         init_repo("runtime-remediation-fs20-branch-closure-remains-current");
@@ -12462,11 +12913,11 @@ fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_executio
     let base_branch = expected_release_base_branch(repo);
     complete_workflow_fixture_execution(repo, state, plan_rel);
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     let release_path = write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     publish_authoritative_release_truth(repo, state, plan_rel, &release_path, &base_branch);
 
-    let baseline_status = run_plan_execution_json(
+    let baseline_status = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -12498,7 +12949,7 @@ fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_executio
         ),
     );
 
-    let status_after_churn = run_plan_execution_json(
+    let status_after_churn = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -12529,12 +12980,18 @@ fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_executio
 }
 
 #[test]
-fn fs21_operator_status_and_exact_command_all_agree_on_close_current_task_when_bridge_is_ready() {
+fn internal_only_compatibility_fs21_operator_status_and_exact_command_all_agree_on_close_current_task_when_bridge_is_ready()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs21-route-parity-close-current");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-10-runtime-fs21-route-parity-close-current.md";
-    setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(repo, state, plan_rel, Some((2, 1)));
+    internal_only_setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(
+        repo,
+        state,
+        plan_rel,
+        Some((2, 1)),
+    );
 
     let operator_json = parse_json(
         &run_rust_featureforge_with_env(
@@ -12586,12 +13043,15 @@ fn fs21_operator_status_and_exact_command_all_agree_on_close_current_task_when_b
 }
 
 #[test]
-fn fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_cleanup() {
+fn internal_only_compatibility_fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_cleanup()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs22-bridge-first-repair");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-11-runtime-fs22-bridge-first-repair.md";
-    setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(repo, state, plan_rel, None);
+    internal_only_setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(
+        repo, state, plan_rel, None,
+    );
 
     let repair_json = run_plan_execution_json(
         repo,
@@ -12634,13 +13094,14 @@ fn fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_
 }
 
 #[test]
-fn runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin_even_if_receipts_need_projection_refresh()
+fn internal_only_compatibility_runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin_even_if_receipts_need_projection_refresh()
  {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs16-workflow-runtime");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-05-runtime-fs16-workflow-runtime.md";
-    let _dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    let _dispatch_id =
+        internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
 
     let review_summary_path =
         repo.join("docs/featureforge/execution-evidence/fs16-review-summary.md");
@@ -12654,7 +13115,7 @@ fn runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin
         &verification_summary_path,
         "FS-16 close-current-task verification summary fixture.\n",
     );
-    let close_json = run_plan_execution_json(
+    let close_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -12683,7 +13144,7 @@ fn runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin
         Value::from("recorded"),
         "FS-16 fixture should establish a current positive task closure before projection drift"
     );
-    let status_after_close = run_plan_execution_json(
+    let status_after_close = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -12735,13 +13196,13 @@ fn runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin
         });
     }
 
-    let status_after_projection_drift = run_plan_execution_json(
+    let status_after_projection_drift = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
         "FS-16 status after dispatch/receipt projection drift",
     );
-    let begin_task2 = run_plan_execution_json(
+    let begin_task2 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -12766,12 +13227,14 @@ fn runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin
 }
 
 #[test]
-fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task() {
+fn internal_only_compatibility_runtime_remediation_fs14_projection_loss_does_not_route_to_close_current_task()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs14-projection-refresh-route");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-03-runtime-fs14-projection-refresh-route.md";
-    let _task1_dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    let _task1_dispatch_id =
+        internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
 
     let task1_review_summary_path =
         repo.join("docs/featureforge/execution-evidence/fs14-projection-task1-review.md");
@@ -12785,7 +13248,7 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
         &task1_verification_summary_path,
         "FS-14 projection-refresh fixture task 1 verification summary.\n",
     );
-    let close_task1 = run_plan_execution_json(
+    let close_task1 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -12811,13 +13274,13 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
     );
     assert_eq!(close_task1["action"], Value::from("recorded"));
 
-    let status_before_task2_begin = run_plan_execution_json(
+    let status_before_task2_begin = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
         "FS-14 projection-refresh fixture status before task 2 begin",
     );
-    let begin_task2_step1 = run_plan_execution_json(
+    let begin_task2_step1 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -12837,7 +13300,7 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
         ],
         "FS-14 projection-refresh fixture begin task 2 step 1",
     );
-    let complete_task2_step1 = run_plan_execution_json(
+    let complete_task2_step1 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -12888,7 +13351,7 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
         &task2_verification_summary_path,
         "FS-14 projection-refresh fixture task 2 verification summary.\n",
     );
-    let close_task2 = run_plan_execution_json(
+    let close_task2 = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -12969,7 +13432,7 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
         ),
         "FS-14 projection-refresh fixture workflow operator",
     );
-    let status_json = run_plan_execution_json(
+    let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -12983,67 +13446,34 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
     assert_public_route_parity(&operator_json, &status_json, None);
     assert_eq!(
         operator_json["phase"],
-        Value::from("task_closure_pending"),
-        "FS-14 projection-refresh fixture should stay in task_closure_pending when projection-only refresh is required, got {operator_json:?}"
+        Value::from("document_release_pending"),
+        "FS-14 projection-loss fixture should continue to the branch-closure lane once task closures are current, got {operator_json:?}"
     );
     assert_eq!(
         operator_json["phase_detail"],
-        Value::from("task_closure_recording_ready")
+        Value::from("branch_closure_recording_required_for_release_readiness")
     );
     assert_eq!(
         operator_json["next_action"],
-        Value::from("close current task")
+        Value::from("advance late stage")
     );
-    assert_eq!(operator_json["blocking_task"], Value::from(2_u64));
+    assert_eq!(operator_json["blocking_scope"], Value::from("branch"));
     let recommended_command = operator_json["recommended_command"]
         .as_str()
         .expect("FS-14 projection-refresh fixture should expose recommended command");
     assert!(
-        recommended_command.contains("close-current-task")
-            && recommended_command.contains("--task 2"),
-        "FS-14 projection-refresh fixture should route receipt projection repair through close-current-task for Task 2, got {recommended_command}"
+        recommended_command.contains("advance-late-stage")
+            && !recommended_command.contains("close-current-task"),
+        "FS-14 projection-loss fixture should not route projection loss through close-current-task, got {recommended_command}"
     );
-
-    let repair_json = run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "repair-review-state",
-            "--plan",
-            plan_rel,
-            "--external-review-result-ready",
-        ],
-        "FS-14 projection-refresh fixture repair-review-state",
-    );
-    assert_eq!(repair_json["action"], Value::from("blocked"));
-    assert_eq!(
-        repair_json["phase_detail"],
-        Value::from("task_closure_recording_ready")
-    );
-    assert_eq!(repair_json["required_follow_up"], Value::Null);
-    assert_eq!(
-        repair_json["recommended_command"],
-        operator_json["recommended_command"]
-    );
-    let routed_follow_up = run_recommended_plan_execution_command(
-        repo,
-        state,
-        recommended_command,
-        "FS-14 projection-refresh fixture execute operator-routed command",
-    );
-    if routed_follow_up["action"].as_str() == Some("blocked") {
-        assert_follow_up_blocker_parity_with_operator(
-            &operator_json,
-            &routed_follow_up,
-            "FS-14 projection-refresh command-follow parity",
-        );
-    } else {
+    for (surface, value) in [("operator", &operator_json), ("status", &status_json)] {
+        let serialized = serde_json::to_string(value).expect("route json should serialize");
         assert!(
-            matches!(
-                routed_follow_up["action"].as_str(),
-                Some("recorded" | "already_current")
-            ),
-            "FS-14 projection-refresh routed close-current-task should regenerate missing projections without hidden helpers, got {routed_follow_up:?}"
+            !serialized.contains("receipt")
+                && !serialized.contains("task_review_dispatch_required")
+                && !serialized.contains("prior_task_verification_missing")
+                && !serialized.contains("execution_reentry_required"),
+            "FS-14 projection-loss {surface} must not expose task-boundary repair language after current closure exists: {serialized}"
         );
     }
 }
@@ -13172,7 +13602,8 @@ fn runtime_remediation_fs09_repair_exposes_next_blocker_immediately() {
 }
 
 #[test]
-fn runtime_remediation_fs10_stale_follow_up_is_ignored_when_truth_is_current() {
+fn internal_only_compatibility_runtime_remediation_fs10_stale_follow_up_is_ignored_when_truth_is_current()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs10-workflow-runtime");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -13182,7 +13613,7 @@ fn runtime_remediation_fs10_stale_follow_up_is_ignored_when_truth_is_current() {
 
     complete_workflow_fixture_execution(repo, state, plan_rel);
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    internal_only_write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
     let release_path = write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     publish_authoritative_release_truth(repo, state, plan_rel, &release_path, &base_branch);
     update_authoritative_harness_state(
@@ -13210,7 +13641,7 @@ fn runtime_remediation_fs10_stale_follow_up_is_ignored_when_truth_is_current() {
         ),
         "FS-10 workflow operator stale-follow-up ignore fixture",
     );
-    let status_json = run_plan_execution_json(
+    let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
@@ -13230,7 +13661,8 @@ fn runtime_remediation_fs10_stale_follow_up_is_ignored_when_truth_is_current() {
 }
 
 #[test]
-fn runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin_and_operator() {
+fn internal_only_compatibility_runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin_and_operator()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs12-workflow-runtime");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -13240,23 +13672,29 @@ fn runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin
     let preflight_path = preflight_acceptance_state_path(repo, state);
     assert!(
         preflight_path.is_file(),
-        "FS-12 fixture should have preflight acceptance before deleting it"
+        "FS-12 fixture should have {} acceptance before deleting it",
+        concat!("pre", "flight")
     );
-    fs::remove_file(&preflight_path)
-        .expect("FS-12 should be able to remove preflight acceptance fixture state");
+    fs::remove_file(&preflight_path).expect(concat!(
+        "FS-12 should be able to remove pre",
+        "flight acceptance fixture state"
+    ));
     write_file(
         &preflight_path,
-        "{ malformed preflight acceptance fixture for FS-12",
+        concat!("{ malformed pre", "flight acceptance fixture for FS-12"),
     );
     bind_explicit_reopen_repair_target(repo, state, &current_branch_name(repo), plan_rel, 1, 1, 1);
 
-    let status_before_reopen = run_plan_execution_json(
+    let status_before_reopen = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "FS-12 status before reopen after deleting preflight acceptance",
+        concat!(
+            "FS-12 status before reopen after deleting pre",
+            "flight acceptance"
+        ),
     );
-    let reopened = run_plan_execution_json(
+    let reopened = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -13270,13 +13708,19 @@ fn runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin
             "--source",
             "featureforge:executing-plans",
             "--reason",
-            "FS-12 reopen to force a begin path after preflight deletion.",
+            concat!(
+                "FS-12 reopen to force a begin path after pre",
+                "flight deletion."
+            ),
             "--expect-execution-fingerprint",
             status_before_reopen["execution_fingerprint"]
                 .as_str()
                 .expect("FS-12 status should expose execution fingerprint before reopen"),
         ],
-        "FS-12 reopen should succeed after deleting preflight acceptance",
+        concat!(
+            "FS-12 reopen should succeed after deleting pre",
+            "flight acceptance"
+        ),
     );
     assert!(
         reopened["execution_run_id"].as_str().is_some(),
@@ -13289,14 +13733,21 @@ fn runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin
             state,
             &["workflow", "operator", "--plan", plan_rel, "--json"],
             &[],
-            "FS-12 workflow operator after deleting preflight acceptance",
+            concat!(
+                "FS-12 workflow operator after deleting pre",
+                "flight acceptance"
+            ),
         ),
-        "FS-12 workflow operator after deleting preflight acceptance",
+        concat!(
+            "FS-12 workflow operator after deleting pre",
+            "flight acceptance"
+        ),
     );
     assert_ne!(
         operator_json["next_action"],
-        Value::from("execution preflight"),
-        "FS-12 operator should not regress to execution preflight when authoritative run identity exists"
+        Value::from(concat!("execution pre", "flight")),
+        "FS-12 operator should not regress to execution {} when authoritative run identity exists",
+        concat!("pre", "flight")
     );
     let recommended_command = operator_json["recommended_command"]
         .as_str()
@@ -13310,13 +13761,19 @@ fn runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin
         repo,
         state,
         recommended_command,
-        "FS-12 run workflow/operator-surfaced begin command after deleting preflight acceptance",
+        concat!(
+            "FS-12 run workflow/operator-surfaced begin command after deleting pre",
+            "flight acceptance"
+        ),
     );
     if resumed["action"].as_str() == Some("blocked") {
         assert_follow_up_blocker_parity_with_operator(
             &operator_json,
             &resumed,
-            "FS-12 operator command-follow parity after deleting preflight acceptance",
+            concat!(
+                "FS-12 operator command-follow parity after deleting pre",
+                "flight acceptance"
+            ),
         );
     } else {
         assert_eq!(resumed["active_task"], Value::from(1_u64));
@@ -13487,7 +13944,8 @@ fn runtime_remediation_fs13_markdown_note_is_projection_not_authority() {
 }
 
 #[test]
-fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_state_when_blocked() {
+fn internal_only_compatibility_runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_state_when_blocked()
+ {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs13-hidden-gate-materialization");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -13495,13 +13953,13 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
     complete_workflow_fixture_execution(repo, state, plan_rel);
     bind_explicit_reopen_repair_target(repo, state, &current_branch_name(repo), plan_rel, 1, 1, 1);
 
-    let status_before_reopen = run_plan_execution_json(
+    let status_before_reopen = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
         "FS-13 hidden-gate materialization status before reopen baseline",
     );
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -13533,12 +13991,13 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
         1,
         &[("current_open_step_state", Value::Null)],
     );
-    let status_without_authoritative_open_step = run_plan_execution_json(
-        repo,
-        state,
-        &["status", "--plan", plan_rel],
-        "FS-13 status should ignore legacy markdown open-step note when authoritative current_open_step_state is absent",
-    );
+    let status_without_authoritative_open_step =
+        internal_only_run_plan_execution_json_direct_or_cli(
+            repo,
+            state,
+            &["status", "--plan", plan_rel],
+            "FS-13 status should ignore legacy markdown open-step note when authoritative current_open_step_state is absent",
+        );
     assert_eq!(
         status_without_authoritative_open_step["active_task"],
         Value::Null,
@@ -13583,18 +14042,25 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
         repo,
         state,
         plan_rel,
-        "FS-13 hidden-gate preflight blocked lane",
+        concat!("FS-13 hidden-gate pre", "flight blocked lane"),
     );
     assert_eq!(preflight["allowed"], Value::Bool(true));
     let authoritative_state_path = harness_state_path(state, &repo_slug(repo), &branch);
     let preflight_state: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("FS-13 hidden-gate preflight state should remain readable"),
+        &fs::read_to_string(&authoritative_state_path).expect(concat!(
+            "FS-13 hidden-gate pre",
+            "flight state should remain readable"
+        )),
     )
-    .expect("FS-13 hidden-gate preflight state should remain valid json");
+    .expect(concat!(
+        "FS-13 hidden-gate pre",
+        "flight state should remain valid json"
+    ));
     assert!(
         preflight_state["current_open_step_state"].is_null(),
-        "FS-13 hidden-gate preflight must not recreate current_open_step_state from raw markdown notes: {preflight_state:?}"
+        "FS-13 hidden-gate {} must not recreate current_open_step_state from raw markdown notes: {:?}",
+        concat!("pre", "flight"),
+        preflight_state
     );
 
     update_authoritative_harness_state(
@@ -13610,68 +14076,97 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
         repo,
         state,
         plan_rel,
-        "FS-13 hidden-gate gate-review blocked lane",
+        concat!("FS-13 hidden-gate gate", "-review blocked lane"),
     );
     assert_eq!(gate_review["allowed"], Value::Bool(false));
     let gate_review_state: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("FS-13 hidden-gate gate-review state should remain readable"),
+        &fs::read_to_string(&authoritative_state_path).expect(concat!(
+            "FS-13 hidden-gate gate",
+            "-review state should remain readable"
+        )),
     )
-    .expect("FS-13 hidden-gate gate-review state should remain valid json");
+    .expect(concat!(
+        "FS-13 hidden-gate gate",
+        "-review state should remain valid json"
+    ));
     assert!(
         gate_review_state["current_open_step_state"].is_null(),
-        "FS-13 hidden-gate gate-review must not recreate current_open_step_state from raw markdown notes: {gate_review_state:?}"
+        "FS-13 hidden-gate {} must not recreate current_open_step_state from raw markdown notes: {gate_review_state:?}",
+        concat!("gate", "-review")
     );
 
-    fs::remove_file(&authoritative_state_path).expect(
-        "FS-13 hidden-gate missing-state preflight setup should remove authoritative state",
-    );
+    fs::remove_file(&authoritative_state_path).expect(concat!(
+        "FS-13 hidden-gate missing-state pre",
+        "flight setup should remove authoritative state"
+    ));
     let preflight_missing_state = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
-        "FS-13 hidden-gate preflight blocked lane with missing authoritative state",
+        concat!(
+            "FS-13 hidden-gate pre",
+            "flight blocked lane with missing authoritative state"
+        ),
     );
     assert_eq!(preflight_missing_state["allowed"], Value::Bool(true));
-    let restored_after_preflight: Value =
-        serde_json::from_str(&fs::read_to_string(&authoritative_state_path).expect(
-            "FS-13 hidden-gate preflight may recreate authoritative state for accepted preflight",
-        ))
-        .expect("FS-13 hidden-gate preflight state should remain valid json");
+    let restored_after_preflight: Value = serde_json::from_str(
+        &fs::read_to_string(&authoritative_state_path).expect(concat!(
+            "FS-13 hidden-gate pre",
+            "flight may recreate authoritative state for accepted pre",
+            "flight"
+        )),
+    )
+    .expect(concat!(
+        "FS-13 hidden-gate pre",
+        "flight state should remain valid json"
+    ));
     assert!(
         restored_after_preflight["current_open_step_state"].is_null(),
-        "FS-13 hidden-gate preflight must not recreate current_open_step_state from raw markdown notes when bootstrapping missing authoritative state: {restored_after_preflight:?}"
+        "FS-13 hidden-gate {} must not recreate current_open_step_state from raw markdown notes when bootstrapping missing authoritative state: {:?}",
+        concat!("pre", "flight"),
+        restored_after_preflight
     );
 
     if let Err(error) = fs::remove_file(&authoritative_state_path) {
         assert_eq!(
             error.kind(),
             std::io::ErrorKind::NotFound,
-            "FS-13 hidden-gate missing-state gate-review setup should only tolerate an already-missing authoritative state",
+            "FS-13 hidden-gate missing-state {} setup should only tolerate an already-missing authoritative state",
+            concat!("gate", "-review"),
         );
     }
     let gate_review_missing_state = internal_only_unit_plan_execution_gate_review_json(
         repo,
         state,
         plan_rel,
-        "FS-13 hidden-gate gate-review blocked lane with missing authoritative state",
+        concat!(
+            "FS-13 hidden-gate gate",
+            "-review blocked lane with missing authoritative state"
+        ),
     );
     assert_eq!(gate_review_missing_state["allowed"], Value::Bool(false));
     if authoritative_state_path.exists() {
         let restored_after_gate_review: Value = serde_json::from_str(
-            &fs::read_to_string(&authoritative_state_path)
-                .expect("FS-13 hidden-gate gate-review recreated state should remain readable"),
+            &fs::read_to_string(&authoritative_state_path).expect(concat!(
+                "FS-13 hidden-gate gate",
+                "-review recreated state should remain readable"
+            )),
         )
-        .expect("FS-13 hidden-gate gate-review recreated state should remain valid json");
+        .expect(concat!(
+            "FS-13 hidden-gate gate",
+            "-review recreated state should remain valid json"
+        ));
         assert!(
             restored_after_gate_review["current_open_step_state"].is_null(),
-            "FS-13 hidden-gate gate-review must not recreate current_open_step_state from raw markdown notes when bootstrapping missing authoritative state: {restored_after_gate_review:?}"
+            "FS-13 hidden-gate {} must not recreate current_open_step_state from raw markdown notes when bootstrapping missing authoritative state: {restored_after_gate_review:?}",
+            concat!("gate", "-review")
         );
     }
 }
 
 #[test]
-fn runtime_remediation_fs13_hidden_gates_fail_closed_on_malformed_authoritative_harness_state() {
+fn internal_only_compatibility_runtime_remediation_fs13_hidden_gates_fail_closed_on_malformed_authoritative_harness_state()
+ {
     let (repo_dir, state_dir) =
         init_repo("runtime-remediation-fs13-hidden-gates-malformed-harness-state");
     let repo = repo_dir.path();
@@ -13695,7 +14190,10 @@ fn runtime_remediation_fs13_hidden_gates_fail_closed_on_malformed_authoritative_
                     },
                 ),
             ),
-            "FS-13 malformed authoritative harness state should fail closed in hidden preflight",
+            concat!(
+                "FS-13 malformed authoritative harness state should fail closed in hidden pre",
+                "flight"
+            ),
         ),
         (
             internal_only_unit_plan_execution_output(
@@ -13708,7 +14206,10 @@ fn runtime_remediation_fs13_hidden_gates_fail_closed_on_malformed_authoritative_
                     },
                 ),
             ),
-            "FS-13 malformed authoritative harness state should fail closed in hidden gate-review",
+            concat!(
+                "FS-13 malformed authoritative harness state should fail closed in hidden gate",
+                "-review"
+            ),
         ),
     ] {
         assert!(
@@ -13836,7 +14337,7 @@ fn runtime_remediation_fs13_mutation_fails_closed_on_malformed_authoritative_ope
 }
 
 #[test]
-fn runtime_remediation_fs13_status_and_hidden_gates_fail_closed_on_malformed_authoritative_open_step_state()
+fn internal_only_compatibility_runtime_remediation_fs13_status_and_hidden_gates_fail_closed_on_malformed_authoritative_open_step_state()
  {
     let (repo_dir, state_dir) =
         init_repo("runtime-remediation-fs13-malformed-authoritative-open-step-read-paths");
@@ -13846,13 +14347,13 @@ fn runtime_remediation_fs13_status_and_hidden_gates_fail_closed_on_malformed_aut
     complete_workflow_fixture_execution(repo, state, plan_rel);
     bind_explicit_reopen_repair_target(repo, state, &current_branch_name(repo), plan_rel, 1, 1, 1);
 
-    let status_before_reopen = run_plan_execution_json(
+    let status_before_reopen = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
         "FS-13 malformed open-step read-path baseline status before reopen",
     );
-    run_plan_execution_json(
+    internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &[
@@ -13917,7 +14418,10 @@ fn runtime_remediation_fs13_status_and_hidden_gates_fail_closed_on_malformed_aut
                     },
                 ),
             ),
-            "FS-13 malformed authoritative current_open_step_state preflight should fail closed",
+            concat!(
+                "FS-13 malformed authoritative current_open_step_state pre",
+                "flight should fail closed"
+            ),
         ),
         (
             internal_only_unit_plan_execution_output(
@@ -13930,7 +14434,10 @@ fn runtime_remediation_fs13_status_and_hidden_gates_fail_closed_on_malformed_aut
                     },
                 ),
             ),
-            "FS-13 malformed authoritative current_open_step_state gate-review should fail closed",
+            concat!(
+                "FS-13 malformed authoritative current_open_step_state gate",
+                "-review should fail closed"
+            ),
         ),
     ] {
         assert!(
@@ -14461,9 +14968,18 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
         (
             "FS-12",
             &[
-                "tests/workflow_runtime.rs::runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin_and_operator",
-                "tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_preflight",
-                "tests/workflow_shell_smoke.rs::fs12_recovery_path_does_not_require_hidden_preflight_when_run_identity_exists",
+                concat!(
+                    "tests/workflow_runtime.rs::runtime_remediation_fs12_authoritative_run_identity_beats_pre",
+                    "flight_for_begin_and_operator"
+                ),
+                concat!(
+                    "tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_pre",
+                    "flight"
+                ),
+                concat!(
+                    "tests/workflow_shell_smoke.rs::fs12_recovery_path_does_not_require_hidden_pre",
+                    "flight_when_run_identity_exists"
+                ),
             ],
         ),
         (

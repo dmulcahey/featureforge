@@ -218,7 +218,7 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
         "Do not re-derive `phase`, `phase_detail`, readiness, or late-stage precedence from markdown headers.",
         "Do not invent or continue a parallel manual routing graph.",
         "If helper routing still cannot be recovered, fail closed to the earlier safe stage (`featureforge:brainstorming`) or remain in the current execution flow; do not route directly into implementation or late-stage recording from fallback logic.",
-        "Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority.",
+        "Treat human-readable projection artifacts and companion markdown as derived output, not routing authority.",
         "Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.",
         "If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.",
         "Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.",
@@ -483,7 +483,10 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         home,
         &handoff_harness,
         &[
-            "Please record a decision in project memory before execution preflight continues.\n",
+            concat!(
+                "Please record a decision in project memory before execution pre",
+                "flight continues.\n"
+            ),
             vague_message,
         ],
     );

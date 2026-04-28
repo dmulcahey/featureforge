@@ -38,6 +38,24 @@ fn assert_file_contains_ci(path: PathBuf, needle: &str) {
     );
 }
 
+fn assert_file_does_not_contain_ci(path: PathBuf, needle: &str) {
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
+    assert!(
+        !source.to_lowercase().contains(&needle.to_lowercase()),
+        "{} should not contain {:?} case-insensitively",
+        path.display(),
+        needle
+    );
+}
+
+fn plan_execution_prompt_command(command_parts: &[&str]) -> String {
+    format!(
+        "run `featureforge plan execution {}",
+        command_parts.concat()
+    )
+}
+
 #[test]
 fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     let root = repo_root();
@@ -108,7 +126,7 @@ fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
-        "Do not create, repair, search for, or reference runtime receipt files",
+        "Do not create, repair, search for, or reference runtime-owned projection files",
     );
     assert_file_does_not_contain(
         root.join("skills/requesting-code-review/code-reviewer.md"),
@@ -150,8 +168,21 @@ fn reviewer_prompts_are_non_recursive_and_runtime_command_free() {
             "do not dispatch `code-reviewer` or `requesting-code-review`",
         );
         assert_file_contains(path.clone(), "If required runtime context is missing");
+        assert_file_contains(path.clone(), "report a blocked review");
         assert_file_does_not_contain(path.clone(), "Run `featureforge workflow");
         assert_file_does_not_contain(path.clone(), "Run `featureforge plan execution");
+        for forbidden_runtime_command in [
+            "run `featureforge workflow operator".to_owned(),
+            plan_execution_prompt_command(&["status"]),
+            plan_execution_prompt_command(&["repair", "-review-state"]),
+            plan_execution_prompt_command(&["close-current-task"]),
+            plan_execution_prompt_command(&["advance-late-stage"]),
+            plan_execution_prompt_command(&["rebuild", "-evidence"]),
+            plan_execution_prompt_command(&["reconcile", "-review-state"]),
+        ] {
+            assert_file_does_not_contain_ci(path.clone(), &forbidden_runtime_command);
+        }
+        assert_file_does_not_contain_ci(path.clone(), "receipt");
     }
 
     assert_file_contains(
@@ -166,4 +197,25 @@ fn reviewer_prompts_are_non_recursive_and_runtime_command_free() {
         root.join("skills/requesting-code-review/SKILL.md"),
         "REVIEWER_RUNTIME_COMMANDS_ALLOWED: no",
     );
+}
+
+#[test]
+fn codex_reviewer_agent_launch_artifact_carries_runtime_command_env_contract() {
+    let root = repo_root();
+    let codex_agent = root.join(".codex/agents/code-reviewer.toml");
+
+    assert_file_contains(codex_agent.clone(), "# REVIEWER_RUNTIME_ENV_CONTRACT");
+    assert_file_contains(
+        codex_agent.clone(),
+        "Launcher must set FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED = \"no\" before starting this reviewer.",
+    );
+    assert_file_contains(
+        codex_agent.clone(),
+        "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no",
+    );
+    assert_file_contains(
+        codex_agent.clone(),
+        "If required runtime context is missing, report a blocked review",
+    );
+    assert_file_does_not_contain(codex_agent, "REVIEWER_RUNTIME_COMMANDS_ALLOWED: no");
 }

@@ -213,15 +213,22 @@ Normal `begin`, `complete`, `reopen`, `transfer`, `close-current-task`,
 `repair-review-state`, `advance-late-stage`, `workflow operator`, and
 `plan execution status` commands must leave approved plan/evidence/review files
 and repo-local projection exports untouched. Runtime read models live under the
-state directory. Repo-local human-readable exports are explicit:
+state directory. Diagnostic materialization is state-dir-only by default:
 
 ```bash
 featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all
 ```
 
-Materialization writes repo-local projection exports without modifying approved
-plan or evidence files. It is projection-only and must not be recommended by
-operator routing as required progress.
+Repo-local human-readable projection exports are Git-visible and require an
+explicit confirmed export:
+
+```bash
+featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all --repo-export --confirm-repo-export
+```
+
+Materialization is never required for normal progress. Confirmed repo exports
+write projection-only files without modifying approved plan or evidence files,
+and must not be recommended by operator routing as required progress.
 
 Historical final-remediation plans used targeted Rust subsets while closing specific failures. For branch proof, task-completion gates, plan-task review loops, and pre-merge verification, use the full Rust nextest suite instead:
 

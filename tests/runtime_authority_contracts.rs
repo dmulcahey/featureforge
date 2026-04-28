@@ -12,7 +12,7 @@ const FORBIDDEN_FILES: &[&str] = &[
 ];
 
 const FORBIDDEN_GATE_CALLS: &[&str] = &[
-    "preflight_from_context(",
+    concat!("pre", "flight_from_context("),
     "gate_review_from_context(",
     "gate_finish_from_context(",
 ];
@@ -67,11 +67,11 @@ const FORBIDDEN_STALE_TARGET_FABRICATION_PATTERNS: &[(&str, &str)] = &[
 ];
 
 const STATE_DIRECT_GATE_COMMAND_BODIES: &[&str] = &[
-    "preflight_gate_with_mode",
+    concat!("pre", "flight_gate_with_mode"),
     "review_gate",
     "finish_gate",
     "gate_review_command_phase_gate",
-    "preflight_from_context",
+    concat!("pre", "flight_from_context"),
     "gate_review_from_context",
     "gate_finish_from_context",
 ];

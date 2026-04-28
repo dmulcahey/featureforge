@@ -158,6 +158,55 @@ function listRepoFiles(dir = REPO_ROOT) {
   return files;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function listActiveDocSkillAgentFiles() {
+  return listRepoFiles()
+    .filter((relPath) => {
+      const activeRoot =
+        relPath === 'README.md'
+        || relPath === 'AGENTS.md'
+        || relPath.startsWith(path.join('.codex', 'agents') + path.sep)
+        || relPath.startsWith(`agents${path.sep}`)
+        || relPath.startsWith(`docs${path.sep}`)
+        || relPath.startsWith(`review${path.sep}`)
+        || relPath.startsWith(`skills${path.sep}`);
+      const agentConfig = relPath.startsWith(path.join('.codex', 'agents') + path.sep)
+        && relPath.endsWith('.toml');
+      const textLike = relPath.endsWith('.md') || relPath.endsWith('.md.tmpl') || agentConfig;
+      const explicitTestingDoc = relPath === path.join('docs', 'testing.md');
+      return activeRoot && textLike && !explicitTestingDoc;
+    });
+}
+
+test('active docs and agent-facing prompts do not expose forbidden receipt vocabulary', () => {
+  const forbiddenPhrases = [
+    'receipt',
+    'unit-review receipts',
+    'task-verification receipt',
+    'receipt-ready',
+    'Dedicated Reviewer Receipt Contract',
+    'runtime-owned receipt',
+  ];
+  const violations = [];
+  for (const relPath of listActiveDocSkillAgentFiles()) {
+    const content = readUtf8(path.join(REPO_ROOT, relPath));
+    for (const phrase of forbiddenPhrases) {
+      const pattern = new RegExp(escapeRegExp(phrase), 'i');
+      if (pattern.test(content)) {
+        violations.push(`${relPath}: ${phrase}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    violations,
+    [],
+    'active docs/skills/agent prompts must not teach agents forbidden receipt vocabulary',
+  );
+});
+
 function buildTimedHookPatterns(timings, targetPattern, gapPattern = '[^.\\n]{0,160}') {
   const obligationPattern = '(?:must|always|required|requires|should|need(?:s)? to|have(?:s)? to|ought to)';
   const imperativeActionPattern = '(?:consult|search|update|use|record)';
@@ -744,7 +793,7 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewPrompt, /dedicated independent reviewer for the terminal whole-diff gate/);
   assert.match(reviewPrompt, /Structured Review Result Metadata/);
   assert.match(reviewPrompt, /review-result metadata for the controller to bind to runtime-owned state/);
-  assert.match(reviewPrompt, /Do not create, repair, search for, or reference runtime receipt files/);
+  assert.match(reviewPrompt, /Do not create, repair, search for, or reference runtime-owned projection files/);
   assert.doesNotMatch(reviewPrompt, /Dedicated Reviewer Receipt Contract/);
   assert.doesNotMatch(reviewPrompt, /receipt-ready metadata/);
   assert.match(reviewPrompt, /`Source Plan`, `Source Plan Revision`, `Strategy Checkpoint Fingerprint`, `Branch`, `Repo`, `Base Branch`, `Head SHA`/);
@@ -1017,8 +1066,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       normalized,
-      /MUST NOT manually edit runtime-owned execution records[\s\S]*MUST NOT manually edit derived markdown artifacts or receipts/i,
-      `${label} should explicitly forbid manual edits to runtime-owned records and derived markdown receipts`,
+      /MUST NOT manually edit runtime-owned execution records[\s\S]*MUST NOT manually edit derived markdown projection artifacts/i,
+      `${label} should explicitly forbid manual edits to runtime-owned records and derived markdown projection artifacts`,
     );
     assert.match(
       content,
@@ -1264,6 +1313,19 @@ test('reuse hard-fail law is critical, scoped, and example-backed across reviewe
     assert.match(content, /Example hard fail: a diff adds a second repo-relative path normalizer/);
     assert.match(content, /Example allowed exception: generated schema output repeats field names/);
   }
+});
+
+test('generated codex reviewer agent carries launcher-enforced runtime command contract', () => {
+  const generatedCodexAgent = readUtf8(path.join(REPO_ROOT, '.codex/agents/code-reviewer.toml'));
+
+  assert.match(generatedCodexAgent, /^# REVIEWER_RUNTIME_ENV_CONTRACT$/m);
+  assert.match(
+    generatedCodexAgent,
+    /^# Launcher must set FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED = "no" before starting this reviewer\.$/m,
+  );
+  assert.match(generatedCodexAgent, /FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no/);
+  assert.match(generatedCodexAgent, /If required runtime context is missing, report a blocked review/);
+  assert.match(generatedCodexAgent, /do not run `featureforge workflow` or `featureforge plan execution` commands/i);
 });
 
 test('review prompts use deterministic repair-packet findings tied to obligations', () => {
@@ -1837,7 +1899,7 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   );
   assert.match(
     usingFeatureForge,
-    /Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority\./,
+    /Treat human-readable projection artifacts and companion markdown as derived output, not routing authority\./,
   );
   assert.match(
     usingFeatureForge,

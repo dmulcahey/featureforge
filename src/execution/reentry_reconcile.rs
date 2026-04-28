@@ -1,4 +1,3 @@
-use crate::execution::current_truth::late_stage_projection_targets_present;
 use crate::execution::state::{PlanExecutionStatus, StatusBlockingRecord};
 
 pub(crate) const TARGETLESS_STALE_RECONCILE_REASON_CODE: &str = "stale_unreviewed_target_missing";
@@ -24,12 +23,10 @@ impl TargetlessStaleReconcile {
         review_state_status: &str,
         stale_unreviewed_closures: &[String],
         has_task_closure_baseline_candidate: bool,
-        has_late_stage_bound_target: bool,
     ) -> bool {
         review_state_status == "stale_unreviewed"
             && stale_unreviewed_closures.is_empty()
             && !has_task_closure_baseline_candidate
-            && !has_late_stage_bound_target
     }
 
     pub(crate) fn status_needs_marker_for_status(status: &PlanExecutionStatus) -> bool {
@@ -37,7 +34,6 @@ impl TargetlessStaleReconcile {
             &status.review_state_status,
             &status.stale_unreviewed_closures,
             task_closure_baseline_repair_candidate_reason_present(status),
-            late_stage_projection_targets_present(status),
         )
     }
 

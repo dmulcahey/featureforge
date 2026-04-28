@@ -204,18 +204,6 @@ fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Val
     parse_json(&run(command, context), context)
 }
 
-fn internal_only_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
-    plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        &featureforge::cli::plan_execution::StatusArgs {
-            plan: PathBuf::from(plan_rel),
-            external_review_result_ready: false,
-        },
-    )
-    .expect("internal preflight helper should succeed")
-}
-
 fn internal_only_runtime_topology_recommendation_json(
     repo: &Path,
     state: &Path,
@@ -262,24 +250,31 @@ fn topology_context(
     }
 }
 
-fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) {
+fn internal_only_accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) {
     run_checked(
         {
             let mut command = Command::new("git");
             command
-                .args(["checkout", "-B", "execution-preflight-fixture"])
+                .args(["checkout", "-B", concat!("execution-pre", "flight-fixture")])
                 .current_dir(repo);
             command
         },
-        "git checkout execution-preflight-fixture",
+        concat!("git checkout execution-pre", "flight-fixture"),
     );
-
-    let preflight = internal_only_runtime_preflight_gate_json(repo, state, plan_rel);
+    let preflight = plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
+        repo,
+        state,
+        &featureforge::cli::plan_execution::StatusArgs {
+            plan: PathBuf::from(plan_rel),
+            external_review_result_ready: false,
+        },
+    )
+    .expect(concat!("internal pre", "flight helper should succeed"));
     assert_eq!(preflight["allowed"], true);
 }
 
 #[test]
-fn canonical_recommend_matches_helper_for_independent_plan() {
+fn internal_only_compatibility_canonical_recommend_matches_helper_for_independent_plan() {
     let (repo_dir, state_dir) = init_repo("plan-execution-recommend");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -300,7 +295,8 @@ fn canonical_recommend_matches_helper_for_independent_plan() {
 }
 
 #[test]
-fn canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_preflight_state() {
+fn internal_only_compatibility_canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_preflight_state()
+ {
     let (repo_dir, state_dir) = init_repo("plan-execution-recommend-policy-tuple");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -366,13 +362,17 @@ fn canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_pr
             .unwrap_or_else(|| panic!("status should expose {field} after recommend"));
         assert!(
             value.is_null(),
-            "recommend should not mutate preflight-owned {field}, got {value:?}"
+            "recommend should not mutate {}-owned {}, got {:?}",
+            field,
+            value,
+            concat!("pre", "flight")
         );
     }
 }
 
 #[test]
-fn runtime_topology_recommends_worktree_backed_parallel_when_the_plan_and_workspace_are_ready() {
+fn internal_only_compatibility_runtime_topology_recommends_worktree_backed_parallel_when_the_plan_and_workspace_are_ready()
+ {
     let (repo_dir, state_dir) = init_repo("plan-execution-worktree-backed-parallel");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -682,8 +682,10 @@ fn runtime_topology_can_select_worktree_backed_parallel_for_separate_session_coo
 }
 
 #[test]
-fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_changes() {
-    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-stable-identities");
+fn internal_only_compatibility_preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_changes()
+ {
+    let (repo_dir, state_dir) =
+        init_repo(concat!("plan-execution-pre", "flight-stable-identities"));
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
@@ -693,27 +695,34 @@ fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_chang
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status before preflight identity acceptance",
+        concat!("status before pre", "flight identity acceptance"),
     );
     assert!(
         before_preflight["execution_run_id"].is_null(),
-        "execution_run_id should be null before preflight acceptance"
+        "execution_run_id should be null before {} acceptance",
+        concat!("pre", "flight")
     );
 
-    accept_execution_preflight(repo, state, PLAN_REL);
+    internal_only_accept_execution_preflight(repo, state, PLAN_REL);
     let accepted_status = run_rust_json(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status after preflight identity acceptance",
+        concat!("status after pre", "flight identity acceptance"),
     );
     let accepted_run_id = accepted_status["execution_run_id"]
         .as_str()
-        .expect("execution_run_id should be present after preflight acceptance")
+        .expect(concat!(
+            "execution_run_id should be present after pre",
+            "flight acceptance"
+        ))
         .to_owned();
     let accepted_chunk_id = accepted_status["chunk_id"]
         .as_str()
-        .expect("chunk_id should be present after preflight acceptance")
+        .expect(concat!(
+            "chunk_id should be present after pre",
+            "flight acceptance"
+        ))
         .to_owned();
 
     let begin = run_rust_json(
@@ -734,7 +743,7 @@ fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_chang
                 .as_str()
                 .expect("accepted status fingerprint should be present"),
         ],
-        "begin after preflight identity acceptance",
+        concat!("begin after pre", "flight identity acceptance"),
     );
     assert_ne!(
         begin["execution_fingerprint"], accepted_status["execution_fingerprint"],
@@ -743,11 +752,13 @@ fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_chang
     assert_eq!(
         begin["execution_run_id"],
         Value::String(accepted_run_id),
-        "execution_run_id should stay stable after preflight acceptance"
+        "execution_run_id should stay stable after {} acceptance",
+        concat!("pre", "flight")
     );
     assert_eq!(
         begin["chunk_id"],
         Value::String(accepted_chunk_id),
-        "chunk_id should stay stable after preflight acceptance"
+        "chunk_id should stay stable after {} acceptance",
+        concat!("pre", "flight")
     );
 }

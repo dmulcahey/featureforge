@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use serde::Serialize;
 
 use crate::diagnostics::JsonFailure;
@@ -46,8 +44,6 @@ pub(crate) struct RuntimeState {
     pub(crate) release_readiness_result_for_current_branch: Option<String>,
     #[serde(skip)]
     pub(crate) branch_rerecording_assessment: Option<BranchRerecordingAssessment>,
-    #[serde(skip)]
-    pub(crate) task_closure_execution_run_ids: BTreeMap<u32, String>,
     pub(crate) task_review_dispatch_id: Option<String>,
     #[serde(skip)]
     pub(crate) final_review_dispatch_authority: FinalReviewDispatchAuthority,
@@ -319,15 +315,6 @@ fn build_runtime_state_from_event_authority(
     );
     let branch_rerecording_assessment =
         branch_closure_rerecording_assessment_with_authority(context, event_authority_state).ok();
-    let task_closure_execution_run_ids = event_authority_state
-        .map(|state| {
-            state
-                .current_task_closure_results()
-                .into_iter()
-                .filter_map(|(task, record)| record.execution_run_id.map(|run_id| (task, run_id)))
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
     let base_branch = event_authority_state.and_then(|state| {
         usable_current_branch_closure_id
             .as_deref()
@@ -384,7 +371,6 @@ fn build_runtime_state_from_event_authority(
         persisted_repair_follow_up: None,
         release_readiness_result_for_current_branch,
         branch_rerecording_assessment,
-        task_closure_execution_run_ids,
         task_review_dispatch_id,
         final_review_dispatch_authority,
     };

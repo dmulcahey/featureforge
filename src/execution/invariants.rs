@@ -79,6 +79,7 @@ fn inject_status_invariant_test_violation_from_env(
     };
     match injection.as_str() {
         "current_stale_overlap" => inject_current_stale_overlap(status),
+        "targetless_stale_unreviewed" => inject_targetless_stale_unreviewed(status),
         "hidden_recommended_command" => {
             status.recommended_command = Some(String::from(
                 "featureforge plan execution gate-review --plan injected",
@@ -396,6 +397,29 @@ fn inject_current_stale_overlap(status: &mut PlanExecutionStatus) {
         "featureforge plan execution reopen --plan injected --task {} --step 1 --source featureforge:executing-plans --reason injected",
         current.task
     ));
+}
+
+fn inject_targetless_stale_unreviewed(status: &mut PlanExecutionStatus) {
+    status.review_state_status = String::from("stale_unreviewed");
+    status.phase_detail = String::from("execution_reentry_required");
+    status.current_branch_closure_id = Some(String::from("branch-closure-targetless-diagnostic"));
+    status.finish_review_gate_pass_branch_closure_id = None;
+    status.current_final_review_branch_closure_id = None;
+    status.current_qa_branch_closure_id = None;
+    status.stale_unreviewed_closures.clear();
+    status.current_task_closures.clear();
+    status.execution_command_context = None;
+    status.execution_reentry_target_source = None;
+    status.public_repair_targets.clear();
+    status.recommended_command = None;
+    status.next_public_action = None;
+    status.blocking_records.clear();
+    status
+        .reason_codes
+        .retain(|code| code != "task_closure_baseline_repair_candidate");
+    status
+        .blocking_reason_codes
+        .retain(|code| code != "task_closure_baseline_repair_candidate");
 }
 
 fn targetless_stale_reconcile_diagnostic(status: &PlanExecutionStatus) -> bool {

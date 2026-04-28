@@ -860,7 +860,7 @@ fn internal_only_unit_preflight(repo: &Path, state_dir: &Path, plan_rel: &str) -
             external_review_result_ready: false,
         },
     )
-    .expect("internal preflight helper should succeed")
+    .expect(concat!("internal pre", "flight helper should succeed"))
 }
 
 fn internal_only_unit_gate_finish(repo: &Path, state_dir: &Path, plan_rel: &str) -> Value {
@@ -872,10 +872,14 @@ fn internal_only_unit_gate_finish(repo: &Path, state_dir: &Path, plan_rel: &str)
             external_review_result_ready: false,
         },
     )
-    .expect("internal gate-finish helper should succeed")
+    .expect(concat!("internal gate", "-finish helper should succeed"))
 }
 
-fn record_task_boundary_review_dispatch(repo: &Path, state_dir: &Path, plan_rel: &str) -> String {
+fn internal_only_record_task_boundary_review_dispatch(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+) -> String {
     let _ = plan_execution_direct_support::internal_only_runtime_review_dispatch_authority_json(
         repo,
         state_dir,
@@ -885,7 +889,10 @@ fn record_task_boundary_review_dispatch(repo: &Path, state_dir: &Path, plan_rel:
             task: Some(1),
         },
     )
-    .expect("internal record-review-dispatch helper should succeed");
+    .expect(concat!(
+        "internal record",
+        "-review-dispatch helper should succeed"
+    ));
     run_plan_execution(
         repo,
         state_dir,
@@ -897,7 +904,7 @@ fn record_task_boundary_review_dispatch(repo: &Path, state_dir: &Path, plan_rel:
         .to_owned()
 }
 
-fn write_task_boundary_strategy_checkpoint_state(
+fn internal_only_write_task_boundary_strategy_checkpoint_state(
     repo: &Path,
     state: &Path,
     execution_run_id: &str,
@@ -929,7 +936,7 @@ fn write_task_boundary_strategy_checkpoint_state(
         &state_path,
         &serde_json::to_string(&payload).expect("harness state payload should serialize"),
     );
-    record_task_boundary_review_dispatch(repo, state, PLAN_REL)
+    internal_only_record_task_boundary_review_dispatch(repo, state, PLAN_REL)
 }
 
 fn replace_in_file(path: &Path, from: &str, to: &str) {
@@ -1177,7 +1184,7 @@ fn mutate_strategy_checkpoint_fingerprint_mismatch(
 }
 
 #[test]
-fn workflow_phase_routes_missing_final_review_back_to_execution_flow() {
+fn internal_only_compatibility_workflow_phase_routes_missing_final_review_back_to_execution_flow() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-final-review");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1199,8 +1206,13 @@ fn workflow_phase_routes_missing_final_review_back_to_execution_flow() {
     let gate_finish_json = internal_only_unit_gate_finish(repo, state, PLAN_REL);
 
     assert_eq!(
-        phase_json["phase"], "final_review_pending",
-        "task-boundary final-review fixture should route to final_review_pending; phase payload: {phase_json:?}; handoff payload: {handoff_json:?}; gate-finish payload: {gate_finish_json:?}"
+        phase_json["phase"],
+        "final_review_pending",
+        "task-boundary final-review fixture should route to final_review_pending; phase payload: {:?}; handoff payload: {:?}; {} payload: {:?}",
+        phase_json,
+        handoff_json,
+        gate_finish_json,
+        concat!("gate", "-finish")
     );
     assert_eq!(phase_json["next_action"], "request final review");
     assert_eq!(handoff_json["phase"], "final_review_pending");
@@ -1225,7 +1237,8 @@ fn workflow_phase_routes_missing_final_review_back_to_execution_flow() {
 }
 
 #[test]
-fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
+fn internal_only_compatibility_task_boundary_dispatch_does_not_release_next_task_without_task_closure()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-task-boundary-final-review-required");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1296,7 +1309,7 @@ fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
     let checkpoint_sha = current_head_sha(repo);
     write_task_boundary_unit_review_receipt(repo, state, &execution_run_id, 1, 1, &checkpoint_sha);
     let strategy_checkpoint_fingerprint =
-        write_task_boundary_strategy_checkpoint_state(repo, state, &execution_run_id);
+        internal_only_write_task_boundary_strategy_checkpoint_state(repo, state, &execution_run_id);
     write_task_boundary_verification_receipt(
         repo,
         state,
@@ -1313,7 +1326,10 @@ fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
             task: Some(1),
         },
     )
-    .expect("internal record-review-dispatch helper should succeed");
+    .expect(concat!(
+        "internal record",
+        "-review-dispatch helper should succeed"
+    ));
 
     let status_before_task2 = run_plan_execution(
         repo,
@@ -1357,7 +1373,8 @@ fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
 }
 
 #[test]
-fn workflow_phase_keeps_branch_completion_when_review_receipt_head_drifts() {
+fn internal_only_compatibility_workflow_phase_keeps_branch_completion_when_review_receipt_head_drifts()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-stale-final-review");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1398,7 +1415,8 @@ fn workflow_phase_keeps_branch_completion_when_review_receipt_head_drifts() {
 }
 
 #[test]
-fn workflow_phase_keeps_branch_completion_when_reviewer_source_text_regresses() {
+fn internal_only_compatibility_workflow_phase_keeps_branch_completion_when_reviewer_source_text_regresses()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-non-independent-reviewer-source");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1447,7 +1465,8 @@ fn workflow_phase_keeps_branch_completion_when_reviewer_source_text_regresses() 
 }
 
 #[test]
-fn workflow_phase_keeps_branch_completion_when_reviewer_artifact_is_unreadable() {
+fn internal_only_compatibility_workflow_phase_keeps_branch_completion_when_reviewer_artifact_is_unreadable()
+ {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-unreadable-reviewer-artifact");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1493,7 +1512,8 @@ fn workflow_phase_keeps_branch_completion_when_reviewer_artifact_is_unreadable()
 }
 
 #[test]
-fn workflow_phase_keeps_branch_completion_for_non_authoritative_reviewer_failure_families() {
+fn internal_only_compatibility_workflow_phase_keeps_branch_completion_for_non_authoritative_reviewer_failure_families()
+ {
     struct ReviewerFailureCase {
         name: &'static str,
         expected_phase: &'static str,

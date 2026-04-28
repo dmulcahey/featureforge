@@ -129,7 +129,7 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "Do not look for or require a runtime-owned plan-fidelity receipt. The authoritative fidelity evidence is the parseable review artifact surfaced by workflow routing and `plan contract analyze-plan` as `plan_fidelity_review`.",
+        "Do not look for or require a runtime-owned plan-fidelity projection file. The authoritative fidelity evidence is the parseable review artifact surfaced by workflow routing and `plan contract analyze-plan` as `plan_fidelity_review`.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),

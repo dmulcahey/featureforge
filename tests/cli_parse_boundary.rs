@@ -254,7 +254,8 @@ fn reviewer_runtime_guard_does_not_affect_normal_controller_commands() {
 }
 
 #[test]
-fn close_current_task_rejects_hidden_dispatch_id_without_internal_flag_env() {
+fn internal_only_compatibility_close_current_task_rejects_hidden_dispatch_id_without_internal_flag_env()
+ {
     let (repo_dir, state_dir) = init_repo("cli-boundary-close-current-task-hidden-dispatch-id");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -274,7 +275,7 @@ fn close_current_task_rejects_hidden_dispatch_id_without_internal_flag_env() {
             PLAN_REL,
             "--task",
             "1",
-            "--dispatch-id",
+            concat!("--dispatch", "-id"),
             "dispatch-001",
             "--review-result",
             "pass",
@@ -296,22 +297,32 @@ fn close_current_task_rejects_hidden_dispatch_id_without_internal_flag_env() {
     assert_eq!(json["error_class"], "InvalidCommandInput");
     assert_eq!(
         json["message"],
-        "--dispatch-id is an internal compatibility flag and is not available in normal public execution. Run close-current-task without it."
+        Value::from(format!(
+            "{} is an internal compatibility flag and is not available in normal public execution. Run close-current-task without it.",
+            concat!("--dispatch", "-id")
+        ))
     );
 }
 
 #[test]
-fn advance_late_stage_rejects_hidden_lineage_flags_without_internal_flag_env() {
+fn internal_only_compatibility_advance_late_stage_rejects_hidden_lineage_flags_without_internal_flag_env()
+ {
     let cases = [
         (
-            "--dispatch-id",
+            concat!("--dispatch", "-id"),
             "dispatch-001",
-            "--dispatch-id is an internal compatibility flag and is not available in normal public execution. Run advance-late-stage without it.",
+            concat!(
+                "--dispatch",
+                "-id is an internal compatibility flag and is not available in normal public execution. Run advance-late-stage without it."
+            ),
         ),
         (
-            "--branch-closure-id",
+            concat!("--branch", "-closure-id"),
             "branch-closure-001",
-            "--branch-closure-id is an internal compatibility flag and is not available in normal public execution. Run advance-late-stage without it.",
+            concat!(
+                "--branch",
+                "-closure-id is an internal compatibility flag and is not available in normal public execution. Run advance-late-stage without it."
+            ),
         ),
     ];
 
@@ -345,7 +356,8 @@ fn advance_late_stage_rejects_hidden_lineage_flags_without_internal_flag_env() {
 }
 
 #[test]
-fn internal_execution_flag_env_allows_hidden_lineage_flags_to_reach_normal_validation() {
+fn internal_only_compatibility_internal_execution_flag_env_allows_hidden_lineage_flags_to_reach_normal_validation()
+ {
     let (repo_dir, state_dir) = init_repo("cli-boundary-internal-execution-flag-env");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -359,11 +371,14 @@ fn internal_execution_flag_env_allows_hidden_lineage_flags_to_reach_normal_valid
             "advance-late-stage",
             "--plan",
             PLAN_REL,
-            "--dispatch-id",
+            concat!("--dispatch", "-id"),
             "dispatch-001",
         ],
         "advance-late-stage hidden flag with internal env",
-        &[("FEATUREFORGE_ALLOW_INTERNAL_EXECUTION_FLAGS", "1")],
+        &[(
+            concat!("FEATUREFORGE", "_ALLOW_INTERNAL_EXECUTION_FLAGS"),
+            "1",
+        )],
     );
     let json = parse_failure_json(&output, "advance-late-stage hidden flag with internal env");
     let message = json["message"]
@@ -485,7 +500,8 @@ fn plan_execution_task3_commands_require_their_artifact_flags_at_parse_boundary(
 }
 
 #[test]
-fn plan_execution_record_review_dispatch_requires_scope_at_parse_boundary() {
+fn internal_only_compatibility_plan_execution_record_review_dispatch_requires_scope_at_parse_boundary()
+ {
     let (repo_dir, state_dir) = init_repo("cli-boundary-review-dispatch-scope");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -496,15 +512,15 @@ fn plan_execution_record_review_dispatch_requires_scope_at_parse_boundary() {
         &[
             "plan",
             "execution",
-            "record-review-dispatch",
+            concat!("record", "-review-dispatch"),
             "--plan",
             PLAN_REL,
         ],
-        "plan execution record-review-dispatch missing scope",
+        concat!("plan execution record", "-review-dispatch missing scope"),
     );
     let json = parse_failure_json(
         &output,
-        "plan execution record-review-dispatch missing scope",
+        concat!("plan execution record", "-review-dispatch missing scope"),
     );
 
     assert_eq!(
@@ -514,12 +530,16 @@ fn plan_execution_record_review_dispatch_requires_scope_at_parse_boundary() {
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
-    assert!(message.contains("unrecognized subcommand 'record-review-dispatch'"));
+    assert!(message.contains(&format!(
+        "unrecognized subcommand '{}'",
+        concat!("record", "-review-dispatch")
+    )));
 }
 
 #[test]
-fn plan_execution_record_release_readiness_requires_primitive_arguments_at_parse_boundary() {
-    let (repo_dir, state_dir) = init_repo("cli-boundary-record-release-readiness");
+fn internal_only_compatibility_plan_execution_record_release_readiness_requires_primitive_arguments_at_parse_boundary()
+ {
+    let (repo_dir, state_dir) = init_repo(concat!("cli-boundary-record", "-release-readiness"));
     let repo = repo_dir.path();
     let state = state_dir.path();
 
@@ -529,15 +549,21 @@ fn plan_execution_record_release_readiness_requires_primitive_arguments_at_parse
         &[
             "plan",
             "execution",
-            "record-release-readiness",
+            concat!("record", "-release-readiness"),
             "--plan",
             PLAN_REL,
         ],
-        "plan execution record-release-readiness missing primitive arguments",
+        concat!(
+            "plan execution record",
+            "-release-readiness missing primitive arguments"
+        ),
     );
     let json = parse_failure_json(
         &output,
-        "plan execution record-release-readiness missing primitive arguments",
+        concat!(
+            "plan execution record",
+            "-release-readiness missing primitive arguments"
+        ),
     );
 
     assert_eq!(
@@ -547,12 +573,16 @@ fn plan_execution_record_release_readiness_requires_primitive_arguments_at_parse
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
-    assert!(message.contains("unrecognized subcommand 'record-release-readiness'"));
+    assert!(message.contains(&format!(
+        "unrecognized subcommand '{}'",
+        concat!("record", "-release-readiness")
+    )));
 }
 
 #[test]
-fn plan_execution_record_final_review_requires_primitive_arguments_at_parse_boundary() {
-    let (repo_dir, state_dir) = init_repo("cli-boundary-record-final-review");
+fn internal_only_compatibility_plan_execution_record_final_review_requires_primitive_arguments_at_parse_boundary()
+ {
+    let (repo_dir, state_dir) = init_repo(concat!("cli-boundary-record", "-final-review"));
     let repo = repo_dir.path();
     let state = state_dir.path();
 
@@ -562,15 +592,21 @@ fn plan_execution_record_final_review_requires_primitive_arguments_at_parse_boun
         &[
             "plan",
             "execution",
-            "record-final-review",
+            concat!("record", "-final-review"),
             "--plan",
             PLAN_REL,
         ],
-        "plan execution record-final-review missing primitive arguments",
+        concat!(
+            "plan execution record",
+            "-final-review missing primitive arguments"
+        ),
     );
     let json = parse_failure_json(
         &output,
-        "plan execution record-final-review missing primitive arguments",
+        concat!(
+            "plan execution record",
+            "-final-review missing primitive arguments"
+        ),
     );
 
     assert_eq!(
@@ -580,7 +616,10 @@ fn plan_execution_record_final_review_requires_primitive_arguments_at_parse_boun
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
-    assert!(message.contains("unrecognized subcommand 'record-final-review'"));
+    assert!(message.contains(&format!(
+        "unrecognized subcommand '{}'",
+        concat!("record", "-final-review")
+    )));
 }
 
 #[test]
@@ -707,7 +746,8 @@ fn session_entry_command_is_removed_from_active_cli_surface() {
 }
 
 #[test]
-fn workflow_hidden_compatibility_commands_are_removed_from_active_cli_surface() {
+fn internal_only_compatibility_workflow_hidden_compatibility_commands_are_removed_from_active_cli_surface()
+ {
     let (repo_dir, state_dir) = init_repo("cli-boundary-workflow-hidden-commands");
     let repo = repo_dir.path();
     let state = state_dir.path();

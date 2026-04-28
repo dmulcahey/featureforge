@@ -35,9 +35,8 @@ use crate::execution::reentry_reconcile::{
 use crate::execution::state::{
     ExecutionReadScope, ExecutionRuntime, PlanExecutionStatus, StatusBlockingRecord,
     current_branch_closure_structural_review_state_reason,
-    task_closure_baseline_bridge_ready_for_stale_target,
-    task_closure_baseline_repair_candidate_with_stale_target,
-    task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
+    task_closure_baseline_bridge_ready_for_stale_target, task_scope_review_state_repair_reason,
+    task_scope_structural_review_state_reason,
 };
 use crate::workflow::status::WorkflowRoute;
 
@@ -306,7 +305,6 @@ fn shared_next_action_decision_from_runtime_state(
             persisted_repair_follow_up: runtime_state.persisted_repair_follow_up.as_deref(),
             branch_rerecording_assessment: runtime_state.branch_rerecording_assessment.as_ref(),
             gate_finish: runtime_state.gate_snapshot.gate_finish.as_ref(),
-            task_closure_execution_run_ids: Some(&runtime_state.task_closure_execution_run_ids),
             authoritative_stale_target: runtime_state
                 .gate_snapshot
                 .earliest_task_stale_target_details()
@@ -497,12 +495,6 @@ fn route_decision_from_runtime_state_with_inputs(
         {
             return close_current_task_route_decision(runtime_state, status, task_number);
         }
-        if seed.phase_detail == "execution_reentry_required"
-            && let Some(task_number) =
-                task_closure_projection_refresh_route_task(runtime_state, status)
-        {
-            return close_current_task_route_decision(runtime_state, status, task_number);
-        }
         return RouteDecision {
             state_kind,
             phase: seed.phase,
@@ -642,53 +634,6 @@ fn reducer_dispatch_bridge_ready(
             .all(|step| step.checked)
 }
 
-fn task_closure_projection_refresh_route_task(
-    runtime_state: &RuntimeState,
-    status: &PlanExecutionStatus,
-) -> Option<u32> {
-    if late_stage_failed_result_requires_execution_reentry(status) {
-        return None;
-    }
-    status
-        .current_task_closures
-        .iter()
-        .map(|closure| closure.task)
-        .find(|task_number| {
-            task_closure_baseline_repair_candidate_with_stale_target(
-                &runtime_state.context,
-                status,
-                *task_number,
-                runtime_state.gate_snapshot.earliest_task_stale_target(),
-            )
-            .ok()
-            .flatten()
-            .is_some_and(|candidate| {
-                candidate.projection_refresh_only
-                    && runtime_state
-                        .context
-                        .steps
-                        .iter()
-                        .all(|step| step.checked || step.task_number <= candidate.task)
-            })
-        })
-}
-
-fn late_stage_failed_result_requires_execution_reentry(status: &PlanExecutionStatus) -> bool {
-    let final_review_failed = status.current_final_review_result.as_deref() == Some("fail")
-        && status
-            .current_final_review_branch_closure_id
-            .as_deref()
-            .zip(status.current_branch_closure_id.as_deref())
-            .is_some_and(|(recorded, current)| recorded == current);
-    let qa_failed = status.current_qa_result.as_deref() == Some("fail")
-        && status
-            .current_qa_branch_closure_id
-            .as_deref()
-            .zip(status.current_branch_closure_id.as_deref())
-            .is_some_and(|(recorded, current)| recorded == current);
-    final_review_failed || qa_failed
-}
-
 pub(crate) fn route_runtime_state(
     runtime_state: &RuntimeState,
     external_review_result_ready: bool,
@@ -787,21 +732,11 @@ fn close_current_task_route_decision(
     status: &PlanExecutionStatus,
     task_number: u32,
 ) -> RouteDecision {
-    let projection_refresh_only = task_closure_baseline_repair_candidate_with_stale_target(
-        &runtime_state.context,
-        status,
-        task_number,
-        runtime_state.gate_snapshot.earliest_task_stale_target(),
-    )
-    .ok()
-    .flatten()
-    .is_some_and(|candidate| candidate.projection_refresh_only);
     if status
         .current_task_closures
         .iter()
         .any(|closure| closure.task == task_number)
         && status.current_branch_closure_id.is_none()
-        && !projection_refresh_only
     {
         return branch_closure_recording_route_decision(runtime_state, status);
     }

@@ -12,7 +12,7 @@ use std::fs;
 use tempfile::TempDir;
 
 use executable_support::make_executable;
-use featureforge_support::{run_rust_featureforge, run_rust_featureforge_with_env_control};
+use featureforge_support::{run_featureforge_real_cli, run_featureforge_with_env_control_real_cli};
 use json_support::parse_json;
 use process_support::repo_root;
 
@@ -34,7 +34,7 @@ fn runtime_root_helper_resolves_the_repo_local_runtime() {
     let home_dir = TempDir::new().expect("home tempdir should exist");
     let repo = repo_root();
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(repo.as_path()),
         Some(state_dir.path()),
         Some(home_dir.path()),
@@ -65,7 +65,7 @@ fn runtime_root_path_helper_resolves_the_repo_local_runtime_without_json_parsing
     let home_dir = TempDir::new().expect("home tempdir should exist");
     let repo = repo_root();
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(repo.as_path()),
         Some(state_dir.path()),
         Some(home_dir.path()),
@@ -94,7 +94,7 @@ fn runtime_root_field_helper_reports_upgrade_eligibility_without_json_parsing() 
     let home_dir = TempDir::new().expect("home tempdir should exist");
     let repo = repo_root();
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(repo.as_path()),
         Some(state_dir.path()),
         Some(home_dir.path()),
@@ -122,7 +122,7 @@ fn runtime_root_helper_reports_unresolved_without_guessing() {
     let outside_repo = TempDir::new().expect("outside repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(outside_repo.path()),
         Some(state_dir.path()),
         None,
@@ -157,7 +157,7 @@ fn runtime_root_field_helper_reports_unresolved_with_empty_stdout() {
     let outside_repo = TempDir::new().expect("outside repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(outside_repo.path()),
         Some(state_dir.path()),
         None,
@@ -184,7 +184,7 @@ fn runtime_root_path_helper_reports_unresolved_with_empty_stdout() {
     let outside_repo = TempDir::new().expect("outside repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(outside_repo.path()),
         Some(state_dir.path()),
         None,
@@ -219,7 +219,7 @@ fn runtime_root_field_helper_reports_non_upgrade_eligible_valid_roots() {
         .expect("non-git runtime binary should exist");
     make_executable(&non_git_root.path().join("bin/featureforge"));
 
-    let output = run_rust_featureforge(
+    let output = run_featureforge_real_cli(
         None,
         Some(state_dir.path()),
         Some(home_dir.path()),
@@ -251,7 +251,7 @@ fn runtime_root_helper_rejects_invalid_featureforge_dir_without_fallback() {
     let invalid_dir = TempDir::new().expect("invalid runtime tempdir should exist");
     let repo = repo_root();
 
-    let output = run_rust_featureforge(
+    let output = run_featureforge_real_cli(
         Some(repo.as_path()),
         Some(state_dir.path()),
         Some(home_dir.path()),
@@ -292,7 +292,7 @@ fn runtime_root_helper_reports_featureforge_dir_env_as_a_bounded_source() {
         .expect("explicit runtime binary should exist");
     make_executable(&explicit_root.path().join("bin/featureforge"));
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(outside_repo.path()),
         Some(state_dir.path()),
         Some(home_dir.path()),
@@ -332,7 +332,7 @@ fn runtime_root_path_helper_rejects_invalid_featureforge_dir_without_fallback() 
     let invalid_dir = TempDir::new().expect("invalid runtime tempdir should exist");
     let repo = repo_root();
 
-    let output = run_rust_featureforge(
+    let output = run_featureforge_real_cli(
         Some(repo.as_path()),
         Some(state_dir.path()),
         Some(home_dir.path()),

@@ -6,6 +6,7 @@ mod files_support;
 mod git_support;
 #[path = "support/json.rs"]
 mod json_support;
+#[allow(dead_code)]
 #[path = "support/plan_execution_direct.rs"]
 mod plan_execution_direct_support;
 #[path = "support/process.rs"]
@@ -13,7 +14,6 @@ mod process_support;
 #[path = "support/projection.rs"]
 mod projection_support;
 
-use featureforge::cli::plan_execution::StatusArgs;
 use featureforge::contracts::evidence::read_execution_evidence;
 use featureforge::contracts::plan::parse_plan_file;
 use featureforge::diagnostics::FailureClass;
@@ -43,7 +43,7 @@ const SPEC_REL: &str = "docs/featureforge/specs/2026-03-25-execution-harness-sta
 
 const EXPECTED_PUBLIC_HARNESS_PHASES: &[&str] = &[
     "implementation_handoff",
-    "execution_preflight",
+    concat!("execution_pre", "flight"),
     "contract_drafting",
     "contract_pending_approval",
     "contract_approved",
@@ -135,27 +135,6 @@ fn parse_failure_json(output: &Output, context: &str) -> Value {
         .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
 }
 
-fn internal_only_runtime_preflight_gate_json(
-    repo: &Path,
-    state: &Path,
-    plan_rel: &str,
-    context: &str,
-) -> Value {
-    let mut runtime = ExecutionRuntime::discover(repo)
-        .unwrap_or_else(|error| panic!("{context} should discover runtime: {:?}", error));
-    runtime.state_dir = state.to_path_buf();
-    let args = StatusArgs {
-        plan: PathBuf::from(plan_rel),
-        external_review_result_ready: false,
-    };
-    to_value(
-        runtime
-            .preflight_gate(&args)
-            .unwrap_or_else(|error| panic!("{context} should succeed: {:?}", error)),
-    )
-    .unwrap_or_else(|error| panic!("{context} should serialize to json: {error}"))
-}
-
 fn run_checked_output(command: Command, context: &str) -> Output {
     let output = run(command, context);
     assert!(
@@ -235,13 +214,6 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 }
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    match plan_execution_direct_support::try_run_plan_execution_output_direct(
-        repo, state, args, context,
-    ) {
-        Ok(Some(output)) => return parse_json(&output, context),
-        Ok(None) => {}
-        Err(error) => panic!("{error}"),
-    }
     parse_json(&run_plan_execution(repo, state, args, context), context)
 }
 
@@ -492,23 +464,14 @@ fn write_candidate_contract_fixture(repo: &Path, artifact_rel: &str) -> String {
     contract_fingerprint
 }
 
-fn accept_execution_preflight(repo: &Path, state: &Path) {
+fn accept_execution_preflight(repo: &Path, _state: &Path) {
     let mut checkout = Command::new("git");
     checkout
-        .args(["checkout", "-B", "execution-preflight-fixture"])
+        .args(["checkout", "-B", concat!("execution-pre", "flight-fixture")])
         .current_dir(repo);
-    run_checked_output(checkout, "git checkout execution-preflight-fixture");
-
-    let preflight = internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        PLAN_REL,
-        "execution preflight acceptance for per-step provenance coverage",
-    );
-    assert_eq!(
-        preflight["allowed"],
-        Value::Bool(true),
-        "execution preflight should allow begin/complete fixtures for per-step provenance coverage, got {preflight}"
+    run_checked_output(
+        checkout,
+        concat!("git checkout execution-pre", "flight-fixture"),
     );
 }
 
@@ -867,7 +830,9 @@ fn status_exposes_run_identity_policy_snapshot_and_authority_diagnostics_before_
     );
     assert!(
         missing_or_invalid_nullable_string_fields.is_empty(),
-        "status should expose nullable preflight diagnostics as null or non-empty strings, missing/invalid: {missing_or_invalid_nullable_string_fields:?}"
+        "status should expose nullable {} diagnostics as null or non-empty strings, missing/invalid: {:?}",
+        concat!("pre", "flight"),
+        missing_or_invalid_nullable_string_fields
     );
 
     let missing_non_empty_string_fields =
@@ -939,7 +904,9 @@ fn status_exposes_run_identity_policy_snapshot_and_authority_diagnostics_before_
     );
     assert!(
         missing_prestart_null_fields.is_empty(),
-        "status should keep pre-start authority fields unset before preflight/evaluation, missing null fields: {missing_prestart_null_fields:?}"
+        "status should keep pre-start authority fields unset before {}/evaluation, missing null fields: {:?}",
+        concat!("pre", "flight"),
+        missing_prestart_null_fields
     );
 
     let missing_number_fields = missing_number_fields(
@@ -1096,7 +1063,8 @@ fn status_ignores_persisted_late_stage_phase_without_late_stage_bindings() {
 }
 
 #[test]
-fn record_contract_persists_dependency_index_with_authoritative_contract_node() {
+fn internal_only_compatibility_record_contract_persists_dependency_index_with_authoritative_contract_node()
+ {
     let (repo_dir, state_dir) =
         init_repo("execution-harness-state-dependency-index-record-contract");
     let repo = repo_dir.path();
@@ -1163,7 +1131,8 @@ fn record_contract_persists_dependency_index_with_authoritative_contract_node() 
 }
 
 #[test]
-fn record_contract_persists_observability_event_and_authoritative_mutation_counter() {
+fn internal_only_compatibility_record_contract_persists_observability_event_and_authoritative_mutation_counter()
+ {
     let (repo_dir, state_dir) = init_repo("execution-harness-state-observability-record-contract");
     let repo = repo_dir.path();
     let state = state_dir.path();

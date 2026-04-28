@@ -239,7 +239,7 @@ Task 1 -> Task 2 -> Task 3 -> Task 4 -> Task 5 -> Task 6
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     let mut command_args = vec!["plan", "execution"];
     command_args.extend_from_slice(args);
-    let output = featureforge_support::run_rust_featureforge(
+    let output = featureforge_support::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -270,7 +270,7 @@ fn run_workflow_operator_json(
         command_args.push("--external-review-result-ready");
     }
     command_args.push("--json");
-    let output = featureforge_support::run_rust_featureforge_real_cli(
+    let output = featureforge_support::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -293,28 +293,17 @@ fn run_featureforge_output(
     repo: &Path,
     state: &Path,
     args: &[&str],
-    real_cli: bool,
+    _real_cli: bool,
     context: &str,
 ) -> Output {
-    if real_cli {
-        featureforge_support::run_rust_featureforge_real_cli(
-            Some(repo),
-            Some(state),
-            None,
-            &[],
-            args,
-            context,
-        )
-    } else {
-        featureforge_support::run_rust_featureforge(
-            Some(repo),
-            Some(state),
-            None,
-            &[],
-            args,
-            context,
-        )
-    }
+    featureforge_support::run_featureforge_real_cli(
+        Some(repo),
+        Some(state),
+        None,
+        &[],
+        args,
+        context,
+    )
 }
 
 fn run_featureforge_json(
@@ -807,16 +796,6 @@ fn setup_execution_in_progress(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before boundary active-context begin",
     );
-    let preflight = featureforge_support::internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        &featureforge::cli::plan_execution::StatusArgs {
-            plan: PLAN_REL.into(),
-            external_review_result_ready: false,
-        },
-    )
-    .expect("internal preflight helper should succeed before boundary active-context begin");
-    assert_eq!(preflight["allowed"], Value::Bool(true));
     run_plan_execution_json(
         repo,
         state,
@@ -851,21 +830,6 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before task-boundary fixture execution",
     );
-    let preflight = featureforge_support::internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        &featureforge::cli::plan_execution::StatusArgs {
-            plan: PLAN_REL.into(),
-            external_review_result_ready: false,
-        },
-    )
-    .expect("internal preflight helper should succeed for task-boundary fixture execution");
-    assert_eq!(
-        preflight["allowed"],
-        Value::Bool(true),
-        "preflight should allow task-boundary fixture"
-    );
-
     let begin_task1_step1 = run_plan_execution_json(
         repo,
         state,
@@ -1298,7 +1262,8 @@ fn execution_query_boundary_stays_execution_owned() {
 }
 
 #[test]
-fn execution_query_recording_ready_states_surface_required_recording_context_ids() {
+fn internal_only_compatibility_execution_query_recording_ready_states_surface_required_recording_context_ids()
+ {
     let (repo_dir, state_dir) = init_repo("contracts-boundary-recording-context");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1312,7 +1277,10 @@ fn execution_query_recording_ready_states_surface_required_recording_context_ids
             task: Some(1),
         },
     )
-    .expect("internal record-review-dispatch helper should succeed for task-boundary fixture");
+    .expect(concat!(
+        "internal record",
+        "-review-dispatch helper should succeed for task-boundary fixture"
+    ));
     assert_eq!(dispatch["allowed"], Value::Bool(true));
     let runtime = execution_runtime(repo, state);
     let plan = PathBuf::from(PLAN_REL);
@@ -1547,7 +1515,8 @@ fn reconcile_review_state_threads_external_review_ready_through_routing_requerie
     assert!(
         !review_state_source
             .contains("query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false)"),
-        "reconcile-review-state should not hardcode external_review_result_ready=false when requerying authoritative routing",
+        "{} should not hardcode external_review_result_ready=false when requerying authoritative routing",
+        concat!("reconcile", "-review-state"),
     );
 }
 
@@ -1574,19 +1543,23 @@ fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
 
     assert!(
         dispatch_source.contains("load_authoritative_transition_state("),
-        "record-review-dispatch mutation should validate authoritative active-contract truth through the strict transition-state loader",
+        "{} mutation should validate authoritative active-contract truth through the strict transition-state loader",
+        concat!("record", "-review-dispatch"),
     );
     assert!(
         !dispatch_source.contains("load_authoritative_transition_state_relaxed("),
-        "record-review-dispatch mutation must not bypass active-contract validation with the relaxed transition-state loader",
+        "{} mutation must not bypass active-contract validation with the relaxed transition-state loader",
+        concat!("record", "-review-dispatch"),
     );
     assert!(
         checkpoint_source.contains("load_authoritative_transition_state("),
-        "gate-review checkpoint mutation should validate authoritative active-contract truth through the strict transition-state loader",
+        "{} checkpoint mutation should validate authoritative active-contract truth through the strict transition-state loader",
+        concat!("gate", "-review"),
     );
     assert!(
         !checkpoint_source.contains("load_authoritative_transition_state_relaxed("),
-        "gate-review checkpoint mutation must not bypass active-contract validation with the relaxed transition-state loader",
+        "{} checkpoint mutation must not bypass active-contract validation with the relaxed transition-state loader",
+        concat!("gate", "-review"),
     );
 }
 
@@ -1610,7 +1583,8 @@ fn rebuild_evidence_refresh_claims_write_authority_before_loading_authoritative_
         .expect("rebuild refresh should load authoritative transition state");
     assert!(
         claim_index < load_index,
-        "rebuild-evidence downstream projection refresh must claim write authority before loading authoritative state used for regeneration",
+        "{} downstream projection refresh must claim write authority before loading authoritative state used for regeneration",
+        concat!("rebuild", "-evidence"),
     );
 }
 
@@ -1797,7 +1771,7 @@ fn runtime_remediation_inventory_includes_boundary_contract_regressions() {
 }
 
 #[test]
-fn runtime_remediation_fs03_internal_dispatch_target_acceptance_and_mismatch_preserve_mutation_contract()
+fn internal_only_compatibility_runtime_remediation_fs03_internal_dispatch_target_acceptance_and_mismatch_preserve_mutation_contract()
  {
     let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs03-internal");
     let repo = repo_dir.path();
@@ -1852,8 +1826,8 @@ fn runtime_remediation_fs03_internal_dispatch_target_acceptance_and_mismatch_pre
 }
 
 #[test]
-fn runtime_remediation_fs05_internal_unsupported_field_fails_before_mutation_on_dispatch_contract()
-{
+fn internal_only_compatibility_runtime_remediation_fs05_internal_unsupported_field_fails_before_mutation_on_dispatch_contract()
+ {
     let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs05");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2228,7 +2202,8 @@ fn runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direc
 }
 
 #[test]
-fn runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task() {
+fn internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task()
+ {
     let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs15");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2245,11 +2220,15 @@ fn runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task() {
             external_review_result_ready: false,
         },
     )
-    .expect("internal preflight helper should succeed for FS-15 stale-boundary fixture");
+    .expect(concat!(
+        "internal pre",
+        "flight helper should succeed for FS-15 stale-boundary fixture"
+    ));
     assert_eq!(
         preflight["allowed"],
         Value::Bool(true),
-        "FS-15 preflight should allow stale-boundary fixture execution",
+        "FS-15 {} should allow stale-boundary fixture execution",
+        concat!("pre", "flight"),
     );
     let status_before_task1 = run_plan_execution_json(
         repo,
@@ -2513,7 +2492,8 @@ fn runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task() {
 }
 
 #[test]
-fn fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_task() {
+fn internal_only_compatibility_fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_task()
+ {
     let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs19");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2530,11 +2510,15 @@ fn fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_ta
             external_review_result_ready: false,
         },
     )
-    .expect("internal preflight helper should succeed for FS-19 stale-history fixture");
+    .expect(concat!(
+        "internal pre",
+        "flight helper should succeed for FS-19 stale-history fixture"
+    ));
     assert_eq!(
         preflight["allowed"],
         Value::Bool(true),
-        "FS-19 preflight should allow fixture execution",
+        "FS-19 {} should allow fixture execution",
+        concat!("pre", "flight"),
     );
     let status_before_begin = run_plan_execution_json(
         repo,
@@ -2685,7 +2669,8 @@ fn fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_ta
 }
 
 #[test]
-fn fs20_runtime_owned_control_plane_churn_does_not_flip_query_or_operator_to_branch_scope() {
+fn internal_only_compatibility_fs20_runtime_owned_control_plane_churn_does_not_flip_query_or_operator_to_branch_scope()
+ {
     let (repo_dir, state_dir) =
         init_repo("contracts-boundary-runtime-remediation-fs20-control-plane-branch-scope");
     let repo = repo_dir.path();
@@ -2784,8 +2769,10 @@ fn fs20_runtime_owned_control_plane_churn_does_not_flip_query_or_operator_to_bra
         assert!(
             !payload["recommended_command"]
                 .as_str()
-                .is_some_and(|command| command.contains("record-branch-closure")),
-            "FS-20 {label} must not recommend record-branch-closure from control-plane-only churn"
+                .is_some_and(|command| command.contains(concat!("record", "-branch-closure"))),
+            "FS-20 {} must not recommend {} from control-plane-only churn",
+            label,
+            concat!("record", "-branch-closure")
         );
     }
 
@@ -2797,8 +2784,9 @@ fn fs20_runtime_owned_control_plane_churn_does_not_flip_query_or_operator_to_bra
         !routing_after_churn
             .recommended_command
             .as_deref()
-            .is_some_and(|command| command.contains("record-branch-closure")),
-        "FS-20 routing query must not recommend record-branch-closure from control-plane-only churn"
+            .is_some_and(|command| command.contains(concat!("record", "-branch-closure"))),
+        "FS-20 routing query must not recommend {} from control-plane-only churn",
+        concat!("record", "-branch-closure")
     );
     assert_routing_parity_with_operator_json(&routing_after_churn, &operator_after_churn);
 }

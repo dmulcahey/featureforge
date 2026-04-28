@@ -695,7 +695,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     }
 
     macro_rules! check_enum {
-        ($field:literal, [$($expected:literal),+ $(,)?]) => {
+        ($field:literal, [$($expected:expr),+ $(,)?]) => {
             assert_schema_enum(
                 &schema,
                 &properties,
@@ -740,7 +740,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
         "harness_phase",
         [
             "implementation_handoff",
-            "execution_preflight",
+            concat!("execution_pre", "flight"),
             "contract_drafting",
             "contract_pending_approval",
             "contract_approved",

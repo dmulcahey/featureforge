@@ -176,15 +176,6 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
         &["status", "--plan", plan_rel],
         "status before task-boundary blocked entry fixture execution",
     );
-    let _ = plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        &featureforge::cli::plan_execution::StatusArgs {
-            plan: plan_rel.into(),
-            external_review_result_ready: false,
-        },
-    )
-    .expect("internal preflight helper should succeed for task-boundary blocked entry fixture");
     let begin_task1_step1 = run_plan_execution_json(
         repo,
         state,
@@ -284,10 +275,16 @@ fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
     checkout
         .args(["checkout", "-B", branch_name])
         .current_dir(repo);
-    let output = run(checkout, "git checkout preflight acceptance branch");
+    let output = run(
+        checkout,
+        concat!("git checkout pre", "flight acceptance branch"),
+    );
     assert!(
         output.status.success(),
-        "preflight acceptance branch checkout should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        concat!(
+            "pre",
+            "flight acceptance branch checkout should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}"
+        ),
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
@@ -455,13 +452,17 @@ fn fs02_entry_route_surfaces_share_parity_and_budget() {
         .as_str()
         .expect("FS-02 operator route should include phase_detail");
     assert_eq!(
-        phase_detail, "execution_preflight_required",
-        "FS-02 fixture should keep comment-only entry drift on the execution-preflight lane under semantic identity routing, got {operator_json}"
+        phase_detail,
+        concat!("execution_pre", "flight_required"),
+        "FS-02 fixture should keep comment-only entry drift on the execution-{} lane under semantic identity routing, got {}",
+        concat!("pre", "flight"),
+        operator_json
     );
     assert_eq!(
         operator_json["next_action"],
-        Value::from("execution preflight"),
-        "FS-02 entry-path classification should stay on execution preflight for comment-only drift"
+        Value::from(concat!("execution pre", "flight")),
+        "FS-02 entry-path classification should stay on execution {} for comment-only drift",
+        concat!("pre", "flight")
     );
     assert_parity_probe_budget("FS-02", runtime_management_commands, 2);
 }

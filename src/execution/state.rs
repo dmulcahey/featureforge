@@ -1688,11 +1688,7 @@ fn route_exposes_repair_review_state_target(status: &PlanExecutionStatus) -> boo
         })
 }
 
-fn project_public_route_mutation_targets(
-    context: &ExecutionContext,
-    status: &mut PlanExecutionStatus,
-    earliest_stale_task: Option<u32>,
-) {
+fn project_public_route_mutation_targets(status: &mut PlanExecutionStatus) {
     if status.phase_detail == "task_closure_recording_ready"
         && let Some(task) = status
             .recording_context
@@ -1741,31 +1737,6 @@ fn project_public_route_mutation_targets(
                 expires_when_fingerprint_changes: true,
             },
         );
-    }
-
-    for closure in status.current_task_closures.clone() {
-        if task_closure_baseline_repair_candidate_with_stale_target(
-            context,
-            status,
-            closure.task,
-            earliest_stale_task,
-        )
-        .ok()
-        .flatten()
-        .is_some_and(|candidate| candidate.projection_refresh_only)
-        {
-            push_public_repair_target_once(
-                status,
-                PublicRepairTarget {
-                    command_kind: String::from("close-current-task"),
-                    task: Some(closure.task),
-                    step: None,
-                    reason_code: String::from("task_closure_projection_refresh_only"),
-                    source_record_id: Some(closure.closure_record_id),
-                    expires_when_fingerprint_changes: true,
-                },
-            );
-        }
     }
 
     let recommended_advance = status
@@ -1878,11 +1849,7 @@ pub(crate) fn apply_shared_routing_projection_to_read_scope_with_routing(
     read_scope.status.state_kind = route_decision.state_kind.clone();
     read_scope.status.next_public_action = route_decision.next_public_action.clone();
     read_scope.status.blockers = route_decision.blockers.clone();
-    project_public_route_mutation_targets(
-        &read_scope.context,
-        &mut read_scope.status,
-        runtime_state.gate_snapshot.earliest_task_stale_target(),
-    );
+    project_public_route_mutation_targets(&mut read_scope.status);
     project_reducer_stale_target_source(&runtime_state, &mut read_scope.status);
     read_scope.status.semantic_workspace_tree_id = runtime_state
         .semantic_workspace
@@ -7709,6 +7676,88 @@ mod exact_execution_command_tests {
     }
 
     #[test]
+    fn derive_public_blocking_records_routes_targetless_stale_to_runtime_diagnostic() {
+        let mut status = late_stage_status_for_review_state_tests();
+        status.review_state_status = String::from("stale_unreviewed");
+        status.stale_unreviewed_closures.clear();
+        status.current_branch_closure_id = None;
+        status.finish_review_gate_pass_branch_closure_id = None;
+        status.current_final_review_branch_closure_id = None;
+        status.current_final_review_result = None;
+        status.current_qa_branch_closure_id = None;
+        status.current_qa_result = None;
+        status.current_task_closures.clear();
+        status.reason_codes.clear();
+        status.blocking_task = None;
+        let gate_finish = gate_result_with_reason("irrelevant");
+
+        let blocking_records = derive_public_blocking_records(&status, &gate_finish);
+
+        assert_eq!(blocking_records.len(), 1, "{blocking_records:?}");
+        assert_eq!(
+            blocking_records[0].code,
+            TARGETLESS_STALE_RECONCILE_REASON_CODE
+        );
+        assert_eq!(blocking_records[0].scope_type, "runtime");
+        assert_eq!(blocking_records[0].scope_key, "targetless_stale_unreviewed");
+        assert_eq!(blocking_records[0].record_id, None);
+        assert_eq!(blocking_records[0].required_follow_up, None);
+    }
+
+    #[test]
+    fn derive_public_blocking_records_never_fabricates_current_branch_for_targetless_stale() {
+        let mut status = late_stage_status_for_review_state_tests();
+        status.review_state_status = String::from("stale_unreviewed");
+        status.stale_unreviewed_closures.clear();
+        status.current_branch_closure_id = Some(String::from("branch-closure-current"));
+        status.current_task_closures.clear();
+        status.reason_codes.clear();
+        let gate_finish = gate_result_with_reason("irrelevant");
+
+        let blocking_records = derive_public_blocking_records(&status, &gate_finish);
+
+        assert_eq!(blocking_records.len(), 1, "{blocking_records:?}");
+        assert_eq!(
+            blocking_records[0].code,
+            TARGETLESS_STALE_RECONCILE_REASON_CODE
+        );
+        assert_eq!(blocking_records[0].scope_type, "runtime");
+        assert_eq!(blocking_records[0].scope_key, "targetless_stale_unreviewed");
+        assert_eq!(blocking_records[0].record_id, None);
+        assert!(
+            blocking_records
+                .iter()
+                .all(|record| record.scope_key != "current"
+                    && record.record_id.as_deref() != Some("current")
+                    && record.record_id.as_deref() != Some("branch-closure-current")),
+            "targetless stale records must not invent current or branch targets: {blocking_records:?}"
+        );
+    }
+
+    #[test]
+    fn derive_public_blocking_records_targetless_stale_preempts_derived_current_fallback() {
+        let mut status = late_stage_status_for_review_state_tests();
+        status.review_state_status = String::from("stale_unreviewed");
+        status.stale_unreviewed_closures.clear();
+        status.current_branch_closure_id = None;
+        status.current_task_closures.clear();
+        status.reason_codes = vec![String::from("derived_review_state_missing")];
+        let gate_finish = gate_result_with_reason("irrelevant");
+
+        let blocking_records = derive_public_blocking_records(&status, &gate_finish);
+
+        assert_eq!(blocking_records.len(), 1, "{blocking_records:?}");
+        assert_eq!(
+            blocking_records[0].code,
+            TARGETLESS_STALE_RECONCILE_REASON_CODE
+        );
+        assert_eq!(blocking_records[0].scope_type, "runtime");
+        assert_eq!(blocking_records[0].scope_key, "targetless_stale_unreviewed");
+        assert_eq!(blocking_records[0].record_id, None);
+        assert_eq!(blocking_records[0].required_follow_up, None);
+    }
+
+    #[test]
     fn derive_public_next_action_uses_verification_lane_for_task_review_verification_blockers() {
         let mut status = late_stage_status_for_review_state_tests();
         status.phase_detail = String::from("task_review_result_pending");
@@ -7960,6 +8009,10 @@ fn derive_public_blocking_records(
     status: &PlanExecutionStatus,
     gate_finish: &GateResult,
 ) -> Vec<StatusBlockingRecord> {
+    if let Some(blocking_record) = TargetlessStaleReconcile::status_blocking_record(status) {
+        return vec![blocking_record];
+    }
+
     if status
         .reason_codes
         .iter()
@@ -8007,11 +8060,12 @@ fn derive_public_blocking_records(
         }];
     }
 
-    if let Some(blocking_record) = TargetlessStaleReconcile::status_blocking_record(status) {
-        return vec![blocking_record];
-    }
-
     if status.review_state_status == "stale_unreviewed" {
+        if status.stale_unreviewed_closures.is_empty() {
+            return TargetlessStaleReconcile::status_blocking_record(status)
+                .into_iter()
+                .collect();
+        }
         let late_stage_surface_not_declared = status
             .reason_codes
             .iter()
@@ -8030,18 +8084,10 @@ fn derive_public_blocking_records(
                 "The current reviewed state is stale because later workspace changes landed after the latest reviewed closure.",
             )
         };
-        let stale_targets = if status.stale_unreviewed_closures.is_empty() {
-            vec![
-                status
-                    .current_branch_closure_id
-                    .clone()
-                    .unwrap_or_else(|| String::from("current")),
-            ]
-        } else {
-            status.stale_unreviewed_closures.clone()
-        };
-        return stale_targets
-            .into_iter()
+        return status
+            .stale_unreviewed_closures
+            .iter()
+            .cloned()
             .map(|scope_key| StatusBlockingRecord {
                 code: code.clone(),
                 scope_type: String::from(if scope_key.starts_with("task-") {
@@ -15651,7 +15697,6 @@ pub(crate) fn require_prior_task_closure_for_begin(
 pub(crate) struct TaskClosureBaselineRepairCandidate {
     pub(crate) task: u32,
     pub(crate) dispatch_id: Option<String>,
-    pub(crate) projection_refresh_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15674,21 +15719,6 @@ fn task_closure_recording_reason_code(reason_code: &str) -> bool {
             | "task_verification_summary_malformed"
             | "prior_task_current_closure_stale"
     )
-}
-
-fn task_closure_projection_refresh_reason_code(reason_code: &str) -> bool {
-    matches!(
-        reason_code,
-        "prior_task_verification_missing"
-            | "prior_task_verification_missing_legacy"
-            | "task_review_artifact_malformed"
-            | "task_verification_summary_malformed"
-    )
-}
-
-fn task_closure_hard_block_reason_code(reason_code: &str) -> bool {
-    task_closure_recording_reason_code(reason_code)
-        && !task_closure_projection_refresh_reason_code(reason_code)
 }
 
 fn task_closure_dispatch_lineage_reason_code(reason_code: &str) -> bool {
@@ -15998,14 +16028,10 @@ pub(crate) fn task_closure_recording_prerequisites(
     let dispatch_lineage_blocked = blocking_reason_codes
         .iter()
         .any(|reason_code| task_closure_dispatch_lineage_reason_code(reason_code));
-    let current_positive_task_closure_present = authoritative_state
-        .as_ref()
-        .and_then(|state| state.current_task_closure_result(task))
-        .is_some_and(|current_closure| {
-            validate_current_task_closure_record(context, &current_closure).is_ok()
-                && task_closure_matches_current_workspace(context, &current_closure)
-                    .unwrap_or(false)
-        });
+    let current_positive_task_closure_present = authoritative_state.as_ref().is_some_and(|state| {
+        task_current_closure_status_from_authoritative_state(context, task, state)
+            .is_ok_and(|status| status == TaskCurrentClosureStatus::Current)
+    });
     if !current_positive_task_closure_present
         && !dispatch_lineage_blocked
         && dispatch_id
@@ -16255,40 +16281,28 @@ pub(crate) fn task_closure_baseline_repair_candidate_with_stale_target(
     {
         return Ok(None);
     }
-    let mut current_closure_dispatch_id = None;
-    let mut current_closure_execution_run_id = None;
-    let current_closure_current =
-        if let Some(current_record) = authoritative_state.current_task_closure_result(task) {
-            if validate_current_task_closure_record(context, &current_record).is_err() {
-                return Ok(None);
-            }
-            if !task_closure_matches_current_workspace(context, &current_record)? {
-                return Ok(None);
-            }
-            current_closure_dispatch_id = Some(current_record.dispatch_id.clone());
-            current_closure_execution_run_id = current_record.execution_run_id.clone();
-            true
-        } else if authoritative_state
-            .raw_current_task_closure_state_entry(task)
-            .is_some()
-        {
+    match task_current_closure_status_from_authoritative_state(context, task, &authoritative_state)
+    {
+        Ok(TaskCurrentClosureStatus::Missing) => {}
+        Ok(TaskCurrentClosureStatus::Current | TaskCurrentClosureStatus::Stale) | Err(_) => {
+            // Current positive task-closure records are authoritative. Review/verification
+            // markdown projections cannot create a task-boundary repair lane once the shared
+            // currentness classifier sees a task-closure record for this task.
             return Ok(None);
-        } else {
-            false
-        };
+        }
+    }
     let prerequisites = task_closure_recording_prerequisites(context, task)?;
     let mut dispatch_id = prerequisites
         .dispatch_id
         .clone()
-        .or(current_closure_dispatch_id.clone())
         .or_else(|| authoritative_state.task_review_dispatch_id(task));
     let next_unchecked_task = context
         .steps
         .iter()
         .find(|step| !step.checked)
         .map(|step| step.task_number);
-    let task_scope_matches_task = current_closure_current
-        || (status.blocking_step.is_none() && status.blocking_task == Some(task))
+    let task_scope_matches_task = (status.blocking_step.is_none()
+        && status.blocking_task == Some(task))
         || status.active_task == Some(task)
         || status.resume_task == Some(task)
         || next_unchecked_task.is_some_and(|next_task| task < next_task)
@@ -16296,29 +16310,6 @@ pub(crate) fn task_closure_baseline_repair_candidate_with_stale_target(
             && context.tasks_by_number.keys().copied().max() == Some(task));
     let closure_recording_runtime_truth_ready =
         task_scope_matches_task && task_closure_recording_runtime_truth_ready(context, task)?;
-    let mut projection_refresh_reason_codes = prerequisites.blocking_reason_codes.clone();
-    if current_closure_current
-        && !projection_refresh_reason_codes
-            .iter()
-            .any(|reason_code| task_closure_projection_refresh_reason_code(reason_code))
-        && let Some(execution_run_id) = current_closure_execution_run_id.as_deref()
-    {
-        push_task_closure_pending_verification_reason_codes_for_run(
-            context,
-            task,
-            execution_run_id,
-            true,
-            &mut projection_refresh_reason_codes,
-        )?;
-    }
-    let projection_refresh_only = current_closure_current
-        && projection_refresh_reason_codes
-            .iter()
-            .any(|reason_code| task_closure_projection_refresh_reason_code(reason_code));
-    let hard_blockers_present = prerequisites
-        .blocking_reason_codes
-        .iter()
-        .any(|reason_code| task_closure_hard_block_reason_code(reason_code));
     let stale_bridge_allowed =
         stale_unreviewed_allows_task_closure_baseline_bridge_with_stale_target(
             context,
@@ -16326,45 +16317,36 @@ pub(crate) fn task_closure_baseline_repair_candidate_with_stale_target(
             task,
             earliest_unresolved_stale_task,
         )?;
-    if current_closure_current {
-        if !strategy_checkpoint_present || hard_blockers_present || !projection_refresh_only {
-            return Ok(None);
-        }
-        if dispatch_id
-            .as_deref()
-            .is_some_and(|value| value.trim().is_empty())
-        {
-            dispatch_id = None;
-        }
-    } else {
-        if !closure_recording_runtime_truth_ready {
-            return Ok(None);
-        }
-        let dispatch_args = RecordReviewDispatchArgs {
-            plan: context.plan_abs.clone(),
-            scope: ReviewDispatchScopeArg::Task,
-            task: Some(task),
-        };
-        if let Some(current_dispatch_id) =
-            current_review_dispatch_id_if_still_current(context, &dispatch_args)?
-        {
-            dispatch_id = Some(current_dispatch_id);
-        }
-        let close_current_task_bridge_blocked =
-            prerequisites
-                .blocking_reason_codes
-                .iter()
-                .any(|reason_code| {
-                    matches!(
-                        reason_code.as_str(),
-                        "prior_task_review_not_green"
-                            | "prior_task_current_closure_stale"
-                                if !stale_bridge_allowed
-                    )
-                });
-        if close_current_task_bridge_blocked {
-            return Ok(None);
-        }
+    if !strategy_checkpoint_present {
+        return Ok(None);
+    }
+    if !closure_recording_runtime_truth_ready {
+        return Ok(None);
+    }
+    let dispatch_args = RecordReviewDispatchArgs {
+        plan: context.plan_abs.clone(),
+        scope: ReviewDispatchScopeArg::Task,
+        task: Some(task),
+    };
+    if let Some(current_dispatch_id) =
+        current_review_dispatch_id_if_still_current(context, &dispatch_args)?
+    {
+        dispatch_id = Some(current_dispatch_id);
+    }
+    let close_current_task_bridge_blocked =
+        prerequisites
+            .blocking_reason_codes
+            .iter()
+            .any(|reason_code| {
+                matches!(
+                    reason_code.as_str(),
+                    "prior_task_review_not_green"
+                        | "prior_task_current_closure_stale"
+                            if !stale_bridge_allowed
+                )
+            });
+    if close_current_task_bridge_blocked {
+        return Ok(None);
     }
     let late_stage_missing_task_closure_baseline_bridge =
         status.current_branch_closure_id.is_none()
@@ -16447,24 +16429,12 @@ pub(crate) fn task_closure_baseline_repair_candidate_with_stale_target(
     }
     if status.current_branch_closure_id.is_none()
         && task_closures_are_non_branch_contributing(status)
-        && !projection_refresh_only
     {
         return Ok(None);
-    }
-    if projection_refresh_only {
-        let next_unchecked_task = context
-            .steps
-            .iter()
-            .find(|step| !step.checked)
-            .map(|step| step.task_number);
-        if next_unchecked_task.is_some_and(|next_task| task >= next_task) {
-            return Ok(None);
-        }
     }
     Ok(Some(TaskClosureBaselineRepairCandidate {
         task,
         dispatch_id,
-        projection_refresh_only,
     }))
 }
 
@@ -16721,6 +16691,14 @@ fn task_current_closure_status(
     let Some(authoritative_state) = authoritative_state.as_ref() else {
         return Ok(TaskCurrentClosureStatus::Missing);
     };
+    task_current_closure_status_from_authoritative_state(context, task_number, authoritative_state)
+}
+
+fn task_current_closure_status_from_authoritative_state(
+    context: &ExecutionContext,
+    task_number: u32,
+    authoritative_state: &AuthoritativeTransitionState,
+) -> Result<TaskCurrentClosureStatus, JsonFailure> {
     let Some(current_closure) = authoritative_state.current_task_closure_result(task_number) else {
         if let Some(entry) = authoritative_state.raw_current_task_closure_state_entry(task_number) {
             return Err(invalid_current_task_closure_error_for_raw_entry(&entry));

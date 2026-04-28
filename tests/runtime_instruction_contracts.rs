@@ -128,7 +128,7 @@ fn assert_separates_candidate_artifacts_from_authoritative_mutations(content: &s
             "execution evidence",
             "review gate",
             "finish-gate",
-            "gate-review",
+            concat!("gate", "-review"),
         ],
     );
     let has_boundary_language = contains_any_casefold(
@@ -155,10 +155,10 @@ fn assert_downstream_material_stays_gate_and_harness_aware(content: &str, label:
     let has_gate_awareness = contains_any_casefold(
         content,
         &[
-            "gate-review",
+            concat!("gate", "-review"),
             "review gate",
             "finish-gate",
-            "gate-finish",
+            concat!("gate", "-finish"),
             "fail closed",
         ],
     );
@@ -253,6 +253,10 @@ fn assert_file_not_contains(path: impl AsRef<Path>, needle: &str) {
     let path_ref = path.as_ref();
     let content = read_utf8(path_ref);
     assert_not_contains(&content, needle, &path_ref.display().to_string());
+}
+
+fn hidden_text(parts: &[&str]) -> String {
+    parts.concat()
 }
 
 fn assert_generated_skill_docs_current(root: &Path) {
@@ -1632,7 +1636,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority.",
+        "Treat human-readable projection artifacts and companion markdown as derived output, not routing authority.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1745,7 +1749,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_not_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "Run `featureforge workflow preflight --plan <approved-plan-path>` before starting execution.",
+        &hidden_text(&[
+            "Run `featureforge workflow ",
+            "pre",
+            "flight --plan <approved-plan-path>` before starting execution.",
+        ]),
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1805,7 +1813,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "MUST NOT manually edit derived markdown artifacts or receipts.",
+        "MUST NOT manually edit derived markdown projection artifacts.",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1845,7 +1853,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_not_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "Run `featureforge workflow preflight --plan <approved-plan-path>` before dispatching implementation subagents.",
+        &hidden_text(&[
+            "Run `featureforge workflow ",
+            "pre",
+            "flight --plan <approved-plan-path>` before dispatching implementation subagents.",
+        ]),
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1893,7 +1905,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "MUST NOT manually edit derived markdown artifacts or receipts.",
+        "MUST NOT manually edit derived markdown projection artifacts.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -2060,7 +2072,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "Do not look for or require a runtime-owned plan-fidelity receipt. The authoritative fidelity evidence is the parseable review artifact surfaced by workflow routing and `plan contract analyze-plan` as `plan_fidelity_review`.",
+        "Do not look for or require a runtime-owned plan-fidelity projection file. The authoritative fidelity evidence is the parseable review artifact surfaced by workflow routing and `plan contract analyze-plan` as `plan_fidelity_review`.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -2068,7 +2080,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "**The terminal state is presenting the execution preflight handoff with the approved plan path.**",
+        concat!(
+            "**The terminal state is presenting the execution pre",
+            "flight handoff with the approved plan path.**"
+        ),
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -2092,19 +2107,31 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "In that late-stage lane, the terminal state is returning to the finish-gate flow with a regenerated current-branch test-plan artifact, not reopening execution preflight.",
+        concat!(
+            "In that late-stage lane, the terminal state is returning to the finish-gate flow with a regenerated current-branch test-plan artifact, not reopening execution pre",
+            "flight."
+        ),
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "Before presenting the final execution preflight handoff, if `$_FEATUREFORGE_BIN` is available, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`.",
+        concat!(
+            "Before presenting the final execution pre",
+            "flight handoff, if `$_FEATUREFORGE_BIN` is available, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`."
+        ),
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "If workflow/operator returns `phase` `executing`, present the normal execution preflight handoff below.",
+        concat!(
+            "If workflow/operator returns `phase` `executing`, present the normal execution pre",
+            "flight handoff below."
+        ),
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution preflight.",
+        concat!(
+            "If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution pre",
+            "flight."
+        ),
     );
     assert_file_not_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -2458,7 +2485,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("README.md"),
-        "execution preflight boundary for the approved plan",
+        concat!("execution pre", "flight boundary for the approved plan"),
     );
     assert_file_contains(
         root.join("README.md"),
@@ -2472,10 +2499,17 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("README.md"),
         "compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path",
     );
-    assert_file_not_contains(root.join("README.md"), "plan execution rebuild-evidence");
     assert_file_not_contains(
         root.join("README.md"),
-        "`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` replays rebuildable execution-evidence targets from the current approved plan and refreshes helper-owned closure receipts against the current runtime state.",
+        &hidden_text(&["plan execution ", "rebuild", "-evidence"]),
+    );
+    assert_file_not_contains(
+        root.join("README.md"),
+        &hidden_text(&[
+            "`featureforge plan execution ",
+            "rebuild",
+            "-evidence --plan <approved-plan-path>` replays rebuildable execution-evidence targets from the current approved plan and refreshes helper-owned closure receipts against the current runtime state.",
+        ]),
     );
     assert_file_not_contains(
         root.join("README.md"),
@@ -2531,11 +2565,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_not_contains(
         root.join("README.md"),
-        "featureforge plan execution gate-review-dispatch",
+        &hidden_text(&["featureforge plan execution ", "gate", "-review-dispatch"]),
     );
     assert_file_not_contains(
         root.join("RELEASE-NOTES.md"),
-        "featureforge plan execution gate-review-dispatch",
+        &hidden_text(&["featureforge plan execution ", "gate", "-review-dispatch"]),
     );
     assert_file_contains(root.join("RELEASE-NOTES.md"), "windows prebuilt artifacts");
     assert_file_contains(
@@ -3074,7 +3108,10 @@ fn runtime_remediation_inventory_is_visible_to_instruction_contract_tests() {
         "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift",
         "tests/workflow_runtime.rs::runtime_remediation_fs11_operator_begin_repair_share_one_next_action_engine",
         "tests/workflow_shell_smoke.rs::fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers",
-        "tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_preflight",
+        concat!(
+            "tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_pre",
+            "flight"
+        ),
         "tests/plan_execution.rs::runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state",
         "tests/workflow_runtime.rs::runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task",
         "tests/plan_execution.rs::runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch",

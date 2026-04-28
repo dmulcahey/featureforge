@@ -270,7 +270,7 @@ Before moving into the review sections:
 6. If you make plan edits during this review, keep `**Workflow State:** Draft` and keep `**Last Reviewed By:** writing-plans` until every engineering-review issue is resolved.
 7. When all engineering-review issues are resolved, update only `**Last Reviewed By:** plan-eng-review` and hand control to `featureforge:plan-fidelity-review` for the final independent fidelity pass.
 8. After a current pass plan-fidelity review artifact exists for the final draft fingerprint, return here for the final approval-header mutation.
-9. Do not look for or require a runtime-owned plan-fidelity receipt. The authoritative fidelity evidence is the parseable review artifact surfaced by workflow routing and `plan contract analyze-plan` as `plan_fidelity_review`.
+9. Do not look for or require a runtime-owned plan-fidelity projection file. The authoritative fidelity evidence is the parseable review artifact surfaced by workflow routing and `plan contract analyze-plan` as `plan_fidelity_review`.
 
 ### Plan-Contract Gate
 

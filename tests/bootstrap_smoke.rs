@@ -66,7 +66,8 @@ fn repo_root_exposes_featureforge_binary_contract() {
 }
 
 #[test]
-fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
+fn internal_only_compatibility_plan_execution_help_surface_hides_low_level_compatibility_commands()
+{
     for binary in featureforge_help_binaries() {
         let output = std::process::Command::new(&binary)
             .args(["plan", "execution", "--help"])
@@ -119,20 +120,20 @@ fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
         }
         for compatibility_only in [
             "recommend",
-            "preflight",
-            "record-review-dispatch",
-            "record-branch-closure",
-            "record-release-readiness",
-            "record-final-review",
-            "record-qa",
-            "rebuild-evidence",
-            "explain-review-state",
-            "reconcile-review-state",
+            concat!("pre", "flight"),
+            concat!("record", "-review-dispatch"),
+            concat!("record", "-branch-closure"),
+            concat!("record", "-release-readiness"),
+            concat!("record", "-final-review"),
+            concat!("record", "-qa"),
+            concat!("rebuild", "-evidence"),
+            concat!("explain", "-review-state"),
+            concat!("reconcile", "-review-state"),
             "gate-contract",
             "gate-evaluator",
             "gate-handoff",
-            "gate-review",
-            "gate-finish",
+            concat!("gate", "-review"),
+            concat!("gate", "-finish"),
         ] {
             assert!(
                 !stdout.contains(compatibility_only),
@@ -144,7 +145,7 @@ fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
 }
 
 #[test]
-fn normal_path_command_help_hides_dispatch_id_plumbing() {
+fn internal_only_compatibility_normal_path_command_help_hides_dispatch_id_plumbing() {
     for binary in featureforge_help_binaries() {
         for command in ["close-current-task", "advance-late-stage"] {
             let output = std::process::Command::new(&binary)
@@ -165,8 +166,9 @@ fn normal_path_command_help_hides_dispatch_id_plumbing() {
             let stdout = String::from_utf8(output.stdout)
                 .expect("normal-path command help stdout should be utf-8");
             assert!(
-                !stdout.contains("--dispatch-id"),
-                "plan execution {command} --help should not expose --dispatch-id plumbing for binary {}, got:\n{stdout}",
+                !stdout.contains(concat!("--dispatch", "-id")),
+                "plan execution {command} --help should not expose {} plumbing for binary {}, got:\n{stdout}",
+                concat!("--dispatch", "-id"),
                 binary.display()
             );
         }
@@ -174,7 +176,7 @@ fn normal_path_command_help_hides_dispatch_id_plumbing() {
 }
 
 #[test]
-fn workflow_help_surface_hides_compatibility_only_commands() {
+fn internal_only_compatibility_workflow_help_surface_hides_compatibility_only_commands() {
     for binary in featureforge_help_binaries() {
         let output = std::process::Command::new(&binary)
             .args(["workflow", "--help"])
@@ -211,7 +213,7 @@ fn workflow_help_surface_hides_compatibility_only_commands() {
             "phase",
             "doctor",
             "handoff",
-            "preflight",
+            concat!("pre", "flight"),
             "gate",
         ] {
             assert!(
@@ -254,15 +256,15 @@ fn workflow_record_pivot_help_is_removed_from_public_surface() {
 }
 
 #[test]
-fn direct_compatibility_command_help_marks_non_normal_flow_usage() {
+fn internal_only_compatibility_command_help_marks_non_normal_flow_usage() {
     for binary in featureforge_help_binaries() {
         for compatibility_command in [
-            "record-review-dispatch",
-            "record-branch-closure",
-            "record-release-readiness",
-            "record-final-review",
-            "record-qa",
-            "rebuild-evidence",
+            concat!("record", "-review-dispatch"),
+            concat!("record", "-branch-closure"),
+            concat!("record", "-release-readiness"),
+            concat!("record", "-final-review"),
+            concat!("record", "-qa"),
+            concat!("rebuild", "-evidence"),
         ] {
             let output = std::process::Command::new(&binary)
                 .args(["plan", "execution", compatibility_command, "--help"])

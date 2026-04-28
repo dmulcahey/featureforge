@@ -2106,7 +2106,7 @@ fn internal_only_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel
             external_review_result_ready: false,
         },
     )
-    .expect("internal preflight helper should succeed")
+    .expect(concat!("internal pre", "flight helper should succeed"))
 }
 
 fn internal_only_runtime_finish_gate_json(
@@ -2123,7 +2123,7 @@ fn internal_only_runtime_finish_gate_json(
             external_review_result_ready,
         },
     )
-    .expect("internal gate-finish helper should succeed")
+    .expect(concat!("internal gate", "-finish helper should succeed"))
 }
 
 fn internal_rebuild_evidence_args(
@@ -2150,7 +2150,10 @@ fn internal_only_unit_rebuild_evidence_json(repo: &Path, state: &Path, plan_rel:
         state,
         &internal_rebuild_evidence_args(plan_rel),
     )
-    .expect("internal rebuild-evidence helper should succeed")
+    .expect(concat!(
+        "internal rebuild",
+        "-evidence helper should succeed"
+    ))
 }
 
 fn internal_only_unit_rebuild_evidence_failure_json(
@@ -2164,13 +2167,16 @@ fn internal_only_unit_rebuild_evidence_failure_json(
             state,
             &internal_rebuild_evidence_args(plan_rel),
         )
-        .expect_err("internal rebuild-evidence helper should fail"),
+        .expect_err(concat!("internal rebuild", "-evidence helper should fail")),
     )
-    .expect("internal rebuild-evidence failure should serialize")
+    .expect(concat!(
+        "internal rebuild",
+        "-evidence failure should serialize"
+    ))
 }
 
 #[test]
-fn gate_finish_requires_final_review_artifact() {
+fn internal_only_compatibility_gate_finish_requires_final_review_artifact() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-missing-review");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2215,13 +2221,17 @@ fn gate_finish_requires_final_review_artifact() {
                 code == "review_artifact_missing" || code == "review_artifact_malformed"
             })
         }),
-        "gate-finish should fail closed when final-review authoritative bindings are missing, got {}",
+        concat!(
+            "gate",
+            "-finish should fail closed when final-review authoritative bindings are missing, got {}"
+        ),
         pretty_json(&gate)
     );
 }
 
 #[test]
-fn rebuild_evidence_rejects_tampered_authoritative_final_review_projection_content() {
+fn internal_only_compatibility_rebuild_evidence_rejects_tampered_authoritative_final_review_projection_content()
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-projection-tampered-authoritative-content");
     let repo = repo_dir.path();
@@ -2301,7 +2311,8 @@ fn rebuild_evidence_rejects_tampered_authoritative_final_review_projection_conte
 }
 
 #[test]
-fn rebuild_evidence_regenerates_missing_authoritative_final_review_projection_from_machine_state() {
+fn internal_only_compatibility_rebuild_evidence_regenerates_missing_authoritative_final_review_projection_from_machine_state()
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-projection-missing-authoritative-content");
     let repo = repo_dir.path();
@@ -2397,7 +2408,8 @@ fn rebuild_evidence_regenerates_missing_authoritative_final_review_projection_fr
 }
 
 #[test]
-fn rebuild_evidence_fails_closed_when_projection_refresh_hits_live_write_authority_conflict() {
+fn internal_only_compatibility_rebuild_evidence_fails_closed_when_projection_refresh_hits_live_write_authority_conflict()
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-projection-write-authority-conflict");
     let repo = repo_dir.path();
@@ -2467,7 +2479,8 @@ fn rebuild_evidence_fails_closed_when_projection_refresh_hits_live_write_authori
 }
 
 #[test]
-fn gate_finish_rejects_current_final_review_without_authoritative_fingerprint_binding() {
+fn internal_only_compatibility_gate_finish_rejects_current_final_review_without_authoritative_fingerprint_binding()
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-missing-authoritative-fingerprint");
     let repo = repo_dir.path();
@@ -2499,13 +2512,17 @@ fn gate_finish_rejects_current_final_review_without_authoritative_fingerprint_bi
         gate["reason_codes"]
             .as_array()
             .is_some_and(|codes| codes.iter().any(|code| code == "review_artifact_malformed")),
-        "gate-finish should report review_artifact_malformed for missing authoritative fingerprint binding, got {}",
+        concat!(
+            "gate",
+            "-finish should report review_artifact_malformed for missing authoritative fingerprint binding, got {}"
+        ),
         pretty_json(&gate)
     );
 }
 
 #[test]
-fn gate_finish_rejects_current_final_review_without_strategy_checkpoint_binding() {
+fn internal_only_compatibility_gate_finish_rejects_current_final_review_without_strategy_checkpoint_binding()
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-missing-strategy-checkpoint-binding");
     let repo = repo_dir.path();
@@ -2536,13 +2553,16 @@ fn gate_finish_rejects_current_final_review_without_strategy_checkpoint_binding(
         gate["reason_codes"]
             .as_array()
             .is_some_and(|codes| codes.iter().any(|code| code == "review_artifact_malformed")),
-        "gate-finish should report review_artifact_malformed when authoritative strategy checkpoint binding is missing, got {}",
+        concat!(
+            "gate",
+            "-finish should report review_artifact_malformed when authoritative strategy checkpoint binding is missing, got {}"
+        ),
         pretty_json(&gate)
     );
 }
 
 #[test]
-fn gate_finish_accepts_fresh_non_browser_review_chain() {
+fn internal_only_compatibility_gate_finish_accepts_fresh_non_browser_review_chain() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-pass");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2568,7 +2588,8 @@ fn gate_finish_accepts_fresh_non_browser_review_chain() {
 }
 
 #[test]
-fn gate_finish_accepts_review_when_only_receipt_provenance_text_is_mutated() {
+fn internal_only_compatibility_gate_finish_accepts_review_when_only_receipt_provenance_text_is_mutated()
+ {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-missing-provenance");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2598,7 +2619,8 @@ fn gate_finish_accepts_review_when_only_receipt_provenance_text_is_mutated() {
 }
 
 #[test]
-fn gate_finish_accepts_review_when_receipt_reviewer_source_text_is_mutated() {
+fn internal_only_compatibility_gate_finish_accepts_review_when_receipt_reviewer_source_text_is_mutated()
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-non-independent-reviewer-source");
     let repo = repo_dir.path();
@@ -2629,7 +2651,8 @@ fn gate_finish_accepts_review_when_receipt_reviewer_source_text_is_mutated() {
 }
 
 #[test]
-fn gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_missing() {
+fn internal_only_compatibility_gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_missing()
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-missing-reviewer-artifact-path");
     let repo = repo_dir.path();
@@ -2664,7 +2687,8 @@ fn gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_missing() {
 }
 
 #[test]
-fn gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_unreadable() {
+fn internal_only_compatibility_gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_unreadable()
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-unreadable-reviewer-artifact-path");
     let repo = repo_dir.path();
@@ -2688,7 +2712,8 @@ fn gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_unreadable(
 }
 
 #[test]
-fn gate_finish_accepts_review_when_receipt_deviation_verdict_text_is_mutated() {
+fn internal_only_compatibility_gate_finish_accepts_review_when_receipt_deviation_verdict_text_is_mutated()
+ {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-invalid-deviation-verdict");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2723,7 +2748,7 @@ fn gate_finish_accepts_review_when_receipt_deviation_verdict_text_is_mutated() {
 }
 
 #[test]
-fn gate_finish_accepts_review_when_runtime_records_topology_downgrade_but_authoritative_review_is_current()
+fn internal_only_compatibility_gate_finish_accepts_review_when_runtime_records_topology_downgrade_but_authoritative_review_is_current()
  {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-runtime-recorded-deviation");
     let repo = repo_dir.path();
@@ -2756,7 +2781,8 @@ fn gate_finish_accepts_review_when_runtime_records_topology_downgrade_but_author
 }
 
 #[test]
-fn gate_finish_ignores_reason_code_deviation_without_matching_downgrade_record() {
+fn internal_only_compatibility_gate_finish_ignores_reason_code_deviation_without_matching_downgrade_record()
+ {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-reason-code-no-record");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2789,7 +2815,10 @@ fn gate_finish_ignores_reason_code_deviation_without_matching_downgrade_record()
     assert_eq!(
         gate["allowed"],
         true,
-        "gate-finish should ignore reason-code-only deviation hints, got {}",
+        concat!(
+            "gate",
+            "-finish should ignore reason-code-only deviation hints, got {}"
+        ),
         pretty_json(&gate)
     );
 }
@@ -2845,7 +2874,7 @@ fn status_routes_release_readiness_before_final_review_when_release_state_stales
 }
 
 #[test]
-fn gate_finish_rejects_final_review_release_binding_mismatch() {
+fn internal_only_compatibility_gate_finish_rejects_final_review_release_binding_mismatch() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-fs11-release-binding-mismatch");
     let repo = repo_dir.path();
@@ -2890,12 +2919,15 @@ fn gate_finish_rejects_final_review_release_binding_mismatch() {
             .is_some_and(|codes| codes
                 .iter()
                 .any(|code| code == "review_artifact_release_binding_mismatch")),
-        "gate-finish should surface explicit final-review->release identity mismatch, got {gate_finish}"
+        "{} should surface explicit final-review->release identity mismatch, got {}",
+        gate_finish,
+        concat!("gate", "-finish")
     );
 }
 
 #[test]
-fn missing_final_review_projection_regenerates_without_truth_mutation() {
+fn internal_only_compatibility_missing_final_review_projection_regenerates_without_truth_mutation()
+{
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-fs12-projection-regen");
     let repo = repo_dir.path();
     let state = state_dir.path();

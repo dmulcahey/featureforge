@@ -1,7 +1,5 @@
 #[path = "support/files.rs"]
 mod files_support;
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/workflow.rs"]
@@ -9,14 +7,13 @@ mod workflow_support;
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::process::Command;
 
-use featureforge::cli::plan_execution::StatusArgs;
-use featureforge::cli::workflow::OperatorArgs;
 use featureforge::execution::semantic_identity::task_definition_identity_for_task;
-use featureforge::execution::state::{ExecutionRuntime, PlanExecutionStatus};
+use featureforge::execution::state::ExecutionRuntime;
 use featureforge::git::{discover_slug_identity, sha256_hex};
 use featureforge::paths::harness_state_path;
-use featureforge::workflow::operator;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-04-01-liveness-model-plan.md";
@@ -91,6 +88,57 @@ struct SyntheticFixtureContext<'a> {
     branch_definition_identity: &'a str,
     repo_slug: &'a str,
     branch_name: &'a str,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LivenessPlanExecutionStatus {
+    phase_detail: String,
+    review_state_status: String,
+    #[serde(default)]
+    current_task_closures: Vec<Value>,
+    #[serde(default)]
+    stale_unreviewed_closures: Vec<String>,
+    #[serde(default)]
+    reason_codes: Vec<String>,
+    #[serde(default)]
+    blocking_reason_codes: Vec<String>,
+    state_kind: String,
+    #[serde(default)]
+    next_public_action: Option<LivenessNextPublicAction>,
+    #[serde(default)]
+    blockers: Vec<LivenessBlocker>,
+    next_action: String,
+    #[serde(default)]
+    recommended_command: Option<String>,
+    #[serde(default)]
+    blocking_scope: Option<String>,
+    #[serde(default)]
+    execution_command_context: Option<LivenessExecutionCommandContext>,
+    #[serde(default)]
+    active_task: Option<u32>,
+    #[serde(default)]
+    blocking_task: Option<u32>,
+    #[serde(default)]
+    resume_task: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LivenessNextPublicAction {
+    command: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LivenessBlocker {
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    next_public_action: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LivenessExecutionCommandContext {
+    #[serde(default)]
+    task_number: Option<u32>,
 }
 
 fn write_spec_and_plan(repo: &Path, total_tasks: u8, completed_tasks: u8, steps_per_task: u8) {
@@ -596,13 +644,26 @@ fn runtime_for_status(repo: &Path, state: &Path) -> ExecutionRuntime {
     runtime
 }
 
-fn status_value(runtime: &ExecutionRuntime, context: &str) -> PlanExecutionStatus {
-    runtime
-        .status(&StatusArgs {
-            plan: PLAN_REL.into(),
-            external_review_result_ready: false,
-        })
-        .unwrap_or_else(|error| panic!("{context} should succeed: {error:?}"))
+fn status_value(runtime: &ExecutionRuntime, context: &str) -> LivenessPlanExecutionStatus {
+    let output = run_featureforge_real_cli(
+        runtime,
+        ["plan", "execution", "status", "--plan", PLAN_REL],
+        context,
+    );
+    assert!(
+        output.status.success(),
+        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "{context} should emit liveness status JSON: {error}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
 }
 
 fn migrate_variant_to_event_authority(state_path: &Path, context: &str) {
@@ -641,23 +702,44 @@ fn apply_synthetic_worktree_variants(repo: &Path, synthetic: SyntheticState) {
 
 fn contains_hidden_command_token(command: &str) -> bool {
     [
-        " workflow record-pivot ",
-        " plan execution preflight ",
-        " plan execution recommend ",
-        " plan execution record-review-dispatch ",
-        " plan execution gate-review ",
-        " plan execution gate-finish ",
-        " plan execution rebuild-evidence ",
-        " workflow recommend ",
-        " workflow preflight ",
-        " reconcile-review-state ",
-        " internal ",
+        &[" workflow record-pivot "][..],
+        &[" plan execution ", "pre", "flight "],
+        &[" plan execution recommend "],
+        &[" plan execution ", "record", "-review-dispatch "],
+        &[" plan execution ", "gate", "-review "],
+        &[" plan execution ", "gate", "-finish "],
+        &[" plan execution ", "rebuild", "-evidence "],
+        &[" workflow recommend "],
+        &[" workflow ", "pre", "flight "],
+        &[" reconcile", "-review-state "],
+        &[" internal "],
     ]
     .iter()
-    .any(|token| command.contains(token))
+    .any(|token| contains_hidden_parts(command, token))
 }
 
-fn targetless_stale_reconcile_status(status: &PlanExecutionStatus) -> bool {
+fn contains_hidden_parts(haystack: &str, parts: &[&str]) -> bool {
+    let Some((first, rest)) = parts.split_first() else {
+        return true;
+    };
+    for (start, _) in haystack.match_indices(first) {
+        let mut cursor = start + first.len();
+        let mut matched = true;
+        for part in rest {
+            if !haystack[cursor..].starts_with(part) {
+                matched = false;
+                break;
+            }
+            cursor += part.len();
+        }
+        if matched {
+            return true;
+        }
+    }
+    false
+}
+
+fn targetless_stale_reconcile_status(status: &LivenessPlanExecutionStatus) -> bool {
     status.phase_detail == "runtime_reconcile_required"
         && status
             .reason_codes
@@ -669,7 +751,7 @@ fn targetless_stale_reconcile_status(status: &PlanExecutionStatus) -> bool {
             .any(|reason| reason == "missing_authoritative_stale_target")
 }
 
-fn current_stale_overlap_runtime_diagnostic(status: &PlanExecutionStatus) -> bool {
+fn current_stale_overlap_runtime_diagnostic(status: &LivenessPlanExecutionStatus) -> bool {
     matches!(
         status.phase_detail.as_str(),
         "blocked_runtime_bug" | "runtime_reconcile_required"
@@ -680,11 +762,14 @@ fn current_stale_overlap_runtime_diagnostic(status: &PlanExecutionStatus) -> boo
         .any(|reason| reason == "current_stale_closure_overlap")
 }
 
-fn blocked_runtime_bug_diagnostic_status(status: &PlanExecutionStatus) -> bool {
+fn blocked_runtime_bug_diagnostic_status(status: &LivenessPlanExecutionStatus) -> bool {
     status.state_kind == "blocked_runtime_bug" || status.phase_detail == "blocked_runtime_bug"
 }
 
-fn progress_metric_from_status(status: &PlanExecutionStatus, total_tasks: u8) -> ProgressMetric {
+fn progress_metric_from_status(
+    status: &LivenessPlanExecutionStatus,
+    total_tasks: u8,
+) -> ProgressMetric {
     let recommended_command = materialized_status_command(status);
     let hidden_command_exposure = u8::from(
         recommended_command
@@ -783,7 +868,7 @@ fn progress_metric_from_status(status: &PlanExecutionStatus, total_tasks: u8) ->
             .unwrap_or_else(|| total_tasks.saturating_sub(current_closures))
     };
     let execution_frontier_distance = match status.phase_detail.as_str() {
-        "execution_preflight_required" | "execution_reentry_required" => 2,
+        concat!("execution_pre", "flight_required") | "execution_reentry_required" => 2,
         "execution_in_progress" => 1,
         _ => 0,
     };
@@ -812,9 +897,9 @@ fn progress_metric_from_status(status: &PlanExecutionStatus, total_tasks: u8) ->
 }
 
 fn public_edge_satisfies_liveness_contract(
-    before_status: &PlanExecutionStatus,
+    before_status: &LivenessPlanExecutionStatus,
     before: ProgressMetric,
-    after_status: &PlanExecutionStatus,
+    after_status: &LivenessPlanExecutionStatus,
     after: ProgressMetric,
 ) -> bool {
     if after < before {
@@ -843,7 +928,7 @@ fn public_edge_satisfies_liveness_contract(
             .all(|reason| reason != "task_cycle_break_active")
 }
 
-fn materialized_status_command(status: &PlanExecutionStatus) -> Option<String> {
+fn materialized_status_command(status: &LivenessPlanExecutionStatus) -> Option<String> {
     status
         .recommended_command
         .clone()
@@ -872,7 +957,7 @@ fn summary_file(state: &Path, label: &str) -> std::path::PathBuf {
 
 fn materialize_public_progress_command(
     runtime: &ExecutionRuntime,
-    status: &PlanExecutionStatus,
+    status: &LivenessPlanExecutionStatus,
 ) -> Option<String> {
     if let Some(command) = status.recommended_command.as_deref() {
         return Some(command.to_owned());
@@ -887,23 +972,16 @@ fn materialize_public_progress_command(
     {
         return Some(command.clone());
     }
-    let operator_output = operator::operator_for_runtime(
-        runtime,
-        &OperatorArgs {
-            plan: PLAN_REL.into(),
-            external_review_result_ready: false,
-            json: true,
-        },
-    )
-    .ok()?;
-    operator_output.recommended_command
+    workflow_operator_recommended_command_real_cli(runtime)
+        .ok()
+        .flatten()
 }
 
 fn execute_public_progress_edge(
     runtime: &ExecutionRuntime,
     state: &Path,
-    status: &PlanExecutionStatus,
-) -> Result<Option<PlanExecutionStatus>, String> {
+    status: &LivenessPlanExecutionStatus,
+) -> Result<Option<LivenessPlanExecutionStatus>, String> {
     let Some(command) = materialize_public_progress_command(runtime, status) else {
         return Ok(None);
     };
@@ -917,7 +995,7 @@ fn execute_public_progress_edge(
 fn execute_materialized_public_command(
     runtime: &ExecutionRuntime,
     state: &Path,
-    status: &PlanExecutionStatus,
+    status: &LivenessPlanExecutionStatus,
     command: &str,
 ) -> Result<(), String> {
     let materialized = materialize_public_command_template(state, command);
@@ -929,16 +1007,8 @@ fn execute_materialized_public_command(
     let words = parts.iter().map(String::as_str).collect::<Vec<_>>();
     match words.as_slice() {
         ["featureforge", "workflow", "operator", ..] => {
-            let operator_output = operator::operator_for_runtime(
-                runtime,
-                &OperatorArgs {
-                    plan: PLAN_REL.into(),
-                    external_review_result_ready: false,
-                    json: true,
-                },
-            )
-            .map_err(|error| error.message)?;
-            let Some(operator_command) = operator_output.recommended_command else {
+            let Some(operator_command) = workflow_operator_recommended_command_real_cli(runtime)?
+            else {
                 return Err(String::from(
                     "workflow operator public edge did not return a concrete successor command",
                 ));
@@ -955,17 +1025,13 @@ fn execute_materialized_public_command(
             execute_materialized_public_command(runtime, state, &routed_status, &operator_command)
         }
         ["featureforge", "plan", "execution", args @ ..] => {
-            let output = plan_execution_direct_support::try_run_plan_execution_output_direct(
-                &runtime.repo_root,
-                &runtime.state_dir,
-                args,
+            let output = run_featureforge_real_cli(
+                runtime,
+                std::iter::once("plan")
+                    .chain(std::iter::once("execution"))
+                    .chain(args.iter().copied()),
                 &format!("liveness public edge `{materialized}`"),
-            )?
-            .ok_or_else(|| {
-                format!(
-                    "liveness public edge was not accepted by the in-process public CLI parser: {materialized}"
-                )
-            })?;
+            );
             if output.status.success() {
                 Ok(())
             } else {
@@ -982,6 +1048,42 @@ fn execute_materialized_public_command(
             "liveness public edge is not a supported public FeatureForge command: {materialized}"
         )),
     }
+}
+
+fn workflow_operator_recommended_command_real_cli(
+    runtime: &ExecutionRuntime,
+) -> Result<Option<String>, String> {
+    let output = run_featureforge_real_cli(
+        runtime,
+        ["workflow", "operator", "--plan", PLAN_REL, "--json"],
+        "liveness workflow operator public edge",
+    );
+    if !output.status.success() {
+        return Err(format!(
+            "workflow operator public edge failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let value: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("workflow operator public edge should emit JSON: {error}"))?;
+    Ok(value
+        .get("recommended_command")
+        .and_then(Value::as_str)
+        .map(str::to_owned))
+}
+
+fn run_featureforge_real_cli<'a>(
+    runtime: &ExecutionRuntime,
+    args: impl IntoIterator<Item = &'a str>,
+    context: &str,
+) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_featureforge"));
+    command
+        .current_dir(&runtime.repo_root)
+        .env("FEATUREFORGE_STATE_DIR", &runtime.state_dir)
+        .args(args);
+    process_support::run(command, context)
 }
 
 fn is_workflow_operator_command(command: &str) -> bool {

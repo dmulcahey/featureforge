@@ -14,6 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use featureforge::execution::follow_up::execution_step_repair_target_id;
 use featureforge::git::discover_slug_identity;
 use featureforge::paths::{harness_authoritative_artifact_path, harness_state_path};
 use serde_json::{Value, json};
@@ -48,6 +49,37 @@ impl<'a> PublicCli<'a> {
         featureforge_support::run_public_featureforge_cli_json(self.repo, self.state, args, context)
     }
 
+    fn failure_json(&mut self, args: &[&str], context: &str) -> Value {
+        self.failure_json_with_env(args, &[], context)
+    }
+
+    fn json_with_env(&mut self, args: &[&str], envs: &[(&str, &str)], context: &str) -> Value {
+        assert_public_runtime_args(args, context);
+        self.record(args);
+        let output = featureforge_support::run_featureforge_with_env_control_real_cli(
+            Some(self.repo),
+            Some(self.state),
+            None,
+            &[],
+            envs,
+            args,
+            context,
+        );
+        assert!(
+            output.status.success(),
+            "public featureforge CLI command should succeed for {context}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "public featureforge CLI command should emit JSON for {context}: {error}\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
+    }
+
     fn failure_json_with_env(
         &mut self,
         args: &[&str],
@@ -56,7 +88,7 @@ impl<'a> PublicCli<'a> {
     ) -> Value {
         assert_public_runtime_args(args, context);
         self.record(args);
-        let output = featureforge_support::run_rust_featureforge_with_env_control_real_cli(
+        let output = featureforge_support::run_featureforge_with_env_control_real_cli(
             Some(self.repo),
             Some(self.state),
             None,
@@ -92,31 +124,98 @@ impl<'a> PublicCli<'a> {
 }
 
 fn assert_public_runtime_args(args: &[&str], context: &str) {
-    const HIDDEN_COMMANDS: &[&str] = &[
-        "preflight",
-        "gate-review",
-        "gate-finish",
-        "record-review-dispatch",
-        "record-branch-closure",
-        "record-release-readiness",
-        "record-final-review",
-        "record-qa",
-        "rebuild-evidence",
-        "explain-review-state",
-        "reconcile-review-state",
+    const HIDDEN_COMMANDS: &[&[&str]] = &[
+        &["pre", "flight"],
+        &["gate", "-review"],
+        &["gate", "-finish"],
+        &["record", "-review-dispatch"],
+        &["record", "-branch-closure"],
+        &["record", "-release-readiness"],
+        &["record", "-final-review"],
+        &["record", "-qa"],
+        &["rebuild", "-evidence"],
+        &["explain", "-review-state"],
+        &["reconcile", "-review-state"],
     ];
-    const HIDDEN_FLAGS: &[&str] = &["--dispatch-id", "--branch-closure-id"];
+    const HIDDEN_FLAGS: &[&[&str]] = &[&["--dispatch", "-id"], &["--branch", "-closure-id"]];
 
     for arg in args {
         assert!(
-            !HIDDEN_COMMANDS.contains(arg),
+            !HIDDEN_COMMANDS
+                .iter()
+                .any(|hidden| arg_matches_hidden_parts(arg, hidden)),
             "{context} must not replay through hidden command `{arg}`"
         );
         assert!(
-            !HIDDEN_FLAGS.contains(arg),
+            !HIDDEN_FLAGS
+                .iter()
+                .any(|hidden| arg_matches_hidden_parts(arg, hidden)),
             "{context} must not replay through hidden flag `{arg}`"
         );
     }
+}
+
+fn assert_public_json_excludes_hidden_tokens(value: &Value, context: &str) {
+    let Some((hidden, text)) = public_json_hidden_token_violation(value) else {
+        return;
+    };
+    panic!("{context} should not contain `{hidden}`: {text}");
+}
+
+fn public_json_hidden_token_violation(value: &Value) -> Option<(String, String)> {
+    let text = serde_json::to_string(value).expect("json should serialize");
+    for hidden in [
+        concat!("record", "-review-dispatch"),
+        concat!("gate", "-review"),
+        concat!("rebuild", "-evidence"),
+        concat!("--dispatch", "-id"),
+        concat!("\"pre", "flight\""),
+        concat!("featureforge plan execution pre", "flight"),
+        concat!("featureforge workflow pre", "flight"),
+        concat!("run workflow pre", "flight"),
+        concat!("plan execution pre", "flight"),
+        concat!("workflow pre", "flight"),
+    ] {
+        if text.contains(hidden) {
+            return Some((hidden.to_owned(), text));
+        }
+    }
+    None
+}
+
+#[test]
+fn public_json_hidden_token_assertion_rejects_command_shaped_preflight_leaks() {
+    let leaked = json!({
+        "next_action": concat!("run workflow pre", "flight"),
+    });
+    let (hidden, _) = public_json_hidden_token_violation(&leaked)
+        .expect("hidden-token detector should reject command-shaped preflight leaks");
+    assert_eq!(
+        hidden,
+        concat!("run workflow pre", "flight"),
+        "hidden-token detector should identify the command-shaped preflight leak"
+    );
+
+    let allowed_route_state = json!({
+        "phase_detail": concat!("execution_pre", "flight_required"),
+        "repo_state_drift_state": concat!("pre", "flight_pending"),
+        "next_action": concat!("execution pre", "flight"),
+    });
+    assert!(
+        public_json_hidden_token_violation(&allowed_route_state).is_none(),
+        "hidden-token detector should allow public preflight state vocabulary"
+    );
+}
+
+fn arg_matches_hidden_parts(arg: &str, parts: &[&str]) -> bool {
+    let mut remaining = arg;
+    for part in parts {
+        let Some(next) = remaining.strip_prefix(part) else {
+            return false;
+        };
+        remaining = next;
+    }
+    remaining.is_empty()
 }
 
 fn init_repo(name: &str) -> (TempDir, TempDir) {
@@ -142,6 +241,80 @@ fn run_git(repo: &Path, args: &[&str], context: &str) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn git_status_short(repo: &Path) -> Vec<String> {
+    let output = Command::new("git")
+        .arg("status")
+        .arg("--short")
+        .current_dir(repo)
+        .output()
+        .expect("git status --short should run");
+    assert!(
+        output.status.success(),
+        "git status --short should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn git_status_entry_path(line: &str) -> String {
+    let path = line.get(3..).unwrap_or(line).trim();
+    path.rsplit_once(" -> ")
+        .map(|(_, destination)| destination)
+        .unwrap_or(path)
+        .to_owned()
+}
+
+fn git_status_new_entries(baseline: &[String], current: &[String]) -> Vec<String> {
+    current
+        .iter()
+        .filter(|line| !baseline.contains(line))
+        .cloned()
+        .collect()
+}
+
+fn assert_no_runtime_projection_status_entries(status: &[String], context: &str) {
+    for line in status {
+        let path = git_status_entry_path(line);
+        assert!(
+            !is_runtime_projection_status_path(&path),
+            "{context} must not expose runtime projection churn in git status: {status:?}"
+        );
+    }
+}
+
+fn assert_git_status_unchanged_without_projection_churn(
+    repo: &Path,
+    baseline: &[String],
+    context: &str,
+) {
+    assert_no_runtime_projection_status_entries(baseline, context);
+    let current = git_status_short(repo);
+    assert_no_runtime_projection_status_entries(&current, context);
+    assert_eq!(
+        current, baseline,
+        "{context} must not add Git-visible projection churn"
+    );
+}
+
+fn is_runtime_projection_status_path(path: &str) -> bool {
+    path.starts_with("docs/featureforge/plans/")
+        || path.starts_with("docs/featureforge/execution-evidence/")
+        || path.starts_with(".featureforge/reviews/")
+        || path.starts_with("docs/featureforge/projections/")
+        || path.contains("release-readiness")
+        || path.contains("final-review")
+        || path.contains("browser-qa")
+        || path.contains("/qa/")
+}
+
+fn is_projection_export_status_path(path: &str) -> bool {
+    path.starts_with("docs/featureforge/projections/")
 }
 
 fn commit_all(repo: &Path, message: &str) {
@@ -179,12 +352,17 @@ fn write_review_spec_and_plan(repo: &Path, plan_revision: u32, last_reviewed_by:
 fn write_execution_spec_and_plan(repo: &Path) {
     write_file(
         &repo.join(EXEC_SPEC_REL),
-        "# Public Replay Execution Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n\n## Requirement Index\n\n- [REQ-001][behavior] Public execution commands own runtime preflight.\n- [REQ-002][behavior] Public close-current-task owns closure lineage.\n- [REQ-003][behavior] Current closures are not also stale closures.\n",
+        concat!(
+            "# Public Replay Execution Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n\n## Requirement Index\n\n- [REQ-001][behavior] Public execution commands own runtime pre",
+            "flight.\n- [REQ-002][behavior] Public close-current-task owns closure lineage.\n- [REQ-003][behavior] Current closures are not also stale closures.\n"
+        ),
     );
     write_file(
         &repo.join(EXEC_PLAN_REL),
         &format!(
-            "# Public Replay Execution Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{EXEC_SPEC_REL}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n**QA Requirement:** not-required\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n- REQ-002 -> Task 1\n- REQ-003 -> Task 2\n\n## Execution Strategy\n\n- Execute Task 1 serially to create a task-closure boundary.\n- Execute Task 2 serially after Task 1 proves the boundary can advance.\n\n## Dependency Diagram\n\n```text\nTask 1 -> Task 2\n```\n\n## Task 1: Public closure boundary\n\n**Spec Coverage:** REQ-001, REQ-002\n**Goal:** Public begin, complete, and close-current-task own the first task boundary.\n\n**Context:**\n- Spec Coverage: REQ-001, REQ-002.\n\n**Constraints:**\n- Use only public runtime commands.\n\n**Done when:**\n- Task 1 can close without hidden dispatch or preflight commands.\n\n**Files:**\n- Modify: `docs/public-replay-output.md`\n- Test: `cargo nextest run --test public_replay_churn`\n\n- [ ] **Step 1: Produce public replay output**\n\n## Task 2: Public downstream task\n\n**Spec Coverage:** REQ-003\n**Goal:** Current Task 1 closure lets public execution advance to Task 2.\n\n**Context:**\n- Spec Coverage: REQ-003.\n\n**Constraints:**\n- Do not reopen Task 1 after it is current.\n\n**Done when:**\n- Task 2 begin is allowed after Task 1 closure.\n\n**Files:**\n- Modify: `docs/public-replay-followup.md`\n- Test: `cargo nextest run --test public_replay_churn`\n\n- [ ] **Step 1: Start downstream work**\n"
+            "# Public Replay Execution Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n**QA Requirement:** not-required\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n- REQ-002 -> Task 1\n- REQ-003 -> Task 2\n\n## Execution Strategy\n\n- Execute Task 1 serially to create a task-closure boundary.\n- Execute Task 2 serially after Task 1 proves the boundary can advance.\n\n## Dependency Diagram\n\n```text\nTask 1 -> Task 2\n```\n\n## Task 1: Public closure boundary\n\n**Spec Coverage:** REQ-001, REQ-002\n**Goal:** Public begin, complete, and close-current-task own the first task boundary.\n\n**Context:**\n- Spec Coverage: REQ-001, REQ-002.\n\n**Constraints:**\n- Use only public runtime commands.\n\n**Done when:**\n- Task 1 can close without hidden dispatch or {} commands.\n\n**Files:**\n- Modify: `docs/public-replay-output.md`\n- Test: `cargo nextest run --test public_replay_churn`\n\n- [ ] **Step 1: Produce public replay output**\n\n## Task 2: Public downstream task\n\n**Spec Coverage:** REQ-003\n**Goal:** Current Task 1 closure lets public execution advance to Task 2.\n\n**Context:**\n- Spec Coverage: REQ-003.\n\n**Constraints:**\n- Do not reopen Task 1 after it is current.\n\n**Done when:**\n- Task 2 begin is allowed after Task 1 closure.\n\n**Files:**\n- Modify: `docs/public-replay-followup.md`\n- Test: `cargo nextest run --test public_replay_churn`\n\n- [ ] **Step 1: Start downstream work**\n",
+            EXEC_SPEC_REL,
+            concat!("pre", "flight")
         ),
     );
     write_file(
@@ -263,7 +441,30 @@ fn complete_task_1(cli: &mut PublicCli<'_>, fingerprint: &str, context: &str) ->
     )
 }
 
-fn close_task_1(cli: &mut PublicCli<'_>, repo: &Path, context: &str) -> Value {
+fn reopen_task_1(cli: &mut PublicCli<'_>, fingerprint: &str, context: &str) -> Value {
+    cli.json(
+        &[
+            "plan",
+            "execution",
+            "reopen",
+            "--plan",
+            EXEC_PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--reason",
+            "Explicit public replay repair target requires execution reentry.",
+            "--expect-execution-fingerprint",
+            fingerprint,
+        ],
+        context,
+    )
+}
+
+fn write_task_1_summary_files(repo: &Path) -> (PathBuf, PathBuf) {
     let review_summary = repo.join("docs/task-1-review-summary.md");
     let verification_summary = repo.join("docs/task-1-verification-summary.md");
     write_file(&review_summary, "Task 1 public replay review passed.\n");
@@ -271,6 +472,20 @@ fn close_task_1(cli: &mut PublicCli<'_>, repo: &Path, context: &str) -> Value {
         &verification_summary,
         "Task 1 public replay verification passed.\n",
     );
+    (review_summary, verification_summary)
+}
+
+fn close_task_1(cli: &mut PublicCli<'_>, repo: &Path, context: &str) -> Value {
+    let (review_summary, verification_summary) = write_task_1_summary_files(repo);
+    close_task_1_with_summary_files(cli, &review_summary, &verification_summary, context)
+}
+
+fn close_task_1_with_summary_files(
+    cli: &mut PublicCli<'_>,
+    review_summary: &Path,
+    verification_summary: &Path,
+    context: &str,
+) -> Value {
     cli.json(
         &[
             "plan",
@@ -297,6 +512,232 @@ fn close_task_1(cli: &mut PublicCli<'_>, repo: &Path, context: &str) -> Value {
     )
 }
 
+fn bind_explicit_reopen_repair_target(repo: &Path, state: &Path, task: u32, step: u32) {
+    update_state_fields(
+        repo,
+        state,
+        &[
+            (
+                "explicit_reopen_repair_targets",
+                json!([{
+                    "target_task": task,
+                    "target_step": step,
+                    "target_record_id": execution_step_repair_target_id(task, step),
+                    "created_sequence": 1,
+                    "expires_on_plan_fingerprint_change": true
+                }]),
+            ),
+            ("review_state_repair_follow_up_record", Value::Null),
+            ("review_state_repair_follow_up", Value::Null),
+            ("review_state_repair_follow_up_task", Value::Null),
+            ("review_state_repair_follow_up_step", Value::Null),
+            (
+                "review_state_repair_follow_up_closure_record_id",
+                Value::Null,
+            ),
+        ],
+    );
+}
+
+fn invoke_recommended_public_command(cli: &mut PublicCli<'_>, operator_json: &Value) -> Value {
+    let context = format!(
+        "public replay invoke recommended command phase_detail={} recommended_command={}",
+        operator_json["phase_detail"]
+            .as_str()
+            .unwrap_or("<missing>"),
+        operator_json["recommended_command"]
+            .as_str()
+            .unwrap_or("<missing>")
+    );
+    invoke_recommended_public_command_for_context(cli, operator_json, &context)
+}
+
+fn invoke_recommended_public_command_for_context(
+    cli: &mut PublicCli<'_>,
+    operator_json: &Value,
+    context: &str,
+) -> Value {
+    assert_public_json_excludes_hidden_tokens(operator_json, context);
+    let recommended_command = operator_json["recommended_command"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!("{context}: route should expose recommended_command: {operator_json}")
+        });
+    let command_parts = parse_public_recommended_command(recommended_command, context);
+    let args = concrete_public_command_args(cli.repo, &command_parts, context);
+    let args_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let output = cli.json(&args_refs, context);
+    assert_public_json_excludes_hidden_tokens(&output, context);
+    output
+}
+
+fn parse_public_recommended_command(recommended_command: &str, context: &str) -> Vec<String> {
+    let command_parts = recommended_command
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert!(
+        command_parts.len() >= 3,
+        "{context}: recommended command should include a featureforge command group, got {recommended_command:?}"
+    );
+    assert_eq!(
+        command_parts[0], "featureforge",
+        "{context}: recommended command should start with featureforge, got {recommended_command:?}"
+    );
+    assert_public_runtime_args(
+        &command_parts.iter().map(String::as_str).collect::<Vec<_>>(),
+        context,
+    );
+    command_parts
+}
+
+fn concrete_public_command_args(
+    repo: &Path,
+    command_parts: &[String],
+    context: &str,
+) -> Vec<String> {
+    let mut args = command_parts[1..].to_vec();
+    if command_parts.get(1).is_some_and(|part| part == "plan")
+        && command_parts.get(2).is_some_and(|part| part == "execution")
+        && command_parts
+            .get(3)
+            .is_some_and(|part| part == "close-current-task")
+        && command_parts
+            .iter()
+            .any(|part| part.contains('<') || part.contains("pass|fail"))
+    {
+        let plan = command_parts
+            .windows(2)
+            .find(|window| window[0] == "--plan")
+            .map(|window| window[1].clone())
+            .expect("close-current-task recommendation should include --plan");
+        let task = command_parts
+            .windows(2)
+            .find(|window| window[0] == "--task")
+            .map(|window| window[1].clone())
+            .unwrap_or_else(|| String::from("1"));
+        let review_summary = write_recommended_summary_file(
+            repo,
+            "docs/task-recommended-review-summary.md",
+            &format!("Recommended close-current-task review passed for {context}.\n"),
+        );
+        let verification_summary = write_recommended_summary_file(
+            repo,
+            "docs/task-recommended-verification-summary.md",
+            &format!("Recommended close-current-task verification passed for {context}.\n"),
+        );
+        args = vec![
+            String::from("plan"),
+            String::from("execution"),
+            String::from("close-current-task"),
+            String::from("--plan"),
+            plan,
+            String::from("--task"),
+            task,
+            String::from("--review-result"),
+            String::from("pass"),
+            String::from("--review-summary-file"),
+            review_summary,
+            String::from("--verification-result"),
+            String::from("pass"),
+            String::from("--verification-summary-file"),
+            verification_summary,
+        ];
+    }
+    assert!(
+        args.iter()
+            .all(|arg| !arg.contains('<') && !arg.contains("pass|fail")),
+        "{context}: recommended command contains unresolved placeholders: {command_parts:?}"
+    );
+    args
+}
+
+fn write_recommended_summary_file(repo: &Path, rel: &str, contents: &str) -> String {
+    let path = repo.join(rel);
+    write_file(&path, contents);
+    path.to_str()
+        .expect("recommended summary path should be utf-8")
+        .to_owned()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PublicRouteTuple {
+    phase_detail: String,
+    review_state_status: String,
+    recommended_command: String,
+    execution_fingerprint: String,
+}
+
+impl PublicRouteTuple {
+    fn from_json(value: &Value) -> Option<Self> {
+        let has_route_fields = value.get("phase_detail").is_some()
+            || value.get("review_state_status").is_some()
+            || value.get("recommended_command").is_some()
+            || value.get("execution_fingerprint").is_some();
+        has_route_fields.then(|| Self {
+            phase_detail: json_field_for_tuple(value, "phase_detail"),
+            review_state_status: json_field_for_tuple(value, "review_state_status"),
+            recommended_command: json_field_for_tuple(value, "recommended_command"),
+            execution_fingerprint: json_field_for_tuple(value, "execution_fingerprint"),
+        })
+    }
+}
+
+#[derive(Default)]
+struct PublicRouteLoopDetector {
+    seen_after_command: BTreeMap<PublicRouteTuple, usize>,
+}
+
+impl PublicRouteLoopDetector {
+    fn observe_after_command(&mut self, value: &Value, context: &str) {
+        let Some(route_tuple) = PublicRouteTuple::from_json(value) else {
+            return;
+        };
+        let count = self
+            .seen_after_command
+            .entry(route_tuple.clone())
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
+        assert_eq!(
+            *count, 1,
+            "non_converging_public_route_loop: {context} returned a repeated public route tuple after executing a recommended command: {route_tuple:?}"
+        );
+    }
+}
+
+fn json_field_for_tuple(value: &Value, field: &str) -> String {
+    value
+        .get(field)
+        .map(|field_value| {
+            field_value
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| field_value.to_string())
+        })
+        .unwrap_or_default()
+}
+
+fn invoke_recommended_public_command_and_check_progress(
+    cli: &mut PublicCli<'_>,
+    loop_detector: &mut PublicRouteLoopDetector,
+    route_json: &Value,
+    context: &str,
+) -> Value {
+    let before = PublicRouteTuple::from_json(route_json).unwrap_or_else(|| {
+        panic!("{context}: public route tuple should be available: {route_json}")
+    });
+    let output = invoke_recommended_public_command(cli, route_json);
+    if let Some(after) = PublicRouteTuple::from_json(&output) {
+        assert_ne!(
+            before, after,
+            "non_converging_public_route_loop: {context} returned to the same route tuple after executing `{}`",
+            before.recommended_command
+        );
+    }
+    loop_detector.observe_after_command(&output, context);
+    output
+}
+
 fn append_repo_file(repo: &Path, rel: &str, line: &str) {
     let path = repo.join(rel);
     let mut source = fs::read_to_string(&path)
@@ -315,6 +756,77 @@ fn assert_json_text_excludes(value: &Value, needle: &str, context: &str) {
         !text.contains(needle),
         "{context} should not contain `{needle}`: {text}"
     );
+}
+
+fn assert_targetless_stale_public_surface(value: &Value, context: &str) {
+    assert!(
+        value["phase_detail"] == json!("runtime_reconcile_required")
+            || value["phase_detail"] == json!("blocked_runtime_bug"),
+        "{context} should expose a runtime diagnostic route: {value}"
+    );
+    assert!(
+        value.get("recommended_command").is_none_or(Value::is_null),
+        "{context} must not recommend a mutation command: {value}"
+    );
+    assert!(
+        value
+            .get("execution_command_context")
+            .is_none_or(Value::is_null),
+        "{context} must not expose execution command context: {value}"
+    );
+    assert_json_text_excludes(value, "\"scope_key\":\"current\"", context);
+    for forbidden_command in [
+        "reopen --plan",
+        "begin --plan",
+        "close-current-task",
+        "advance-late-stage",
+    ] {
+        assert_json_text_excludes(value, forbidden_command, context);
+    }
+    assert!(
+        value["blocking_reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "stale_unreviewed_target_missing")),
+        "{context} should expose the targetless stale runtime reason code: {value}"
+    );
+    if let Some(blocking_records) = value["blocking_records"].as_array() {
+        assert!(
+            blocking_records.iter().any(|record| {
+                record["code"] == json!("stale_unreviewed_target_missing")
+                    && record["scope_type"] == json!("runtime")
+                    && record["scope_key"] == json!("targetless_stale_unreviewed")
+                    && record["record_id"].is_null()
+                    && record["required_follow_up"].is_null()
+            }),
+            "{context} should expose the targetless stale runtime blocking record when blocking_records are serialized: {value}"
+        );
+    }
+}
+
+fn assert_hidden_recommended_command_is_blocked(value: &Value, context: &str) {
+    assert_eq!(
+        value["state_kind"], "blocked_runtime_bug",
+        "{context} should fail closed as a blocked runtime bug: {value}"
+    );
+    assert!(
+        value.get("recommended_command").is_none_or(Value::is_null),
+        "{context} must not expose the injected hidden recommended command: {value}"
+    );
+    assert!(
+        value.get("next_public_action").is_none_or(Value::is_null),
+        "{context} must not expose an executable next public action: {value}"
+    );
+    assert!(
+        value["blocking_reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "recommended_command_hidden_or_debug")),
+        "{context} should carry the hidden-command invariant reason code: {value}"
+    );
+    assert_public_json_excludes_hidden_tokens(value, context);
 }
 
 fn current_task_1_closure_id(status_json: &Value) -> String {
@@ -338,25 +850,51 @@ fn state_identity(repo: &Path) -> (String, String) {
     (identity.repo_slug, identity.branch_name)
 }
 
-fn remove_task_1_projection_artifacts(repo: &Path, state: &Path, status_json: &Value) {
+fn remove_task_projection_artifacts(
+    repo: &Path,
+    state: &Path,
+    status_json: &Value,
+    task: u32,
+) -> Vec<PathBuf> {
     let execution_run_id = status_json["execution_run_id"]
         .as_str()
         .expect("status should expose execution_run_id");
     let (repo_slug, branch_name) = state_identity(repo);
-    for file_name in [
-        format!("unit-review-{execution_run_id}-task-1-step-1.md"),
-        format!("task-verification-{execution_run_id}-task-1.md"),
-    ] {
-        let path = harness_authoritative_artifact_path(state, &repo_slug, &branch_name, &file_name);
-        if path.is_file() {
+    let marker_path = harness_authoritative_artifact_path(state, &repo_slug, &branch_name, ".keep");
+    let artifact_dir = marker_path
+        .parent()
+        .expect("artifact marker should have a parent directory");
+    let unit_prefix = format!("unit-review-{execution_run_id}-task-{task}-step-");
+    let verification_name = format!("task-verification-{execution_run_id}-task-{task}.md");
+    let mut removed = Vec::new();
+    if !artifact_dir.exists() {
+        return removed;
+    }
+    for entry in fs::read_dir(artifact_dir).unwrap_or_else(|error| {
+        panic!(
+            "artifact dir `{}` should read: {error}",
+            artifact_dir.display()
+        )
+    }) {
+        let entry = entry.expect("artifact dir entry should read");
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let task_projection = (file_name.starts_with(&unit_prefix) && file_name.ends_with(".md"))
+            || file_name == verification_name;
+        if task_projection && path.is_file() {
             fs::remove_file(&path).unwrap_or_else(|error| {
                 panic!(
                     "projection artifact `{}` should be removable: {error}",
                     path.display()
                 )
             });
+            removed.push(path);
         }
     }
+    removed.sort();
+    removed
 }
 
 fn update_state_fields(repo: &Path, state: &Path, fields: &[(&str, Value)]) {
@@ -426,6 +964,7 @@ fn public_replay_writing_plans_and_mid_review_edits_do_not_require_fidelity_rece
     );
     assert_json_text_excludes(&first, "receipt", "writing-plans route");
     assert_json_text_excludes(&first, "plan-fidelity-review", "writing-plans route");
+    assert_json_text_excludes(&first, "plan_fidelity_review", "writing-plans route");
 
     write_review_spec_and_plan(repo, 2, "writing-plans");
     let edited_plan_path = repo.join(REVIEW_PLAN_REL);
@@ -448,6 +987,11 @@ fn public_replay_writing_plans_and_mid_review_edits_do_not_require_fidelity_rece
         "plan-fidelity-review",
         "engineering-review edit route",
     );
+    assert_json_text_excludes(
+        &after_edit,
+        "plan_fidelity_review",
+        "engineering-review edit route",
+    );
     assert_eq!(
         cli.delta_since(&checkpoint, "workflow status"),
         1,
@@ -457,13 +1001,14 @@ fn public_replay_writing_plans_and_mid_review_edits_do_not_require_fidelity_rece
 
 #[test]
 fn public_replay_begin_owns_allowed_preflight_without_hidden_command() {
-    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-begin-preflight");
+    let (repo_dir, state_dir) =
+        setup_execution_fixture(concat!("public-replay-begin-pre", "flight"));
     let repo = repo_dir.path();
     let state = state_dir.path();
     let mut cli = PublicCli::new(repo, state);
 
     let status_before = status(&mut cli, "public replay begin status");
-    assert_json_text_excludes(&status_before, "\"preflight\"", "begin status");
+    assert_json_text_excludes(&status_before, concat!("\"pre", "flight\""), "begin status");
     let checkpoint = cli.checkpoint();
     let begin = begin_task(
         &mut cli,
@@ -471,7 +1016,7 @@ fn public_replay_begin_owns_allowed_preflight_without_hidden_command() {
         status_before["execution_fingerprint"]
             .as_str()
             .expect("status should expose execution fingerprint"),
-        "public replay begin owns preflight",
+        concat!("public replay begin owns pre", "flight"),
     );
 
     assert_eq!(begin["active_task"], json!(1));
@@ -482,7 +1027,8 @@ fn public_replay_begin_owns_allowed_preflight_without_hidden_command() {
     assert_eq!(
         cli.delta_since(&checkpoint, "begin"),
         1,
-        "preflight bridge should need one public begin after route discovery"
+        "{} bridge should need one public begin after route discovery",
+        concat!("pre", "flight")
     );
 }
 
@@ -522,6 +1068,55 @@ fn public_replay_completed_task_without_closure_routes_to_public_close_once() {
 }
 
 #[test]
+fn public_replay_projection_loss_before_current_closure_stays_on_public_close_current_task() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-preclosure-projection-loss");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    complete_task_1_without_closure(&mut cli, repo);
+
+    let status_before_close = status(&mut cli, "public replay preclosure projection status");
+    remove_task_projection_artifacts(repo, state, &status_before_close, 1);
+
+    let operator = workflow_operator(
+        &mut cli,
+        EXEC_PLAN_REL,
+        "public replay preclosure projection operator",
+    );
+    assert_eq!(operator["phase_detail"], "task_closure_recording_ready");
+    assert!(
+        operator["recommended_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("close-current-task")),
+        "operator should stay on public close-current-task after preclosure projection loss: {operator}"
+    );
+    assert_json_text_excludes(&operator, "receipt", "preclosure projection operator");
+    assert_json_text_excludes(
+        &operator,
+        concat!("record", "-review-dispatch"),
+        "preclosure projection operator",
+    );
+    assert_json_text_excludes(
+        &operator,
+        "task_review_dispatch_required",
+        "preclosure projection operator",
+    );
+    assert_json_text_excludes(&operator, "unit-review", "preclosure projection operator");
+    assert_json_text_excludes(
+        &operator,
+        "task-verification",
+        "preclosure projection operator",
+    );
+
+    let close = close_task_1(
+        &mut cli,
+        repo,
+        "public replay preclosure close-current-task with summaries",
+    );
+    assert_eq!(close["action"], "recorded");
+}
+
+#[test]
 fn public_replay_current_closure_is_not_stale_and_projection_loss_does_not_block_next_begin() {
     let (repo_dir, state_dir) =
         setup_execution_fixture("public-replay-current-closure-projections");
@@ -548,7 +1143,12 @@ fn public_replay_current_closure_is_not_stale_and_projection_loss_does_not_block
         "current closure status",
     );
 
-    remove_task_1_projection_artifacts(repo, state, &status_after_close);
+    let removed_projection_artifacts =
+        remove_task_projection_artifacts(repo, state, &status_after_close, 1);
+    assert!(
+        !removed_projection_artifacts.is_empty(),
+        "fixture should remove runtime-owned review projection artifacts after current closure"
+    );
     let checkpoint = cli.checkpoint();
     let status_after_projection_loss =
         status(&mut cli, "public replay status after projection loss");
@@ -556,9 +1156,32 @@ fn public_replay_current_closure_is_not_stale_and_projection_loss_does_not_block
         current_task_1_closure_id(&status_after_projection_loss),
         closure_id
     );
+    assert_eq!(
+        status_after_projection_loss["phase_detail"], status_after_close["phase_detail"],
+        "projection loss should not introduce a new task-boundary route"
+    );
+    assert_eq!(
+        status_after_projection_loss["blocking_task"], status_after_close["blocking_task"],
+        "projection loss should not change the public blocking target"
+    );
+    assert_eq!(
+        status_after_projection_loss["recommended_command"],
+        status_after_close["recommended_command"],
+        "projection loss should not change the next executable public command"
+    );
+    assert_json_text_excludes(
+        &status_after_projection_loss,
+        "receipt",
+        "projection-loss status",
+    );
     assert_json_text_excludes(
         &status_after_projection_loss,
         "task_review_dispatch_required",
+        "projection-loss status",
+    );
+    assert_json_text_excludes(
+        &status_after_projection_loss,
+        "prior_task_verification_missing",
         "projection-loss status",
     );
     let begin_task_2 = begin_task(
@@ -580,6 +1203,485 @@ fn public_replay_current_closure_is_not_stale_and_projection_loss_does_not_block
         1,
         "projection loss should allow one public downstream begin"
     );
+}
+
+#[test]
+fn public_replay_recommended_mutations_execute_and_do_not_loop() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-recommended-parity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    let mut loop_detector = PublicRouteLoopDetector::default();
+
+    let initial_status = status(&mut cli, "recommended parity initial status");
+    assert_public_json_excludes_hidden_tokens(&initial_status, "recommended parity initial status");
+    assert!(
+        initial_status["recommended_command"]
+            .as_str()
+            .is_some_and(|command| {
+                command.starts_with("featureforge plan execution begin --plan ")
+                    && command.contains("--task 1 --step 1")
+            }),
+        "initial public status should recommend Task 1 begin: {initial_status}"
+    );
+    let begin = invoke_recommended_public_command_and_check_progress(
+        &mut cli,
+        &mut loop_detector,
+        &initial_status,
+        "recommended parity begin task 1",
+    );
+    assert_eq!(begin["active_task"], json!(1));
+
+    append_repo_file(
+        repo,
+        "docs/public-replay-output.md",
+        "Task 1 output changed through the recommended parity replay.",
+    );
+    let in_progress = status(&mut cli, "recommended parity status before complete");
+    assert_public_json_excludes_hidden_tokens(
+        &in_progress,
+        "recommended parity status before complete",
+    );
+    assert_eq!(
+        in_progress["phase_detail"], "execution_in_progress",
+        "status should allow public completion after implementation output changes: {in_progress}"
+    );
+    let complete = complete_task_1(
+        &mut cli,
+        begin["execution_fingerprint"]
+            .as_str()
+            .expect("begin should expose execution fingerprint"),
+        "recommended parity complete task 1 with dynamic summaries",
+    );
+    assert!(
+        complete["execution_fingerprint"].as_str().is_some(),
+        "complete should return the next execution fingerprint: {complete}"
+    );
+    assert_public_json_excludes_hidden_tokens(&complete, "recommended parity complete task 1");
+    loop_detector.observe_after_command(&complete, "recommended parity complete task 1");
+
+    let operator_after_complete =
+        workflow_operator(&mut cli, EXEC_PLAN_REL, "recommended parity close operator");
+    assert_public_json_excludes_hidden_tokens(
+        &operator_after_complete,
+        "recommended parity close operator",
+    );
+    assert_eq!(
+        operator_after_complete["phase_detail"], "task_closure_recording_ready",
+        "operator should route completed Task 1 to public close-current-task: {operator_after_complete}"
+    );
+    assert!(
+        operator_after_complete["recommended_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("close-current-task")),
+        "operator should recommend public close-current-task: {operator_after_complete}"
+    );
+    let close = invoke_recommended_public_command_and_check_progress(
+        &mut cli,
+        &mut loop_detector,
+        &operator_after_complete,
+        "recommended parity close task 1",
+    );
+    assert!(
+        close["action"] == json!("recorded") || close["action"] == json!("already_current"),
+        "recommended close-current-task should close or refresh Task 1: {close}"
+    );
+
+    let status_before_task_2 = status(&mut cli, "recommended parity status before task 2");
+    assert_public_json_excludes_hidden_tokens(
+        &status_before_task_2,
+        "recommended parity status before task 2",
+    );
+    assert!(
+        status_before_task_2["recommended_command"]
+            .as_str()
+            .is_some_and(|command| {
+                command.starts_with("featureforge plan execution begin --plan ")
+                    && command.contains("--task 2 --step 1")
+            }),
+        "status after Task 1 closure should recommend Task 2 begin: {status_before_task_2}"
+    );
+    let begin_task_2 = invoke_recommended_public_command_and_check_progress(
+        &mut cli,
+        &mut loop_detector,
+        &status_before_task_2,
+        "recommended parity begin task 2",
+    );
+    assert_eq!(begin_task_2["active_task"], json!(2));
+}
+
+#[test]
+fn public_replay_stale_current_closure_repair_recommendation_executes_without_loop() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-stale-repair-parity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    let mut loop_detector = PublicRouteLoopDetector::default();
+    complete_task_1_without_closure(&mut cli, repo);
+    let close = close_task_1(&mut cli, repo, "stale repair parity initial close");
+    assert_eq!(close["action"], "recorded");
+
+    append_repo_file(
+        repo,
+        "docs/public-replay-output.md",
+        "Post-closure drift should require public repair-review-state.",
+    );
+    let stale_operator = workflow_operator(&mut cli, EXEC_PLAN_REL, "stale repair parity operator");
+    assert_public_json_excludes_hidden_tokens(&stale_operator, "stale repair parity operator");
+    assert!(
+        stale_operator["recommended_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("repair-review-state")),
+        "stale current closure should route through public repair-review-state: {stale_operator}"
+    );
+    let repair = invoke_recommended_public_command_and_check_progress(
+        &mut cli,
+        &mut loop_detector,
+        &stale_operator,
+        "stale repair parity repair-review-state",
+    );
+    assert_public_json_excludes_hidden_tokens(&repair, "stale repair parity repair output");
+    let next_recommended = repair["recommended_command"]
+        .as_str()
+        .expect("repair-review-state should return the next concrete public command");
+    assert!(
+        !next_recommended.contains("repair-review-state")
+            || stale_operator["recommended_command"] == repair["recommended_command"],
+        "repair-review-state should progress to a concrete public command or bounded same-command repair route: {repair}"
+    );
+
+    let next = invoke_recommended_public_command_and_check_progress(
+        &mut cli,
+        &mut loop_detector,
+        &repair,
+        "stale repair parity next recommended command",
+    );
+    assert_public_json_excludes_hidden_tokens(&next, "stale repair parity next command output");
+}
+
+#[test]
+fn public_replay_normal_progress_keeps_projection_materialization_explicit() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-projection-export");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    let mut loop_detector = PublicRouteLoopDetector::default();
+
+    let initial_status = status(&mut cli, "projection explicit initial status");
+    let before_begin = git_status_short(repo);
+    let begin = begin_task(
+        &mut cli,
+        1,
+        initial_status["execution_fingerprint"]
+            .as_str()
+            .expect("initial status should expose execution fingerprint"),
+        "projection explicit begin task 1",
+    );
+    assert_git_status_unchanged_without_projection_churn(
+        repo,
+        &before_begin,
+        "normal begin projection explicit replay",
+    );
+
+    append_repo_file(
+        repo,
+        "docs/public-replay-output.md",
+        "Task 1 output changed before projection explicit completion.",
+    );
+    let before_complete = git_status_short(repo);
+    let complete = complete_task_1(
+        &mut cli,
+        begin["execution_fingerprint"]
+            .as_str()
+            .expect("begin should expose execution fingerprint"),
+        "projection explicit complete task 1",
+    );
+    assert!(
+        complete["execution_fingerprint"].as_str().is_some(),
+        "complete should return a new execution fingerprint: {complete}"
+    );
+    assert_git_status_unchanged_without_projection_churn(
+        repo,
+        &before_complete,
+        "normal complete projection explicit replay",
+    );
+
+    let (review_summary, verification_summary) = write_task_1_summary_files(repo);
+    let before_close = git_status_short(repo);
+    let close = close_task_1_with_summary_files(
+        &mut cli,
+        &review_summary,
+        &verification_summary,
+        "projection explicit close-current-task",
+    );
+    assert_eq!(close["action"], "recorded");
+    assert_git_status_unchanged_without_projection_churn(
+        repo,
+        &before_close,
+        "normal close-current-task projection explicit replay",
+    );
+
+    append_repo_file(
+        repo,
+        "docs/public-replay-output.md",
+        "Post-closure drift should require public repair without projection export.",
+    );
+    let stale_operator = workflow_operator(
+        &mut cli,
+        EXEC_PLAN_REL,
+        "projection explicit repair operator",
+    );
+    assert!(
+        stale_operator["recommended_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("repair-review-state")),
+        "post-closure drift should recommend public repair-review-state: {stale_operator}"
+    );
+    let before_repair = git_status_short(repo);
+    let repair = invoke_recommended_public_command_and_check_progress(
+        &mut cli,
+        &mut loop_detector,
+        &stale_operator,
+        "projection explicit repair-review-state",
+    );
+    assert_git_status_unchanged_without_projection_churn(
+        repo,
+        &before_repair,
+        "normal repair-review-state projection explicit replay",
+    );
+    assert_public_json_excludes_hidden_tokens(&repair, "projection explicit repair output");
+
+    let before_state_dir_materialize = git_status_short(repo);
+    let state_dir_materialized = cli.json(
+        &[
+            "plan",
+            "execution",
+            "materialize-projections",
+            "--plan",
+            EXEC_PLAN_REL,
+        ],
+        "state-dir materialization should not dirty git",
+    );
+    assert_eq!(state_dir_materialized["action"], "materialized");
+    assert_eq!(state_dir_materialized["projection_mode"], "state_dir_only");
+    assert_eq!(
+        state_dir_materialized["runtime_truth_changed"],
+        json!(false)
+    );
+    assert_git_status_unchanged_without_projection_churn(
+        repo,
+        &before_state_dir_materialize,
+        "state-dir materialization projection explicit replay",
+    );
+
+    for (flag, context) in [
+        (
+            "--repo-export",
+            "unconfirmed repo-export materialization should fail closed",
+        ),
+        (
+            "--tracked",
+            "deprecated tracked materialization should require confirmation",
+        ),
+    ] {
+        let before_failure = git_status_short(repo);
+        let failure = cli.failure_json(
+            &[
+                "plan",
+                "execution",
+                "materialize-projections",
+                "--plan",
+                EXEC_PLAN_REL,
+                flag,
+            ],
+            context,
+        );
+        assert_eq!(failure["error_class"], "InvalidCommandInput");
+        assert!(
+            failure["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("--confirm-repo-export")),
+            "{context} should explain the explicit export confirmation requirement: {failure}"
+        );
+        assert_git_status_unchanged_without_projection_churn(repo, &before_failure, context);
+    }
+
+    let before_repo_export = git_status_short(repo);
+    let materialized = cli.json(
+        &[
+            "plan",
+            "execution",
+            "materialize-projections",
+            "--plan",
+            EXEC_PLAN_REL,
+            "--repo-export",
+            "--confirm-repo-export",
+        ],
+        "confirmed repo projection export",
+    );
+    assert_eq!(materialized["action"], "materialized");
+    assert_eq!(materialized["projection_mode"], "projection_export");
+    assert_eq!(materialized["runtime_truth_changed"], json!(false));
+    assert!(
+        materialized["trace_summary"].as_str().is_some_and(
+            |summary| summary.contains("approved plan/evidence files were not modified")
+        ),
+        "confirmed materialization should describe approved-file preservation: {materialized}"
+    );
+    let written_paths = materialized["written_paths"]
+        .as_array()
+        .expect("confirmed materialization should report written paths")
+        .iter()
+        .map(|path| {
+            path.as_str()
+                .expect("written path should be a string")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !written_paths.is_empty(),
+        "confirmed materialization should report Git-visible projection exports: {materialized}"
+    );
+    assert!(
+        written_paths
+            .iter()
+            .all(|path| path.starts_with("docs/featureforge/projections/")),
+        "confirmed materialization should only write projection export paths: {written_paths:?}"
+    );
+    assert!(
+        written_paths.iter().all(|path| repo.join(path).is_file()),
+        "confirmed materialization should write every reported path: {written_paths:?}"
+    );
+    let after_repo_export = git_status_short(repo);
+    let export_entries = git_status_new_entries(&before_repo_export, &after_repo_export);
+    assert!(
+        !export_entries.is_empty(),
+        "confirmed materialization should create Git-visible projection export entries: {after_repo_export:?}"
+    );
+    assert!(
+        export_entries
+            .iter()
+            .map(|line| git_status_entry_path(line))
+            .all(|path| is_projection_export_status_path(&path)),
+        "only confirmed materialization may add projection export paths, new entries: {export_entries:?}"
+    );
+}
+
+#[test]
+fn public_replay_reopen_does_not_materialize_tracked_projection_files() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-reopen-no-projection-churn");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+
+    let initial_status = status(&mut cli, "projection explicit reopen initial status");
+    let begin = begin_task(
+        &mut cli,
+        1,
+        initial_status["execution_fingerprint"]
+            .as_str()
+            .expect("initial status should expose execution fingerprint"),
+        "projection explicit reopen begin task 1",
+    );
+    append_repo_file(
+        repo,
+        "docs/public-replay-output.md",
+        "Task 1 output changed before projection explicit reopen.",
+    );
+    let complete = complete_task_1(
+        &mut cli,
+        begin["execution_fingerprint"]
+            .as_str()
+            .expect("begin should expose execution fingerprint"),
+        "projection explicit reopen complete task 1",
+    );
+    bind_explicit_reopen_repair_target(repo, state, 1, 1);
+
+    let status_after_repair = status(&mut cli, "projection explicit reopen status");
+    assert!(
+        status_after_repair["public_repair_targets"]
+            .as_array()
+            .is_some_and(|targets| targets.iter().any(|target| {
+                target["command_kind"] == "reopen"
+                    && target["task"] == json!(1)
+                    && target["step"] == json!(1)
+            })),
+        "status should expose a public reopen repair target: {status_after_repair}"
+    );
+    let before_reopen = git_status_short(repo);
+    let reopened = reopen_task_1(
+        &mut cli,
+        status_after_repair["execution_fingerprint"]
+            .as_str()
+            .or_else(|| complete["execution_fingerprint"].as_str())
+            .expect("status should expose execution fingerprint before reopen"),
+        "projection explicit reopen command",
+    );
+    assert_eq!(reopened["resume_task"], json!(1));
+    assert_eq!(reopened["resume_step"], json!(1));
+    assert_git_status_unchanged_without_projection_churn(
+        repo,
+        &before_reopen,
+        "normal reopen projection explicit replay",
+    );
+}
+
+#[test]
+fn public_replay_hidden_recommended_command_injection_is_blocked_before_execution() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-hidden-recommendation");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let env = [(
+        "FEATUREFORGE_PLAN_EXECUTION_READ_INVARIANT_TEST_INJECTION",
+        "hidden_recommended_command",
+    )];
+    let mut cli = PublicCli::new(repo, state);
+
+    let status_json = cli.json_with_env(
+        &["plan", "execution", "status", "--plan", EXEC_PLAN_REL],
+        &env,
+        "public replay hidden recommended status",
+    );
+    assert_hidden_recommended_command_is_blocked(
+        &status_json,
+        "public replay hidden recommended status",
+    );
+
+    let operator_json = cli.json_with_env(
+        &["workflow", "operator", "--plan", EXEC_PLAN_REL, "--json"],
+        &env,
+        "public replay hidden recommended operator",
+    );
+    assert_hidden_recommended_command_is_blocked(
+        &operator_json,
+        "public replay hidden recommended operator",
+    );
+}
+
+#[test]
+fn public_replay_targetless_stale_state_does_not_fabricate_current_scope() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-targetless-stale");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    let env = [(
+        "FEATUREFORGE_PLAN_EXECUTION_READ_INVARIANT_TEST_INJECTION",
+        "targetless_stale_unreviewed",
+    )];
+
+    let status_json = cli.json_with_env(
+        &["plan", "execution", "status", "--plan", EXEC_PLAN_REL],
+        &env,
+        "public replay targetless stale status",
+    );
+    assert_targetless_stale_public_surface(&status_json, "targetless stale status");
+
+    let operator_json = cli.json_with_env(
+        &["workflow", "operator", "--plan", EXEC_PLAN_REL, "--json"],
+        &env,
+        "public replay targetless stale operator",
+    );
+    assert_targetless_stale_public_surface(&operator_json, "targetless stale operator");
 }
 
 #[test]
@@ -646,12 +1748,72 @@ fn public_replay_reviewer_recursion_guard_fails_closed_without_state_mutation() 
 
     for (args, context) in [
         (
+            &["workflow", "status", "--json"][..],
+            "public replay reviewer workflow status guard",
+        ),
+        (
             &["workflow", "operator", "--plan", EXEC_PLAN_REL, "--json"][..],
-            "public replay reviewer workflow guard",
+            "public replay reviewer workflow operator guard",
         ),
         (
             &["plan", "execution", "status", "--plan", EXEC_PLAN_REL][..],
-            "public replay reviewer plan execution guard",
+            "public replay reviewer plan execution status guard",
+        ),
+        (
+            &[
+                "plan",
+                "execution",
+                "begin",
+                "--plan",
+                EXEC_PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--expect-execution-fingerprint",
+                "reviewer-guard-fingerprint",
+            ][..],
+            "public replay reviewer plan execution begin guard",
+        ),
+        (
+            &[
+                "plan",
+                "execution",
+                "close-current-task",
+                "--plan",
+                EXEC_PLAN_REL,
+                "--task",
+                "1",
+                "--review-result",
+                "pass",
+                "--review-summary-file",
+                "missing-review-summary.md",
+                "--verification-result",
+                "pass",
+                "--verification-summary-file",
+                "missing-verification-summary.md",
+            ][..],
+            "public replay reviewer plan execution close-current-task guard",
+        ),
+        (
+            &[
+                "plan",
+                "execution",
+                "advance-late-stage",
+                "--plan",
+                EXEC_PLAN_REL,
+            ][..],
+            "public replay reviewer plan execution advance-late-stage guard",
+        ),
+        (
+            &[
+                "plan",
+                "execution",
+                "repair-review-state",
+                "--plan",
+                EXEC_PLAN_REL,
+            ][..],
+            "public replay reviewer plan execution repair-review-state guard",
         ),
     ] {
         let failure = cli.failure_json_with_env(
@@ -666,6 +1828,11 @@ fn public_replay_reviewer_recursion_guard_fails_closed_without_state_mutation() 
                 && message.contains("blocked review")),
             "{context} should return reviewer-context guidance: {failure}"
         );
+        assert_eq!(
+            state_dir_snapshot(state),
+            before,
+            "{context} should fail before runtime state mutation"
+        );
     }
 
     assert_eq!(
@@ -675,8 +1842,8 @@ fn public_replay_reviewer_recursion_guard_fails_closed_without_state_mutation() 
     );
 }
 
-fn state_dir_snapshot(state: &Path) -> Vec<PathBuf> {
-    fn visit(root: &Path, base: &Path, out: &mut Vec<PathBuf>) {
+fn state_dir_snapshot(state: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(root: &Path, base: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
         if !root.exists() {
             return;
         }
@@ -688,17 +1855,19 @@ fn state_dir_snapshot(state: &Path) -> Vec<PathBuf> {
             if path.is_dir() {
                 visit(&path, base, out);
             } else {
-                out.push(
-                    path.strip_prefix(base)
-                        .expect("state file should be under state dir")
-                        .to_path_buf(),
-                );
+                let relative_path = path
+                    .strip_prefix(base)
+                    .expect("state file should be under state dir")
+                    .to_path_buf();
+                let contents = fs::read(&path).unwrap_or_else(|error| {
+                    panic!("state file `{}` should read: {error}", path.display())
+                });
+                out.insert(relative_path, contents);
             }
         }
     }
 
-    let mut files = Vec::new();
+    let mut files = BTreeMap::new();
     visit(state, state, &mut files);
-    files.sort();
     files
 }

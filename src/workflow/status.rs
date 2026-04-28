@@ -770,16 +770,22 @@ fn resolve_route(
                 &reason_codes,
             );
             if plan_needs_authoring {
+                let next_skill = "featureforge:writing-plans";
                 return Ok(WorkflowRoute {
                     schema_version: 2,
                     status: String::from("plan_draft"),
-                    next_skill: String::from("featureforge:writing-plans"),
+                    next_skill: String::from(next_skill),
                     spec_path: approved_spec.path.clone(),
                     plan_path: plan.path.clone(),
                     contract_state,
                     reason_codes,
                     diagnostics,
-                    plan_fidelity_review: Some(plan_fidelity_gate),
+                    plan_fidelity_review: fidelity_review_visible_for_route(
+                        &plan,
+                        next_skill,
+                        &plan_fidelity_gate,
+                    )
+                    .then_some(plan_fidelity_gate),
                     scan_truncated,
                     spec_candidate_count,
                     plan_candidate_count: 1,
@@ -790,25 +796,31 @@ fn resolve_route(
                 });
             }
             if draft_ready_for_fidelity_review(&plan, &plan_fidelity_gate, plan_needs_authoring) {
+                let next_skill = "featureforge:plan-fidelity-review";
                 let combined_reason_codes =
                     combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
                 let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
                     &plan,
                     &diagnostics,
                     &plan_fidelity_gate,
-                    "featureforge:plan-fidelity-review",
+                    next_skill,
                 );
                 let reason = compatibility_reason(&combined_reason_codes);
                 return Ok(WorkflowRoute {
                     schema_version: 2,
                     status: String::from("plan_draft"),
-                    next_skill: String::from("featureforge:plan-fidelity-review"),
+                    next_skill: String::from(next_skill),
                     spec_path: approved_spec.path.clone(),
                     plan_path: plan.path.clone(),
                     contract_state,
                     reason_codes: combined_reason_codes,
                     diagnostics: combined_diagnostics,
-                    plan_fidelity_review: Some(plan_fidelity_gate),
+                    plan_fidelity_review: fidelity_review_visible_for_route(
+                        &plan,
+                        next_skill,
+                        &plan_fidelity_gate,
+                    )
+                    .then_some(plan_fidelity_gate),
                     scan_truncated,
                     spec_candidate_count,
                     plan_candidate_count: 1,
@@ -845,16 +857,22 @@ fn resolve_route(
             } else {
                 (reason_codes, diagnostics, reason)
             };
+            let next_skill = "featureforge:plan-eng-review";
             return Ok(WorkflowRoute {
                 schema_version: 2,
                 status: String::from("plan_draft"),
-                next_skill: String::from("featureforge:plan-eng-review"),
+                next_skill: String::from(next_skill),
                 spec_path: approved_spec.path.clone(),
                 plan_path: plan.path.clone(),
                 contract_state,
                 reason_codes,
                 diagnostics,
-                plan_fidelity_review: Some(plan_fidelity_gate),
+                plan_fidelity_review: fidelity_review_visible_for_route(
+                    &plan,
+                    next_skill,
+                    &plan_fidelity_gate,
+                )
+                .then_some(plan_fidelity_gate),
                 scan_truncated,
                 spec_candidate_count,
                 plan_candidate_count: 1,
@@ -1064,33 +1082,45 @@ pub(crate) fn explicit_plan_override_route(
             &reason_codes,
         );
         if plan_needs_authoring {
+            let next_skill = "featureforge:writing-plans";
             return Ok(decorate(WorkflowRoute {
                 status: String::from("plan_draft"),
-                next_skill: String::from("featureforge:writing-plans"),
+                next_skill: String::from(next_skill),
                 reason_codes,
                 diagnostics,
-                plan_fidelity_review: Some(plan_fidelity_gate),
+                plan_fidelity_review: fidelity_review_visible_for_route(
+                    &plan,
+                    next_skill,
+                    &plan_fidelity_gate,
+                )
+                .then_some(plan_fidelity_gate),
                 reason: reason.clone(),
                 note: reason,
                 ..base_route
             }));
         }
         if draft_ready_for_fidelity_review(&plan, &plan_fidelity_gate, plan_needs_authoring) {
+            let next_skill = "featureforge:plan-fidelity-review";
             let combined_reason_codes =
                 combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
             let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
                 &plan,
                 &diagnostics,
                 &plan_fidelity_gate,
-                "featureforge:plan-fidelity-review",
+                next_skill,
             );
             let reason = compatibility_reason(&combined_reason_codes);
             return Ok(decorate(WorkflowRoute {
                 status: String::from("plan_draft"),
-                next_skill: String::from("featureforge:plan-fidelity-review"),
+                next_skill: String::from(next_skill),
                 reason_codes: combined_reason_codes,
                 diagnostics: combined_diagnostics,
-                plan_fidelity_review: Some(plan_fidelity_gate),
+                plan_fidelity_review: fidelity_review_visible_for_route(
+                    &plan,
+                    next_skill,
+                    &plan_fidelity_gate,
+                )
+                .then_some(plan_fidelity_gate),
                 reason: reason.clone(),
                 note: reason,
                 ..base_route
@@ -1123,12 +1153,18 @@ pub(crate) fn explicit_plan_override_route(
         } else {
             (reason_codes, diagnostics, reason)
         };
+        let next_skill = "featureforge:plan-eng-review";
         return Ok(decorate(WorkflowRoute {
             status: String::from("plan_draft"),
-            next_skill: String::from("featureforge:plan-eng-review"),
+            next_skill: String::from(next_skill),
             reason_codes,
             diagnostics,
-            plan_fidelity_review: Some(plan_fidelity_gate),
+            plan_fidelity_review: fidelity_review_visible_for_route(
+                &plan,
+                next_skill,
+                &plan_fidelity_gate,
+            )
+            .then_some(plan_fidelity_gate),
             reason: reason.clone(),
             note: reason,
             ..base_route
@@ -2028,6 +2064,21 @@ fn draft_ready_for_engineering_approval(
         && matches!(gate.state.as_str(), "pass" | "fail")
 }
 
+fn fidelity_review_visible_for_route(
+    plan: &WorkflowPlanCandidate,
+    next_skill: &str,
+    gate: &PlanFidelityReviewReport,
+) -> bool {
+    next_skill == "featureforge:plan-fidelity-review"
+        || (next_skill == "featureforge:plan-eng-review"
+            && plan.workflow_state == "Draft"
+            && plan.last_reviewed_by == "plan-eng-review"
+            && matches!(gate.state.as_str(), "pass" | "fail"))
+        || (next_skill == "featureforge:plan-eng-review"
+            && plan.workflow_state == "Engineering Approved"
+            && matches!(gate.state.as_str(), "pass" | "fail"))
+}
+
 fn combine_plan_and_fidelity_reason_codes(
     reason_codes: &[String],
     gate: &PlanFidelityReviewReport,
@@ -2185,4 +2236,123 @@ fn is_plan_header_reason_code(code: &str) -> bool {
 
 fn repo_relative_path(path: &Path) -> String {
     repo_relative_string(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git::sha256_hex;
+    use tempfile::TempDir;
+
+    const SPEC_PATH: &str = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    const PLAN_PATH: &str = "docs/featureforge/plans/2026-01-22-document-review-system.md";
+
+    fn write_fixture_file(repo: &Path, rel: &str, contents: &str) {
+        let path = repo.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("fixture parent should be created");
+        }
+        fs::write(path, contents).expect("fixture file should be written");
+    }
+
+    fn write_spec(repo: &Path) {
+        write_fixture_file(
+            repo,
+            SPEC_PATH,
+            "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n\n## Requirement Index\n\n- [REQ-001][behavior] The draft plan must complete an independent fidelity review before engineering review.\n",
+        );
+    }
+
+    fn write_draft_plan_with_stale_source_revision(repo: &Path) {
+        write_fixture_file(
+            repo,
+            PLAN_PATH,
+            "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 0\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 serially.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the final draft plan\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for final approval.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n\n**Done when:**\n- The draft plan is ready for final approval.\n\n**Files:**\n- Test: `src/workflow/status.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        );
+    }
+
+    fn write_current_pass_fidelity_artifact(repo: &Path) {
+        let plan_fingerprint =
+            sha256_hex(&fs::read(repo.join(PLAN_PATH)).expect("plan should be readable"));
+        let spec_fingerprint =
+            sha256_hex(&fs::read(repo.join(SPEC_PATH)).expect("spec should be readable"));
+        write_fixture_file(
+            repo,
+            ".featureforge/reviews/plan-fidelity-current-pass.md",
+            &format!(
+                "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** pass\n**Reviewed Plan:** `{PLAN_PATH}`\n**Reviewed Plan Revision:** 1\n**Reviewed Plan Fingerprint:** {plan_fingerprint}\n**Reviewed Spec:** `{SPEC_PATH}`\n**Reviewed Spec Revision:** 1\n**Reviewed Spec Fingerprint:** {spec_fingerprint}\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** reviewer-explicit-override\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** requirement_index, execution_topology, task_contract, task_determinism, spec_reference_fidelity\n**Verified Requirement IDs:** REQ-001\n"
+            ),
+        );
+    }
+
+    fn fixture_workflow_runtime(repo: &Path, state: &Path) -> WorkflowRuntime {
+        WorkflowRuntime {
+            identity: RepositoryIdentity {
+                repo_root: repo.to_path_buf(),
+                remote_url: None,
+                branch_name: String::from("main"),
+            },
+            state_dir: state.to_path_buf(),
+            manifest_path: state.join("workflow-manifest.json"),
+            manifest: None,
+            manifest_warning: None,
+            manifest_recovery_reasons: Vec::new(),
+        }
+    }
+
+    fn empty_resolved_route(repo: &Path) -> WorkflowRoute {
+        WorkflowRoute {
+            schema_version: WORKFLOW_ROUTE_SCHEMA_VERSION,
+            status: String::new(),
+            next_skill: String::new(),
+            spec_path: SPEC_PATH.to_owned(),
+            plan_path: PLAN_PATH.to_owned(),
+            contract_state: String::new(),
+            reason_codes: Vec::new(),
+            diagnostics: Vec::new(),
+            plan_fidelity_review: None,
+            scan_truncated: false,
+            spec_candidate_count: 1,
+            plan_candidate_count: 1,
+            manifest_path: repo
+                .join(".featureforge/workflow-manifest.json")
+                .display()
+                .to_string(),
+            root: repo.display().to_string(),
+            reason: String::new(),
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn explicit_plan_override_suppresses_current_pass_fidelity_when_authoring_defect_routes_to_writing_plans()
+     {
+        let repo = TempDir::new().expect("repo tempdir should exist");
+        let state = TempDir::new().expect("state tempdir should exist");
+        write_spec(repo.path());
+        write_draft_plan_with_stale_source_revision(repo.path());
+        write_current_pass_fidelity_artifact(repo.path());
+
+        let workflow = fixture_workflow_runtime(repo.path(), state.path());
+        let route = explicit_plan_override_route(
+            &workflow,
+            &empty_resolved_route(repo.path()),
+            Path::new(PLAN_PATH),
+        )
+        .expect("explicit plan override should resolve route");
+
+        assert_eq!(route.status, "plan_draft");
+        assert_eq!(route.next_skill, "featureforge:writing-plans");
+        assert!(
+            route.plan_fidelity_review.is_none(),
+            "explicit plan override writing-plans routes must suppress current pass fidelity diagnostics: {route:?}"
+        );
+        assert!(
+            route
+                .reason_codes
+                .iter()
+                .all(|code| !code.contains("plan_fidelity")),
+            "authoring-defect route must not expose fidelity reason codes: {route:?}"
+        );
+    }
 }

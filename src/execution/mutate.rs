@@ -92,12 +92,10 @@ use crate::execution::state::{
     load_execution_read_scope_for_mutation, normalize_begin_request, normalize_complete_request,
     normalize_note_request, normalize_rebuild_evidence_request, normalize_reopen_request,
     normalize_source, normalize_transfer_request, persist_allowed_public_begin_preflight,
-    projected_earliest_stale_task_from_status, public_intent_preflight_persistence_required,
-    public_status_from_context_with_shared_routing,
+    public_intent_preflight_persistence_required, public_status_from_context_with_shared_routing,
     public_status_from_supplied_context_with_shared_routing, require_normalized_text,
     require_preflight_acceptance, require_prior_task_closure_for_begin,
     still_current_task_closure_records, structural_current_task_closure_failures,
-    task_closure_baseline_repair_candidate_with_stale_target,
     task_closure_negative_result_blocks_current_reviewed_state,
     task_completion_lineage_fingerprint, task_packet_fingerprint,
     usable_current_branch_closure_identity, validate_expected_fingerprint,
@@ -1548,16 +1546,6 @@ pub fn close_current_task(
         Some(args.task),
         args.dispatch_id.as_deref(),
     )?;
-    let closure_baseline_repair_candidate =
-        task_closure_baseline_repair_candidate_with_stale_target(
-            &initial_context,
-            &status,
-            args.task,
-            projected_earliest_stale_task_from_status(&status),
-        )?;
-    let projection_refresh_only_candidate = closure_baseline_repair_candidate
-        .as_ref()
-        .is_some_and(|candidate| candidate.projection_refresh_only);
     if let Some(dispatch_id) = candidate_dispatch_id.as_deref() {
         ensure_task_dispatch_id_matches(&initial_context, args.task, dispatch_id)?;
         match task_dispatch_reviewed_state_status(
@@ -1639,41 +1627,36 @@ pub fn close_current_task(
                 && current_record.verification_result == verification_result
                 && current_record.verification_summary_hash == verification_summary_hash.as_str()
             {
-                if !projection_refresh_only_candidate {
-                    let postconditions_would_mutate =
-                        current_task_closure_postconditions_would_mutate(
-                            authoritative_state,
-                            args.task,
-                            &initial_closure_record_id,
-                            &current_record.reviewed_state_id,
-                        );
-                    let reason_codes = if postconditions_would_mutate
-                        && close_current_task_public_mutation_allowed(&status, args.task)
-                    {
-                        let _write_authority = claim_step_write_authority(runtime)?;
-                        resolve_already_current_task_closure_postconditions(
-                            authoritative_state,
-                            args.task,
-                            &initial_closure_record_id,
-                            &current_record.reviewed_state_id,
-                        )?
-                    } else {
-                        Vec::new()
-                    };
-                    return Ok(close_current_task_already_current_output(
+                let postconditions_would_mutate = current_task_closure_postconditions_would_mutate(
+                    authoritative_state,
+                    args.task,
+                    &initial_closure_record_id,
+                    &current_record.reviewed_state_id,
+                );
+                let reason_codes = if postconditions_would_mutate
+                    && close_current_task_public_mutation_allowed(&status, args.task)
+                {
+                    let _write_authority = claim_step_write_authority(runtime)?;
+                    resolve_already_current_task_closure_postconditions(
+                        authoritative_state,
                         args.task,
-                        initial_closure_record_id,
-                        "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
-                        reason_codes,
-                    ));
-                }
-            } else if !projection_refresh_only_candidate
-                && current_positive_closure_matches_incoming_results(
-                    &current_record,
-                    args.review_result.as_str(),
-                    verification_result,
-                )
-            {
+                        &initial_closure_record_id,
+                        &current_record.reviewed_state_id,
+                    )?
+                } else {
+                    Vec::new()
+                };
+                return Ok(close_current_task_already_current_output(
+                    args.task,
+                    initial_closure_record_id,
+                    "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
+                    reason_codes,
+                ));
+            } else if current_positive_closure_matches_incoming_results(
+                &current_record,
+                args.review_result.as_str(),
+                verification_result,
+            ) {
                 let postconditions_would_mutate = current_task_closure_postconditions_would_mutate(
                     authoritative_state,
                     args.task,
@@ -1700,7 +1683,7 @@ pub fn close_current_task(
                     "Current task already has a positive recorded task closure for the supplied dispatch lineage; summary-only drift was ignored.",
                     reason_codes,
                 ));
-            } else if !projection_refresh_only_candidate {
+            } else {
                 let operator = current_workflow_operator(runtime, &args.plan, true)?;
                 return Ok(with_close_current_task_operator_blocker_metadata(
                     blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
@@ -1833,41 +1816,36 @@ pub fn close_current_task(
                 && current_record.verification_result == verification_result
                 && current_record.verification_summary_hash == verification_summary_hash.as_str()
             {
-                if !projection_refresh_only_candidate {
-                    let postconditions_would_mutate =
-                        current_task_closure_postconditions_would_mutate(
-                            authoritative_state,
-                            args.task,
-                            &closure_record_id,
-                            &current_record.reviewed_state_id,
-                        );
-                    let reason_codes = if postconditions_would_mutate
-                        && close_current_task_public_mutation_allowed(&status, args.task)
-                    {
-                        let _write_authority = claim_step_write_authority(runtime)?;
-                        resolve_already_current_task_closure_postconditions(
-                            authoritative_state,
-                            args.task,
-                            &closure_record_id,
-                            &current_record.reviewed_state_id,
-                        )?
-                    } else {
-                        Vec::new()
-                    };
-                    return Ok(close_current_task_already_current_output(
+                let postconditions_would_mutate = current_task_closure_postconditions_would_mutate(
+                    authoritative_state,
+                    args.task,
+                    &closure_record_id,
+                    &current_record.reviewed_state_id,
+                );
+                let reason_codes = if postconditions_would_mutate
+                    && close_current_task_public_mutation_allowed(&status, args.task)
+                {
+                    let _write_authority = claim_step_write_authority(runtime)?;
+                    resolve_already_current_task_closure_postconditions(
+                        authoritative_state,
                         args.task,
-                        closure_record_id,
-                        "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
-                        reason_codes,
-                    ));
-                }
-            } else if !projection_refresh_only_candidate
-                && current_positive_closure_matches_incoming_results(
-                    &current_record,
-                    args.review_result.as_str(),
-                    verification_result,
-                )
-            {
+                        &closure_record_id,
+                        &current_record.reviewed_state_id,
+                    )?
+                } else {
+                    Vec::new()
+                };
+                return Ok(close_current_task_already_current_output(
+                    args.task,
+                    closure_record_id,
+                    "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
+                    reason_codes,
+                ));
+            } else if current_positive_closure_matches_incoming_results(
+                &current_record,
+                args.review_result.as_str(),
+                verification_result,
+            ) {
                 let postconditions_would_mutate = current_task_closure_postconditions_would_mutate(
                     authoritative_state,
                     args.task,
@@ -1894,7 +1872,7 @@ pub fn close_current_task(
                     "Current task already has a positive recorded task closure for the supplied dispatch lineage; summary-only drift was ignored.",
                     reason_codes,
                 ));
-            } else if !projection_refresh_only_candidate {
+            } else {
                 return Ok(with_close_current_task_operator_blocker_metadata(
                     blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                         task_number: args.task,

@@ -1,3 +1,5 @@
+//! INTERNAL_RUNTIME_HELPER_TEST: this file intentionally exercises unavailable runtime internals.
+
 #![allow(dead_code)]
 
 #[allow(dead_code)]
@@ -23,7 +25,7 @@ use serde_json::Value;
 
 use crate::process_support::run;
 
-pub fn run_rust_featureforge(
+pub fn internal_only_run_featureforge_direct_or_cli(
     repo: Option<&Path>,
     state_dir: Option<&Path>,
     home_dir: Option<&Path>,
@@ -31,18 +33,7 @@ pub fn run_rust_featureforge(
     args: &[&str],
     context: &str,
 ) -> Output {
-    run_rust_featureforge_with_env_control(repo, state_dir, home_dir, &[], envs, args, context)
-}
-
-pub fn run_rust_featureforge_real_cli(
-    repo: Option<&Path>,
-    state_dir: Option<&Path>,
-    home_dir: Option<&Path>,
-    envs: &[(&str, &str)],
-    args: &[&str],
-    context: &str,
-) -> Output {
-    run_rust_featureforge_with_env_control_real_cli(
+    internal_only_run_featureforge_with_env_control_direct_or_cli(
         repo,
         state_dir,
         home_dir,
@@ -53,13 +44,24 @@ pub fn run_rust_featureforge_real_cli(
     )
 }
 
+pub fn run_featureforge_real_cli(
+    repo: Option<&Path>,
+    state_dir: Option<&Path>,
+    home_dir: Option<&Path>,
+    envs: &[(&str, &str)],
+    args: &[&str],
+    context: &str,
+) -> Output {
+    run_featureforge_with_env_control_real_cli(repo, state_dir, home_dir, &[], envs, args, context)
+}
+
 pub fn run_public_featureforge_cli_json(
     repo: &Path,
     state_dir: &Path,
     args: &[&str],
     context: &str,
 ) -> Value {
-    let output = run_rust_featureforge_with_env_control_real_cli(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -83,7 +85,7 @@ pub fn run_public_featureforge_cli_json(
     })
 }
 
-pub fn run_rust_featureforge_with_env_control(
+pub fn internal_only_run_featureforge_with_env_control_direct_or_cli(
     repo: Option<&Path>,
     state_dir: Option<&Path>,
     home_dir: Option<&Path>,
@@ -118,7 +120,7 @@ pub fn run_rust_featureforge_with_env_control(
     run(command, context)
 }
 
-pub fn run_rust_featureforge_with_env_control_real_cli(
+pub fn run_featureforge_with_env_control_real_cli(
     repo: Option<&Path>,
     state_dir: Option<&Path>,
     home_dir: Option<&Path>,
@@ -351,7 +353,9 @@ fn try_direct_featureforge_output(
         return None;
     }
 
-    match root_direct_support::try_run_root_output_direct(repo, state_dir, args, context) {
+    match root_direct_support::internal_only_try_run_root_output_direct(
+        repo, state_dir, args, context,
+    ) {
         Ok(Some(output)) => return Some(output),
         Ok(None) => {}
         Err(error) => panic!("{error}"),
@@ -365,7 +369,7 @@ fn try_direct_featureforge_output(
     // root-command shell behavior must keep using the real binary. Everything else
     // should converge on the same in-process runtime path so semantic surfaces don't drift.
     if args.first().copied() == Some("workflow") {
-        return match workflow_direct_support::try_run_workflow_output_direct(
+        return match workflow_direct_support::internal_only_try_run_workflow_output_direct(
             repo, state_dir, args, context,
         ) {
             Ok(Some(output)) => Some(output),
@@ -375,7 +379,7 @@ fn try_direct_featureforge_output(
     }
 
     if args.starts_with(&["plan", "execution"]) {
-        return match plan_execution_direct_support::try_run_plan_execution_output_direct(
+        return match plan_execution_direct_support::internal_only_try_run_plan_execution_output_direct(
             repo,
             state_dir,
             &args[2..],

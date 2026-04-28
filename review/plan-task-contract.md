@@ -236,5 +236,5 @@ must be written in the new task format immediately.
 
 Merge-ready active workflow is new-format-only. Any old-format compatibility
 path that survives must be explicitly quarantined outside normal authoring,
-packet generation, receipt validation, and review flow, and it must be marked
+packet generation, runtime projection checks, and review flow, and it must be marked
 migration-only.

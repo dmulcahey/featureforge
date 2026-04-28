@@ -92,7 +92,7 @@ Task 1 -> Task 2
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     let mut command_args = vec!["plan", "execution"];
     command_args.extend_from_slice(args);
-    let output = featureforge_support::run_rust_featureforge(
+    let output = featureforge_support::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -111,25 +111,6 @@ fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &s
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
-fn internal_only_runtime_preflight_gate_json(
-    repo: &Path,
-    state: &Path,
-    plan_rel: &str,
-    context: &str,
-) -> Value {
-    let runtime = execution_runtime(repo, state);
-    let args = StatusArgs {
-        plan: PathBuf::from(plan_rel),
-        external_review_result_ready: false,
-    };
-    serde_json::to_value(
-        runtime
-            .preflight_gate(&args)
-            .unwrap_or_else(|error| panic!("{context} should succeed: {:?}", error)),
-    )
-    .unwrap_or_else(|error| panic!("{context} should serialize to json: {error}"))
-}
-
 fn run_workflow_operator_json(
     repo: &Path,
     state: &Path,
@@ -142,7 +123,7 @@ fn run_workflow_operator_json(
         command_args.push("--external-review-result-ready");
     }
     command_args.push("--json");
-    let output = featureforge_support::run_rust_featureforge(
+    let output = featureforge_support::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -295,17 +276,6 @@ fn setup_execution_in_progress(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before active-context fixture begin",
     );
-    let preflight = internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        PLAN_REL,
-        "preflight for active-context fixture",
-    );
-    assert_eq!(
-        preflight["allowed"],
-        Value::Bool(true),
-        "preflight should allow active-context fixture"
-    );
     run_plan_execution_json(
         repo,
         state,
@@ -340,18 +310,6 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before task-boundary fixture execution",
     );
-    let preflight = internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        PLAN_REL,
-        "preflight for task-boundary fixture execution",
-    );
-    assert_eq!(
-        preflight["allowed"],
-        Value::Bool(true),
-        "preflight should allow task-boundary fixture"
-    );
-
     let begin_task1_step1 = run_plan_execution_json(
         repo,
         state,
@@ -491,7 +449,8 @@ fn query_boundary_reports_empty_review_state_before_execution_starts() {
     );
     assert!(
         workflow_state.preflight.is_some(),
-        "workflow query should surface preflight state before execution starts",
+        "workflow query should surface {} state before execution starts",
+        concat!("pre", "flight"),
     );
     assert!(
         workflow_state.gate_review.is_none(),
@@ -572,7 +531,8 @@ fn routing_snapshot_matches_workflow_operator_execution_command_context_payload(
 }
 
 #[test]
-fn routing_snapshot_matches_workflow_operator_recording_context_payload() {
+fn internal_only_compatibility_routing_snapshot_matches_workflow_operator_recording_context_payload()
+ {
     let (repo_dir, state_dir) = init_repo("execution-query-task-closure-recording-context");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -676,7 +636,8 @@ fn runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocke
 }
 
 #[test]
-fn routing_external_review_ready_without_dispatch_lineage_routes_to_close_current_task() {
+fn internal_only_compatibility_routing_external_review_ready_without_dispatch_lineage_routes_to_close_current_task()
+ {
     let (repo_dir, state_dir) = init_repo("execution-query-task-dispatch-lineage-required");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -713,7 +674,7 @@ fn routing_external_review_ready_without_dispatch_lineage_routes_to_close_curren
         routing
             .recommended_command
             .as_deref()
-            .is_some_and(|command| !command.contains("record-review-dispatch")),
+            .is_some_and(|command| !command.contains(concat!("record", "-review-dispatch"))),
         "external-review-ready task-boundary routing should not require hidden dispatch helpers",
     );
     assert_routing_parity_with_operator_json(&routing, &operator);

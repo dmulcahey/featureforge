@@ -88,7 +88,7 @@ Do not reconstruct closure routing from memory or duplicate route tables in this
 - In `*_dispatch_required` lanes, request the review and keep rerouting through workflow/operator; do not expand the normal path into low-level dispatch-lineage management.
 - MUST NOT manually edit runtime-owned execution records.
 - MUST NOT manually edit `**Execution Note:**` lines to recover runtime state.
-- MUST NOT manually edit derived markdown artifacts or receipts.
+- MUST NOT manually edit derived markdown projection artifacts.
 - MUST NOT use the internal task-closure recording service boundary directly.
 - MUST use `close-current-task` for task closure.
 
@@ -202,7 +202,7 @@ Before dispatching any implementation subagent:
   - `review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically when reviewable dispatch lineage enters remediation and when remediation reopens execution work.
   - `cycle_break`: required when churn is detected. Runtime records it automatically when the same task hits three review-dispatch/reopen cycles in one run.
 - Cycle-break trigger: cap remediation churn at 3 cycles per task. On the third cycle, transition to `cycle_break` strategy automatically (no human replanning loopback).
-- Unit-review receipts and downstream final-review evidence must reference the checkpoint fingerprint from the runtime status for traceability.
+- Reviewers return summaries/results; the controller/runtime binds those results to authoritative state and runtime-owned review projections retain checkpoint fingerprints for traceability. Agents do not search for, repair, or depend on those projection files.
 - Surface and respect runtime strategy status from `featureforge plan execution status --plan ...`:
   - `strategy_state`
   - `strategy_checkpoint_kind`
