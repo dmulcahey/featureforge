@@ -53,7 +53,6 @@ enum WorkflowOperatorPhaseDetailSchema {
     BlockedRuntimeBug,
     ExecutionInProgress,
     ExecutionReentryRequired,
-    TaskReviewDispatchRequired,
     TaskReviewResultPending,
     TaskClosureRecordingReady,
     BranchClosureRecordingRequiredForReleaseReadiness,
@@ -98,8 +97,6 @@ enum WorkflowOperatorNextActionSchema {
     CloseCurrentTask,
     #[serde(rename = "continue execution")]
     ContinueExecution,
-    #[serde(rename = "request task review")]
-    RequestTaskReview,
     #[serde(rename = "request final review")]
     RequestFinalReview,
     #[serde(rename = "execution reentry required")]
@@ -1307,6 +1304,17 @@ fn build_context_from_routing(
         .as_ref()
         .map(|status| status.blocking_reason_codes.clone())
         .unwrap_or(blocking_reason_codes);
+    let mut operator_diagnostic_reason_codes = diagnostic_reason_codes;
+    if let Some(status) = execution_status.as_ref() {
+        for reason_code in &status.projection_diagnostics {
+            if !operator_diagnostic_reason_codes
+                .iter()
+                .any(|existing| existing == reason_code)
+            {
+                operator_diagnostic_reason_codes.push(reason_code.clone());
+            }
+        }
+    }
     if operator_phase_detail == "execution_reentry_required"
         && let Some(task_number) = operator_execution_command_context
             .as_ref()
@@ -1381,7 +1389,7 @@ fn build_context_from_routing(
         operator_semantic_workspace_tree_id,
         operator_raw_workspace_tree_id,
         reason_family,
-        diagnostic_reason_codes,
+        diagnostic_reason_codes: operator_diagnostic_reason_codes,
         task_review_dispatch_id,
         final_review_dispatch_id,
         finish_review_gate_pass_branch_closure_id,
@@ -1654,7 +1662,7 @@ fn task_boundary_reason_text(context: &OperatorContext) -> Option<String> {
     let blocking_task = context.operator_blocking_task?;
     let message = match context.operator_phase_detail.as_str() {
         "task_review_dispatch_required" => format!(
-            "Task {blocking_task} closure cannot be recorded/refreshed yet. Dispatch dedicated-independent review for Task {blocking_task} first."
+            "Task {blocking_task} closure reached a retired task-review dispatch lane. Rerun workflow/operator after repairing runtime routing; normal task closure must use close-current-task."
         ),
         "task_review_result_pending" => {
             if task_review_result_pending_requires_verification(context) {

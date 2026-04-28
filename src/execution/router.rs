@@ -8,7 +8,8 @@ use crate::execution::command_eligibility::{
 };
 use crate::execution::current_truth::{
     CurrentTruthSnapshot, RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
-    normalized_plan_qa_requirement, resolve_actionable_repair_follow_up,
+    normalized_plan_qa_requirement, public_task_boundary_decision,
+    resolve_actionable_repair_follow_up, task_boundary_projection_diagnostic_reason_code,
 };
 use crate::execution::follow_up::{
     follow_up_command_template, follow_up_from_phase_detail,
@@ -432,9 +433,8 @@ fn route_decision_from_runtime_state_with_inputs(
         let next_public_action =
             synthesize_next_public_action(recommended_command.as_deref(), &seed.phase_detail);
         let review_state_status = effective_route_review_state_status(status, &seed);
-        let next_action = seed.next_action;
         let blocking_reason_codes = merge_reason_codes(
-            seed.blocking_reason_codes.clone(),
+            public_route_blocking_reason_codes(status, &seed),
             compact_route_reason_codes(
                 status,
                 &seed.phase_detail,
@@ -443,6 +443,7 @@ fn route_decision_from_runtime_state_with_inputs(
                 None,
             ),
         );
+        let next_action = seed.next_action;
         let external_wait_state = external_wait_state_for_phase_detail(
             &seed.phase_detail,
             &blocking_reason_codes,
@@ -518,6 +519,38 @@ fn route_decision_from_runtime_state_with_inputs(
         };
     }
     route_decision_for_unroutable_runtime_state(status)
+}
+
+fn public_route_blocking_reason_codes(
+    status: &PlanExecutionStatus,
+    seed: &WorkflowRoutingDecision,
+) -> Vec<String> {
+    if seed.blocking_task.is_some()
+        && status.blocking_step.is_none()
+        && matches!(
+            seed.phase_detail.as_str(),
+            "task_closure_recording_ready"
+                | "task_review_result_pending"
+                | "execution_reentry_required"
+        )
+    {
+        return seed
+            .blocking_reason_codes
+            .iter()
+            .filter(|reason_code| {
+                !task_boundary_projection_diagnostic_reason_code(reason_code)
+                    && reason_code.as_str() != "task_review_dispatch_required"
+            })
+            .cloned()
+            .collect();
+    }
+    if status.blocking_task.is_some()
+        && status.blocking_step.is_none()
+        && seed.phase_detail == "task_closure_recording_ready"
+    {
+        return public_task_boundary_decision(status).public_reason_codes;
+    }
+    seed.blocking_reason_codes.clone()
 }
 
 fn prior_task_closure_progress_edge_required(status: &PlanExecutionStatus) -> bool {
@@ -1537,11 +1570,19 @@ fn project_routing_from_runtime_state(
     _external_review_result_ready: bool,
 ) -> ExecutionRoutingState {
     let status = runtime_state.status.clone();
-    let (reason_family, diagnostic_reason_codes) = late_stage_observability_for_phase(
+    let (reason_family, mut diagnostic_reason_codes) = late_stage_observability_for_phase(
         &route_decision.phase,
         runtime_state.gate_review.as_ref(),
         runtime_state.gate_finish.as_ref(),
     );
+    for reason_code in public_task_boundary_decision(&status).diagnostic_reason_codes {
+        if !diagnostic_reason_codes
+            .iter()
+            .any(|existing| existing == &reason_code)
+        {
+            diagnostic_reason_codes.push(reason_code);
+        }
+    }
     let mut blocking_scope = status.blocking_scope.clone();
     let mut blocking_task = status.blocking_task;
     let recording_context = match route_decision.phase_detail.as_str() {
@@ -1830,9 +1871,7 @@ fn synthesize_next_public_action(
         });
     }
     let command = match phase_detail {
-        "task_review_dispatch_required"
-        | "final_review_dispatch_required"
-        | "test_plan_refresh_required" => {
+        "final_review_dispatch_required" | "test_plan_refresh_required" => {
             "featureforge workflow operator --plan <approved-plan-path>"
         }
         _ => return None,
@@ -1932,9 +1971,7 @@ const GENERIC_WORKFLOW_OPERATOR_PREFIX: &str = "featureforge workflow operator -
 
 fn fallback_public_command_for_phase_detail(phase_detail: &str) -> Option<String> {
     match phase_detail {
-        "task_review_dispatch_required"
-        | "final_review_dispatch_required"
-        | "test_plan_refresh_required" => Some(String::from(
+        "final_review_dispatch_required" | "test_plan_refresh_required" => Some(String::from(
             "featureforge workflow operator --plan <approved-plan-path>",
         )),
         "execution_reentry_required" | "planning_reentry_required" => Some(String::from(
@@ -1997,13 +2034,10 @@ mod tests {
     }
 
     #[test]
-    fn omitted_dispatch_lanes_still_expose_next_public_action_and_blocker() {
-        let next_public_action =
-            synthesize_next_public_action(None, "task_review_dispatch_required")
-                .expect("dispatch-required lane should expose a next public action");
-        assert_eq!(
-            next_public_action.command,
-            "featureforge workflow operator --plan <approved-plan-path>"
+    fn task_review_dispatch_lane_does_not_expose_public_action_or_blocker_command() {
+        assert!(
+            synthesize_next_public_action(None, "task_review_dispatch_required").is_none(),
+            "task-review dispatch is no longer a public route"
         );
         let routing = ExecutionRoutingState {
             route_decision: None,
@@ -2037,7 +2071,7 @@ mod tests {
             finish_review_gate_pass_branch_closure_id: None,
             recording_context: None,
             execution_command_context: None,
-            next_action: String::from("request task review"),
+            next_action: String::from("runtime diagnostic required"),
             recommended_command: None,
             blocking_scope: Some(String::from("task")),
             blocking_task: Some(2),
@@ -2051,17 +2085,10 @@ mod tests {
             current_release_readiness_result: None,
             base_branch: None,
         };
-        let blockers = primary_blocker_for_route(
-            &routing,
-            &[],
-            "actionable_public_command",
-            Some(&next_public_action),
-        );
-        assert_eq!(blockers.len(), 1);
-        assert_eq!(blockers[0].scope_key, "task-2");
-        assert_eq!(
-            blockers[0].next_public_action.as_deref(),
-            Some("featureforge workflow operator --plan <approved-plan-path>")
+        let blockers = primary_blocker_for_route(&routing, &[], "actionable_public_command", None);
+        assert!(
+            blockers.is_empty(),
+            "legacy task-review dispatch lanes must not create public blockers: {blockers:?}"
         );
     }
 
@@ -2259,12 +2286,13 @@ mod tests {
             blocking_scope: Some(String::from("task")),
             external_wait_state: None,
             blocking_reason_codes: Vec::new(),
+            projection_diagnostics: Vec::new(),
             state_kind: String::from("actionable_public_command"),
             next_public_action: None,
             blockers: Vec::new(),
             semantic_workspace_tree_id: String::from("semantic_tree:authoritative"),
             raw_workspace_tree_id: Some(String::from("git_tree:debug")),
-            next_action: String::from("request task review"),
+            next_action: String::from("runtime diagnostic required"),
             recommended_command: Some(String::from(
                 "featureforge plan execution record-review-dispatch --plan docs/featureforge/plans/example.md --scope task --task 1",
             )),
@@ -2292,11 +2320,9 @@ mod tests {
             &status.phase_detail,
         );
         assert_eq!(recommended.as_deref(), None);
-        assert_eq!(
-            synthesize_next_public_action(recommended.as_deref(), &status.phase_detail)
-                .as_ref()
-                .map(|action| action.command.as_str()),
-            Some("featureforge workflow operator --plan <approved-plan-path>")
+        assert!(
+            synthesize_next_public_action(recommended.as_deref(), &status.phase_detail).is_none(),
+            "task-review dispatch is diagnostic-only and must not synthesize a public operator loop"
         );
     }
 

@@ -254,12 +254,10 @@ fn build_runtime_state_from_event_authority(
         task_review_dispatch_id,
         final_review_dispatch_authority,
     } = derived;
-    let preflight = if project_gate_checks && status.execution_started == "no" {
-        Some(if status.execution_run_id.is_some() {
-            GateState::default().finish()
-        } else {
-            preflight_from_context(context)
-        })
+    let preflight = if project_gate_checks && status.execution_run_id.is_none() {
+        Some(preflight_from_context(context))
+    } else if project_gate_checks && status.execution_started == "no" {
+        Some(GateState::default().finish())
     } else {
         None
     };

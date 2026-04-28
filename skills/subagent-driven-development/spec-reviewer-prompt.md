@@ -4,7 +4,7 @@ Use this template when dispatching a spec compliance reviewer sub-agent or custo
 
 **Purpose:** Verify implementer built what was requested (nothing more, nothing less)
 
-REVIEWER_RUNTIME_COMMANDS_ALLOWED: no
+FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no
 
 If you are running as a reviewer subagent, do not invoke FeatureForge skills, do not run `featureforge workflow` or `featureforge plan execution` commands, do not dispatch `code-reviewer` or `requesting-code-review`, and do not repair runtime state. Use only the context supplied by the caller plus read-only repo inspection. If required runtime context is missing, report a blocked review and name the missing context.
 

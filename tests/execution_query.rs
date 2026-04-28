@@ -111,7 +111,7 @@ fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &s
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
-fn internal_test_runtime_preflight_gate_json(
+fn internal_only_runtime_preflight_gate_json(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
@@ -295,7 +295,7 @@ fn setup_execution_in_progress(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before active-context fixture begin",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         PLAN_REL,
@@ -340,7 +340,7 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before task-boundary fixture execution",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         PLAN_REL,
@@ -577,7 +577,7 @@ fn routing_snapshot_matches_workflow_operator_recording_context_payload() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state);
-    let dispatch = featureforge_support::internal_test_runtime_review_dispatch_authority_json(
+    let dispatch = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
         &RecordReviewDispatchArgs {

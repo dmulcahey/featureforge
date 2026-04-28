@@ -2097,8 +2097,8 @@ fn run_plan_execution_json_real_cli(
     parse_json(&run(command, context), context)
 }
 
-fn internal_test_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
-    plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
+fn internal_only_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
+    plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -2109,13 +2109,13 @@ fn internal_test_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel
     .expect("internal preflight helper should succeed")
 }
 
-fn internal_test_runtime_finish_gate_json(
+fn internal_only_runtime_finish_gate_json(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
     external_review_result_ready: bool,
 ) -> Value {
-    plan_execution_direct_support::internal_test_runtime_finish_gate_json(
+    plan_execution_direct_support::internal_only_runtime_finish_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -2144,8 +2144,8 @@ fn internal_rebuild_evidence_args(
     }
 }
 
-fn internal_test_unit_rebuild_evidence_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
-    plan_execution_direct_support::internal_test_unit_rebuild_evidence_json(
+fn internal_only_unit_rebuild_evidence_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
+    plan_execution_direct_support::internal_only_unit_rebuild_evidence_json(
         repo,
         state,
         &internal_rebuild_evidence_args(plan_rel),
@@ -2153,13 +2153,13 @@ fn internal_test_unit_rebuild_evidence_json(repo: &Path, state: &Path, plan_rel:
     .expect("internal rebuild-evidence helper should succeed")
 }
 
-fn internal_test_unit_rebuild_evidence_failure_json(
+fn internal_only_unit_rebuild_evidence_failure_json(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
 ) -> Value {
     serde_json::from_str(
-        &plan_execution_direct_support::internal_test_unit_rebuild_evidence_json(
+        &plan_execution_direct_support::internal_only_unit_rebuild_evidence_json(
             repo,
             state,
             &internal_rebuild_evidence_args(plan_rel),
@@ -2203,7 +2203,7 @@ fn gate_finish_requires_final_review_artifact() {
         }),
     );
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
 
     assert_eq!(
         gate["allowed"], false,
@@ -2235,7 +2235,7 @@ fn rebuild_evidence_rejects_tampered_authoritative_final_review_projection_conte
     let review_path = write_code_review_artifact(repo, state, &base_branch);
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
-    let _ = internal_test_runtime_preflight_gate_json(repo, state, PLAN_REL);
+    let _ = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
 
     let branch = branch_name(repo);
     let repo_slug = repo_slug(repo);
@@ -2269,7 +2269,7 @@ fn rebuild_evidence_rejects_tampered_authoritative_final_review_projection_conte
         "# Code Review Result\n**tampered:** true\n",
     );
 
-    let failure = internal_test_unit_rebuild_evidence_failure_json(repo, state, PLAN_REL);
+    let failure = internal_only_unit_rebuild_evidence_failure_json(repo, state, PLAN_REL);
     assert_eq!(failure["error_class"], "StaleProvenance", "json: {failure}");
     assert!(
         failure["message"].as_str().is_some_and(|message| message.contains(
@@ -2315,7 +2315,7 @@ fn rebuild_evidence_regenerates_missing_authoritative_final_review_projection_fr
     let review_path = write_code_review_artifact(repo, state, &base_branch);
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
-    let _ = internal_test_runtime_preflight_gate_json(repo, state, PLAN_REL);
+    let _ = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
 
     let branch = branch_name(repo);
     let repo_slug = repo_slug(repo);
@@ -2353,14 +2353,14 @@ fn rebuild_evidence_regenerates_missing_authoritative_final_review_projection_fr
     fs::remove_file(&authoritative_review_path)
         .expect("missing authoritative fixture should allow deleting the authoritative final-review projection");
 
-    let gate_before_rebuild = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate_before_rebuild = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
     assert_eq!(
         gate_before_rebuild["allowed"],
         Value::Bool(true),
         "json: {gate_before_rebuild}"
     );
 
-    let rebuild = internal_test_unit_rebuild_evidence_json(repo, state, PLAN_REL);
+    let rebuild = internal_only_unit_rebuild_evidence_json(repo, state, PLAN_REL);
     assert_eq!(
         rebuild["counts"]["rebuilt"],
         Value::from(0),
@@ -2371,7 +2371,7 @@ fn rebuild_evidence_regenerates_missing_authoritative_final_review_projection_fr
         "missing authoritative fixture should restore a readable code-review projection artifact"
     );
 
-    let gate_after_rebuild = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate_after_rebuild = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
     assert_eq!(
         gate_after_rebuild["allowed"],
         Value::Bool(true),
@@ -2411,7 +2411,7 @@ fn rebuild_evidence_fails_closed_when_projection_refresh_hits_live_write_authori
     let review_path = write_code_review_artifact(repo, state, &base_branch);
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
-    let _ = internal_test_runtime_preflight_gate_json(repo, state, PLAN_REL);
+    let _ = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
 
     let branch = branch_name(repo);
     let repo_slug = repo_slug(repo);
@@ -2447,7 +2447,7 @@ fn rebuild_evidence_fails_closed_when_projection_refresh_hits_live_write_authori
         .expect("live write-authority fixture process should spawn");
     write_file(&lock_path, &format!("pid={}\n", holder.id()));
 
-    let failure = internal_test_unit_rebuild_evidence_failure_json(repo, state, PLAN_REL);
+    let failure = internal_only_unit_rebuild_evidence_failure_json(repo, state, PLAN_REL);
     let _ = holder.kill();
     let _ = holder.wait();
 
@@ -2491,7 +2491,7 @@ fn gate_finish_rejects_current_final_review_without_authoritative_fingerprint_bi
         Value::Null,
     );
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
 
     assert_eq!(gate["allowed"], false, "{}", pretty_json(&gate));
     assert_eq!(gate["failure_class"], "MalformedExecutionState");
@@ -2528,7 +2528,7 @@ fn gate_finish_rejects_current_final_review_without_strategy_checkpoint_binding(
         }),
     );
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
 
     assert_eq!(gate["allowed"], false, "{}", pretty_json(&gate));
     assert_eq!(gate["failure_class"], "MalformedExecutionState");
@@ -2557,7 +2557,7 @@ fn gate_finish_accepts_fresh_non_browser_review_chain() {
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
 
     assert_eq!(
         gate["allowed"],
@@ -2592,7 +2592,7 @@ fn gate_finish_accepts_review_when_only_receipt_provenance_text_is_mutated() {
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
 
     assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
@@ -2623,7 +2623,7 @@ fn gate_finish_accepts_review_when_receipt_reviewer_source_text_is_mutated() {
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
 
     assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
@@ -2658,7 +2658,7 @@ fn gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_missing() {
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
 
     assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
@@ -2682,7 +2682,7 @@ fn gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_unreadable(
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
 
     assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
@@ -2717,7 +2717,7 @@ fn gate_finish_accepts_review_when_receipt_deviation_verdict_text_is_mutated() {
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
 
     assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
@@ -2750,7 +2750,7 @@ fn gate_finish_accepts_review_when_runtime_records_topology_downgrade_but_author
     );
     write_matching_topology_downgrade_record(repo, state, &base_branch);
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
 
     assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
@@ -2785,7 +2785,7 @@ fn gate_finish_ignores_reason_code_deviation_without_matching_downgrade_record()
         }),
     );
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
     assert_eq!(
         gate["allowed"],
         true,
@@ -2882,7 +2882,7 @@ fn gate_finish_rejects_final_review_release_binding_mismatch() {
         );
     write_harness_state_payload(repo, state, &payload);
 
-    let gate_finish = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate_finish = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
     assert_eq!(gate_finish["allowed"], false, "json: {gate_finish}");
     assert!(
         gate_finish["reason_codes"]
@@ -2909,7 +2909,7 @@ fn missing_final_review_projection_regenerates_without_truth_mutation() {
     write_code_review_artifact(repo, state, &base_branch);
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
-    let _ = internal_test_runtime_preflight_gate_json(repo, state, PLAN_REL);
+    let _ = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
     let harness_state_path = harness_state_path(state, &repo_slug(repo), &branch_name(repo));
     let harness_before: Value = serde_json::from_str(
         &fs::read_to_string(&harness_state_path).expect("harness state should be readable"),
@@ -2934,7 +2934,7 @@ fn missing_final_review_projection_regenerates_without_truth_mutation() {
     fs::remove_file(&deleted_projection_path)
         .expect("projection-regeneration fixture should allow deleting the derived project projection artifact");
 
-    let rebuild = internal_test_unit_rebuild_evidence_json(repo, state, PLAN_REL);
+    let rebuild = internal_only_unit_rebuild_evidence_json(repo, state, PLAN_REL);
     assert_eq!(
         rebuild["counts"]["rebuilt"],
         Value::from(0),
@@ -2963,6 +2963,6 @@ fn missing_final_review_projection_regenerates_without_truth_mutation() {
         "projection regeneration must not mutate authoritative truth"
     );
 
-    let gate = internal_test_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
     assert_eq!(gate["allowed"], Value::Bool(true), "json: {gate}");
 }

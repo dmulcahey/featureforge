@@ -302,15 +302,15 @@ After saving the full plan:
   --plan docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md
 ```
 
-1. After the plan is written or updated, continue using the same repo-relative plan path in plan-fidelity-review and workflow/operator handoffs.
-
-2. Invoke `featureforge:plan-fidelity-review`.
-3. Do NOT invoke `featureforge:plan-eng-review` directly from `writing-plans`; `plan-fidelity-review` owns dedicated independent review plus runtime-owned receipt recording.
+1. Keep using the same repo-relative plan path in downstream review and workflow/operator handoffs.
+2. Invoke `featureforge:plan-eng-review` for the first engineering review pass.
+3. Do not invoke `featureforge:plan-fidelity-review` directly from `writing-plans`; plan-fidelity runs only after engineering-review edits are complete and `plan-eng-review` has set `**Last Reviewed By:** plan-eng-review` on the final draft.
 4. Keep this handoff fail-closed:
-   - if plan fidelity fails, return to `featureforge:writing-plans`
-   - if plan fidelity passes and the receipt records, continue to `featureforge:plan-eng-review`
+   - if engineering review finds plan issues, return to `featureforge:writing-plans` for plan repair
+   - if engineering review edits the draft, keep `**Workflow State:** Draft` and `**Last Reviewed By:** writing-plans` until all engineering-review issues are resolved
+   - when engineering review has no remaining edits, `featureforge:plan-eng-review` owns the handoff to `featureforge:plan-fidelity-review`
 
-**The terminal state is invoking `featureforge:plan-fidelity-review`.**
+**The terminal state is invoking `featureforge:plan-eng-review`.**
 
 ## Execution Handoff
 

@@ -531,6 +531,43 @@ fn workflow_status_refresh_json(repo: &Path, state_dir: &Path) -> Value {
     .expect("workflow route should serialize")
 }
 
+fn assert_no_plan_fidelity_receipt_file_created(repo: &Path, state_dir: &Path) {
+    fn visit(root: &Path, findings: &mut Vec<PathBuf>) {
+        if !root.exists() {
+            return;
+        }
+        let entries = fs::read_dir(root)
+            .unwrap_or_else(|error| panic!("should read `{}`: {error}", root.display()));
+        for entry in entries {
+            let entry = entry.expect("directory entry should be readable");
+            let path = entry.path();
+            if path.is_dir() {
+                visit(&path, findings);
+                continue;
+            }
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let looks_like_plan_fidelity_receipt = (file_name.contains("plan-fidelity")
+                || file_name.contains("plan_fidelity"))
+                && file_name.contains("receipt");
+            if looks_like_plan_fidelity_receipt {
+                findings.push(path);
+            }
+        }
+    }
+
+    let mut findings = Vec::new();
+    visit(repo, &mut findings);
+    visit(state_dir, &mut findings);
+    assert!(
+        findings.is_empty(),
+        "workflow route fixtures must not create runtime-owned plan-fidelity receipt files: {findings:?}"
+    );
+}
+
 fn public_harness_phases_from_spec() -> Vec<String> {
     fn parse_phases(
         spec: &str,
@@ -1185,7 +1222,7 @@ fn post_mutation_invariant_reuses_shared_checker_after_mutation_attempt() {
         &["status", "--plan", plan_rel],
         "post-mutation invariant baseline status",
     );
-    let preflight_json = internal_test_unit_plan_execution_preflight_json(
+    let preflight_json = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -1432,7 +1469,7 @@ fn remove_origin_remote(repo: &Path) {
 
 fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
     if let ["explain-review-state", "--plan", plan_rel] = args {
-        return internal_test_unit_explain_review_state_json(repo, state_dir, plan_rel, context);
+        return internal_only_unit_explain_review_state_json(repo, state_dir, plan_rel, context);
     }
     match plan_execution_direct_support::try_run_plan_execution_output_direct(
         repo, state_dir, args, context,
@@ -1450,7 +1487,7 @@ fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context
     parse_json(&run(command, context), context)
 }
 
-fn internal_test_unit_explain_review_state_json(
+fn internal_only_unit_explain_review_state_json(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1461,7 +1498,7 @@ fn internal_test_unit_explain_review_state_json(
         external_review_result_ready: false,
     };
     parse_direct_json_result(
-        plan_execution_direct_support::internal_test_unit_explain_review_state_json(
+        plan_execution_direct_support::internal_only_unit_explain_review_state_json(
             repo, state_dir, &args,
         ),
         context,
@@ -1483,7 +1520,7 @@ fn run_plan_execution_json_real_cli(
     parse_json(&run(command, context), context)
 }
 
-fn internal_test_unit_plan_execution_preflight_json(
+fn internal_only_unit_plan_execution_preflight_json(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1494,14 +1531,14 @@ fn internal_test_unit_plan_execution_preflight_json(
         external_review_result_ready: false,
     };
     parse_direct_json_result(
-        plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
+        plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
             repo, state_dir, &args,
         ),
         context,
     )
 }
 
-fn internal_test_unit_plan_execution_gate_review_json(
+fn internal_only_unit_plan_execution_gate_review_json(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1512,14 +1549,14 @@ fn internal_test_unit_plan_execution_gate_review_json(
         external_review_result_ready: false,
     };
     parse_direct_json_result(
-        plan_execution_direct_support::internal_test_runtime_review_gate_json(
+        plan_execution_direct_support::internal_only_runtime_review_gate_json(
             repo, state_dir, &args,
         ),
         context,
     )
 }
 
-fn internal_test_runtime_review_dispatch_authority_json(
+fn internal_only_runtime_review_dispatch_authority_json(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1533,14 +1570,14 @@ fn internal_test_runtime_review_dispatch_authority_json(
         task,
     };
     parse_direct_json_result(
-        plan_execution_direct_support::internal_test_runtime_review_dispatch_authority_json(
+        plan_execution_direct_support::internal_only_runtime_review_dispatch_authority_json(
             repo, state_dir, &args,
         ),
         context,
     )
 }
 
-fn internal_test_unit_reconcile_review_state_json(
+fn internal_only_unit_reconcile_review_state_json(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1551,14 +1588,14 @@ fn internal_test_unit_reconcile_review_state_json(
         external_review_result_ready: false,
     };
     parse_direct_json_result(
-        plan_execution_direct_support::internal_test_unit_reconcile_review_state_json(
+        plan_execution_direct_support::internal_only_unit_reconcile_review_state_json(
             repo, state_dir, &args,
         ),
         context,
     )
 }
 
-fn internal_test_unit_plan_execution_output(result: Result<Value, String>) -> Output {
+fn internal_only_unit_plan_execution_output(result: Result<Value, String>) -> Output {
     match result {
         Ok(value) => value_to_json_output(value),
         Err(error) => output_with_code(1, Vec::new(), error.into_bytes()),
@@ -2190,7 +2227,7 @@ fn complete_workflow_fixture_execution_with_qa_requirement_slow(
         &["status", "--plan", plan_rel],
         "plan execution status before workflow routing fixture",
     );
-    let preflight_json = internal_test_unit_plan_execution_preflight_json(
+    let preflight_json = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -2787,7 +2824,7 @@ fn setup_runtime_fs14_fs16_task_boundary_fixture(
         &["status", "--plan", plan_rel],
         "FS-14/FS-16 status before task-boundary fixture begin",
     );
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -2892,7 +2929,7 @@ fn setup_runtime_fs14_fs16_task_boundary_fixture(
     );
     let branch = current_branch_name(repo);
     update_authoritative_harness_state(repo, state, &branch, plan_rel, 1, &[]);
-    let dispatch = internal_test_runtime_review_dispatch_authority_json(
+    let dispatch = internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
         plan_rel,
@@ -3203,7 +3240,7 @@ fn write_dispatched_branch_review_artifact(
     publish_authoritative_release_truth(repo, state, plan_rel, &release_path, base_branch);
     let initial_review_path = write_branch_review_artifact(repo, state, plan_rel, base_branch);
     publish_authoritative_final_review_truth(repo, state, plan_rel, &initial_review_path);
-    let gate_review = internal_test_runtime_review_dispatch_authority_json(
+    let gate_review = internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
         plan_rel,
@@ -3521,6 +3558,7 @@ fn workflow_status_routes_writing_plans_draft_to_eng_review_without_fidelity_art
             .any(|code| code.contains("plan_fidelity")),
         "missing fidelity artifacts must not block engineering review start: {status_json}"
     );
+    assert_no_plan_fidelity_receipt_file_created(repo, state);
 }
 
 #[test]
@@ -3604,6 +3642,7 @@ fn workflow_status_keeps_engineering_review_owner_after_plan_edits_before_handof
             .any(|code| code == "stale_plan_fidelity_review_artifact"),
         "stale fidelity artifacts must not eject active engineering-review edits: {status_json}"
     );
+    assert_no_plan_fidelity_receipt_file_created(repo, state);
 }
 
 #[test]
@@ -3667,6 +3706,7 @@ fn workflow_status_routes_engineering_reviewed_draft_without_fidelity_artifact_t
             .as_bool()
             .expect("spec reference fidelity verification should be present")
     );
+    assert_no_plan_fidelity_receipt_file_created(repo, state);
 }
 
 #[test]
@@ -3941,6 +3981,54 @@ fn workflow_status_normalizes_dot_slash_plan_fidelity_review_targets() {
     let status_json = workflow_status_refresh_json(repo, state);
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
     assert_eq!(status_json["plan_fidelity_review"]["state"], "pass");
+}
+
+#[test]
+fn workflow_status_routes_current_pass_fidelity_artifact_back_to_engineering_approval() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-current-pass");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
+
+    fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
+    write_minimal_plan_fidelity_spec(repo, spec_path);
+    write_minimal_plan_fidelity_plan(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "plan-eng-review",
+        "Prepare the final draft plan for fidelity review",
+    );
+    write_plan_fidelity_review_artifact(
+        repo,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-current-pass.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-current-pass",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
+    );
+
+    let status_json = workflow_status_refresh_json(repo, state);
+
+    assert_eq!(status_json["status"], "plan_draft");
+    assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "pass");
+    assert!(
+        status_json["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .is_empty(),
+        "current pass fidelity artifact should not emit route-blocking reason codes: {status_json}"
+    );
+    assert_no_plan_fidelity_receipt_file_created(repo, state);
 }
 
 #[test]
@@ -5492,7 +5580,7 @@ fn canonical_workflow_gate_review_is_read_only_before_dispatch() {
         "workflow gate-review should not mutate strategy state"
     );
 
-    let gate_review_dispatch_json = internal_test_runtime_review_dispatch_authority_json(
+    let gate_review_dispatch_json = internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
         plan_rel,
@@ -6436,7 +6524,7 @@ fn plan_execution_status_and_explain_share_started_state_across_same_branch_work
         &["status", "--plan", plan_rel],
         "plan execution status before same-branch status/explain sharing fixture",
     );
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo_a,
         state,
         plan_rel,
@@ -6564,7 +6652,7 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
         &["status", "--plan", plan_rel],
         "plan execution status before same-branch repair/reconcile fixture",
     );
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo_a,
         state,
         plan_rel,
@@ -6614,7 +6702,7 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
         ],
     );
 
-    let reconcile_b = internal_test_unit_reconcile_review_state_json(
+    let reconcile_b = internal_only_unit_reconcile_review_state_json(
         &repo_b,
         state,
         plan_rel,
@@ -6799,7 +6887,7 @@ fn plan_execution_status_and_explain_do_not_share_started_state_from_detached_wo
         &["status", "--plan", plan_rel],
         "plan execution status before detached same-branch status/explain sharing fixture",
     );
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo_a,
         state,
         plan_rel,
@@ -6948,7 +7036,7 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_d
     );
     assert_eq!(status_b_before_begin["execution_started"], "no");
 
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo_a,
         state,
         plan_rel,
@@ -7084,7 +7172,7 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_diffe
     );
     assert_eq!(status_b_before_begin["execution_started"], "no");
 
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo_a,
         state,
         plan_rel,
@@ -7325,7 +7413,7 @@ fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flo
         &["status", "--plan", plan_rel],
         "plan execution status before started-execution routing fixture",
     );
-    let preflight_json = internal_test_unit_plan_execution_preflight_json(
+    let preflight_json = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -7484,7 +7572,7 @@ Task 1 -> Task 2
         &["status", "--plan", plan_rel],
         "status before task-boundary blocked workflow fixture execution",
     );
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -7585,7 +7673,7 @@ Task 1 -> Task 2
     );
     let branch = current_branch_name(repo);
     update_authoritative_harness_state(repo, state, &branch, plan_rel, 1, &[]);
-    internal_test_runtime_review_dispatch_authority_json(
+    internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
         plan_rel,
@@ -7593,8 +7681,8 @@ Task 1 -> Task 2
         Some(1),
         "record task-boundary review dispatch for blocked workflow fixture",
     );
-    let mismatch_dispatch_output = internal_test_unit_plan_execution_output(
-        plan_execution_direct_support::internal_test_runtime_review_dispatch_authority_json(
+    let mismatch_dispatch_output = internal_only_unit_plan_execution_output(
+        plan_execution_direct_support::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state,
             &RecordReviewDispatchArgs {
@@ -7799,7 +7887,7 @@ Task 1 -> Task 2
         &["status", "--plan", plan_rel],
         "status before begin for workflow dispatch-blocked fixture",
     );
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -8130,7 +8218,7 @@ fn canonical_workflow_routes_accepted_preflight_from_harness_state_even_when_wor
     write_file(&decision_path, "enabled\n");
     prepare_preflight_acceptance_workspace(repo, "workflow-phase-accepted-preflight-dirty");
 
-    let preflight_json = internal_test_unit_plan_execution_preflight_json(
+    let preflight_json = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -8216,7 +8304,7 @@ fn canonical_workflow_doctor_uses_accepted_preflight_truth_after_workspace_dirti
     enable_session_decision(state, session_key);
     prepare_preflight_acceptance_workspace(repo, "workflow-doctor-accepted-preflight-dirty");
 
-    let preflight_json = internal_test_unit_plan_execution_preflight_json(
+    let preflight_json = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -10565,7 +10653,7 @@ fn setup_runtime_fs11_next_action_fixture(repo: &Path, state: &Path, plan_rel: &
     prepare_preflight_acceptance_workspace(repo, "runtime-remediation-fs11-next-action");
     let branch = current_branch_name(repo);
 
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -10676,7 +10764,7 @@ fn setup_runtime_fs11_fs15_next_action_fixture(repo: &Path, state: &Path, plan_r
     prepare_preflight_acceptance_workspace(repo, "runtime-remediation-fs11-fs15-next-action");
     let branch = current_branch_name(repo);
 
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -11038,7 +11126,7 @@ fn runtime_remediation_fs11_prestart_operator_status_begin_share_first_unchecked
         Value::from("no"),
         "FS-11 prestart fixture should remain pre-start before begin parity checks"
     );
-    let preflight_before_begin = internal_test_unit_plan_execution_preflight_json(
+    let preflight_before_begin = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -12227,7 +12315,7 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-07-runtime-fs20-task-closure-freshness.md";
-    let task1_dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    let _task1_dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
     let review_summary_path = repo.join("docs/featureforge/execution-evidence/fs20-review.md");
     let verification_summary_path =
         repo.join("docs/featureforge/execution-evidence/fs20-verification.md");
@@ -12245,8 +12333,6 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &task1_dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -12554,7 +12640,7 @@ fn runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-05-runtime-fs16-workflow-runtime.md";
-    let dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    let _dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
 
     let review_summary_path =
         repo.join("docs/featureforge/execution-evidence/fs16-review-summary.md");
@@ -12577,8 +12663,6 @@ fn runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -12687,7 +12771,7 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-04-03-runtime-fs14-projection-refresh-route.md";
-    let task1_dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    let _task1_dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
 
     let task1_review_summary_path =
         repo.join("docs/featureforge/execution-evidence/fs14-projection-task1-review.md");
@@ -12710,8 +12794,6 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &task1_dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -12781,7 +12863,7 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
         ],
         "FS-14 projection-refresh fixture complete task 2 step 1",
     );
-    let dispatch_task2 = internal_test_runtime_review_dispatch_authority_json(
+    let dispatch_task2 = internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
         plan_rel,
@@ -12790,7 +12872,7 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
         "FS-14 projection-refresh fixture record task 2 dispatch",
     );
     assert_eq!(dispatch_task2["allowed"], Value::Bool(true));
-    let task2_dispatch_id = dispatch_task2["dispatch_id"]
+    let _task2_dispatch_id = dispatch_task2["dispatch_id"]
         .as_str()
         .expect("FS-14 projection-refresh fixture task 2 dispatch should expose id")
         .to_owned();
@@ -12815,8 +12897,6 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
             plan_rel,
             "--task",
             "2",
-            "--dispatch-id",
-            &task2_dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -13499,7 +13579,7 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
         "FS-13 operator must not surface Task 1 Step 1 solely from raw markdown when authoritative current_open_step_state is absent: {operator_without_authoritative_open_step:?}",
     );
 
-    let preflight = internal_test_unit_plan_execution_preflight_json(
+    let preflight = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -13526,7 +13606,7 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
         &[("current_open_step_state", Value::Null)],
     );
 
-    let gate_review = internal_test_unit_plan_execution_gate_review_json(
+    let gate_review = internal_only_unit_plan_execution_gate_review_json(
         repo,
         state,
         plan_rel,
@@ -13546,7 +13626,7 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
     fs::remove_file(&authoritative_state_path).expect(
         "FS-13 hidden-gate missing-state preflight setup should remove authoritative state",
     );
-    let preflight_missing_state = internal_test_unit_plan_execution_preflight_json(
+    let preflight_missing_state = internal_only_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -13570,7 +13650,7 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
             "FS-13 hidden-gate missing-state gate-review setup should only tolerate an already-missing authoritative state",
         );
     }
-    let gate_review_missing_state = internal_test_unit_plan_execution_gate_review_json(
+    let gate_review_missing_state = internal_only_unit_plan_execution_gate_review_json(
         repo,
         state,
         plan_rel,
@@ -13605,8 +13685,8 @@ fn runtime_remediation_fs13_hidden_gates_fail_closed_on_malformed_authoritative_
 
     for (output, context) in [
         (
-            internal_test_unit_plan_execution_output(
-                plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
+            internal_only_unit_plan_execution_output(
+                plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
                     repo,
                     state,
                     &PlanExecutionStatusArgs {
@@ -13618,8 +13698,8 @@ fn runtime_remediation_fs13_hidden_gates_fail_closed_on_malformed_authoritative_
             "FS-13 malformed authoritative harness state should fail closed in hidden preflight",
         ),
         (
-            internal_test_unit_plan_execution_output(
-                plan_execution_direct_support::internal_test_runtime_review_gate_json(
+            internal_only_unit_plan_execution_output(
+                plan_execution_direct_support::internal_only_runtime_review_gate_json(
                     repo,
                     state,
                     &PlanExecutionStatusArgs {
@@ -13827,8 +13907,8 @@ fn runtime_remediation_fs13_status_and_hidden_gates_fail_closed_on_malformed_aut
             "FS-13 malformed authoritative current_open_step_state status should fail closed",
         ),
         (
-            internal_test_unit_plan_execution_output(
-                plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
+            internal_only_unit_plan_execution_output(
+                plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
                     repo,
                     state,
                     &PlanExecutionStatusArgs {
@@ -13840,8 +13920,8 @@ fn runtime_remediation_fs13_status_and_hidden_gates_fail_closed_on_malformed_aut
             "FS-13 malformed authoritative current_open_step_state preflight should fail closed",
         ),
         (
-            internal_test_unit_plan_execution_output(
-                plan_execution_direct_support::internal_test_runtime_review_gate_json(
+            internal_only_unit_plan_execution_output(
+                plan_execution_direct_support::internal_only_runtime_review_gate_json(
                     repo,
                     state,
                     &PlanExecutionStatusArgs {

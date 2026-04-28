@@ -8,8 +8,18 @@ pub struct WorkflowCli {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkflowCommand {
+    #[command(
+        about = "Workflow status: public workflow routing without execution-only operator gates."
+    )]
+    Status(StatusArgs),
     #[command(about = "Workflow operator: the normal public routing authority.")]
     Operator(OperatorArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct StatusArgs {
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Args)]

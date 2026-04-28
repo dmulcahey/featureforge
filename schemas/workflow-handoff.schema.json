@@ -295,7 +295,6 @@
         "finish branch",
         "close current task",
         "continue execution",
-        "request task review",
         "request final review",
         "execution reentry required",
         "hand off",
@@ -392,7 +391,6 @@
         "release_readiness_recording_ready",
         "runtime_reconcile_required",
         "task_closure_recording_ready",
-        "task_review_dispatch_required",
         "task_review_result_pending",
         "test_plan_refresh_required"
       ],
@@ -726,6 +724,12 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "projection_diagnostics": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "projection_mode": {
           "type": "string"

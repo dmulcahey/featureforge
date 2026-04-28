@@ -60,7 +60,7 @@ For each task, enforce this exact order before dispatching the next task:
 5. After review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`.
 6. Task `N+1` may begin only after Task `N` has a current positive task-closure record; dedicated-independent review loops and verification are required inputs to `close-current-task` and are not separate begin-time authority after closure is current.
 7. Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.
-8. If workflow/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep routing through workflow/operator plus the intent-level commands; do not expand the normal closure loop into low-level dispatch-lineage management.
+8. Workflow/operator must not report `task_review_dispatch_required` for normal task-boundary closure; task closure routes through `close-current-task`. If workflow/operator reports `final_review_dispatch_required`, keep routing through workflow/operator plus intent-level commands and do not expand the loop into low-level dispatch-lineage management.
 9. No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.
 
 ### Reviewed-Closure Command Matrix

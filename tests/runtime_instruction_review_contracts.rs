@@ -100,11 +100,23 @@ fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
-        "Dedicated Reviewer Receipt Contract",
+        "Structured Review Result Metadata",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
-        "include structured receipt-ready metadata in your response",
+        "review-result metadata for the controller to bind to runtime-owned state",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "Do not create, repair, search for, or reference runtime receipt files",
+    );
+    assert_file_does_not_contain(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "receipt-ready metadata",
+    );
+    assert_file_does_not_contain(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "Dedicated Reviewer Receipt Contract",
     );
 }
 
@@ -123,7 +135,11 @@ fn reviewer_prompts_are_non_recursive_and_runtime_command_free() {
     ];
 
     for path in reviewer_paths {
-        assert_file_contains(path.clone(), "REVIEWER_RUNTIME_COMMANDS_ALLOWED: no");
+        assert_file_contains(
+            path.clone(),
+            "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no",
+        );
+        assert_file_does_not_contain(path.clone(), "REVIEWER_RUNTIME_COMMANDS_ALLOWED: no");
         assert_file_contains_ci(path.clone(), "do not invoke FeatureForge skills");
         assert_file_contains_ci(
             path.clone(),
@@ -143,6 +159,10 @@ fn reviewer_prompts_are_non_recursive_and_runtime_command_free() {
         "The controller owns any FeatureForge runtime queries before dispatch.",
     );
     assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no",
+    );
+    assert_file_does_not_contain(
         root.join("skills/requesting-code-review/SKILL.md"),
         "REVIEWER_RUNTIME_COMMANDS_ALLOWED: no",
     );

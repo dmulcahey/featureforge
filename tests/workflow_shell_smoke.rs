@@ -604,7 +604,7 @@ fn close_two_task_fixture_task_1(repo: &Path, state_dir: &Path, plan_rel: &str) 
         &["status", "--plan", plan_rel],
         "status before two-task shell-smoke fixture preflight",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state_dir,
         plan_rel,
@@ -884,7 +884,7 @@ fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context
     if let ["explain-review-state", "--plan", plan_rel, rest @ ..] = args {
         let external_review_result_ready = rest == ["--external-review-result-ready"];
         if rest.is_empty() || external_review_result_ready {
-            return featureforge_support::internal_test_unit_explain_review_state_json(
+            return featureforge_support::internal_only_unit_explain_review_state_json(
                 repo,
                 state_dir,
                 &StatusArgs {
@@ -917,7 +917,7 @@ fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
-fn internal_test_plan_execution_fixture_json(
+fn internal_only_plan_execution_fixture_json(
     repo: &Path,
     state_dir: &Path,
     args: &[&str],
@@ -925,31 +925,31 @@ fn internal_test_plan_execution_fixture_json(
 ) -> Value {
     match args {
         ["preflight", "--plan", plan_rel] => {
-            internal_test_runtime_preflight_gate_json(repo, state_dir, plan_rel, context)
+            internal_only_runtime_preflight_gate_json(repo, state_dir, plan_rel, context)
         }
         ["gate-review", "--plan", plan_rel] => {
-            internal_test_runtime_review_gate_json(repo, state_dir, plan_rel, false, context)
+            internal_only_runtime_review_gate_json(repo, state_dir, plan_rel, false, context)
         }
         [
             "gate-review",
             "--plan",
             plan_rel,
             "--external-review-result-ready",
-        ] => internal_test_runtime_review_gate_json(repo, state_dir, plan_rel, true, context),
+        ] => internal_only_runtime_review_gate_json(repo, state_dir, plan_rel, true, context),
         ["gate-finish", "--plan", plan_rel] => {
-            internal_test_runtime_finish_gate_json(repo, state_dir, plan_rel, false, context)
+            internal_only_runtime_finish_gate_json(repo, state_dir, plan_rel, false, context)
         }
         [
             "gate-finish",
             "--plan",
             plan_rel,
             "--external-review-result-ready",
-        ] => internal_test_runtime_finish_gate_json(repo, state_dir, plan_rel, true, context),
+        ] => internal_only_runtime_finish_gate_json(repo, state_dir, plan_rel, true, context),
         ["record-branch-closure", "--plan", plan_rel] => {
-            internal_test_unit_record_branch_closure_json(repo, state_dir, plan_rel, context)
+            internal_only_unit_record_branch_closure_json(repo, state_dir, plan_rel, context)
         }
         ["internal", "reconcile-review-state", "--plan", plan_rel] => {
-            internal_test_unit_reconcile_review_state_json(repo, state_dir, plan_rel, context)
+            internal_only_unit_reconcile_review_state_json(repo, state_dir, plan_rel, context)
         }
         [
             "record-review-dispatch",
@@ -970,7 +970,7 @@ fn internal_test_plan_execution_fixture_json(
             let task = task.parse::<u32>().unwrap_or_else(|error| {
                 panic!("{context} should use a valid task number, got {task:?}: {error}")
             });
-            internal_test_runtime_review_dispatch_authority_json(
+            internal_only_runtime_review_dispatch_authority_json(
                 repo,
                 state_dir,
                 plan_rel,
@@ -993,7 +993,7 @@ fn internal_test_plan_execution_fixture_json(
                     panic!("{context} should use a supported review-dispatch scope, got {other:?}")
                 }
             };
-            internal_test_runtime_review_dispatch_authority_json(
+            internal_only_runtime_review_dispatch_authority_json(
                 repo, state_dir, plan_rel, scope, None, context,
             )
         }
@@ -1015,7 +1015,7 @@ fn internal_test_plan_execution_fixture_json(
                     "{context} should use a supported release-readiness result, got {other:?}"
                 ),
             };
-            internal_test_unit_record_release_readiness_json(
+            internal_only_unit_record_release_readiness_json(
                 repo,
                 state_dir,
                 plan_rel,
@@ -1049,7 +1049,7 @@ fn internal_test_plan_execution_fixture_json(
                     panic!("{context} should use a supported final-review result, got {other:?}")
                 }
             };
-            internal_test_unit_record_final_review_json(
+            internal_only_unit_record_final_review_json(
                 repo,
                 state_dir,
                 &record_final_review_args(
@@ -1078,7 +1078,7 @@ fn internal_test_plan_execution_fixture_json(
                 "fail" => ReviewOutcomeArg::Fail,
                 other => panic!("{context} should use a supported QA result, got {other:?}"),
             };
-            internal_test_unit_record_qa_json(
+            internal_only_unit_record_qa_json(
                 repo,
                 state_dir,
                 plan_rel,
@@ -1117,7 +1117,7 @@ fn run_plan_execution_failure_json(
         let task = task.parse::<u32>().unwrap_or_else(|error| {
             panic!("{context} should use a valid task number, got {task:?}: {error}")
         });
-        let failure = featureforge_support::internal_test_runtime_review_dispatch_authority_json(
+        let failure = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state_dir,
             &record_review_dispatch_args(plan_rel, scope, Some(task)),
@@ -1141,7 +1141,7 @@ fn run_plan_execution_failure_json(
                 panic!("{context} should use a supported review-dispatch scope, got {other:?}")
             }
         };
-        let failure = featureforge_support::internal_test_runtime_review_dispatch_authority_json(
+        let failure = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state_dir,
             &record_review_dispatch_args(plan_rel, scope, None),
@@ -1288,14 +1288,14 @@ fn record_qa_args(plan_rel: &str, result: ReviewOutcomeArg, summary_file: &Path)
     }
 }
 
-fn internal_test_runtime_preflight_gate_json(
+fn internal_only_runtime_preflight_gate_json(
     repo: &Path,
     state_dir: &Path,
     plan_rel: &str,
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_test_runtime_preflight_gate_json(
+        featureforge_support::internal_only_runtime_preflight_gate_json(
             repo,
             state_dir,
             &status_args(plan_rel),
@@ -1304,7 +1304,7 @@ fn internal_test_runtime_preflight_gate_json(
     )
 }
 
-fn internal_test_runtime_review_gate_json(
+fn internal_only_runtime_review_gate_json(
     repo: &Path,
     state_dir: &Path,
     plan_rel: &str,
@@ -1317,12 +1317,12 @@ fn internal_test_runtime_review_gate_json(
         status_args(plan_rel)
     };
     expect_internal_plan_execution_json(
-        featureforge_support::internal_test_runtime_review_gate_json(repo, state_dir, &args),
+        featureforge_support::internal_only_runtime_review_gate_json(repo, state_dir, &args),
         context,
     )
 }
 
-fn internal_test_runtime_finish_gate_json(
+fn internal_only_runtime_finish_gate_json(
     repo: &Path,
     state_dir: &Path,
     plan_rel: &str,
@@ -1335,12 +1335,12 @@ fn internal_test_runtime_finish_gate_json(
         status_args(plan_rel)
     };
     expect_internal_plan_execution_json(
-        featureforge_support::internal_test_runtime_finish_gate_json(repo, state_dir, &args),
+        featureforge_support::internal_only_runtime_finish_gate_json(repo, state_dir, &args),
         context,
     )
 }
 
-fn internal_test_runtime_review_dispatch_authority_json(
+fn internal_only_runtime_review_dispatch_authority_json(
     repo: &Path,
     state_dir: &Path,
     plan_rel: &str,
@@ -1349,7 +1349,7 @@ fn internal_test_runtime_review_dispatch_authority_json(
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_test_runtime_review_dispatch_authority_json(
+        featureforge_support::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state_dir,
             &record_review_dispatch_args(plan_rel, scope, task),
@@ -1358,14 +1358,14 @@ fn internal_test_runtime_review_dispatch_authority_json(
     )
 }
 
-fn internal_test_unit_record_branch_closure_json(
+fn internal_only_unit_record_branch_closure_json(
     repo: &Path,
     state_dir: &Path,
     plan_rel: &str,
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_test_unit_record_branch_closure_json(
+        featureforge_support::internal_only_unit_record_branch_closure_json(
             repo,
             state_dir,
             &record_branch_closure_args(plan_rel),
@@ -1374,7 +1374,7 @@ fn internal_test_unit_record_branch_closure_json(
     )
 }
 
-fn internal_test_unit_record_release_readiness_json(
+fn internal_only_unit_record_release_readiness_json(
     repo: &Path,
     state_dir: &Path,
     plan_rel: &str,
@@ -1384,7 +1384,7 @@ fn internal_test_unit_record_release_readiness_json(
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_test_unit_record_release_readiness_json(
+        featureforge_support::internal_only_unit_record_release_readiness_json(
             repo,
             state_dir,
             &record_release_readiness_args(plan_rel, branch_closure_id, result, summary_file),
@@ -1393,19 +1393,19 @@ fn internal_test_unit_record_release_readiness_json(
     )
 }
 
-fn internal_test_unit_record_final_review_json(
+fn internal_only_unit_record_final_review_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordFinalReviewArgs,
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_test_unit_record_final_review_json(repo, state_dir, args),
+        featureforge_support::internal_only_unit_record_final_review_json(repo, state_dir, args),
         context,
     )
 }
 
-fn internal_test_unit_record_qa_json(
+fn internal_only_unit_record_qa_json(
     repo: &Path,
     state_dir: &Path,
     plan_rel: &str,
@@ -1414,7 +1414,7 @@ fn internal_test_unit_record_qa_json(
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_test_unit_record_qa_json(
+        featureforge_support::internal_only_unit_record_qa_json(
             repo,
             state_dir,
             &record_qa_args(plan_rel, result, summary_file),
@@ -1423,14 +1423,14 @@ fn internal_test_unit_record_qa_json(
     )
 }
 
-fn internal_test_unit_reconcile_review_state_json(
+fn internal_only_unit_reconcile_review_state_json(
     repo: &Path,
     state_dir: &Path,
     plan_rel: &str,
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_test_unit_reconcile_review_state_json(
+        featureforge_support::internal_only_unit_reconcile_review_state_json(
             repo,
             state_dir,
             &status_args(plan_rel),
@@ -1548,46 +1548,6 @@ fn plan_execution_close_current_task_relative_summary_paths_preserve_real_cli_se
     setup_task_boundary_blocked_case(repo, direct_state, plan_rel, "main");
     setup_task_boundary_blocked_case(repo, real_state, plan_rel, "main");
 
-    let dispatch_direct = internal_test_plan_execution_fixture_json(
-        repo,
-        direct_state,
-        &[
-            "record-review-dispatch",
-            "--plan",
-            plan_rel,
-            "--scope",
-            "task",
-            "--task",
-            "1",
-        ],
-        "direct record-review-dispatch for close-current-task relative summary parity",
-    );
-    let dispatch_real = internal_test_plan_execution_fixture_json(
-        repo,
-        real_state,
-        &[
-            "record-review-dispatch",
-            "--plan",
-            plan_rel,
-            "--scope",
-            "task",
-            "--task",
-            "1",
-        ],
-        "real-cli record-review-dispatch for close-current-task relative summary parity",
-    );
-    assert_eq!(dispatch_direct["allowed"], Value::Bool(true));
-    assert_eq!(dispatch_real["allowed"], Value::Bool(true));
-
-    let dispatch_id_direct = dispatch_direct["dispatch_id"]
-        .as_str()
-        .expect("direct dispatch should expose dispatch id")
-        .to_owned();
-    let dispatch_id_real = dispatch_real["dispatch_id"]
-        .as_str()
-        .expect("real-cli dispatch should expose dispatch id")
-        .to_owned();
-
     let review_summary_rel = "task-1-relative-review-summary.md";
     let verification_summary_rel = "task-1-relative-verification-summary.md";
     write_file(
@@ -1610,8 +1570,6 @@ fn plan_execution_close_current_task_relative_summary_paths_preserve_real_cli_se
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id_direct,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -1632,8 +1590,6 @@ fn plan_execution_close_current_task_relative_summary_paths_preserve_real_cli_se
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id_real,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -1673,8 +1629,6 @@ fn plan_execution_close_current_task_relative_summary_paths_preserve_real_cli_se
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id_direct,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -1695,8 +1649,6 @@ fn plan_execution_close_current_task_relative_summary_paths_preserve_real_cli_se
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id_real,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -2414,7 +2366,7 @@ fn complete_workflow_fixture_execution_with_qa_requirement_slow(
         &["status", "--plan", plan_rel],
         "plan execution status for shell-smoke parity fixture",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state_dir,
         plan_rel,
@@ -2496,7 +2448,7 @@ fn normal_execution_commands_do_not_dirty_tracked_projection_files() {
         &["status", "--plan", plan_rel],
         "plan execution status before no-churn begin",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         plan_rel,
@@ -2666,7 +2618,7 @@ fn normal_execution_commands_do_not_dirty_tracked_projection_files() {
     write_branch_test_plan_artifact(late_repo, late_state, plan_rel, "no");
     write_branch_release_artifact(late_repo, late_state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(late_repo, late_state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         late_repo,
         late_state,
         &[
@@ -2782,7 +2734,7 @@ fn materialize_projections_default_export_does_not_change_runtime_truth_or_appro
         &["status", "--plan", plan_rel],
         "plan execution status before explicit materialization fixture",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         plan_rel,
@@ -3054,7 +3006,7 @@ fn tampered_state_dir_projection_is_not_materialized_as_current() {
         &["status", "--plan", plan_rel],
         "status before tampered state-dir projection fixture",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         plan_rel,
@@ -3170,7 +3122,7 @@ fn deleting_tracked_projection_files_does_not_change_routing() {
         &["status", "--plan", plan_rel],
         "status before tracked projection deletion fixture",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         plan_rel,
@@ -4204,7 +4156,7 @@ fn write_dispatched_branch_review_artifact(
         "tester-{safe_branch}-code-review-20260324-121000.md"
     ));
     publish_authoritative_final_review_truth(repo, state_dir, &initial_review_path);
-    let gate_review = internal_test_plan_execution_fixture_json(
+    let gate_review = internal_only_plan_execution_fixture_json(
         repo,
         state_dir,
         &[
@@ -4297,10 +4249,10 @@ fn workflow_help_outside_repo_mentions_the_public_surfaces() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage: featureforge workflow <COMMAND>"));
     assert!(stdout.contains("Commands:"));
+    assert!(stdout.contains("status"));
     assert!(stdout.contains("operator"));
     assert!(stdout.contains("help"));
     for hidden in [
-        "status",
         "plan-fidelity",
         "resolve",
         "expect",
@@ -4473,7 +4425,7 @@ fn workflow_operator_routes_active_execution_to_exact_step_command() {
         &["status", "--plan", plan_rel],
         "status for workflow operator active execution routing",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         plan_rel,
@@ -4641,7 +4593,7 @@ fn workflow_operator_routes_blocked_execution_to_resume_same_step() {
         &["status", "--plan", plan_rel],
         "status for workflow operator blocked execution routing",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         plan_rel,
@@ -5862,7 +5814,7 @@ fn workflow_doctor_accepts_plan_and_external_review_ready_for_task_closure_recor
     let state = state_dir.path();
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -5922,7 +5874,7 @@ fn workflow_doctor_accepts_plan_and_external_review_ready_for_final_review_recor
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -5996,7 +5948,7 @@ fn plan_execution_record_review_dispatch_prefers_task_boundary_target_over_inter
     );
     write_file(&plan_path, &interrupted_plan);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -6083,6 +6035,20 @@ fn workflow_operator_routes_closure_baseline_candidate_when_clean_execution_has_
         "task_closure_recording_ready"
     );
     assert_eq!(operator_json["next_action"], "close current task");
+    assert_ne!(
+        operator_json["phase_detail"],
+        "task_review_dispatch_required"
+    );
+    assert!(
+        operator_json["blocking_reason_codes"]
+            .as_array()
+            .is_none_or(|codes| {
+                !codes
+                    .iter()
+                    .any(|code| code.as_str() == Some("prior_task_review_dispatch_stale"))
+            }),
+        "stale dispatch lineage must not be published as a public blocker, got {operator_json}"
+    );
     assert!(
         operator_json["blocking_reason_codes"]
             .as_array()
@@ -6223,7 +6189,7 @@ fn plan_execution_gate_review_records_finish_review_gate_pass_checkpoint() {
         )],
     );
 
-    let gate_review = internal_test_runtime_review_gate_json(
+    let gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -6264,7 +6230,7 @@ fn plan_execution_gate_review_records_finish_checkpoint_from_authoritative_curre
         ],
     );
 
-    let gate_review = internal_test_runtime_review_gate_json(
+    let gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -6328,7 +6294,7 @@ fn plan_execution_gate_review_blocks_when_finish_checkpoint_is_already_current()
         ],
     );
 
-    let gate_review = internal_test_runtime_review_gate_json(
+    let gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -6353,7 +6319,7 @@ fn plan_execution_gate_review_blocks_when_finish_checkpoint_is_already_current()
         Value::from("branch-release-closure")
     );
 
-    let gate_review_real_cli = internal_test_runtime_review_gate_json(
+    let gate_review_real_cli = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -6409,7 +6375,7 @@ fn workflow_operator_waits_for_task_review_result_after_dispatch() {
     let state = state_dir.path();
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -6468,7 +6434,7 @@ fn workflow_operator_routes_task_review_result_ready_to_close_current_task() {
     let state = state_dir.path();
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -6539,7 +6505,7 @@ fn plan_execution_record_review_dispatch_exposes_dispatch_id() {
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
 
-    let dispatch_json = internal_test_plan_execution_fixture_json(
+    let dispatch_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -6559,7 +6525,7 @@ fn plan_execution_record_review_dispatch_exposes_dispatch_id() {
     assert_eq!(dispatch_json["scope"], "task");
     assert!(dispatch_json["dispatch_id"].as_str().is_some());
 
-    let rerun_json = internal_test_plan_execution_fixture_json(
+    let rerun_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -6577,7 +6543,7 @@ fn plan_execution_record_review_dispatch_exposes_dispatch_id() {
     assert_eq!(rerun_json["action"], "already_current");
     assert_eq!(rerun_json["dispatch_id"], dispatch_json["dispatch_id"]);
 
-    let rerun_json_real_cli = internal_test_plan_execution_fixture_json(
+    let rerun_json_real_cli = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -6601,7 +6567,7 @@ fn plan_execution_close_current_task_records_task_closure() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         plan_rel,
@@ -6690,8 +6656,6 @@ fn plan_execution_close_current_task_records_task_closure() {
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -6736,8 +6700,6 @@ fn plan_execution_close_current_task_records_task_closure() {
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -6802,8 +6764,6 @@ fn plan_execution_close_current_task_records_task_closure() {
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -6857,8 +6817,6 @@ fn plan_execution_close_current_task_records_task_closure() {
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -6919,8 +6877,6 @@ fn plan_execution_close_current_task_records_task_closure() {
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -6950,7 +6906,7 @@ fn plan_execution_close_current_task_stale_dispatch_validation_happens_before_su
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -6964,7 +6920,7 @@ fn plan_execution_close_current_task_stale_dispatch_validation_happens_before_su
         ],
         "plan execution task review dispatch for close-current-task summary ordering fixture",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("summary ordering fixture should expose dispatch id")
         .to_owned();
@@ -6984,8 +6940,6 @@ fn plan_execution_close_current_task_stale_dispatch_validation_happens_before_su
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -7016,7 +6970,7 @@ fn plan_execution_close_current_task_requires_fresh_reviewed_state_after_dispatc
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -7037,7 +6991,7 @@ fn plan_execution_close_current_task_requires_fresh_reviewed_state_after_dispatc
             .expect("stale close-current-task fixture authoritative state should read"),
     )
     .expect("stale close-current-task fixture authoritative state should remain valid json");
-    let dispatch_id =
+    let _dispatch_id =
         authoritative_state["strategy_review_dispatch_lineage"]["task-1"]["dispatch_id"]
             .as_str()
             .expect("stale close-current-task fixture should expose dispatch_id")
@@ -7066,8 +7020,6 @@ fn plan_execution_close_current_task_requires_fresh_reviewed_state_after_dispatc
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -7095,7 +7047,7 @@ fn workflow_operator_routes_stale_task_review_dispatch_to_repair_review_state() 
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -7145,7 +7097,7 @@ fn workflow_operator_routes_stale_task_review_dispatch_to_repair_review_state() 
         "stale dispatch task-boundary routing should now surface close-current-task, got {operator_json}"
     );
 
-    let gate_review = internal_test_plan_execution_fixture_json(
+    let gate_review = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -7162,7 +7114,7 @@ fn workflow_operator_routes_stale_task_review_dispatch_to_repair_review_state() 
         "gate-review should reuse the shared router command for stale dispatch repair, got {gate_review}"
     );
 
-    let gate_finish = internal_test_plan_execution_fixture_json(
+    let gate_finish = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -7485,7 +7437,7 @@ fn plan_execution_close_current_task_requires_dispatch_reviewed_state_binding() 
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -7499,7 +7451,7 @@ fn plan_execution_close_current_task_requires_dispatch_reviewed_state_binding() 
         ],
         "plan execution task review dispatch for missing reviewed-state binding fixture",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("missing reviewed-state binding fixture should expose dispatch id")
         .to_owned();
@@ -7534,8 +7486,6 @@ fn plan_execution_close_current_task_requires_dispatch_reviewed_state_binding() 
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -7560,7 +7510,7 @@ fn plan_execution_close_current_task_records_failed_task_outcomes() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -7598,8 +7548,6 @@ fn plan_execution_close_current_task_records_failed_task_outcomes() {
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -7675,7 +7623,7 @@ fn plan_execution_close_current_task_records_failed_review_outcomes() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -7708,8 +7656,6 @@ fn plan_execution_close_current_task_records_failed_review_outcomes() {
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -7777,8 +7723,6 @@ fn plan_execution_close_current_task_records_failed_review_outcomes() {
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -7808,8 +7752,6 @@ fn plan_execution_close_current_task_records_failed_review_outcomes() {
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -7838,7 +7780,7 @@ fn plan_execution_close_current_task_records_failed_review_with_passing_verifica
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -7877,8 +7819,6 @@ fn plan_execution_close_current_task_records_failed_review_with_passing_verifica
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -7927,7 +7867,7 @@ fn plan_execution_close_current_task_failed_review_keeps_execution_reentry_over_
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
     update_authoritative_harness_state(repo, state, &[("handoff_required", Value::Bool(true))]);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -7941,7 +7881,7 @@ fn plan_execution_close_current_task_failed_review_keeps_execution_reentry_over_
         ],
         "task review dispatch before close-current-task handoff override",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("handoff override fixture should expose dispatch id")
         .to_owned();
@@ -7960,8 +7900,6 @@ fn plan_execution_close_current_task_failed_review_keeps_execution_reentry_over_
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -8005,7 +7943,7 @@ fn workflow_operator_ignores_forged_transfer_artifact_without_authoritative_chec
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
     update_authoritative_harness_state(repo, state, &[("handoff_required", Value::Bool(true))]);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -8019,7 +7957,7 @@ fn workflow_operator_ignores_forged_transfer_artifact_without_authoritative_chec
         ],
         "task review dispatch before forged transfer artifact coverage",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("forged transfer fixture should expose dispatch id")
         .to_owned();
@@ -8038,8 +7976,6 @@ fn workflow_operator_ignores_forged_transfer_artifact_without_authoritative_chec
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -8113,7 +8049,7 @@ fn workflow_operator_keeps_handoff_override_when_checkpoint_decision_reason_code
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
     update_authoritative_harness_state(repo, state, &[("handoff_required", Value::Bool(true))]);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -8127,7 +8063,7 @@ fn workflow_operator_keeps_handoff_override_when_checkpoint_decision_reason_code
         ],
         "task review dispatch before checkpoint decision drift coverage",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("decision-drift transfer fixture should expose dispatch id")
         .to_owned();
@@ -8146,8 +8082,6 @@ fn workflow_operator_keeps_handoff_override_when_checkpoint_decision_reason_code
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -8237,7 +8171,7 @@ fn plan_execution_transfer_records_when_checkpoint_scope_does_not_match_current_
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
     update_authoritative_harness_state(repo, state, &[("handoff_required", Value::Bool(true))]);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -8251,7 +8185,7 @@ fn plan_execution_transfer_records_when_checkpoint_scope_does_not_match_current_
         ],
         "task review dispatch before checkpoint scope-drift transfer coverage",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("scope-drift transfer fixture should expose dispatch id")
         .to_owned();
@@ -8270,8 +8204,6 @@ fn plan_execution_transfer_records_when_checkpoint_scope_does_not_match_current_
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -8394,7 +8326,7 @@ fn plan_execution_transfer_blocks_when_requested_scope_mismatches_current_decisi
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
     update_authoritative_harness_state(repo, state, &[("handoff_required", Value::Bool(true))]);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -8408,7 +8340,7 @@ fn plan_execution_transfer_blocks_when_requested_scope_mismatches_current_decisi
         ],
         "task review dispatch before mismatched requested transfer scope coverage",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("mismatched requested transfer scope fixture should expose dispatch id")
         .to_owned();
@@ -8428,8 +8360,6 @@ fn plan_execution_transfer_blocks_when_requested_scope_mismatches_current_decisi
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -8512,7 +8442,7 @@ fn plan_execution_transfer_reuses_equivalent_artifact_by_restoring_checkpoint() 
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
     update_authoritative_harness_state(repo, state, &[("handoff_required", Value::Bool(true))]);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -8526,7 +8456,7 @@ fn plan_execution_transfer_reuses_equivalent_artifact_by_restoring_checkpoint() 
         ],
         "task review dispatch before equivalent transfer rerun coverage",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("equivalent transfer fixture should expose dispatch id")
         .to_owned();
@@ -8545,8 +8475,6 @@ fn plan_execution_transfer_reuses_equivalent_artifact_by_restoring_checkpoint() 
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -8664,7 +8592,7 @@ fn plan_execution_transfer_routed_handoff_shape_is_executable_and_clears_overrid
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
     update_authoritative_harness_state(repo, state, &[("handoff_required", Value::Bool(true))]);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -8678,7 +8606,7 @@ fn plan_execution_transfer_routed_handoff_shape_is_executable_and_clears_overrid
         ],
         "task review dispatch before routed handoff transfer",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("routed handoff fixture should expose dispatch id")
         .to_owned();
@@ -8697,8 +8625,6 @@ fn plan_execution_transfer_routed_handoff_shape_is_executable_and_clears_overrid
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -8917,7 +8843,7 @@ fn plan_execution_close_current_task_failed_verification_keeps_execution_reentry
         )],
     );
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -8931,7 +8857,7 @@ fn plan_execution_close_current_task_failed_verification_keeps_execution_reentry
         ],
         "task review dispatch before close-current-task pivot override",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("pivot override fixture should expose dispatch id")
         .to_owned();
@@ -8955,8 +8881,6 @@ fn plan_execution_close_current_task_failed_verification_keeps_execution_reentry
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -9002,7 +8926,7 @@ fn workflow_operator_allows_fresh_task_redispatch_after_failed_task_review() {
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
 
-    let first_dispatch = internal_test_plan_execution_fixture_json(
+    let first_dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9016,7 +8940,7 @@ fn workflow_operator_allows_fresh_task_redispatch_after_failed_task_review() {
         ],
         "task review dispatch before failed review recovery fixture",
     );
-    let first_dispatch_id = first_dispatch["dispatch_id"]
+    let _first_dispatch_id = first_dispatch["dispatch_id"]
         .as_str()
         .expect("failed review recovery fixture should expose first dispatch id")
         .to_owned();
@@ -9034,8 +8958,6 @@ fn workflow_operator_allows_fresh_task_redispatch_after_failed_task_review() {
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &first_dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -9053,7 +8975,7 @@ fn workflow_operator_allows_fresh_task_redispatch_after_failed_task_review() {
         "remediation edit before redispatch after failed review",
     );
 
-    let second_dispatch = internal_test_plan_execution_fixture_json(
+    let second_dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9107,7 +9029,7 @@ fn plan_execution_record_review_dispatch_preserves_failed_task_outcome_history_o
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
 
-    let first_dispatch = internal_test_plan_execution_fixture_json(
+    let first_dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9139,8 +9061,6 @@ fn plan_execution_record_review_dispatch_preserves_failed_task_outcome_history_o
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &first_dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -9159,7 +9079,7 @@ fn plan_execution_record_review_dispatch_preserves_failed_task_outcome_history_o
         "task negative-result redispatch remediation coverage",
     );
 
-    let second_dispatch = internal_test_plan_execution_fixture_json(
+    let second_dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9212,7 +9132,7 @@ fn plan_execution_close_current_task_supersedes_overlapping_prior_task_closures(
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
 
-    let task1_dispatch = internal_test_plan_execution_fixture_json(
+    let task1_dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9226,7 +9146,7 @@ fn plan_execution_close_current_task_supersedes_overlapping_prior_task_closures(
         ],
         "record-review-dispatch should expose task 1 dispatch contract fields",
     );
-    let task1_dispatch_id = task1_dispatch["dispatch_id"]
+    let _task1_dispatch_id = task1_dispatch["dispatch_id"]
         .as_str()
         .expect("task 1 dispatch should expose dispatch_id")
         .to_owned();
@@ -9249,8 +9169,6 @@ fn plan_execution_close_current_task_supersedes_overlapping_prior_task_closures(
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &task1_dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -9324,7 +9242,7 @@ fn plan_execution_close_current_task_supersedes_overlapping_prior_task_closures(
         "complete task 2 should succeed for supersession coverage",
     );
 
-    let task2_dispatch = internal_test_plan_execution_fixture_json(
+    let task2_dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9338,7 +9256,7 @@ fn plan_execution_close_current_task_supersedes_overlapping_prior_task_closures(
         ],
         "record-review-dispatch should expose task 2 dispatch contract fields",
     );
-    let task2_dispatch_id = task2_dispatch["dispatch_id"]
+    let _task2_dispatch_id = task2_dispatch["dispatch_id"]
         .as_str()
         .expect("task 2 dispatch should expose dispatch_id")
         .to_owned();
@@ -9361,8 +9279,6 @@ fn plan_execution_close_current_task_supersedes_overlapping_prior_task_closures(
             plan_rel,
             "--task",
             "2",
-            "--dispatch-id",
-            &task2_dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -9418,7 +9334,7 @@ fn plan_execution_close_current_task_supersedes_overlapping_prior_task_closures(
             ("current_branch_closure_reviewed_state_id", Value::Null),
         ],
     );
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -9477,7 +9393,7 @@ fn workflow_operator_waits_for_final_review_result_after_dispatch() {
             ("last_final_review_artifact_fingerprint", Value::Null),
         ],
     );
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9490,7 +9406,7 @@ fn workflow_operator_waits_for_final_review_result_after_dispatch() {
         "plan execution final review dispatch for workflow operator pending fixture",
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
-    let final_review_rerun = internal_test_plan_execution_fixture_json(
+    let final_review_rerun = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9548,7 +9464,7 @@ fn workflow_operator_routes_final_review_result_ready_to_advance_late_stage() {
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9617,7 +9533,7 @@ fn workflow_operator_routes_dispatched_final_review_with_missing_release_overlay
         "human-reviewer-fixture-001",
     );
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9678,7 +9594,7 @@ fn workflow_operator_reroutes_failed_final_review_back_to_release_prerequisite()
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9741,7 +9657,7 @@ fn workflow_operator_reroutes_dispatched_final_review_blocked_release_ready_to_r
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -9862,7 +9778,7 @@ fn workflow_operator_requires_fresh_final_review_dispatch_after_branch_closure_c
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10128,7 +10044,7 @@ fn plan_execution_final_review_dispatch_requires_release_readiness_ready() {
     set_current_branch_closure(repo, state, "branch-release-closure");
     let state_before = authoritative_harness_state(repo, state);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10178,7 +10094,7 @@ fn workflow_operator_routes_final_review_pending_without_current_closure_to_reco
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10244,7 +10160,7 @@ fn plan_execution_advance_late_stage_records_final_review_without_explicit_dispa
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10330,7 +10246,7 @@ fn plan_execution_record_final_review_primitive_records_final_review() {
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10370,7 +10286,7 @@ fn plan_execution_record_final_review_primitive_records_final_review() {
 
     let summary_path = repo.join("final-review-summary.md");
     write_file(&summary_path, "Independent final review passed.\n");
-    let review_json = internal_test_plan_execution_fixture_json(
+    let review_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10411,7 +10327,7 @@ fn plan_execution_record_final_review_primitive_rejects_overlay_only_branch_clos
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10491,7 +10407,7 @@ fn plan_execution_record_final_review_primitive_rejects_overlay_only_branch_clos
         &summary_path,
         "Final review should not bind to overlay-only branch closure state.\n",
     );
-    let review_json = internal_test_plan_execution_fixture_json(
+    let review_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10549,7 +10465,7 @@ fn plan_execution_advance_late_stage_final_review_records_runtime_deviation_disp
     write_matching_topology_downgrade_record(repo, state, plan_rel, &base_branch);
     mark_branch_review_artifacts_with_runtime_deviation_pass(repo, state);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10576,7 +10492,7 @@ fn plan_execution_advance_late_stage_final_review_records_runtime_deviation_disp
         ],
         "workflow operator json for runtime-deviation final review fixture",
     );
-    let dispatch_id = operator_json["recording_context"]["dispatch_id"]
+    let _dispatch_id = operator_json["recording_context"]["dispatch_id"]
         .as_str()
         .expect("runtime-deviation fixture should expose dispatch_id")
         .to_owned();
@@ -10593,8 +10509,6 @@ fn plan_execution_advance_late_stage_final_review_records_runtime_deviation_disp
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -10650,7 +10564,7 @@ fn plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_indepe
     write_matching_topology_downgrade_record(repo, state, plan_rel, &base_branch);
     mark_branch_review_artifacts_with_runtime_deviation_pass(repo, state);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10744,7 +10658,7 @@ fn plan_execution_advance_late_stage_final_review_blocks_without_release_ready()
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10758,7 +10672,7 @@ fn plan_execution_advance_late_stage_final_review_blocks_without_release_ready()
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
     write_branch_review_artifact(repo, state, plan_rel, &base_branch);
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("final review dispatch should expose dispatch_id")
         .to_owned();
@@ -10777,8 +10691,6 @@ fn plan_execution_advance_late_stage_final_review_blocks_without_release_ready()
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -10828,7 +10740,7 @@ fn plan_execution_advance_late_stage_final_review_blocked_release_ready_requires
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10841,7 +10753,7 @@ fn plan_execution_advance_late_stage_final_review_blocked_release_ready_requires
         "plan execution final review dispatch before blocking release readiness",
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("final review dispatch should expose dispatch_id")
         .to_owned();
@@ -10856,8 +10768,6 @@ fn plan_execution_advance_late_stage_final_review_blocked_release_ready_requires
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -10908,7 +10818,7 @@ fn plan_execution_advance_late_stage_final_review_rerun_is_idempotent_and_confli
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -10935,8 +10845,6 @@ fn plan_execution_advance_late_stage_final_review_rerun_is_idempotent_and_confli
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -10989,8 +10897,6 @@ fn plan_execution_advance_late_stage_final_review_rerun_is_idempotent_and_confli
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11022,8 +10928,6 @@ fn plan_execution_advance_late_stage_final_review_rerun_is_idempotent_and_confli
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11051,8 +10955,6 @@ fn plan_execution_advance_late_stage_final_review_rerun_is_idempotent_and_confli
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11101,8 +11003,6 @@ fn plan_execution_advance_late_stage_final_review_rerun_is_idempotent_and_confli
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11136,7 +11036,7 @@ fn final_review_receipt_tampering_does_not_reroute_when_authoritative_record_is_
             write_branch_test_plan_artifact(repo, state, plan_rel, "no");
             write_branch_release_artifact(repo, state, plan_rel, &base_branch);
             mark_current_branch_closure_release_ready(repo, state, branch_closure_id);
-            let dispatch = internal_test_plan_execution_fixture_json(
+            let dispatch = internal_only_plan_execution_fixture_json(
                 repo,
                 state,
                 &[
@@ -11153,7 +11053,7 @@ fn final_review_receipt_tampering_does_not_reroute_when_authoritative_record_is_
 
             let summary_path = repo.join("final-review-template-summary.md");
             write_file(&summary_path, "Independent final review passed.\n");
-            let dispatch_id = dispatch["dispatch_id"]
+            let _dispatch_id = dispatch["dispatch_id"]
                 .as_str()
                 .expect("final-review rerun template should expose dispatch_id");
             let first = run_plan_execution_json(
@@ -11163,8 +11063,6 @@ fn final_review_receipt_tampering_does_not_reroute_when_authoritative_record_is_
                     "advance-late-stage",
                     "--plan",
                     plan_rel,
-                    "--dispatch-id",
-                    dispatch_id,
                     "--reviewer-source",
                     "fresh-context-subagent",
                     "--reviewer-id",
@@ -11177,7 +11075,7 @@ fn final_review_receipt_tampering_does_not_reroute_when_authoritative_record_is_
                 "first final-review recording template setup",
             );
             assert_eq!(first["action"], "recorded", "{first}");
-            let gate_review = internal_test_plan_execution_fixture_json(
+            let gate_review = internal_only_plan_execution_fixture_json(
                 repo,
                 state,
                 &["gate-review", "--plan", plan_rel],
@@ -11198,7 +11096,7 @@ fn final_review_receipt_tampering_does_not_reroute_when_authoritative_record_is_
     ] {
         populate_fixture_from_template(&template, repo, state);
         let authoritative_state_before = authoritative_harness_state(repo, state);
-        let dispatch_id = authoritative_state_before["current_final_review_dispatch_id"]
+        let _dispatch_id = authoritative_state_before["current_final_review_dispatch_id"]
             .as_str()
             .expect("final-review invalidation fixture should expose dispatch_id")
             .to_owned();
@@ -11252,7 +11150,7 @@ fn final_review_receipt_tampering_does_not_reroute_when_authoritative_record_is_
             );
         }
 
-        let gate_finish = internal_test_plan_execution_fixture_json(
+        let gate_finish = internal_only_plan_execution_fixture_json(
             repo,
             state,
             &["gate-finish", "--plan", plan_rel],
@@ -11305,8 +11203,6 @@ fn final_review_receipt_tampering_does_not_reroute_when_authoritative_record_is_
                 "advance-late-stage",
                 "--plan",
                 plan_rel,
-                "--dispatch-id",
-                &dispatch_id,
                 "--reviewer-source",
                 "fresh-context-subagent",
                 "--reviewer-id",
@@ -11354,7 +11250,7 @@ fn plan_execution_record_qa_same_state_rerun_keeps_standard_requery_after_final_
 
     let summary_path = repo.join("qa-after-final-review-summary.md");
     write_file(&summary_path, "Browser QA passed for the current branch.\n");
-    let first = internal_test_plan_execution_fixture_json(
+    let first = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -11401,7 +11297,7 @@ fn plan_execution_record_qa_same_state_rerun_keeps_standard_requery_after_final_
     assert_eq!(operator_json["phase"], "ready_for_branch_completion");
     assert_eq!(operator_json["phase_detail"], "finish_review_gate_ready");
 
-    let rerun = internal_test_plan_execution_fixture_json(
+    let rerun = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -11441,7 +11337,7 @@ fn workflow_operator_keeps_branch_completion_routing_after_reviewer_artifact_tam
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -11453,7 +11349,7 @@ fn workflow_operator_keeps_branch_completion_routing_after_reviewer_artifact_tam
         ],
         "final review dispatch should succeed before reviewer-artifact tamper routing coverage",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("reviewer-artifact tamper fixture should expose dispatch_id")
         .to_owned();
@@ -11467,8 +11363,6 @@ fn workflow_operator_keeps_branch_completion_routing_after_reviewer_artifact_tam
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11534,7 +11428,7 @@ fn workflow_operator_keeps_branch_completion_routing_after_reviewer_artifact_tam
     assert_eq!(status_json["phase"], operator_json["phase"]);
     assert_eq!(status_json["phase_detail"], operator_json["phase_detail"]);
 
-    let gate_review = internal_test_runtime_review_gate_json(
+    let gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -11543,7 +11437,7 @@ fn workflow_operator_keeps_branch_completion_routing_after_reviewer_artifact_tam
     );
     assert_eq!(gate_review["allowed"], Value::Bool(true), "{gate_review}");
 
-    let gate_finish = internal_test_runtime_finish_gate_json(
+    let gate_finish = internal_only_runtime_finish_gate_json(
         repo,
         state,
         plan_rel,
@@ -11559,8 +11453,6 @@ fn workflow_operator_keeps_branch_completion_routing_after_reviewer_artifact_tam
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11638,8 +11530,6 @@ fn plan_execution_advance_late_stage_final_review_requires_dispatch_follow_up() 
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            "dispatch-missing",
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11677,7 +11567,7 @@ fn plan_execution_advance_late_stage_final_review_fail_reroutes_to_execution_ree
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -11691,7 +11581,7 @@ fn plan_execution_advance_late_stage_final_review_fail_reroutes_to_execution_ree
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
     write_branch_review_artifact_with_result(repo, state, plan_rel, &base_branch, "fail");
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("final-review fail rerun fixture should expose dispatch_id")
         .to_owned();
@@ -11708,8 +11598,6 @@ fn plan_execution_advance_late_stage_final_review_fail_reroutes_to_execution_ree
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11762,8 +11650,6 @@ fn plan_execution_advance_late_stage_final_review_fail_reroutes_to_execution_ree
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11802,7 +11688,7 @@ fn plan_execution_advance_late_stage_final_review_fail_keeps_execution_reentry_o
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
     update_authoritative_harness_state(repo, state, &[("handoff_required", Value::Bool(true))]);
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -11832,8 +11718,6 @@ fn plan_execution_advance_late_stage_final_review_fail_keeps_execution_reentry_o
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11878,8 +11762,6 @@ fn plan_execution_advance_late_stage_final_review_fail_keeps_execution_reentry_o
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -11915,7 +11797,7 @@ fn plan_execution_advance_late_stage_accepts_human_independent_reviewer() {
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -11943,7 +11825,7 @@ fn plan_execution_advance_late_stage_accepts_human_independent_reviewer() {
         &[],
         "workflow operator json for human-independent-reviewer final review",
     );
-    let dispatch_id = operator_json["recording_context"]["dispatch_id"]
+    let _dispatch_id = operator_json["recording_context"]["dispatch_id"]
         .as_str()
         .expect("final review recording fixture should expose dispatch_id")
         .to_owned();
@@ -11957,8 +11839,6 @@ fn plan_execution_advance_late_stage_accepts_human_independent_reviewer() {
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "human-independent-reviewer",
             "--reviewer-id",
@@ -12699,7 +12579,7 @@ fn explain_review_state_omits_recommended_command_for_wait_state_lanes() {
     let state = state_dir.path();
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -12752,7 +12632,7 @@ fn workflow_status_and_operator_reroute_prerelease_branch_closure_refresh_when_c
         resolve_release_base_branch(&repo.join(".git"), "feature").expect("fixture base branch");
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -12863,7 +12743,7 @@ fn prerelease_branch_closure_refresh_ignores_stale_execution_reentry_follow_up()
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -12927,7 +12807,7 @@ fn prerelease_branch_closure_refresh_ignores_stale_execution_reentry_follow_up()
         ))
     );
 
-    let record_json = internal_test_unit_record_branch_closure_json(
+    let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -12948,7 +12828,7 @@ fn gate_review_ignores_stale_execution_reentry_follow_up_during_prerelease_refre
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -12970,7 +12850,7 @@ fn gate_review_ignores_stale_execution_reentry_follow_up_during_prerelease_refre
         )],
     );
 
-    let gate_review = internal_test_runtime_review_gate_json(
+    let gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -13099,7 +12979,7 @@ fn workflow_status_and_operator_require_execution_reentry_when_no_branch_contrib
         ))
     );
 
-    let record_json = internal_test_unit_record_branch_closure_json(
+    let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -13108,7 +12988,7 @@ fn workflow_status_and_operator_require_execution_reentry_when_no_branch_contrib
     assert_eq!(record_json["action"], "blocked");
     assert_eq!(record_json["required_follow_up"], "repair_review_state");
 
-    let reconcile_json = internal_test_unit_reconcile_review_state_json(
+    let reconcile_json = internal_only_unit_reconcile_review_state_json(
         repo,
         state,
         plan_rel,
@@ -13380,7 +13260,7 @@ fn workflow_operator_keeps_execution_scope_when_resume_task_exists_despite_late_
         "targetless stale operator blockers must not synthesize a repair or reopen action: {operator_json}"
     );
 
-    let branch_closure_json = internal_test_unit_record_branch_closure_json(
+    let branch_closure_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -13530,7 +13410,7 @@ fn plan_execution_record_qa_missing_current_closure_returns_out_of_phase_requery
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
     let summary_path = repo.join("missing-closure-qa-summary.md");
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -13588,7 +13468,7 @@ fn plan_execution_record_qa_rejects_overlay_only_branch_closure() {
         &summary_path,
         "Browser QA should not bind to overlay-only branch closure state.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -13623,7 +13503,7 @@ fn plan_execution_record_branch_closure_records_current_branch_closure() {
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure_json = internal_test_unit_record_branch_closure_json(
+    let branch_closure_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -13723,7 +13603,7 @@ fn plan_execution_record_branch_closure_blocks_out_of_phase_after_late_stage_pro
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -13755,7 +13635,7 @@ fn plan_execution_record_branch_closure_blocks_out_of_phase_after_late_stage_pro
     );
     assert_eq!(release_json["action"], "recorded");
 
-    let rerun = internal_test_unit_record_branch_closure_json(
+    let rerun = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -13781,7 +13661,7 @@ fn plan_execution_record_branch_closure_uses_recorded_task_closure_provenance() 
     let base_branch = expected_release_base_branch(repo);
     complete_workflow_fixture_execution(repo, state, plan_rel);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -13795,7 +13675,7 @@ fn plan_execution_record_branch_closure_uses_recorded_task_closure_provenance() 
         ],
         "plan execution task review dispatch for real branch provenance fixture",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("real provenance fixture should expose dispatch id")
         .to_owned();
@@ -13815,8 +13695,6 @@ fn plan_execution_record_branch_closure_uses_recorded_task_closure_provenance() 
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -13848,7 +13726,7 @@ fn plan_execution_record_branch_closure_uses_recorded_task_closure_provenance() 
         ],
     );
 
-    let record_json = internal_test_unit_record_branch_closure_json(
+    let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -13879,7 +13757,7 @@ fn plan_execution_record_branch_closure_re_records_when_reviewed_state_changes_a
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
 
-    let first_branch_closure = internal_test_unit_record_branch_closure_json(
+    let first_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -13896,7 +13774,7 @@ fn plan_execution_record_branch_closure_re_records_when_reviewed_state_changes_a
         "branch-closure reviewed-state regression coverage",
     );
 
-    let second_branch_closure = internal_test_unit_record_branch_closure_json(
+    let second_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -13993,7 +13871,7 @@ fn plan_execution_record_branch_closure_falls_back_to_current_task_closure_set_w
         )],
     );
 
-    let first_branch_closure = internal_test_unit_record_branch_closure_json(
+    let first_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14010,7 +13888,7 @@ fn plan_execution_record_branch_closure_falls_back_to_current_task_closure_set_w
         "branch-closure baseline should absorb this late-stage edit",
     );
 
-    let second_branch_closure = internal_test_unit_record_branch_closure_json(
+    let second_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14099,7 +13977,7 @@ fn plan_execution_record_branch_closure_falls_back_to_current_task_closure_set_w
         ))
     );
 
-    let third_branch_closure = internal_test_unit_record_branch_closure_json(
+    let third_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14143,7 +14021,7 @@ fn plan_execution_record_branch_closure_blocks_late_stage_only_recreation_withou
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
 
-    let first_branch_closure = internal_test_unit_record_branch_closure_json(
+    let first_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14197,7 +14075,7 @@ fn plan_execution_record_branch_closure_blocks_late_stage_only_recreation_withou
         "workflow operator should expose the public repair lane for execution reentry, got {operator_json}"
     );
 
-    let second_branch_closure = internal_test_unit_record_branch_closure_json(
+    let second_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14298,7 +14176,7 @@ fn plan_execution_record_branch_closure_allows_already_current_for_valid_empty_l
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14320,7 +14198,7 @@ fn plan_execution_record_branch_closure_allows_already_current_for_valid_empty_l
         Value::from("late_stage_surface_only:README.md");
     write_authoritative_harness_state(repo, state, &payload);
 
-    let rerun = internal_test_unit_record_branch_closure_json(
+    let rerun = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14452,7 +14330,7 @@ fn plan_execution_record_branch_closure_rerecords_late_stage_surface_exemption_w
         "repair-review-state must not fabricate a task closure target when no current task closure baseline exists: {repair_json}"
     );
 
-    let record_json = internal_test_unit_record_branch_closure_json(
+    let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14489,7 +14367,7 @@ fn plan_execution_record_branch_closure_blocks_first_entry_drift_outside_late_st
     let drifted_tree_id = current_tracked_tree_id(repo);
     assert_ne!(baseline_tree_id, drifted_tree_id);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14512,7 +14390,7 @@ fn plan_execution_record_branch_closure_prefers_current_task_closure_set_baselin
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_review_artifact(repo, state, plan_rel, &base_branch);
 
-    let initial_branch_closure = internal_test_unit_record_branch_closure_json(
+    let initial_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14554,7 +14432,7 @@ fn plan_execution_record_branch_closure_prefers_current_task_closure_set_baselin
             }),
         )],
     );
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14615,7 +14493,7 @@ fn plan_execution_record_branch_closure_allows_deleted_covered_path_in_current_t
         )],
     );
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14664,7 +14542,7 @@ fn plan_execution_record_branch_closure_fails_closed_when_current_task_closure_i
         )],
     );
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14716,7 +14594,7 @@ fn plan_execution_record_branch_closure_fails_closed_when_current_task_closure_r
         )],
     );
 
-    let record_json = internal_test_unit_record_branch_closure_json(
+    let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14770,7 +14648,7 @@ fn plan_execution_record_branch_closure_fails_closed_when_current_task_closure_r
         )],
     );
 
-    let record_json = internal_test_unit_record_branch_closure_json(
+    let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14823,7 +14701,7 @@ fn plan_execution_record_branch_closure_fails_closed_when_current_task_closure_r
         )],
     );
 
-    let record_json = internal_test_unit_record_branch_closure_json(
+    let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14867,7 +14745,7 @@ fn plan_execution_record_branch_closure_fails_closed_when_history_backed_current
     payload["task_closure_record_history"][&closure_record_id] = history_record;
     write_authoritative_harness_state(repo, state, &payload);
 
-    let record_json = internal_test_unit_record_branch_closure_json(
+    let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14920,7 +14798,7 @@ fn plan_execution_record_branch_closure_fails_closed_when_current_task_closure_c
         )],
     );
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14946,7 +14824,7 @@ fn plan_execution_record_branch_closure_re_records_when_contract_identity_change
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let first_branch_closure = internal_test_unit_record_branch_closure_json(
+    let first_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -14980,7 +14858,7 @@ fn plan_execution_record_branch_closure_re_records_when_contract_identity_change
         "git config gh-merge-base for contract-identity regression",
     );
 
-    let second_branch_closure = internal_test_unit_record_branch_closure_json(
+    let second_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15008,7 +14886,7 @@ fn plan_execution_record_branch_closure_blocks_re_record_when_drift_escapes_late
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let first_branch_closure = internal_test_unit_record_branch_closure_json(
+    let first_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15022,7 +14900,7 @@ fn plan_execution_record_branch_closure_blocks_re_record_when_drift_escapes_late
         "branch-closure drift outside trusted late-stage surface",
     );
 
-    let second_branch_closure = internal_test_unit_record_branch_closure_json(
+    let second_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15075,7 +14953,7 @@ fn plan_execution_record_branch_closure_clears_stale_release_readiness_binding()
         ],
     );
 
-    let branch_closure_json = internal_test_unit_record_branch_closure_json(
+    let branch_closure_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15145,7 +15023,7 @@ fn plan_execution_advance_late_stage_records_release_readiness() {
     let state = state_dir.path();
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
-    let branch_closure_json = internal_test_unit_record_branch_closure_json(
+    let branch_closure_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15202,7 +15080,7 @@ fn plan_execution_record_release_readiness_primitive_records_release_readiness()
     let state = state_dir.path();
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
-    let branch_closure_json = internal_test_unit_record_branch_closure_json(
+    let branch_closure_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15218,7 +15096,7 @@ fn plan_execution_record_release_readiness_primitive_records_release_readiness()
         &summary_path,
         "Release readiness is green for the current branch closure.\n",
     );
-    let release_json = internal_test_plan_execution_fixture_json(
+    let release_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -15254,7 +15132,7 @@ fn advance_late_stage_release_readiness_ignores_stale_overlay_currentness_from_o
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let initial_branch = internal_test_unit_record_branch_closure_json(
+    let initial_branch = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15335,7 +15213,7 @@ fn record_release_readiness_primitive_ignores_current_record_from_other_branch_c
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let initial_branch = internal_test_unit_record_branch_closure_json(
+    let initial_branch = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15351,7 +15229,7 @@ fn record_release_readiness_primitive_ignores_current_record_from_other_branch_c
         &summary_path,
         "Release readiness is green for the current branch closure.\n",
     );
-    let initial_release = internal_test_plan_execution_fixture_json(
+    let initial_release = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -15371,7 +15249,7 @@ fn record_release_readiness_primitive_ignores_current_record_from_other_branch_c
     assert_eq!(initial_release["branch_closure_id"], initial_branch_id);
 
     set_current_branch_closure(repo, state, "branch-release-closure-2");
-    let rerun_json = internal_test_plan_execution_fixture_json(
+    let rerun_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -15420,7 +15298,7 @@ fn plan_execution_record_release_readiness_primitive_rejects_overlay_only_branch
         &summary_path,
         "Release readiness should not bind to overlay-only branch closure state.\n",
     );
-    let release_json = internal_test_plan_execution_fixture_json(
+    let release_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -15453,7 +15331,7 @@ fn plan_execution_record_release_readiness_primitive_uses_shared_routing_when_st
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15508,7 +15386,7 @@ fn plan_execution_record_release_readiness_primitive_uses_shared_routing_when_st
         "missing_current_closure"
     );
 
-    let blocked = internal_test_plan_execution_fixture_json(
+    let blocked = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -15544,7 +15422,7 @@ fn plan_execution_advance_late_stage_release_readiness_rerun_stays_idempotent_af
     let state = state_dir.path();
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
-    let branch_closure_json = internal_test_unit_record_branch_closure_json(
+    let branch_closure_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15784,7 +15662,7 @@ fn plan_execution_record_branch_closure_allows_already_current_for_release_block
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -15813,7 +15691,7 @@ fn plan_execution_record_branch_closure_allows_already_current_for_release_block
     );
     assert_eq!(blocked["action"], "recorded");
 
-    let rerun = internal_test_unit_record_branch_closure_json(
+    let rerun = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -16058,7 +15936,7 @@ fn internal_gate_review_uses_shared_public_route_for_out_of_phase_state() {
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_with_current_closure_case(repo, state, plan_rel, &base_branch);
 
-    let gate_review = featureforge_support::internal_test_runtime_review_gate_json(
+    let gate_review = featureforge_support::internal_only_runtime_review_gate_json(
         repo,
         state,
         &StatusArgs {
@@ -16079,7 +15957,7 @@ fn internal_gate_review_uses_shared_public_route_for_out_of_phase_state() {
     );
     assert!(gate_review["rederive_via_workflow_operator"].is_null());
 
-    let gate_review_external_ready = featureforge_support::internal_test_runtime_review_gate_json(
+    let gate_review_external_ready = featureforge_support::internal_only_runtime_review_gate_json(
         repo,
         state,
         &StatusArgs {
@@ -16116,7 +15994,7 @@ fn gate_review_recommends_repair_review_state_when_current_branch_reviewed_state
         Value::from(format!("git_tree:{}", current_head_sha(repo)));
     write_authoritative_harness_state(repo, state, &payload);
 
-    let gate_review = internal_test_runtime_review_gate_json(
+    let gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -16150,7 +16028,7 @@ fn internal_gate_finish_uses_shared_public_route_for_out_of_phase_state() {
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_with_current_closure_case(repo, state, plan_rel, &base_branch);
 
-    let gate_finish = featureforge_support::internal_test_runtime_finish_gate_json(
+    let gate_finish = featureforge_support::internal_only_runtime_finish_gate_json(
         repo,
         state,
         &StatusArgs {
@@ -16171,7 +16049,7 @@ fn internal_gate_finish_uses_shared_public_route_for_out_of_phase_state() {
     );
     assert!(gate_finish["rederive_via_workflow_operator"].is_null());
 
-    let gate_finish_external_ready = featureforge_support::internal_test_runtime_finish_gate_json(
+    let gate_finish_external_ready = featureforge_support::internal_only_runtime_finish_gate_json(
         repo,
         state,
         &StatusArgs {
@@ -16316,7 +16194,7 @@ fn empty_lineage_late_stage_exemption_ignores_current_task_closures_that_only_co
         &["status", "--plan", plan_rel],
         "plan execution status for empty-lineage late-stage exemption fixture",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         plan_rel,
@@ -16481,7 +16359,7 @@ fn gate_finish_allows_not_required_qa_without_current_test_plan_artifact() {
         Value::Null
     );
 
-    let gate_finish = internal_test_runtime_finish_gate_json(
+    let gate_finish = internal_only_runtime_finish_gate_json(
         repo,
         state,
         plan_rel,
@@ -16494,7 +16372,7 @@ fn gate_finish_allows_not_required_qa_without_current_test_plan_artifact() {
         Value::from(vec![String::from("finish_review_gate_checkpoint_missing")])
     );
 
-    let gate_review = internal_test_runtime_review_gate_json(
+    let gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -16503,7 +16381,7 @@ fn gate_finish_allows_not_required_qa_without_current_test_plan_artifact() {
     );
     assert_eq!(gate_review["allowed"], true);
 
-    let gate_finish = internal_test_runtime_finish_gate_json(
+    let gate_finish = internal_only_runtime_finish_gate_json(
         repo,
         state,
         plan_rel,
@@ -16577,7 +16455,7 @@ fn plan_execution_record_qa_records_browser_qa_result() {
         &summary_path,
         "Browser QA passed against the approved test plan.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -16667,7 +16545,7 @@ fn plan_execution_record_qa_fail_returns_execution_reentry_follow_up() {
         &summary_path,
         "Browser QA found a blocker in the release flow.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -16767,7 +16645,7 @@ fn plan_execution_record_qa_fail_keeps_execution_reentry_over_pivot_state() {
         &summary_path,
         "Browser QA found a blocker that requires replanning.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -16837,7 +16715,7 @@ fn plan_execution_record_qa_same_state_rerun_stays_idempotent_and_conflicts_fail
     let summary_path = repo.join("qa-summary.md");
     write_file(&summary_path, summary);
 
-    let second = internal_test_plan_execution_fixture_json(
+    let second = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -16861,7 +16739,7 @@ fn plan_execution_record_qa_same_state_rerun_stays_idempotent_and_conflicts_fail
     );
     assert_eq!(second["required_follow_up"], "execution_reentry");
 
-    let conflict = internal_test_plan_execution_fixture_json(
+    let conflict = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -16908,7 +16786,7 @@ fn plan_execution_record_qa_missing_current_test_plan_fails_before_summary_valid
     );
 
     let missing_summary_path = repo.join("missing-qa-summary.md");
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -16978,7 +16856,7 @@ fn plan_execution_record_qa_prefers_valid_current_test_plan_candidate() {
         &summary_path,
         "Browser QA passed against the still-current test plan.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -17059,7 +16937,7 @@ fn plan_execution_record_qa_requeries_when_base_branch_resolution_invalidates_cu
         &summary_path,
         "Browser QA passed but base-branch resolution is broken.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -17096,7 +16974,7 @@ fn plan_execution_advance_late_stage_final_review_rejects_branch_closure_id_argu
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -17109,7 +16987,7 @@ fn plan_execution_advance_late_stage_final_review_rejects_branch_closure_id_argu
         "plan execution final review dispatch for branch-closure arg rejection fixture",
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
-    let operator_json = run_featureforge_with_env_json(
+    let _operator_json = run_featureforge_with_env_json(
         repo,
         state,
         &[
@@ -17123,9 +17001,6 @@ fn plan_execution_advance_late_stage_final_review_rejects_branch_closure_id_argu
         &[],
         "workflow operator json for final review branch-closure arg rejection fixture",
     );
-    let dispatch_id = operator_json["recording_context"]["dispatch_id"]
-        .as_str()
-        .expect("final review branch-closure arg rejection fixture should expose dispatch_id");
     let summary_path = repo.join("final-review-invalid-arg-summary.md");
     write_file(&summary_path, "Independent final review passed.\n");
 
@@ -17138,8 +17013,6 @@ fn plan_execution_advance_late_stage_final_review_rejects_branch_closure_id_argu
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            dispatch_id,
             "--branch-closure-id",
             "branch-release-closure",
             "--reviewer-source",
@@ -17162,8 +17035,8 @@ fn plan_execution_advance_late_stage_final_review_rejects_branch_closure_id_argu
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("branch_closure_id"),
-        "stderr should mention branch_closure_id: {stderr}"
+        stderr.contains("--branch-closure-id is an internal compatibility flag"),
+        "stderr should reject the internal branch-closure flag: {stderr}"
     );
 }
 
@@ -17227,7 +17100,7 @@ fn plan_execution_record_qa_projection_only_test_plan_edit_does_not_reroute() {
         ))
     );
 
-    let rerun = internal_test_plan_execution_fixture_json(
+    let rerun = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -17267,7 +17140,7 @@ fn plan_execution_record_qa_same_summary_on_new_branch_closure_records_again() {
         &summary_path,
         "Browser QA found a blocker in the release flow.\n",
     );
-    let first = internal_test_plan_execution_fixture_json(
+    let first = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -17309,7 +17182,7 @@ fn plan_execution_record_qa_same_summary_on_new_branch_closure_records_again() {
         &[],
         "workflow operator after switching to a new branch closure",
     );
-    let second = internal_test_plan_execution_fixture_json(
+    let second = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -17448,7 +17321,7 @@ fn plan_execution_record_qa_missing_current_test_plan_reroutes_through_operator(
         "Browser QA passed against the approved test plan.\n",
     );
 
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -17503,7 +17376,7 @@ fn plan_execution_record_qa_after_repair_reroute_requires_operator_requery() {
         &summary_path,
         "Browser QA passed against the approved test plan.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -17580,7 +17453,7 @@ fn plan_execution_record_qa_after_repair_reroute_requires_operator_requery() {
             "repair-review-state recommended closure-recording command should be immediately executable when fully concrete, got {reentry_output}"
         );
     }
-    let blocked = internal_test_plan_execution_fixture_json(
+    let blocked = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -17617,7 +17490,7 @@ fn plan_execution_repair_review_state_reroutes_late_stage_surface_only_drift_to_
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -17634,7 +17507,7 @@ fn plan_execution_repair_review_state_reroutes_late_stage_surface_only_drift_to_
         &["status", "--plan", plan_rel],
         "status should show the release-readiness route before trusted late-stage drift coverage",
     );
-    let _prerelease_gate_review = internal_test_runtime_review_gate_json(
+    let _prerelease_gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -17663,7 +17536,7 @@ fn plan_execution_repair_review_state_reroutes_late_stage_surface_only_drift_to_
     assert_eq!(release_json["action"], "recorded");
 
     append_tracked_repo_line(repo, "README.md", "late-stage-only branch drift");
-    let prerepair_recorded = internal_test_unit_record_branch_closure_json(
+    let prerepair_recorded = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -17711,7 +17584,7 @@ fn plan_execution_repair_review_state_reroutes_late_stage_surface_only_drift_to_
         )),
         "status should use the same shared release-readiness route after branch closure re-record, got {status_json}"
     );
-    let rerecord_json = internal_test_unit_record_branch_closure_json(
+    let rerecord_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -17748,7 +17621,7 @@ fn workflow_operator_does_not_preserve_persisted_branch_reroute_after_drift_esca
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -17832,7 +17705,7 @@ fn workflow_operator_task_scope_repair_outranks_persisted_branch_reroute() {
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -17881,7 +17754,7 @@ fn record_branch_closure_task_scope_repair_outranks_persisted_branch_reroute() {
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -17906,7 +17779,7 @@ fn record_branch_closure_task_scope_repair_outranks_persisted_branch_reroute() {
     payload["current_task_closure_records"]["task-1"]["source_plan_revision"] = Value::from(999);
     write_authoritative_harness_state(repo, state, &payload);
 
-    let record_branch_closure = internal_test_unit_record_branch_closure_json(
+    let record_branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -17931,7 +17804,7 @@ fn workflow_operator_does_not_preserve_persisted_branch_reroute_when_rerecord_ba
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -17976,7 +17849,7 @@ fn workflow_operator_does_not_preserve_persisted_branch_reroute_when_rerecord_ba
         "missing_current_closure"
     );
 
-    let record_json = internal_test_unit_record_branch_closure_json(
+    let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -18003,7 +17876,7 @@ fn explain_review_state_preserves_stale_branch_closure_target_when_late_stage_st
         &summary_path,
         "Browser QA passed before stale branch-closure targeting coverage.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -18085,7 +17958,7 @@ fn freshness_only_late_stage_basis_keeps_status_explain_and_operator_converged_w
         &summary_path,
         "Browser QA passed before freshness-only late-stage basis coverage.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -18179,7 +18052,7 @@ fn orphan_late_stage_history_without_current_branch_closure_does_not_reopen_curr
         &summary_path,
         "Browser QA passed before orphan late-stage history coverage.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -18259,7 +18132,7 @@ fn status_and_explain_review_state_share_gate_review_only_final_review_stale_cla
         ],
     );
 
-    let gate_review = internal_test_runtime_review_gate_json(
+    let gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -18305,7 +18178,7 @@ fn plan_execution_repair_review_state_routes_escaped_drift_to_task_closure_follo
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", plan_rel);
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -18396,7 +18269,7 @@ fn plan_execution_reconcile_review_state_restores_missing_branch_closure_overlay
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -18433,7 +18306,7 @@ fn plan_execution_reconcile_review_state_restores_missing_branch_closure_overlay
         ],
     );
 
-    let reconcile = internal_test_unit_reconcile_review_state_json(
+    let reconcile = internal_only_unit_reconcile_review_state_json(
         repo,
         state,
         plan_rel,
@@ -18477,7 +18350,7 @@ fn plan_execution_reconcile_review_state_restores_branch_overlay_without_branch_
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -18520,7 +18393,7 @@ fn plan_execution_reconcile_review_state_restores_branch_overlay_without_branch_
         ],
     );
 
-    let reconcile = internal_test_unit_reconcile_review_state_json(
+    let reconcile = internal_only_unit_reconcile_review_state_json(
         repo,
         state,
         plan_rel,
@@ -18564,7 +18437,7 @@ fn plan_execution_reconcile_review_state_preserves_release_readiness_while_resto
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -18599,7 +18472,7 @@ fn plan_execution_reconcile_review_state_preserves_release_readiness_while_resto
         ],
     );
 
-    let reconcile = internal_test_unit_reconcile_review_state_json(
+    let reconcile = internal_only_unit_reconcile_review_state_json(
         repo,
         state,
         plan_rel,
@@ -18956,7 +18829,7 @@ fn plan_execution_repair_and_reconcile_do_not_claim_current_when_branch_closure_
         "json: {explain}"
     );
 
-    let reconcile = internal_test_unit_reconcile_review_state_json(
+    let reconcile = internal_only_unit_reconcile_review_state_json(
         repo,
         state,
         plan_rel,
@@ -19442,7 +19315,7 @@ fn late_stage_direct_commands_require_repair_review_state_for_clean_structural_r
         &qa_summary_path,
         "Browser QA should stay blocked behind review-state repair.\n",
     );
-    let blocked_qa = internal_test_plan_execution_fixture_json(
+    let blocked_qa = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -19540,7 +19413,7 @@ fn plan_execution_repair_review_state_reports_reconciled_after_overlay_restore()
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -19584,7 +19457,7 @@ fn plan_execution_repair_review_state_restores_missing_current_task_closure_reco
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -19598,7 +19471,7 @@ fn plan_execution_repair_review_state_restores_missing_current_task_closure_reco
         ],
         "record-review-dispatch should succeed before current task-closure overlay repair coverage",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("task-closure overlay repair fixture should expose dispatch id")
         .to_owned();
@@ -19621,8 +19494,6 @@ fn plan_execution_repair_review_state_restores_missing_current_task_closure_reco
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -19707,7 +19578,7 @@ fn plan_execution_repair_review_state_ignores_superseded_task_dispatch_lineage()
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
 
-    let task1_dispatch = internal_test_plan_execution_fixture_json(
+    let task1_dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -19721,7 +19592,7 @@ fn plan_execution_repair_review_state_ignores_superseded_task_dispatch_lineage()
         ],
         "task 1 review dispatch should succeed before superseded repair coverage",
     );
-    let task1_dispatch_id = task1_dispatch["dispatch_id"]
+    let _task1_dispatch_id = task1_dispatch["dispatch_id"]
         .as_str()
         .expect("task 1 dispatch should expose dispatch id")
         .to_owned();
@@ -19745,8 +19616,6 @@ fn plan_execution_repair_review_state_ignores_superseded_task_dispatch_lineage()
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &task1_dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -19815,7 +19684,7 @@ fn plan_execution_repair_review_state_ignores_superseded_task_dispatch_lineage()
         ],
         "task 2 complete should succeed before superseded repair coverage",
     );
-    let task2_dispatch = internal_test_plan_execution_fixture_json(
+    let task2_dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -19829,7 +19698,7 @@ fn plan_execution_repair_review_state_ignores_superseded_task_dispatch_lineage()
         ],
         "task 2 review dispatch should succeed before superseded repair coverage",
     );
-    let task2_dispatch_id = task2_dispatch["dispatch_id"]
+    let _task2_dispatch_id = task2_dispatch["dispatch_id"]
         .as_str()
         .expect("task 2 dispatch should expose dispatch id")
         .to_owned();
@@ -19853,8 +19722,6 @@ fn plan_execution_repair_review_state_ignores_superseded_task_dispatch_lineage()
             plan_rel,
             "--task",
             "2",
-            "--dispatch-id",
-            &task2_dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -19924,7 +19791,7 @@ fn plan_execution_repair_review_state_ignores_missing_task_closure_negative_proj
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -19956,8 +19823,6 @@ fn plan_execution_repair_review_state_ignores_missing_task_closure_negative_proj
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -20040,7 +19905,7 @@ fn workflow_operator_routes_missing_current_task_closure_overlay_to_repair_revie
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -20054,7 +19919,7 @@ fn workflow_operator_routes_missing_current_task_closure_overlay_to_repair_revie
         ],
         "record-review-dispatch should succeed before task-closure overlay routing coverage",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("task-closure overlay routing fixture should expose dispatch id")
         .to_owned();
@@ -20077,8 +19942,6 @@ fn workflow_operator_routes_missing_current_task_closure_overlay_to_repair_revie
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -20144,7 +20007,7 @@ fn workflow_operator_routes_missing_task_negative_overlay_to_repair_review_state
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -20158,7 +20021,7 @@ fn workflow_operator_routes_missing_task_negative_overlay_to_repair_review_state
         ],
         "record-review-dispatch should succeed before failed task-outcome overlay routing coverage",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("failed task-outcome overlay routing fixture should expose dispatch id")
         .to_owned();
@@ -20176,8 +20039,6 @@ fn workflow_operator_routes_missing_task_negative_overlay_to_repair_review_state
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -20229,7 +20090,7 @@ fn plan_execution_repair_review_state_routes_unrestorable_task_overlay_loss_to_e
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -20243,7 +20104,7 @@ fn plan_execution_repair_review_state_routes_unrestorable_task_overlay_loss_to_e
         ],
         "record-review-dispatch should succeed before unrestorable task-overlay repair coverage",
     );
-    let dispatch_id = dispatch["dispatch_id"]
+    let _dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("unrestorable task-overlay fixture should expose dispatch id")
         .to_owned();
@@ -20266,8 +20127,6 @@ fn plan_execution_repair_review_state_routes_unrestorable_task_overlay_loss_to_e
             plan_rel,
             "--task",
             "1",
-            "--dispatch-id",
-            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -20355,7 +20214,7 @@ fn plan_execution_repair_review_state_prioritizes_unrestorable_task_overlay_over
     );
 
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -20448,7 +20307,7 @@ fn workflow_operator_routes_recoverable_missing_current_branch_closure_to_repair
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -20573,7 +20432,7 @@ fn malformed_current_branch_closure_reviewed_state_requires_repair_review_state_
     );
     assert!(operator_json["current_branch_reviewed_state_id"].is_null());
 
-    let reconcile = internal_test_unit_reconcile_review_state_json(
+    let reconcile = internal_only_unit_reconcile_review_state_json(
         repo,
         state,
         plan_rel,
@@ -20587,7 +20446,7 @@ fn malformed_current_branch_closure_reviewed_state_requires_repair_review_state_
         ))
     );
 
-    let gate_finish = internal_test_runtime_finish_gate_json(
+    let gate_finish = internal_only_runtime_finish_gate_json(
         repo,
         state,
         plan_rel,
@@ -20707,7 +20566,7 @@ fn malformed_current_branch_closure_reviewed_state_requires_repair_review_state_
         &qa_summary_path,
         "QA should stay blocked until branch closure repair reroutes.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -20750,7 +20609,7 @@ fn malformed_current_branch_closure_reconcile_routes_to_repair_when_no_task_base
     payload["task_closure_record_history"] = serde_json::json!({});
     write_authoritative_harness_state(repo, state, &payload);
 
-    let reconcile = internal_test_unit_reconcile_review_state_json(
+    let reconcile = internal_only_unit_reconcile_review_state_json(
         repo,
         state,
         plan_rel,
@@ -20880,7 +20739,7 @@ fn repair_review_state_preserves_branch_reroute_for_structural_branch_damage_wit
     payload["last_final_review_artifact_fingerprint"] = Value::Null;
     write_authoritative_harness_state(repo, state, &payload);
 
-    let gate_review = internal_test_runtime_review_gate_json(
+    let gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -21001,7 +20860,7 @@ fn final_review_dispatch_blocks_when_current_branch_closure_overlay_requires_rep
     update_authoritative_harness_state(repo, state, &[("current_branch_closure_id", Value::Null)]);
 
     let state_before = authoritative_harness_state(repo, state);
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -21052,7 +20911,7 @@ fn final_review_dispatch_blocks_when_current_branch_closure_reviewed_state_requi
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
 
-    let initial_dispatch = internal_test_plan_execution_fixture_json(
+    let initial_dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -21077,7 +20936,7 @@ fn final_review_dispatch_blocks_when_current_branch_closure_reviewed_state_requi
         Value::from("unsupported-reviewed-state");
     write_authoritative_harness_state(repo, state, &payload);
 
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -21122,7 +20981,7 @@ fn plan_execution_record_branch_closure_same_id_reassertion_preserves_release_re
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -21156,7 +21015,7 @@ fn plan_execution_record_branch_closure_same_id_reassertion_preserves_release_re
 
     update_authoritative_harness_state(repo, state, &[("current_branch_closure_id", Value::Null)]);
 
-    let rerecord = internal_test_unit_record_branch_closure_json(
+    let rerecord = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -21416,7 +21275,7 @@ fn empty_lineage_late_stage_exemption_record_without_exempt_surface_fails_closed
         Value::from("missing_current_closure")
     );
 
-    let gate_finish = internal_test_runtime_finish_gate_json(
+    let gate_finish = internal_only_runtime_finish_gate_json(
         repo,
         state,
         plan_rel,
@@ -21462,7 +21321,7 @@ fn empty_lineage_late_stage_exemption_subset_surface_stays_current_across_public
         &["status", "--plan", plan_rel],
         "plan execution status for late-stage exemption subset fixture",
     );
-    let preflight = internal_test_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         plan_rel,
@@ -21559,7 +21418,7 @@ fn empty_lineage_late_stage_exemption_subset_surface_stays_current_across_public
     assert_eq!(operator_json["phase"], "ready_for_branch_completion");
     assert_eq!(operator_json["review_state_status"], Value::from("clean"));
 
-    let gate_review = internal_test_runtime_review_gate_json(
+    let gate_review = internal_only_runtime_review_gate_json(
         repo,
         state,
         plan_rel,
@@ -21568,7 +21427,7 @@ fn empty_lineage_late_stage_exemption_subset_surface_stays_current_across_public
     );
     assert_eq!(gate_review["allowed"], Value::Bool(true));
 
-    let gate_finish = internal_test_runtime_finish_gate_json(
+    let gate_finish = internal_only_runtime_finish_gate_json(
         repo,
         state,
         plan_rel,
@@ -22115,7 +21974,7 @@ fn plan_execution_repair_review_state_restores_overlay_from_authoritative_branch
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -22169,7 +22028,7 @@ fn plan_execution_repair_review_state_blocks_when_only_branch_closure_markdown_r
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -22229,7 +22088,7 @@ fn plan_execution_reconcile_review_state_restores_missing_branch_overlay_while_s
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -22269,7 +22128,7 @@ fn plan_execution_reconcile_review_state_restores_missing_branch_overlay_while_s
         ],
     );
 
-    let reconcile = internal_test_unit_reconcile_review_state_json(
+    let reconcile = internal_only_unit_reconcile_review_state_json(
         repo,
         state,
         plan_rel,
@@ -22308,7 +22167,7 @@ fn plan_execution_reconcile_review_state_stale_only_does_not_claim_restore() {
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -22321,7 +22180,7 @@ fn plan_execution_reconcile_review_state_stale_only_does_not_claim_restore() {
         "stale reconcile without overlay corruption",
     );
 
-    let reconcile = internal_test_unit_reconcile_review_state_json(
+    let reconcile = internal_only_unit_reconcile_review_state_json(
         repo,
         state,
         plan_rel,
@@ -22365,7 +22224,7 @@ fn plan_execution_record_qa_blocks_when_test_plan_refresh_is_required() {
         &summary_path,
         "Browser QA passed after manual verification.\n",
     );
-    let qa_json = internal_test_plan_execution_fixture_json(
+    let qa_json = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -22701,7 +22560,7 @@ fn runtime_remediation_fs01_compiled_cli_repair_and_branch_closure_do_not_disagr
         &["workflow", "operator", "--plan", plan_rel, "--json"],
         "FS-01 workflow operator after repair compiled CLI consistency fixture",
     );
-    let record_json = internal_test_unit_record_branch_closure_json(
+    let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -22788,7 +22647,7 @@ fn compiled_cli_route_parity_probe_for_pending_external_review_fixture() {
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = internal_test_plan_execution_fixture_json(
+    let dispatch = internal_only_plan_execution_fixture_json(
         repo,
         state,
         &[
@@ -22884,7 +22743,8 @@ fn compiled_cli_route_parity_probe_for_branch_scoped_execution_reentry_fixture()
 }
 
 #[test]
-fn fs06_hidden_dispatch_target_mismatch_keeps_helper_semantics_and_cli_cutover_boundary() {
+fn internal_only_fs06_hidden_dispatch_target_mismatch_keeps_helper_semantics_and_cli_cutover_boundary()
+ {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, direct_state_dir) = init_repo("runtime-remediation-fs06-helper-vs-cli-direct");
     let real_state_dir = TempDir::new().expect("real-cli fs06 state tempdir should exist");
@@ -24126,7 +23986,7 @@ fn reentry_recovery_runtime_management_budget_is_capped() {
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
     upsert_plan_header(repo, plan_rel, "Late-Stage Surface", plan_rel);
-    let branch_closure = internal_test_unit_record_branch_closure_json(
+    let branch_closure = internal_only_unit_record_branch_closure_json(
         repo,
         state,
         plan_rel,
@@ -24304,7 +24164,7 @@ fn internal_record_review_dispatch_target_mismatch_fails_before_authoritative_mu
     let digest_before = authoritative_harness_state_digest(repo, state);
 
     let failure: Value = serde_json::from_str(
-        &featureforge_support::internal_test_runtime_review_dispatch_authority_json(
+        &featureforge_support::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state,
             &RecordReviewDispatchArgs {
@@ -24343,7 +24203,7 @@ fn internal_record_review_dispatch_final_review_scope_rejects_task_field_before_
     let digest_before = authoritative_harness_state_digest(repo, state);
 
     let failure: Value = serde_json::from_str(
-        &featureforge_support::internal_test_runtime_review_dispatch_authority_json(
+        &featureforge_support::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state,
             &RecordReviewDispatchArgs {

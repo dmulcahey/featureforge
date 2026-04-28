@@ -179,12 +179,12 @@ fn preflight_acceptance_state_path(repo: &Path, state: &Path) -> PathBuf {
         .join("acceptance-state.json")
 }
 
-fn internal_test_runtime_preflight_gate_json(
+fn internal_only_runtime_preflight_gate_json(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
 ) -> serde_json::Value {
-    plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
+    plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -195,13 +195,13 @@ fn internal_test_runtime_preflight_gate_json(
     .expect("internal preflight helper should succeed")
 }
 
-fn internal_test_unit_preflight_failure_json(
+fn internal_only_unit_preflight_failure_json(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
 ) -> serde_json::Value {
     serde_json::from_str(
-        &plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
+        &plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
             repo,
             state,
             &featureforge::cli::plan_execution::StatusArgs {
@@ -290,7 +290,7 @@ fn preflight_reclaims_stale_write_authority_lock_before_acceptance() {
         "preflight acceptance state should not exist before stale-lock preflight"
     );
 
-    let gate = internal_test_runtime_preflight_gate_json(repo, state, PLAN_REL);
+    let gate = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
 
     assert_eq!(
         gate["allowed"], true,
@@ -341,7 +341,7 @@ fn preflight_blocks_live_write_authority_conflict_without_persisting_acceptance(
         "preflight acceptance state should not exist before live-lock preflight"
     );
 
-    let gate = internal_test_runtime_preflight_gate_json(repo, state, PLAN_REL);
+    let gate = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
     let _ = holder.kill();
     let _ = holder.wait();
 
@@ -432,7 +432,7 @@ fn preflight_fails_closed_when_write_authority_lock_is_unreadable() {
     write_file(&lock_path, "pid=12345\n");
     let _guard = DirectoryModeGuard::new(&harness_dir, 0o000);
 
-    let failure = internal_test_unit_preflight_failure_json(repo, state, PLAN_REL);
+    let failure = internal_only_unit_preflight_failure_json(repo, state, PLAN_REL);
     assert_eq!(failure["error_class"], "MalformedExecutionState");
     assert!(
         failure["message"]
@@ -522,7 +522,7 @@ fn preflight_fails_closed_when_write_authority_lock_is_dangling_symlink() {
     symlink("missing-lock-target.pid", &lock_path)
         .expect("dangling write-authority symlink should be creatable");
 
-    let gate = internal_test_runtime_preflight_gate_json(repo, state, PLAN_REL);
+    let gate = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
 
     assert_eq!(gate["allowed"], false);
     assert!(
@@ -559,7 +559,7 @@ fn preflight_fails_closed_when_authoritative_state_is_dangling_symlink() {
     symlink("missing-state-target.json", &state_path)
         .expect("dangling authoritative state symlink should be creatable");
 
-    let failure = internal_test_unit_preflight_failure_json(repo, state, PLAN_REL);
+    let failure = internal_only_unit_preflight_failure_json(repo, state, PLAN_REL);
     assert_eq!(failure["error_class"], "MalformedExecutionState");
     assert!(
         failure["message"].as_str().is_some_and(|message| {

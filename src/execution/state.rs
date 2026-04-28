@@ -30,6 +30,9 @@ use crate::execution::authority::{
     ensure_preflight_authoritative_bootstrap_with_existing_authority,
 };
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
+use crate::execution::current_truth::public_task_boundary_decision;
+#[cfg(test)]
+use crate::execution::current_truth::task_review_result_pending_task;
 use crate::execution::current_truth::{
     BranchRerecordingUnsupportedReason, RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
     branch_closure_refresh_missing_current_closure as shared_branch_closure_refresh_missing_current_closure,
@@ -70,8 +73,6 @@ use crate::execution::current_truth::{
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
     task_scope_stale_review_state_reason_present as shared_task_scope_stale_review_state_reason_present,
 };
-#[cfg(test)]
-use crate::execution::current_truth::{task_review_dispatch_task, task_review_result_pending_task};
 use crate::execution::event_log::{
     load_reduced_authoritative_state, load_reduced_authoritative_state_for_state_path,
 };
@@ -203,7 +204,6 @@ enum PhaseDetailSchema {
     ReleaseReadinessRecordingReady,
     RuntimeReconcileRequired,
     TaskClosureRecordingReady,
-    TaskReviewDispatchRequired,
     TaskReviewResultPending,
     TestPlanRefreshRequired,
 }
@@ -267,8 +267,6 @@ enum NextActionSchema {
     CloseCurrentTask,
     #[serde(rename = "continue execution")]
     ContinueExecution,
-    #[serde(rename = "request task review")]
-    RequestTaskReview,
     #[serde(rename = "request final review")]
     RequestFinalReview,
     #[serde(rename = "execution reentry required")]
@@ -385,6 +383,8 @@ pub struct PlanExecutionStatus {
     pub external_wait_state: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub blocking_reason_codes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub projection_diagnostics: Vec<String>,
     #[schemars(with = "StateKindSchema")]
     pub state_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1379,6 +1379,7 @@ fn project_routing_decision_onto_status(
         status.blocking_scope = None;
         status.external_wait_state = None;
         status.blocking_reason_codes.clear();
+        status.projection_diagnostics.clear();
         return;
     }
     status.phase = Some(route_decision.phase.clone());
@@ -1424,6 +1425,7 @@ fn project_routing_decision_onto_status(
     status.blocking_scope = routing.blocking_scope.clone();
     status.external_wait_state = routing.external_wait_state.clone();
     status.blocking_reason_codes = routing.blocking_reason_codes.clone();
+    status.projection_diagnostics = public_task_boundary_decision(status).diagnostic_reason_codes;
     let public_execution_reentry_target = (route_decision.phase_detail
         == "execution_reentry_required")
         .then(|| {
@@ -4907,6 +4909,7 @@ pub(crate) fn status_from_context_with_overlay(
         blocking_scope: None,
         external_wait_state: None,
         blocking_reason_codes: Vec::new(),
+        projection_diagnostics: Vec::new(),
         state_kind: String::from("actionable_public_command"),
         next_public_action: None,
         blockers: Vec::new(),
@@ -6883,9 +6886,6 @@ fn derive_public_phase_detail(
     if task_review_result_pending_task(status, task_review_dispatch_id).is_some() {
         return String::from("task_review_result_pending");
     }
-    if task_review_dispatch_task(status).is_some() {
-        return String::from("task_review_dispatch_required");
-    }
     if review_state_status == "missing_current_closure"
         && status.current_branch_closure_id.is_none()
         && crate::execution::current_truth::worktree_drift_escapes_late_stage_surface(context)
@@ -6989,7 +6989,6 @@ fn derive_public_next_action(
 ) -> String {
     let kind = match phase_detail {
         "execution_preflight_required" => NextActionKind::Begin,
-        "task_review_dispatch_required" => NextActionKind::RequestTaskReview,
         "task_review_result_pending" => NextActionKind::WaitForTaskReviewResult,
         "task_closure_recording_ready" => NextActionKind::CloseCurrentTask,
         "finish_completion_gate_ready" | "finish_review_gate_ready" => NextActionKind::FinishBranch,
@@ -7695,7 +7694,7 @@ mod exact_execution_command_tests {
     }
 
     #[test]
-    fn derive_public_blocking_records_includes_task_review_dispatch_required_lane() {
+    fn derive_public_blocking_records_omits_task_review_dispatch_required_lane() {
         let mut status = late_stage_status_for_review_state_tests();
         status.review_state_status = String::from("clean");
         status.phase_detail = String::from("task_review_dispatch_required");
@@ -7703,14 +7702,9 @@ mod exact_execution_command_tests {
         let gate_finish = gate_result_with_reason("irrelevant");
 
         let blocking_records = derive_public_blocking_records(&status, &gate_finish);
-        assert_eq!(blocking_records.len(), 1, "{blocking_records:?}");
-        assert_eq!(blocking_records[0].code, "task_review_dispatch_required");
-        assert_eq!(blocking_records[0].scope_type, "task");
-        assert_eq!(blocking_records[0].scope_key, "task-2");
-        assert_eq!(blocking_records[0].record_type, "task_review_dispatch");
-        assert_eq!(
-            blocking_records[0].required_follow_up,
-            Some(String::from("request_external_review"))
+        assert!(
+            blocking_records.is_empty(),
+            "task-review dispatch projection lineage is diagnostic-only and must not create public blockers: {blocking_records:?}"
         );
     }
 
@@ -8232,23 +8226,6 @@ fn derive_public_blocking_records(
             required_follow_up: Some(String::from("request_external_review")),
             message: String::from(
                 "A fresh external final review is required before late-stage progression can continue.",
-            ),
-        }];
-    }
-
-    if status.phase_detail == "task_review_dispatch_required"
-        && let Some(task_number) = status.blocking_task
-    {
-        return vec![StatusBlockingRecord {
-            code: String::from("task_review_dispatch_required"),
-            scope_type: String::from("task"),
-            scope_key: format!("task-{task_number}"),
-            record_type: String::from("task_review_dispatch"),
-            record_id: None,
-            review_state_status: status.review_state_status.clone(),
-            required_follow_up: Some(String::from("request_external_review")),
-            message: format!(
-                "Task {task_number} requires a fresh external review before task-closure recording can continue."
             ),
         }];
     }
@@ -8927,18 +8904,19 @@ pub fn require_preflight_acceptance(context: &ExecutionContext) -> Result<(), Js
     crate::execution::topology::require_preflight_acceptance(context)
 }
 
-enum PublicBeginPreflightReadiness {
+enum PublicIntentPreflightReadiness {
     AlreadyReady,
     AllowedNeedsPersistence,
 }
 
-fn public_begin_preflight_readiness(
+fn public_intent_preflight_readiness(
     context: &ExecutionContext,
-) -> Result<PublicBeginPreflightReadiness, JsonFailure> {
+    command_name: &str,
+) -> Result<PublicIntentPreflightReadiness, JsonFailure> {
     if authoritative_run_identity_present(context)?
         || preflight_acceptance_for_context(context)?.is_some()
     {
-        return Ok(PublicBeginPreflightReadiness::AlreadyReady);
+        return Ok(PublicIntentPreflightReadiness::AlreadyReady);
     }
 
     let read_scope = load_execution_read_scope_for_mutation(
@@ -8954,56 +8932,133 @@ fn public_begin_preflight_readiness(
     else {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
-            "begin is blocked because the reduced runtime state did not expose an execution preflight gate.",
+            format!(
+                "{command_name} is blocked because the reduced runtime state did not expose an execution preflight gate. Run {} to recover a public route.",
+                repair_review_state_preflight_recovery_command(context)
+            ),
         ));
     };
     if !gate.allowed {
         return Err(JsonFailure::new(
             failure_class_for_gate_result(&gate),
-            preflight_gate_failure_message(&gate),
+            preflight_gate_failure_message(command_name, &gate),
         ));
     }
 
-    Ok(PublicBeginPreflightReadiness::AllowedNeedsPersistence)
+    Ok(PublicIntentPreflightReadiness::AllowedNeedsPersistence)
 }
 
-pub fn validate_public_begin_preflight_allowed(
+pub fn validate_public_intent_preflight_allowed(
     context: &ExecutionContext,
+    command_name: &str,
 ) -> Result<(), JsonFailure> {
-    public_begin_preflight_readiness(context).map(|_| ())
+    public_intent_preflight_readiness(context, command_name).map(|_| ())
 }
 
-pub fn public_begin_preflight_persistence_required(
+pub fn public_intent_preflight_persistence_required(
     context: &ExecutionContext,
+    command_name: &str,
 ) -> Result<bool, JsonFailure> {
     Ok(matches!(
-        public_begin_preflight_readiness(context)?,
-        PublicBeginPreflightReadiness::AllowedNeedsPersistence
+        public_intent_preflight_readiness(context, command_name)?,
+        PublicIntentPreflightReadiness::AllowedNeedsPersistence
     ))
 }
 
-pub fn persist_allowed_public_begin_preflight(
+fn ensure_public_intent_preflight_bootstrap_is_safe(
     context: &ExecutionContext,
+    command_name: &str,
+) -> Result<(), JsonFailure> {
+    if command_name == "begin" {
+        return Ok(());
+    }
+    if let Some(step) = context.steps.iter().find(|step| {
+        matches!(
+            step.note_state,
+            Some(NoteState::Active | NoteState::Blocked | NoteState::Interrupted)
+        )
+    }) {
+        let note_state = step.note_state.map(NoteState::as_str).unwrap_or("unknown");
+        return Err(JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            format!(
+                "{command_name} cannot bootstrap execution preflight while Task {} Step {} is {note_state}. Run {} to recover a public route.",
+                step.task_number,
+                step.step_number,
+                repair_review_state_preflight_recovery_command(context)
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn repair_review_state_preflight_recovery_command(context: &ExecutionContext) -> String {
+    format!(
+        "featureforge plan execution repair-review-state --plan {}",
+        context.plan_rel
+    )
+}
+
+fn persist_allowed_public_intent_preflight(
+    context: &ExecutionContext,
+    command_name: &str,
+    use_existing_authority: bool,
 ) -> Result<(), JsonFailure> {
     if authoritative_run_identity_present(context)?
         || preflight_acceptance_for_context(context)?.is_some()
     {
         return Ok(());
     }
+    ensure_public_intent_preflight_bootstrap_is_safe(context, command_name)?;
     let acceptance = persist_preflight_acceptance(context)?;
-    ensure_preflight_authoritative_bootstrap_with_existing_authority(
-        &context.runtime,
-        RunIdentitySnapshot {
-            execution_run_id: acceptance.execution_run_id.clone(),
-            source_plan_path: context.plan_rel.clone(),
-            source_plan_revision: context.plan_document.plan_revision,
-        },
-        acceptance.chunk_id,
-    )
+    let run_identity = RunIdentitySnapshot {
+        execution_run_id: acceptance.execution_run_id.clone(),
+        source_plan_path: context.plan_rel.clone(),
+        source_plan_revision: context.plan_document.plan_revision,
+    };
+    if use_existing_authority {
+        ensure_preflight_authoritative_bootstrap_with_existing_authority(
+            &context.runtime,
+            run_identity,
+            acceptance.chunk_id,
+        )
+    } else {
+        ensure_preflight_authoritative_bootstrap(
+            &context.runtime,
+            run_identity,
+            acceptance.chunk_id,
+        )
+    }
+}
+
+pub fn ensure_public_intent_preflight_ready(
+    context: &ExecutionContext,
+    command_name: &str,
+) -> Result<(), JsonFailure> {
+    validate_public_intent_preflight_allowed(context, command_name)?;
+    persist_allowed_public_intent_preflight(context, command_name, false)
+}
+
+pub fn validate_public_begin_preflight_allowed(
+    context: &ExecutionContext,
+) -> Result<(), JsonFailure> {
+    validate_public_intent_preflight_allowed(context, "begin")
+}
+
+pub fn public_begin_preflight_persistence_required(
+    context: &ExecutionContext,
+) -> Result<bool, JsonFailure> {
+    public_intent_preflight_persistence_required(context, "begin")
+}
+
+pub fn persist_allowed_public_begin_preflight(
+    context: &ExecutionContext,
+) -> Result<(), JsonFailure> {
+    persist_allowed_public_intent_preflight(context, "begin", true)
 }
 
 pub fn ensure_public_begin_preflight_ready(context: &ExecutionContext) -> Result<(), JsonFailure> {
-    validate_public_begin_preflight_allowed(context)?;
+    validate_public_intent_preflight_allowed(context, "begin")?;
     if authoritative_run_identity_present(context)?
         || preflight_acceptance_for_context(context)?.is_some()
     {
@@ -9031,12 +9086,12 @@ fn failure_class_for_gate_result(gate: &GateResult) -> FailureClass {
     }
 }
 
-fn preflight_gate_failure_message(gate: &GateResult) -> String {
+fn preflight_gate_failure_message(command_name: &str, gate: &GateResult) -> String {
     let Some(diagnostic) = gate.diagnostics.first() else {
-        return String::from("begin is blocked because execution preflight is not allowed.");
+        return format!("{command_name} is blocked because execution preflight is not allowed.");
     };
     format!(
-        "begin is blocked by execution preflight: {} Remediation: {}",
+        "{command_name} is blocked by execution preflight: {} Remediation: {}",
         diagnostic.message, diagnostic.remediation
     )
 }

@@ -53,6 +53,36 @@ pub fn run_rust_featureforge_real_cli(
     )
 }
 
+pub fn run_public_featureforge_cli_json(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    context: &str,
+) -> Value {
+    let output = run_rust_featureforge_with_env_control_real_cli(
+        Some(repo),
+        Some(state_dir),
+        None,
+        &[],
+        &[],
+        args,
+        context,
+    );
+    assert!(
+        output.status.success(),
+        "public featureforge CLI command should succeed for {context}\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "public featureforge CLI command should emit JSON for {context}: {error}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
 pub fn run_rust_featureforge_with_env_control(
     repo: Option<&Path>,
     state_dir: Option<&Path>,
@@ -117,160 +147,160 @@ pub fn run_rust_featureforge_with_env_control_real_cli(
     run(command, context)
 }
 
-pub fn internal_test_runtime_preflight_gate_json(
+pub fn internal_only_runtime_preflight_gate_json(
     repo: &Path,
     state_dir: &Path,
     args: &StatusArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_runtime_preflight_gate_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_runtime_preflight_gate_json(repo, state_dir, args)
 }
 
-pub fn internal_test_runtime_topology_recommendation_json(
+pub fn internal_only_runtime_topology_recommendation_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecommendArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_runtime_topology_recommendation_json(
+    plan_execution_direct_support::internal_only_runtime_topology_recommendation_json(
         repo, state_dir, args,
     )
 }
 
-pub fn internal_test_runtime_review_gate_json(
+pub fn internal_only_runtime_review_gate_json(
     repo: &Path,
     state_dir: &Path,
     args: &StatusArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_runtime_review_gate_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_runtime_review_gate_json(repo, state_dir, args)
 }
 
-pub fn internal_test_unit_gate_contract_json(
+pub fn internal_only_unit_gate_contract_json(
     repo: &Path,
     state_dir: &Path,
     args: &GateContractArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_gate_contract_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_unit_gate_contract_json(repo, state_dir, args)
 }
 
-pub fn internal_test_unit_record_contract_json(
+pub fn internal_only_unit_record_contract_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordContractArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_record_contract_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_unit_record_contract_json(repo, state_dir, args)
 }
 
-pub fn internal_test_unit_gate_evaluator_json(
+pub fn internal_only_unit_gate_evaluator_json(
     repo: &Path,
     state_dir: &Path,
     args: &GateEvaluatorArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_gate_evaluator_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_unit_gate_evaluator_json(repo, state_dir, args)
 }
 
-pub fn internal_test_unit_record_evaluation_json(
+pub fn internal_only_unit_record_evaluation_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordEvaluationArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_record_evaluation_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_unit_record_evaluation_json(repo, state_dir, args)
 }
 
-pub fn internal_test_unit_gate_handoff_json(
+pub fn internal_only_unit_gate_handoff_json(
     repo: &Path,
     state_dir: &Path,
     args: &GateHandoffArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_gate_handoff_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_unit_gate_handoff_json(repo, state_dir, args)
 }
 
-pub fn internal_test_unit_record_handoff_json(
+pub fn internal_only_unit_record_handoff_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordHandoffArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_record_handoff_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_unit_record_handoff_json(repo, state_dir, args)
 }
 
-pub fn internal_test_runtime_finish_gate_json(
+pub fn internal_only_runtime_finish_gate_json(
     repo: &Path,
     state_dir: &Path,
     args: &StatusArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_runtime_finish_gate_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_runtime_finish_gate_json(repo, state_dir, args)
 }
 
-pub fn internal_test_runtime_review_dispatch_authority_json(
+pub fn internal_only_runtime_review_dispatch_authority_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordReviewDispatchArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_runtime_review_dispatch_authority_json(
+    plan_execution_direct_support::internal_only_runtime_review_dispatch_authority_json(
         repo, state_dir, args,
     )
 }
 
-pub fn internal_test_unit_rebuild_evidence_json(
+pub fn internal_only_unit_rebuild_evidence_json(
     repo: &Path,
     state_dir: &Path,
     args: &RebuildEvidenceArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_rebuild_evidence_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_unit_rebuild_evidence_json(repo, state_dir, args)
 }
 
-pub fn internal_test_unit_record_branch_closure_json(
+pub fn internal_only_unit_record_branch_closure_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordBranchClosureArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_record_branch_closure_json(
+    plan_execution_direct_support::internal_only_unit_record_branch_closure_json(
         repo, state_dir, args,
     )
 }
 
-pub fn internal_test_unit_record_release_readiness_json(
+pub fn internal_only_unit_record_release_readiness_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordReleaseReadinessArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_record_release_readiness_json(
+    plan_execution_direct_support::internal_only_unit_record_release_readiness_json(
         repo, state_dir, args,
     )
 }
 
-pub fn internal_test_unit_record_final_review_json(
+pub fn internal_only_unit_record_final_review_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordFinalReviewArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_record_final_review_json(
+    plan_execution_direct_support::internal_only_unit_record_final_review_json(
         repo, state_dir, args,
     )
 }
 
-pub fn internal_test_unit_record_qa_json(
+pub fn internal_only_unit_record_qa_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordQaArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_record_qa_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_only_unit_record_qa_json(repo, state_dir, args)
 }
 
-pub fn internal_test_unit_explain_review_state_json(
+pub fn internal_only_unit_explain_review_state_json(
     repo: &Path,
     state_dir: &Path,
     args: &StatusArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_explain_review_state_json(
+    plan_execution_direct_support::internal_only_unit_explain_review_state_json(
         repo, state_dir, args,
     )
 }
 
-pub fn internal_test_unit_reconcile_review_state_json(
+pub fn internal_only_unit_reconcile_review_state_json(
     repo: &Path,
     state_dir: &Path,
     args: &StatusArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::internal_test_unit_reconcile_review_state_json(
+    plan_execution_direct_support::internal_only_unit_reconcile_review_state_json(
         repo, state_dir, args,
     )
 }

@@ -1,3 +1,7 @@
+//! Internal reducer/unit-test helpers only.
+//! These helpers may exercise hidden or removed runtime machinery.
+//! They must not be used by tests that claim public CLI, operator, budget, liveness, or session-replay behavior.
+
 use std::path::Path;
 use std::process::{ExitStatus, Output};
 
@@ -46,7 +50,7 @@ pub fn try_run_plan_execution_output_direct(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_runtime_topology_recommendation_json(
+pub fn internal_only_runtime_topology_recommendation_json(
     repo: &Path,
     state: &Path,
     args: &RecommendArgs,
@@ -56,7 +60,7 @@ pub fn internal_test_runtime_topology_recommendation_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_runtime_preflight_gate_json(
+pub fn internal_only_runtime_preflight_gate_json(
     repo: &Path,
     state: &Path,
     args: &StatusArgs,
@@ -66,7 +70,7 @@ pub fn internal_test_runtime_preflight_gate_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_runtime_review_gate_json(
+pub fn internal_only_runtime_review_gate_json(
     repo: &Path,
     state: &Path,
     args: &StatusArgs,
@@ -76,7 +80,7 @@ pub fn internal_test_runtime_review_gate_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_gate_contract_json(
+pub fn internal_only_unit_gate_contract_json(
     repo: &Path,
     state: &Path,
     args: &GateContractArgs,
@@ -86,7 +90,7 @@ pub fn internal_test_unit_gate_contract_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_record_contract_json(
+pub fn internal_only_unit_record_contract_json(
     repo: &Path,
     state: &Path,
     args: &RecordContractArgs,
@@ -96,7 +100,7 @@ pub fn internal_test_unit_record_contract_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_gate_evaluator_json(
+pub fn internal_only_unit_gate_evaluator_json(
     repo: &Path,
     state: &Path,
     args: &GateEvaluatorArgs,
@@ -106,7 +110,7 @@ pub fn internal_test_unit_gate_evaluator_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_record_evaluation_json(
+pub fn internal_only_unit_record_evaluation_json(
     repo: &Path,
     state: &Path,
     args: &RecordEvaluationArgs,
@@ -116,7 +120,7 @@ pub fn internal_test_unit_record_evaluation_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_gate_handoff_json(
+pub fn internal_only_unit_gate_handoff_json(
     repo: &Path,
     state: &Path,
     args: &GateHandoffArgs,
@@ -126,7 +130,7 @@ pub fn internal_test_unit_gate_handoff_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_record_handoff_json(
+pub fn internal_only_unit_record_handoff_json(
     repo: &Path,
     state: &Path,
     args: &RecordHandoffArgs,
@@ -136,7 +140,7 @@ pub fn internal_test_unit_record_handoff_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_runtime_finish_gate_json(
+pub fn internal_only_runtime_finish_gate_json(
     repo: &Path,
     state: &Path,
     args: &StatusArgs,
@@ -146,7 +150,7 @@ pub fn internal_test_runtime_finish_gate_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_runtime_review_dispatch_authority_json(
+pub fn internal_only_runtime_review_dispatch_authority_json(
     repo: &Path,
     state: &Path,
     args: &RecordReviewDispatchArgs,
@@ -156,7 +160,7 @@ pub fn internal_test_runtime_review_dispatch_authority_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_rebuild_evidence_json(
+pub fn internal_only_unit_rebuild_evidence_json(
     repo: &Path,
     state: &Path,
     args: &RebuildEvidenceArgs,
@@ -166,7 +170,7 @@ pub fn internal_test_unit_rebuild_evidence_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_record_branch_closure_json(
+pub fn internal_only_unit_record_branch_closure_json(
     repo: &Path,
     state: &Path,
     args: &RecordBranchClosureArgs,
@@ -176,7 +180,7 @@ pub fn internal_test_unit_record_branch_closure_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_record_release_readiness_json(
+pub fn internal_only_unit_record_release_readiness_json(
     repo: &Path,
     state: &Path,
     args: &RecordReleaseReadinessArgs,
@@ -186,7 +190,7 @@ pub fn internal_test_unit_record_release_readiness_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_record_final_review_json(
+pub fn internal_only_unit_record_final_review_json(
     repo: &Path,
     state: &Path,
     args: &RecordFinalReviewArgs,
@@ -196,7 +200,7 @@ pub fn internal_test_unit_record_final_review_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_record_qa_json(
+pub fn internal_only_unit_record_qa_json(
     repo: &Path,
     state: &Path,
     args: &RecordQaArgs,
@@ -206,7 +210,7 @@ pub fn internal_test_unit_record_qa_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_explain_review_state_json(
+pub fn internal_only_unit_explain_review_state_json(
     repo: &Path,
     state: &Path,
     args: &StatusArgs,
@@ -216,7 +220,7 @@ pub fn internal_test_unit_explain_review_state_json(
 }
 
 #[allow(dead_code)]
-pub fn internal_test_unit_reconcile_review_state_json(
+pub fn internal_only_unit_reconcile_review_state_json(
     repo: &Path,
     state: &Path,
     args: &StatusArgs,

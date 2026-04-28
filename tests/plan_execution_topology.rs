@@ -204,8 +204,8 @@ fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Val
     parse_json(&run(command, context), context)
 }
 
-fn internal_test_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
-    plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
+fn internal_only_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
+    plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -216,12 +216,12 @@ fn internal_test_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel
     .expect("internal preflight helper should succeed")
 }
 
-fn internal_test_runtime_topology_recommendation_json(
+fn internal_only_runtime_topology_recommendation_json(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
 ) -> Value {
-    plan_execution_direct_support::internal_test_runtime_topology_recommendation_json(
+    plan_execution_direct_support::internal_only_runtime_topology_recommendation_json(
         repo,
         state,
         &featureforge::execution::internal_args::RecommendArgs {
@@ -274,7 +274,7 @@ fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) {
         "git checkout execution-preflight-fixture",
     );
 
-    let preflight = internal_test_runtime_preflight_gate_json(repo, state, plan_rel);
+    let preflight = internal_only_runtime_preflight_gate_json(repo, state, plan_rel);
     assert_eq!(preflight["allowed"], true);
 }
 
@@ -286,8 +286,8 @@ fn canonical_recommend_matches_helper_for_independent_plan() {
     write_approved_spec(repo);
     write_independent_plan(repo);
 
-    let helper = internal_test_runtime_topology_recommendation_json(repo, state, PLAN_REL);
-    let rust = internal_test_runtime_topology_recommendation_json(repo, state, PLAN_REL);
+    let helper = internal_only_runtime_topology_recommendation_json(repo, state, PLAN_REL);
+    let rust = internal_only_runtime_topology_recommendation_json(repo, state, PLAN_REL);
 
     assert_eq!(rust["recommended_skill"], helper["recommended_skill"]);
     assert_eq!(rust["decision_flags"], helper["decision_flags"]);
@@ -329,7 +329,7 @@ fn canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_pr
         );
     }
 
-    let recommend = internal_test_runtime_topology_recommendation_json(repo, state, PLAN_REL);
+    let recommend = internal_only_runtime_topology_recommendation_json(repo, state, PLAN_REL);
     assert_eq!(
         recommend["recommended_skill"],
         "featureforge:subagent-driven-development"
@@ -408,7 +408,7 @@ fn runtime_topology_recommends_worktree_backed_parallel_when_the_plan_and_worksp
         "parallel-ready topology should report the worktree-backed reason code"
     );
 
-    let shell = internal_test_runtime_topology_recommendation_json(repo, state, PLAN_REL);
+    let shell = internal_only_runtime_topology_recommendation_json(repo, state, PLAN_REL);
     assert_eq!(
         shell["recommended_skill"],
         "featureforge:subagent-driven-development"

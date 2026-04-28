@@ -90,7 +90,6 @@
         "finish branch",
         "close current task",
         "continue execution",
-        "request task review",
         "request final review",
         "execution reentry required",
         "hand off",
@@ -109,7 +108,6 @@
         "blocked_runtime_bug",
         "execution_in_progress",
         "execution_reentry_required",
-        "task_review_dispatch_required",
         "task_review_result_pending",
         "task_closure_recording_ready",
         "branch_closure_recording_required_for_release_readiness",
@@ -330,7 +328,6 @@
         "properties": {
           "phase_detail": {
             "enum": [
-              "task_review_dispatch_required",
               "task_review_result_pending",
               "execution_in_progress",
               "runtime_reconcile_required",

@@ -90,12 +90,25 @@ Fixture spec for CLI parse-boundary coverage.
 }
 
 fn run_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
+    run_featureforge_with_env(repo, state_dir, args, context, &[])
+}
+
+fn run_featureforge_with_env(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    context: &str,
+    extra_env: &[(&str, &str)],
+) -> Output {
     let mut command =
         Command::cargo_bin("featureforge").expect("featureforge cargo binary should exist");
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state_dir)
         .args(args);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
     run(command, context)
 }
 
@@ -169,6 +182,198 @@ fn plan_execution_begin_rejects_unknown_execution_modes_at_parse_boundary() {
     assert!(message.contains("possible values"));
     assert!(message.contains("featureforge:executing-plans"));
     assert!(message.contains("featureforge:subagent-driven-development"));
+}
+
+#[test]
+fn reviewer_context_forbids_workflow_runtime_commands() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-reviewer-workflow-guard");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let output = run_featureforge_with_env(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
+        "workflow operator reviewer runtime guard",
+        &[("FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED", "no")],
+    );
+    let json = parse_failure_json(&output, "workflow operator reviewer runtime guard");
+
+    assert_eq!(json["error_class"], "ReviewerRuntimeCommandForbidden");
+    let message = json["message"]
+        .as_str()
+        .expect("failure message should stay a string");
+    assert!(message.contains("Reviewer subagents may not run FeatureForge runtime commands"));
+    assert!(message.contains("blocked review"));
+    assert!(message.contains("workflow"));
+}
+
+#[test]
+fn reviewer_context_forbids_plan_execution_runtime_commands() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-reviewer-plan-execution-guard");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let output = run_featureforge_with_env(
+        repo,
+        state,
+        &["plan", "execution", "status", "--plan", PLAN_REL],
+        "plan execution status reviewer runtime guard",
+        &[("FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED", "no")],
+    );
+    let json = parse_failure_json(&output, "plan execution status reviewer runtime guard");
+
+    assert_eq!(json["error_class"], "ReviewerRuntimeCommandForbidden");
+    let message = json["message"]
+        .as_str()
+        .expect("failure message should stay a string");
+    assert!(message.contains("Reviewer subagents may not run FeatureForge runtime commands"));
+    assert!(message.contains("blocked review"));
+    assert!(message.contains("plan execution"));
+}
+
+#[test]
+fn reviewer_runtime_guard_does_not_affect_normal_controller_commands() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-reviewer-guard-normal-controller");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let output = run_featureforge(
+        repo,
+        state,
+        &["plan", "execution", "status", "--plan", PLAN_REL],
+        "plan execution status without reviewer guard",
+    );
+
+    assert!(
+        output.status.success(),
+        "normal controller plan execution status should not be blocked by reviewer guard\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn close_current_task_rejects_hidden_dispatch_id_without_internal_flag_env() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-close-current-task-hidden-dispatch-id");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let review_summary = repo.join("task-review.md");
+    let verification_summary = repo.join("task-verification.md");
+    write_file(&review_summary, "Task review passed.\n");
+    write_file(&verification_summary, "Verification passed.\n");
+
+    let output = run_featureforge(
+        repo,
+        state,
+        &[
+            "plan",
+            "execution",
+            "close-current-task",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--dispatch-id",
+            "dispatch-001",
+            "--review-result",
+            "pass",
+            "--review-summary-file",
+            review_summary
+                .to_str()
+                .expect("review summary path should be utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary
+                .to_str()
+                .expect("verification summary path should be utf-8"),
+        ],
+        "close-current-task hidden dispatch-id guard",
+    );
+    let json = parse_failure_json(&output, "close-current-task hidden dispatch-id guard");
+
+    assert_eq!(json["error_class"], "InvalidCommandInput");
+    assert_eq!(
+        json["message"],
+        "--dispatch-id is an internal compatibility flag and is not available in normal public execution. Run close-current-task without it."
+    );
+}
+
+#[test]
+fn advance_late_stage_rejects_hidden_lineage_flags_without_internal_flag_env() {
+    let cases = [
+        (
+            "--dispatch-id",
+            "dispatch-001",
+            "--dispatch-id is an internal compatibility flag and is not available in normal public execution. Run advance-late-stage without it.",
+        ),
+        (
+            "--branch-closure-id",
+            "branch-closure-001",
+            "--branch-closure-id is an internal compatibility flag and is not available in normal public execution. Run advance-late-stage without it.",
+        ),
+    ];
+
+    for (flag, value, expected_message) in cases {
+        let (repo_dir, state_dir) = init_repo(&format!(
+            "cli-boundary-advance-late-stage-hidden-{}",
+            flag.trim_start_matches("--")
+        ));
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+
+        let output = run_featureforge(
+            repo,
+            state,
+            &[
+                "plan",
+                "execution",
+                "advance-late-stage",
+                "--plan",
+                PLAN_REL,
+                flag,
+                value,
+            ],
+            "advance-late-stage hidden lineage flag guard",
+        );
+        let json = parse_failure_json(&output, "advance-late-stage hidden lineage flag guard");
+
+        assert_eq!(json["error_class"], "InvalidCommandInput");
+        assert_eq!(json["message"], expected_message);
+    }
+}
+
+#[test]
+fn internal_execution_flag_env_allows_hidden_lineage_flags_to_reach_normal_validation() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-internal-execution-flag-env");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let output = run_featureforge_with_env(
+        repo,
+        state,
+        &[
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            PLAN_REL,
+            "--dispatch-id",
+            "dispatch-001",
+        ],
+        "advance-late-stage hidden flag with internal env",
+        &[("FEATUREFORGE_ALLOW_INTERNAL_EXECUTION_FLAGS", "1")],
+    );
+    let json = parse_failure_json(&output, "advance-late-stage hidden flag with internal env");
+    let message = json["message"]
+        .as_str()
+        .expect("failure message should stay a string");
+
+    assert!(
+        !message.contains("internal compatibility flag"),
+        "internal debug env should allow hidden flags to reach normal validation, got {json}"
+    );
 }
 
 #[test]

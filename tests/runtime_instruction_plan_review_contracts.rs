@@ -77,19 +77,19 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     );
     assert_file_contains(
         root.join("README.md"),
-        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-fidelity-review -> featureforge:plan-eng-review -> implementation",
+        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review`; `featureforge:plan-fidelity-review` runs only after engineering-review edits are complete, then `featureforge:plan-eng-review` performs final approval before implementation.",
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
-        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-fidelity-review -> featureforge:plan-eng-review",
+        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review`; `featureforge:plan-fidelity-review` runs only after engineering-review edits are complete, then `featureforge:plan-eng-review` performs final approval before implementation.",
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
-        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-fidelity-review -> featureforge:plan-eng-review",
+        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review`; `featureforge:plan-fidelity-review` runs only after engineering-review edits are complete, then `featureforge:plan-eng-review` performs final approval before implementation.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> execution.",
+        "plan-ceo-review -> writing-plans -> plan-eng-review; plan-fidelity-review runs only after engineering-review edits are complete, then plan-eng-review performs final approval before execution.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -101,7 +101,19 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
-        "Invoke `featureforge:plan-fidelity-review`.",
+        "Invoke `featureforge:plan-eng-review` for the first engineering review pass.",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "plan-fidelity runs only after engineering-review edits are complete",
+    );
+    assert_file_not_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "runtime-owned receipt recording",
+    );
+    assert_file_not_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "receipt records",
     );
     assert_file_not_contains(
         root.join("skills/writing-plans/SKILL.md"),

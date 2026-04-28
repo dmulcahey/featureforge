@@ -87,12 +87,12 @@ use crate::execution::state::{
     branch_closure_record_matches_plan_exemption, current_file_proof, current_head_sha,
     current_review_dispatch_id_candidate, current_test_plan_artifact_path_for_qa_recording,
     discover_rebuild_candidates, ensure_current_review_dispatch_id,
-    load_execution_context_for_exact_plan, load_execution_context_for_mutation,
-    load_execution_context_for_rebuild, load_execution_read_scope_for_mutation,
-    normalize_begin_request, normalize_complete_request, normalize_note_request,
-    normalize_rebuild_evidence_request, normalize_reopen_request, normalize_source,
-    normalize_transfer_request, persist_allowed_public_begin_preflight,
-    projected_earliest_stale_task_from_status, public_begin_preflight_persistence_required,
+    ensure_public_intent_preflight_ready, load_execution_context_for_exact_plan,
+    load_execution_context_for_mutation, load_execution_context_for_rebuild,
+    load_execution_read_scope_for_mutation, normalize_begin_request, normalize_complete_request,
+    normalize_note_request, normalize_rebuild_evidence_request, normalize_reopen_request,
+    normalize_source, normalize_transfer_request, persist_allowed_public_begin_preflight,
+    projected_earliest_stale_task_from_status, public_intent_preflight_persistence_required,
     public_status_from_context_with_shared_routing,
     public_status_from_supplied_context_with_shared_routing, require_normalized_text,
     require_preflight_acceptance, require_prior_task_closure_for_begin,
@@ -114,6 +114,9 @@ use crate::paths::{
     harness_authoritative_artifact_path, normalize_repo_relative_path,
     write_atomic as write_atomic_file,
 };
+
+const TASK_CLOSURE_PROJECTION_METADATA_REFRESHED_TRACE: &str = "Recorded or refreshed the current task closure and regenerated state-dir task-review projection metadata.";
+const ALREADY_CURRENT_TASK_CLOSURE_PROJECTION_METADATA_REFRESHED_TRACE: &str = "Current task closure is already current for this reviewed state; regenerated state-dir task-review projection metadata from the existing closure baseline.";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CloseCurrentTaskOutput {
@@ -151,6 +154,41 @@ pub struct MaterializeProjectionsOutput {
     pub written_paths: Vec<String>,
     pub runtime_truth_changed: bool,
     pub trace_summary: String,
+}
+
+const INTERNAL_EXECUTION_FLAGS_ENV: &str = "FEATUREFORGE_ALLOW_INTERNAL_EXECUTION_FLAGS";
+
+fn internal_execution_flags_enabled() -> bool {
+    std::env::var(INTERNAL_EXECUTION_FLAGS_ENV).as_deref() == Ok("1")
+}
+
+fn require_internal_execution_flag_allowed(flag: &str, command: &str) -> Result<(), JsonFailure> {
+    if internal_execution_flags_enabled() {
+        return Ok(());
+    }
+    Err(JsonFailure::new(
+        FailureClass::InvalidCommandInput,
+        format!(
+            "{flag} is an internal compatibility flag and is not available in normal public execution. Run {command} without it."
+        ),
+    ))
+}
+
+fn require_close_current_task_public_flags(args: &CloseCurrentTaskArgs) -> Result<(), JsonFailure> {
+    if args.dispatch_id.is_some() {
+        require_internal_execution_flag_allowed("--dispatch-id", "close-current-task")?;
+    }
+    Ok(())
+}
+
+fn require_advance_late_stage_public_flags(args: &AdvanceLateStageArgs) -> Result<(), JsonFailure> {
+    if args.dispatch_id.is_some() {
+        require_internal_execution_flag_allowed("--dispatch-id", "advance-late-stage")?;
+    }
+    if args.branch_closure_id.is_some() {
+        require_internal_execution_flag_allowed("--branch-closure-id", "advance-late-stage")?;
+    }
+    Ok(())
 }
 
 fn close_current_task_already_current_output(
@@ -471,7 +509,8 @@ pub fn begin(
         }
     }
     let begin_status = public_status_from_supplied_context_with_shared_routing(&context, false)?;
-    let preflight_persistence_required = public_begin_preflight_persistence_required(&context)?;
+    let preflight_persistence_required =
+        public_intent_preflight_persistence_required(&context, "begin")?;
     let _write_authority = claim_step_write_authority(runtime)?;
     let mut authoritative_state =
         Some(load_or_initialize_authoritative_transition_state(&context)?);
@@ -1484,6 +1523,7 @@ pub fn close_current_task(
     runtime: &ExecutionRuntime,
     args: &CloseCurrentTaskArgs,
 ) -> Result<CloseCurrentTaskOutput, JsonFailure> {
+    require_close_current_task_public_flags(args)?;
     let initial_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     let authoritative_execution_run_id = load_authoritative_transition_state(&initial_context)?
         .as_ref()
@@ -1920,7 +1960,7 @@ pub fn close_current_task(
                     return Ok(close_current_task_already_current_output(
                         args.task,
                         closure_record_id,
-                        "Current task closure is already current for this dispatch lineage; refreshed receipt projections from the existing closure baseline.",
+                        ALREADY_CURRENT_TASK_CLOSURE_PROJECTION_METADATA_REFRESHED_TRACE,
                         reason_codes,
                     ));
                 }
@@ -2037,9 +2077,7 @@ pub fn close_current_task(
                 blocking_task: None,
                 blocking_reason_codes: Vec::new(),
                 authoritative_next_action: None,
-                trace_summary: String::from(
-                    "Validated task review dispatch lineage and refreshed authoritative task review and verification receipts.",
-                ),
+                trace_summary: String::from(TASK_CLOSURE_PROJECTION_METADATA_REFRESHED_TRACE),
             })
         }
         CloseCurrentTaskOutcomeClass::Negative => {
@@ -2414,7 +2452,16 @@ pub fn advance_late_stage(
     runtime: &ExecutionRuntime,
     args: &AdvanceLateStageArgs,
 ) -> Result<AdvanceLateStageOutput, JsonFailure> {
+    require_advance_late_stage_public_flags(args)?;
+    advance_late_stage_impl(runtime, args)
+}
+
+fn advance_late_stage_impl(
+    runtime: &ExecutionRuntime,
+    args: &AdvanceLateStageArgs,
+) -> Result<AdvanceLateStageOutput, JsonFailure> {
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    ensure_public_intent_preflight_ready(&context, "advance-late-stage")?;
     require_preflight_acceptance(&context)?;
     let status = status_with_shared_routing_or_context(runtime, &args.plan, &context)?;
     let supplied_result_label = advance_late_stage_result_label(args.result);
@@ -3222,7 +3269,7 @@ pub fn record_release_readiness(
             AdvanceLateStageResultArg::Blocked
         }
     };
-    advance_late_stage(
+    advance_late_stage_impl(
         runtime,
         &AdvanceLateStageArgs {
             plan: args.plan.clone(),
@@ -3260,7 +3307,7 @@ pub fn record_final_review(
         ReviewOutcomeArg::Pass => AdvanceLateStageResultArg::Pass,
         ReviewOutcomeArg::Fail => AdvanceLateStageResultArg::Fail,
     };
-    advance_late_stage(
+    advance_late_stage_impl(
         runtime,
         &AdvanceLateStageArgs {
             plan: args.plan.clone(),
