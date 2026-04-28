@@ -158,15 +158,41 @@ repo-local projection exports. Use targeted iteration while repairing a known fa
 cutover proof must include the Rust, Node/doc, and source-archive checks below:
 
 ```bash
+node scripts/gen-skill-docs.mjs
 node scripts/gen-skill-docs.mjs --check
+node scripts/gen-agent-docs.mjs
 node scripts/gen-agent-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
 node --test tests/evals/review-accelerator-contract.eval.mjs
 npm --prefix tests/brainstorm-server test
 node scripts/verify-source-archive.mjs
 cargo clippy --all-targets --all-features -- -D warnings
+cargo test --test liveness_model_checker
 cargo nextest run --all-targets --all-features --no-fail-fast
 ```
+
+While repairing a known runtime-churn failure, the focused Rust shards are the
+runtime-instruction shard (`cargo nextest run --test runtime_instruction_contracts --test runtime_instruction_plan_review_contracts --test runtime_instruction_review_contracts`)
+and the execution/public replay shard (`cargo nextest run --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test cli_parse_boundary --test public_replay_churn`).
+These are iteration aids only; the documented final Rust gate remains the full
+no-fail-fast nextest suite above.
+
+Run these source checks as part of the same cutover proof and inspect every
+match. The accepted result is limited to historical/internal-only tests,
+quarantined direct helpers, generated-doc contract assertions, or explicit
+compiled-CLI rejection coverage:
+
+```bash
+rg -n "runtime-owned receipt|receipt records|receipt-ready|Dedicated Reviewer Receipt Contract" README.md docs skills agents tests
+rg -n "Invoke `featureforge:plan-fidelity-review`\\." skills/writing-plans tests
+rg -n "record-review-dispatch|rebuild-evidence|gate-review|gate-finish|record-branch-closure|record-release-readiness|record-final-review|record-qa|preflight" tests
+```
+
+The public replay suite (`tests/public_replay_churn.rs`) is part of the
+targeted runtime matrix and the full nextest suite. It must continue to run
+through the compiled public CLI only, reject hidden command/flag use in the
+test wrapper itself, and preserve command-budget assertions for known churn
+dead ends.
 
 The source-archive verifier must pass from the repository root or from an
 unpacked source archive root. It asserts that clean-archive Node/doc test helper

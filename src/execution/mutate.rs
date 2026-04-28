@@ -10,10 +10,8 @@ use sha2::{Digest, Sha256};
 
 use crate::cli::plan_execution::{
     AdvanceLateStageArgs, AdvanceLateStageResultArg, BeginArgs, CloseCurrentTaskArgs, CompleteArgs,
-    MaterializeProjectionScopeArg, MaterializeProjectionsArgs, NoteArgs, RebuildEvidenceArgs,
-    RecordBranchClosureArgs, RecordFinalReviewArgs, RecordQaArgs, RecordReleaseReadinessArgs,
-    ReopenArgs, ReviewDispatchScopeArg, ReviewOutcomeArg, StatusArgs, TransferArgs,
-    VerificationOutcomeArg,
+    MaterializeProjectionScopeArg, MaterializeProjectionsArgs, ReopenArgs, ReviewOutcomeArg,
+    StatusArgs, TransferArgs, VerificationOutcomeArg,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::authority::write_authoritative_unit_review_receipt_artifact;
@@ -45,6 +43,10 @@ use crate::execution::handoff::{
     WorkflowTransferRecordIdentity, WorkflowTransferRecordInput,
     current_workflow_transfer_record_path, latest_matching_workflow_transfer_request_record,
     write_workflow_transfer_record,
+};
+use crate::execution::internal_args::{
+    NoteArgs, RebuildEvidenceArgs, RecordBranchClosureArgs, RecordFinalReviewArgs, RecordQaArgs,
+    RecordReleaseReadinessArgs, ReviewDispatchScopeArg,
 };
 use crate::execution::invariants::{InvariantEnforcementMode, check_runtime_status_invariants};
 use crate::execution::leases::{
@@ -85,14 +87,16 @@ use crate::execution::state::{
     branch_closure_record_matches_plan_exemption, current_file_proof, current_head_sha,
     current_review_dispatch_id_candidate, current_test_plan_artifact_path_for_qa_recording,
     discover_rebuild_candidates, ensure_current_review_dispatch_id,
-    load_execution_context_for_exact_plan, load_execution_context_for_mutation,
-    load_execution_context_for_rebuild, load_execution_read_scope_for_mutation,
-    normalize_begin_request, normalize_complete_request, normalize_note_request,
-    normalize_rebuild_evidence_request, normalize_reopen_request, normalize_source,
-    normalize_transfer_request, projected_earliest_stale_task_from_status, require_normalized_text,
+    ensure_public_intent_preflight_ready, load_execution_context_for_exact_plan,
+    load_execution_context_for_mutation, load_execution_context_for_rebuild,
+    load_execution_read_scope_for_mutation, normalize_begin_request, normalize_complete_request,
+    normalize_note_request, normalize_rebuild_evidence_request, normalize_reopen_request,
+    normalize_source, normalize_transfer_request, persist_allowed_public_begin_preflight,
+    projected_earliest_stale_task_from_status, public_intent_preflight_persistence_required,
+    public_status_from_context_with_shared_routing,
+    public_status_from_supplied_context_with_shared_routing, require_normalized_text,
     require_preflight_acceptance, require_prior_task_closure_for_begin,
-    status_from_context_with_shared_routing, still_current_task_closure_records,
-    structural_current_task_closure_failures,
+    still_current_task_closure_records, structural_current_task_closure_failures,
     task_closure_baseline_repair_candidate_with_stale_target,
     task_closure_negative_result_blocks_current_reviewed_state,
     task_completion_lineage_fingerprint, task_packet_fingerprint,
@@ -110,6 +114,9 @@ use crate::paths::{
     harness_authoritative_artifact_path, normalize_repo_relative_path,
     write_atomic as write_atomic_file,
 };
+
+const TASK_CLOSURE_PROJECTION_METADATA_REFRESHED_TRACE: &str = "Recorded or refreshed the current task closure and regenerated state-dir task-review projection metadata.";
+const ALREADY_CURRENT_TASK_CLOSURE_PROJECTION_METADATA_REFRESHED_TRACE: &str = "Current task closure is already current for this reviewed state; regenerated state-dir task-review projection metadata from the existing closure baseline.";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CloseCurrentTaskOutput {
@@ -147,6 +154,41 @@ pub struct MaterializeProjectionsOutput {
     pub written_paths: Vec<String>,
     pub runtime_truth_changed: bool,
     pub trace_summary: String,
+}
+
+const INTERNAL_EXECUTION_FLAGS_ENV: &str = "FEATUREFORGE_ALLOW_INTERNAL_EXECUTION_FLAGS";
+
+fn internal_execution_flags_enabled() -> bool {
+    std::env::var(INTERNAL_EXECUTION_FLAGS_ENV).as_deref() == Ok("1")
+}
+
+fn require_internal_execution_flag_allowed(flag: &str, command: &str) -> Result<(), JsonFailure> {
+    if internal_execution_flags_enabled() {
+        return Ok(());
+    }
+    Err(JsonFailure::new(
+        FailureClass::InvalidCommandInput,
+        format!(
+            "{flag} is an internal compatibility flag and is not available in normal public execution. Run {command} without it."
+        ),
+    ))
+}
+
+fn require_close_current_task_public_flags(args: &CloseCurrentTaskArgs) -> Result<(), JsonFailure> {
+    if args.dispatch_id.is_some() {
+        require_internal_execution_flag_allowed("--dispatch-id", "close-current-task")?;
+    }
+    Ok(())
+}
+
+fn require_advance_late_stage_public_flags(args: &AdvanceLateStageArgs) -> Result<(), JsonFailure> {
+    if args.dispatch_id.is_some() {
+        require_internal_execution_flag_allowed("--dispatch-id", "advance-late-stage")?;
+    }
+    if args.branch_closure_id.is_some() {
+        require_internal_execution_flag_allowed("--branch-closure-id", "advance-late-stage")?;
+    }
+    Ok(())
 }
 
 fn close_current_task_already_current_output(
@@ -408,8 +450,8 @@ fn begin_failure_class_from_blocking_reason_codes(reason_codes: &[String]) -> Fa
                 | "prior_task_verification_missing"
                 | "prior_task_verification_missing_legacy"
                 | "task_review_not_independent"
-                | "task_review_receipt_malformed"
-                | "task_verification_receipt_malformed"
+                | "task_review_artifact_malformed"
+                | "task_verification_summary_malformed"
                 | "task_cycle_break_active"
         )
     }) {
@@ -438,27 +480,9 @@ pub fn begin(
     args: &BeginArgs,
 ) -> Result<PlanExecutionStatus, JsonFailure> {
     let request = normalize_begin_request(args);
-    let _write_authority = claim_step_write_authority(runtime)?;
     let mut context = load_execution_context_for_mutation(runtime, &args.plan)?;
     validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
-    require_preflight_acceptance(&context)?;
-    let mut authoritative_state =
-        Some(load_or_initialize_authoritative_transition_state(&context)?);
-    enforce_authoritative_phase(authoritative_state.as_ref(), StepCommand::Begin)?;
-    enforce_active_contract_scope(
-        authoritative_state.as_ref(),
-        StepCommand::Begin,
-        request.task,
-        request.step,
-    )?;
-    let begin_status = status_from_context_with_shared_routing(runtime, &context, false)?;
 
-    let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
-        JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "Requested task/step does not exist in the approved plan.",
-        )
-    })?;
     match context.plan_document.execution_mode.as_str() {
         "none" => match request.execution_mode.as_deref() {
             Some("featureforge:executing-plans" | "featureforge:subagent-driven-development") => {
@@ -484,6 +508,19 @@ pub fn begin(
             }
         }
     }
+    let begin_status = public_status_from_supplied_context_with_shared_routing(&context, false)?;
+    let preflight_persistence_required =
+        public_intent_preflight_persistence_required(&context, "begin")?;
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state =
+        Some(load_or_initialize_authoritative_transition_state(&context)?);
+    enforce_authoritative_phase(authoritative_state.as_ref(), StepCommand::Begin)?;
+    enforce_active_contract_scope(
+        authoritative_state.as_ref(),
+        StepCommand::Begin,
+        request.task,
+        request.step,
+    )?;
 
     if let Some(active) = context
         .steps
@@ -528,6 +565,12 @@ pub fn begin(
         ));
     }
 
+    let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::InvalidStepTransition,
+            "Requested task/step does not exist in the approved plan.",
+        )
+    })?;
     require_public_mutation(
         &begin_status,
         PublicMutationRequest {
@@ -583,6 +626,9 @@ pub fn begin(
     }
 
     let projection_write_mode = normal_projection_write_mode()?;
+    if preflight_persistence_required {
+        persist_allowed_public_begin_preflight(&context)?;
+    }
     context.steps[step_index].note_state = Some(crate::execution::state::NoteState::Active);
     context.steps[step_index].note_summary = truncate_summary(&require_normalized_text(
         &context.steps[step_index].title,
@@ -640,7 +686,7 @@ pub fn complete(
         request.task,
         request.step,
     )?;
-    let complete_status = status_from_context_with_shared_routing(runtime, &context, false)?;
+    let complete_status = public_status_from_context_with_shared_routing(runtime, &context, false)?;
     require_public_mutation(
         &complete_status,
         PublicMutationRequest {
@@ -865,7 +911,7 @@ pub fn reopen(
             "Requested task/step does not exist in the approved plan.",
         )
     })?;
-    let reopen_status = status_from_context_with_shared_routing(runtime, &context, false)?;
+    let reopen_status = public_status_from_context_with_shared_routing(runtime, &context, false)?;
     require_public_mutation(
         &reopen_status,
         PublicMutationRequest {
@@ -1035,7 +1081,7 @@ fn transfer_repair_step(
     let mut context = load_execution_context_for_mutation(runtime, plan)?;
     validate_expected_fingerprint(&context, expect_execution_fingerprint)?;
     normalize_source(source, &context.plan_document.execution_mode)?;
-    let transfer_status = status_from_context_with_shared_routing(runtime, &context, false)?;
+    let transfer_status = public_status_from_context_with_shared_routing(runtime, &context, false)?;
     require_public_mutation(
         &transfer_status,
         PublicMutationRequest {
@@ -1137,7 +1183,7 @@ fn status_with_shared_routing_or_context(
     fallback_context: &ExecutionContext,
 ) -> Result<PlanExecutionStatus, JsonFailure> {
     let unsanitized_post_status =
-        status_from_context_with_shared_routing(runtime, fallback_context, false).ok();
+        public_status_from_context_with_shared_routing(runtime, fallback_context, false).ok();
     if let Some(status) = unsanitized_post_status.as_ref() {
         enforce_post_mutation_shared_status_invariants(status)?;
     }
@@ -1181,8 +1227,11 @@ fn status_with_shared_routing_or_context(
                         .is_some())
                 || exact_command_derivation_failure
             {
-                let fallback_status =
-                    status_from_context_with_shared_routing(runtime, fallback_context, false)?;
+                let fallback_status = public_status_from_context_with_shared_routing(
+                    runtime,
+                    fallback_context,
+                    false,
+                )?;
                 enforce_post_mutation_status_invariants(
                     fallback_context,
                     &fallback_status,
@@ -1474,6 +1523,7 @@ pub fn close_current_task(
     runtime: &ExecutionRuntime,
     args: &CloseCurrentTaskArgs,
 ) -> Result<CloseCurrentTaskOutput, JsonFailure> {
+    require_close_current_task_public_flags(args)?;
     let initial_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     let authoritative_execution_run_id = load_authoritative_transition_state(&initial_context)?
         .as_ref()
@@ -1910,7 +1960,7 @@ pub fn close_current_task(
                     return Ok(close_current_task_already_current_output(
                         args.task,
                         closure_record_id,
-                        "Current task closure is already current for this dispatch lineage; refreshed receipt projections from the existing closure baseline.",
+                        ALREADY_CURRENT_TASK_CLOSURE_PROJECTION_METADATA_REFRESHED_TRACE,
                         reason_codes,
                     ));
                 }
@@ -2027,9 +2077,7 @@ pub fn close_current_task(
                 blocking_task: None,
                 blocking_reason_codes: Vec::new(),
                 authoritative_next_action: None,
-                trace_summary: String::from(
-                    "Validated task review dispatch lineage and refreshed authoritative task review and verification receipts.",
-                ),
+                trace_summary: String::from(TASK_CLOSURE_PROJECTION_METADATA_REFRESHED_TRACE),
             })
         }
         CloseCurrentTaskOutcomeClass::Negative => {
@@ -2404,7 +2452,16 @@ pub fn advance_late_stage(
     runtime: &ExecutionRuntime,
     args: &AdvanceLateStageArgs,
 ) -> Result<AdvanceLateStageOutput, JsonFailure> {
+    require_advance_late_stage_public_flags(args)?;
+    advance_late_stage_impl(runtime, args)
+}
+
+fn advance_late_stage_impl(
+    runtime: &ExecutionRuntime,
+    args: &AdvanceLateStageArgs,
+) -> Result<AdvanceLateStageOutput, JsonFailure> {
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    ensure_public_intent_preflight_ready(&context, "advance-late-stage")?;
     require_preflight_acceptance(&context)?;
     let status = status_with_shared_routing_or_context(runtime, &args.plan, &context)?;
     let supplied_result_label = advance_late_stage_result_label(args.result);
@@ -3205,14 +3262,14 @@ pub fn record_release_readiness(
         ));
     }
     let result = match args.result {
-        crate::cli::plan_execution::ReleaseReadinessOutcomeArg::Ready => {
+        crate::execution::internal_args::ReleaseReadinessOutcomeArg::Ready => {
             AdvanceLateStageResultArg::Ready
         }
-        crate::cli::plan_execution::ReleaseReadinessOutcomeArg::Blocked => {
+        crate::execution::internal_args::ReleaseReadinessOutcomeArg::Blocked => {
             AdvanceLateStageResultArg::Blocked
         }
     };
-    advance_late_stage(
+    advance_late_stage_impl(
         runtime,
         &AdvanceLateStageArgs {
             plan: args.plan.clone(),
@@ -3250,7 +3307,7 @@ pub fn record_final_review(
         ReviewOutcomeArg::Pass => AdvanceLateStageResultArg::Pass,
         ReviewOutcomeArg::Fail => AdvanceLateStageResultArg::Fail,
     };
-    advance_late_stage(
+    advance_late_stage_impl(
         runtime,
         &AdvanceLateStageArgs {
             plan: args.plan.clone(),
@@ -3812,10 +3869,20 @@ pub fn materialize_projections(
     args: &MaterializeProjectionsArgs,
 ) -> Result<MaterializeProjectionsOutput, JsonFailure> {
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    let mode = if args.state_dir {
-        ProjectionWriteMode::StateDirOnly
-    } else {
+    let repo_export_requested = args.repo_export || args.tracked;
+    if repo_export_requested
+        && !args.confirm_repo_export
+        && std::env::var("FEATUREFORGE_ALLOW_REPO_PROJECTION_EXPORT").as_deref() != Ok("1")
+    {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidCommandInput,
+            "materialize-projections repo export requires --confirm-repo-export or FEATUREFORGE_ALLOW_REPO_PROJECTION_EXPORT=1.",
+        ));
+    }
+    let mode = if repo_export_requested {
         ProjectionWriteMode::ProjectionExport
+    } else {
+        ProjectionWriteMode::StateDirOnly
     };
     let mut written_paths = Vec::new();
     if matches!(
@@ -3851,7 +3918,7 @@ pub fn materialize_projections(
         runtime_truth_changed: false,
         trace_summary: match mode {
             ProjectionWriteMode::ProjectionExport if args.tracked => String::from(
-                "Materialized projection export files from authoritative runtime state; `--tracked` is a deprecated alias and approved plan/evidence files were not modified.",
+                "Materialized projection export files from authoritative runtime state; `--tracked` is a deprecated alias for --repo-export and approved plan/evidence files were not modified.",
             ),
             ProjectionWriteMode::ProjectionExport => String::from(
                 "Materialized projection export files from authoritative runtime state; approved plan/evidence files were not modified.",
@@ -6849,7 +6916,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -6871,7 +6938,9 @@ mod unit_tests {
             recording_context: None,
             execution_command_context: None,
             next_action: String::new(),
-            recommended_command: None,
+            recommended_command: Some(String::from(
+                "featureforge plan execution repair-review-state --plan <approved-plan-path>",
+            )),
             blocking_scope: None,
             blocking_task: None,
             external_wait_state: None,
@@ -6909,7 +6978,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -6988,7 +7057,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7062,7 +7131,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7127,7 +7196,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7184,7 +7253,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7241,7 +7310,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7297,7 +7366,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7352,7 +7421,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7415,7 +7484,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,

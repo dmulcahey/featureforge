@@ -30,7 +30,7 @@ Execution authority is event-only:
 - once plan execution starts, branch execution truth is the append-only event log under the harness branch root (`execution-harness/events.jsonl`)
 - `state.json`, approved-plan checklist marks, execution evidence, release/readiness/review/QA markdown, and strategy displays are deterministic projections/read models
 - deleting, exporting, or regenerating those projections must not change operator routing, status, review-state repair, or mutator legality
-- use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` only when a repo-local human-readable projection export is explicitly needed; approved plan and evidence files are not modified
+- use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` for state-dir-only diagnostic projection refreshes; add `--repo-export --confirm-repo-export` only when a repo-local human-readable projection export is explicitly needed; approved plan and evidence files are not modified
 - runtime-owned reviewed-closure, milestone, dispatch-lineage, and strategy facts are reduced from the event log for routing and gates
 - branch-scoped local projections live under `~/.featureforge/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
 
@@ -67,11 +67,11 @@ The repo-local default config for this checkout lives at `.featureforge/config.y
 
 Default pipeline:
 
-`featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-fidelity-review -> featureforge:plan-eng-review -> implementation`
+`featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review`; `featureforge:plan-fidelity-review` runs only after engineering-review edits are complete, then `featureforge:plan-eng-review` performs final approval before implementation.
 
 Planning chain in plain language:
 
-`brainstorming -> plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> implementation`
+`brainstorming -> plan-ceo-review -> writing-plans -> plan-eng-review`; `plan-fidelity-review` runs only after engineering-review edits are complete, then `plan-eng-review` performs final approval before implementation.
 
 The generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; if no approved plan path is known, resolve it through the normal planning/review handoff, then route with workflow/operator.
 

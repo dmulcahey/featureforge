@@ -16,6 +16,28 @@ fn assert_file_contains(path: PathBuf, needle: &str) {
     );
 }
 
+fn assert_file_does_not_contain(path: PathBuf, needle: &str) {
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
+    assert!(
+        !source.contains(needle),
+        "{} should not contain {:?}",
+        path.display(),
+        needle
+    );
+}
+
+fn assert_file_contains_ci(path: PathBuf, needle: &str) {
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
+    assert!(
+        source.to_lowercase().contains(&needle.to_lowercase()),
+        "{} should contain {:?} case-insensitively",
+        path.display(),
+        needle
+    );
+}
+
 #[test]
 fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     let root = repo_root();
@@ -78,10 +100,70 @@ fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
-        "Dedicated Reviewer Receipt Contract",
+        "Structured Review Result Metadata",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
-        "include structured receipt-ready metadata in your response",
+        "review-result metadata for the controller to bind to runtime-owned state",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "Do not create, repair, search for, or reference runtime receipt files",
+    );
+    assert_file_does_not_contain(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "receipt-ready metadata",
+    );
+    assert_file_does_not_contain(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "Dedicated Reviewer Receipt Contract",
+    );
+}
+
+#[test]
+fn reviewer_prompts_are_non_recursive_and_runtime_command_free() {
+    let root = repo_root();
+    let reviewer_paths = [
+        root.join("agents/code-reviewer.instructions.md"),
+        root.join("agents/code-reviewer.md"),
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        root.join("skills/plan-fidelity-review/reviewer-prompt.md"),
+        root.join("skills/plan-eng-review/accelerated-reviewer-prompt.md"),
+        root.join("skills/plan-ceo-review/accelerated-reviewer-prompt.md"),
+        root.join("skills/subagent-driven-development/code-quality-reviewer-prompt.md"),
+        root.join("skills/subagent-driven-development/spec-reviewer-prompt.md"),
+    ];
+
+    for path in reviewer_paths {
+        assert_file_contains(
+            path.clone(),
+            "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no",
+        );
+        assert_file_does_not_contain(path.clone(), "REVIEWER_RUNTIME_COMMANDS_ALLOWED: no");
+        assert_file_contains_ci(path.clone(), "do not invoke FeatureForge skills");
+        assert_file_contains_ci(
+            path.clone(),
+            "do not run `featureforge workflow` or `featureforge plan execution` commands",
+        );
+        assert_file_contains_ci(
+            path.clone(),
+            "do not dispatch `code-reviewer` or `requesting-code-review`",
+        );
+        assert_file_contains(path.clone(), "If required runtime context is missing");
+        assert_file_does_not_contain(path.clone(), "Run `featureforge workflow");
+        assert_file_does_not_contain(path.clone(), "Run `featureforge plan execution");
+    }
+
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "The controller owns any FeatureForge runtime queries before dispatch.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no",
+    );
+    assert_file_does_not_contain(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "REVIEWER_RUNTIME_COMMANDS_ALLOWED: no",
     );
 }

@@ -14,13 +14,8 @@ use crate::contracts::task_contract::{
     validate_task_contract,
 };
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::execution::topology::{
-    parse_plan_fidelity_review_artifact, validate_plan_fidelity_review_artifact,
-};
-use crate::git::discover_slug_identity;
-use crate::paths::{
-    RepoPath, featureforge_state_dir, harness_branch_root, normalize_repo_relative_file_reference,
-};
+use crate::execution::topology::parse_plan_fidelity_review_artifact;
+use crate::paths::{RepoPath, normalize_repo_relative_file_reference};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PlanStep {
@@ -64,8 +59,6 @@ pub struct PlanDocument {
     pub source: String,
 }
 
-pub const PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION: u32 = 3;
-pub const PLAN_FIDELITY_RECEIPT_KIND: &str = "plan_fidelity_receipt";
 pub const PLAN_FIDELITY_REVIEW_STAGE: &str = "featureforge:plan-fidelity-review";
 pub const PLAN_FIDELITY_REQUIRED_SURFACES: [&str; 5] = [
     "requirement_index",
@@ -78,40 +71,9 @@ pub const PLAN_FIDELITY_DISTINCT_STAGES: [&str; 2] =
     ["featureforge:writing-plans", "featureforge:plan-eng-review"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct PlanFidelityReviewerProvenance {
-    pub review_stage: String,
-    pub reviewer_source: String,
-    pub reviewer_id: String,
-    pub distinct_from_stages: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct PlanFidelityVerification {
-    pub checked_surfaces: Vec<String>,
-    pub verified_requirement_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct PlanFidelityReceipt {
-    pub schema_version: u32,
-    pub receipt_kind: String,
-    pub verdict: String,
-    pub spec_path: String,
-    pub spec_revision: u32,
-    pub spec_fingerprint: String,
-    pub plan_path: String,
-    pub plan_revision: u32,
-    pub plan_fingerprint: String,
-    pub review_artifact_path: String,
-    pub review_artifact_fingerprint: String,
-    pub reviewer_provenance: PlanFidelityReviewerProvenance,
-    pub verification: PlanFidelityVerification,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct PlanFidelityGateReport {
+pub struct PlanFidelityReviewReport {
     pub state: String,
-    pub receipt_path: String,
+    pub review_artifact_path: String,
     pub reviewer_stage: String,
     pub provenance_source: String,
     pub verified_requirement_index: bool,
@@ -123,7 +85,7 @@ pub struct PlanFidelityGateReport {
     pub diagnostics: Vec<ContractDiagnostic>,
 }
 
-impl PlanFidelityGateReport {
+impl PlanFidelityReviewReport {
     pub fn not_applicable() -> Self {
         Self::unverified(
             "not_applicable",
@@ -137,7 +99,7 @@ impl PlanFidelityGateReport {
 
     pub fn unverified(
         state: &str,
-        receipt_path: String,
+        review_artifact_path: String,
         reviewer_stage: String,
         provenance_source: String,
         reason_codes: Vec<String>,
@@ -145,7 +107,7 @@ impl PlanFidelityGateReport {
     ) -> Self {
         Self {
             state: state.to_owned(),
-            receipt_path,
+            review_artifact_path,
             reviewer_stage,
             provenance_source,
             verified_requirement_index: false,
@@ -208,7 +170,7 @@ pub struct AnalyzePlanReport {
     pub parallel_worktree_requirements: Vec<ParallelWorktreeRequirement>,
     pub reason_codes: Vec<String>,
     pub overlapping_write_scopes: Vec<OverlappingWriteScope>,
-    pub plan_fidelity_receipt: PlanFidelityGateReport,
+    pub plan_fidelity_review: PlanFidelityReviewReport,
     pub diagnostics: Vec<ContractDiagnostic>,
 }
 
@@ -247,14 +209,11 @@ pub fn analyze_plan(
     let plan = parse_plan_file(plan_path)?;
     let mut report = analyze_documents(&spec, &plan);
     if plan.workflow_state == "Draft" {
-        let gate = evaluate_plan_fidelity_receipt_at_path(
+        report.plan_fidelity_review = evaluate_plan_fidelity_review(
             &spec,
             &plan,
             repo_root_for_artifact_paths(spec_path, plan_path),
-            plan_fidelity_receipt_path_for_repo(repo_root_for_artifact_paths(spec_path, plan_path)),
         );
-        merge_plan_fidelity_gate(&mut report, &gate);
-        report.plan_fidelity_receipt = gate;
     }
     Ok(report)
 }
@@ -408,125 +367,111 @@ pub fn analyze_documents(spec: &SpecDocument, plan: &PlanDocument) -> AnalyzePla
         parallel_worktree_requirements: topology.parallel_worktree_requirements,
         reason_codes,
         overlapping_write_scopes,
-        plan_fidelity_receipt: PlanFidelityGateReport::not_applicable(),
+        plan_fidelity_review: PlanFidelityReviewReport::not_applicable(),
         diagnostics,
     }
 }
 
-pub fn evaluate_plan_fidelity_receipt_at_path(
+pub fn evaluate_plan_fidelity_review(
     spec: &SpecDocument,
     plan: &PlanDocument,
     repo_root: &Path,
-    receipt_path: impl AsRef<Path>,
-) -> PlanFidelityGateReport {
-    let receipt_path = receipt_path.as_ref();
-    let receipt_path_string = receipt_path.display().to_string();
+) -> PlanFidelityReviewReport {
+    let candidates = plan_fidelity_review_artifact_candidates(repo_root, plan);
+    if candidates.is_empty() {
+        return missing_plan_fidelity_review();
+    }
+
+    let mut stale_candidate = None;
+    let mut invalid_candidate = None;
+    let mut current_reports = Vec::new();
+    for candidate in candidates {
+        let artifact_path_string = candidate
+            .strip_prefix(repo_root)
+            .ok()
+            .and_then(|path| path.to_str())
+            .map(|path| path.replace('\\', "/"))
+            .unwrap_or_else(|| candidate.display().to_string());
+        let artifact = match parse_plan_fidelity_review_artifact(&candidate, &artifact_path_string)
+        {
+            Ok(artifact) => artifact,
+            Err(error) => {
+                invalid_candidate.get_or_insert_with(|| {
+                    invalid_plan_fidelity_review(
+                        artifact_path_string.clone(),
+                        "plan_fidelity_review_artifact_invalid",
+                        format!("Plan-fidelity review artifact is invalid: {error}"),
+                    )
+                });
+                continue;
+            }
+        };
+
+        let report = evaluate_parsed_plan_fidelity_review_artifact(&artifact, plan, spec);
+        match report.state.as_str() {
+            "pass" | "fail" | "invalid" => {
+                if artifact.reviewed_plan_path == plan.path
+                    && artifact.reviewed_plan_revision == plan.plan_revision
+                    && artifact.reviewed_plan_fingerprint == sha256_hex(plan.source.as_bytes())
+                    && artifact.reviewed_spec_path == spec.path
+                    && artifact.reviewed_spec_revision == spec.spec_revision
+                    && artifact.reviewed_spec_fingerprint == sha256_hex(spec.source.as_bytes())
+                {
+                    current_reports.push(report);
+                } else if stale_candidate.is_none() {
+                    stale_candidate = Some(stale_plan_fidelity_review(artifact.path.clone()));
+                }
+            }
+            "stale" => {
+                stale_candidate.get_or_insert(report);
+            }
+            _ => {
+                invalid_candidate.get_or_insert(report);
+            }
+        };
+    }
+
+    if current_reports.len() > 1 {
+        let verdicts = current_reports
+            .iter()
+            .map(|report| report.state.as_str())
+            .collect::<BTreeSet<_>>();
+        if verdicts.len() > 1 {
+            return invalid_plan_fidelity_review(
+                String::new(),
+                "ambiguous_plan_fidelity_review_artifact",
+                "Multiple current plan-fidelity review artifacts bind to this plan fingerprint with conflicting verdicts."
+                    .to_owned(),
+            );
+        }
+    }
+    if let Some(report) = current_reports.into_iter().next() {
+        return report;
+    }
+    stale_candidate
+        .or(invalid_candidate)
+        .unwrap_or_else(missing_plan_fidelity_review)
+}
+
+fn evaluate_parsed_plan_fidelity_review_artifact(
+    artifact: &crate::execution::topology::PlanFidelityReviewArtifact,
+    plan: &PlanDocument,
+    spec: &SpecDocument,
+) -> PlanFidelityReviewReport {
     let mut diagnostics = Vec::new();
     let mut reason_codes = Vec::new();
-
-    let source = match fs::read_to_string(receipt_path) {
-        Ok(source) => source,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            push_diagnostic(
-                &mut diagnostics,
-                &mut reason_codes,
-                "missing_plan_fidelity_receipt",
-                "Plan-fidelity receipt is missing for the current draft plan.",
-            );
-            return PlanFidelityGateReport::unverified(
-                "missing",
-                receipt_path_string,
-                String::new(),
-                String::new(),
-                reason_codes,
-                diagnostics,
-            );
-        }
-        Err(error) => {
-            push_diagnostic(
-                &mut diagnostics,
-                &mut reason_codes,
-                "malformed_plan_fidelity_receipt",
-                &format!(
-                    "Could not read plan-fidelity receipt {}: {error}",
-                    receipt_path.display()
-                ),
-            );
-            return PlanFidelityGateReport::unverified(
-                "malformed",
-                receipt_path_string,
-                String::new(),
-                String::new(),
-                reason_codes,
-                diagnostics,
-            );
-        }
-    };
-
-    let receipt = match serde_json::from_str::<PlanFidelityReceipt>(&source) {
-        Ok(receipt) => receipt,
-        Err(error) => {
-            push_diagnostic(
-                &mut diagnostics,
-                &mut reason_codes,
-                "malformed_plan_fidelity_receipt",
-                &format!("Plan-fidelity receipt is not valid json: {error}"),
-            );
-            return PlanFidelityGateReport::unverified(
-                "malformed",
-                receipt_path_string,
-                String::new(),
-                String::new(),
-                reason_codes,
-                diagnostics,
-            );
-        }
-    };
-
-    if receipt.schema_version != PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION
-        || receipt.receipt_kind != PLAN_FIDELITY_RECEIPT_KIND
-    {
-        push_diagnostic(
-            &mut diagnostics,
-            &mut reason_codes,
-            "malformed_plan_fidelity_receipt",
-            "Plan-fidelity receipt has an unsupported schema version or receipt kind.",
-        );
-        return PlanFidelityGateReport::unverified(
-            "malformed",
-            receipt_path_string,
-            receipt.reviewer_provenance.review_stage,
-            receipt.reviewer_provenance.reviewer_source,
-            reason_codes,
-            diagnostics,
-        );
-    }
-
-    let spec_fingerprint = sha256_hex(spec.source.as_bytes());
     let plan_fingerprint = sha256_hex(plan.source.as_bytes());
-    let stale_binding = receipt.spec_path != spec.path
-        || receipt.spec_revision != spec.spec_revision
-        || receipt.spec_fingerprint != spec_fingerprint
-        || receipt.plan_path != plan.path
-        || receipt.plan_revision != plan.plan_revision
-        || receipt.plan_fingerprint != plan_fingerprint;
+    let spec_fingerprint = sha256_hex(spec.source.as_bytes());
+    let stale_binding = artifact.reviewed_plan_path != plan.path
+        || artifact.reviewed_plan_revision != plan.plan_revision
+        || artifact.reviewed_plan_fingerprint != plan_fingerprint
+        || artifact.reviewed_spec_path != spec.path
+        || artifact.reviewed_spec_revision != spec.spec_revision
+        || artifact.reviewed_spec_fingerprint != spec_fingerprint;
     if stale_binding {
-        push_diagnostic(
-            &mut diagnostics,
-            &mut reason_codes,
-            "stale_plan_fidelity_receipt",
-            "Plan-fidelity receipt does not match the current approved spec and draft plan revision.",
-        );
+        return stale_plan_fidelity_review(artifact.path.clone());
     }
 
-    if receipt.verdict != "pass" {
-        push_diagnostic(
-            &mut diagnostics,
-            &mut reason_codes,
-            "plan_fidelity_receipt_not_pass",
-            "Plan-fidelity receipt is not in pass state.",
-        );
-    }
     if spec.workflow_state != "CEO Approved" || spec.last_reviewed_by != "plan-ceo-review" {
         push_diagnostic(
             &mut diagnostics,
@@ -535,116 +480,45 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
             "Plan-fidelity review requires a workflow-valid CEO-approved source spec reviewed by plan-ceo-review.",
         );
     }
-    if receipt.review_artifact_path.trim().is_empty()
-        || receipt.review_artifact_fingerprint.trim().is_empty()
+
+    if artifact.review_stage != PLAN_FIDELITY_REVIEW_STAGE
+        || !matches!(
+            artifact.reviewer_source.as_str(),
+            "fresh-context-subagent" | "cross-model"
+        )
+        || artifact.reviewer_id.trim().is_empty()
     {
         push_diagnostic(
             &mut diagnostics,
             &mut reason_codes,
-            "plan_fidelity_receipt_missing_review_artifact_binding",
-            "Plan-fidelity receipt must bind to a concrete review artifact path and fingerprint.",
+            "plan_fidelity_reviewer_provenance_invalid",
+            "Plan-fidelity review artifact reviewer provenance is malformed or not independent.",
         );
-    } else {
-        match RepoPath::parse(&receipt.review_artifact_path) {
-            Ok(review_artifact_path) => {
-                let review_artifact_abs = repo_root.join(review_artifact_path.as_str());
-                match fs::read(&review_artifact_abs) {
-                    Ok(bytes) => {
-                        if sha256_hex(&bytes) != receipt.review_artifact_fingerprint {
-                            push_diagnostic(
-                                &mut diagnostics,
-                                &mut reason_codes,
-                                "plan_fidelity_review_artifact_fingerprint_mismatch",
-                                "Plan-fidelity receipt review artifact fingerprint does not match the current artifact contents.",
-                            );
-                        }
-                        match parse_plan_fidelity_review_artifact(
-                            &review_artifact_abs,
-                            review_artifact_path.as_str(),
-                        )
-                        .and_then(|artifact| {
-                            validate_plan_fidelity_review_artifact(&artifact, plan, spec)?;
-                            if receipt_artifact_binding_matches(&receipt, &artifact) {
-                                Ok(())
-                            } else {
-                                Err(DiagnosticError::new(
-                                    FailureClass::InstructionParseFailed,
-                                    "Plan-fidelity receipt does not match the bound review artifact verification headers.",
-                                ))
-                            }
-                        }) {
-                            Ok(()) => {}
-                            Err(error) => {
-                                push_diagnostic(
-                                    &mut diagnostics,
-                                    &mut reason_codes,
-                                    "plan_fidelity_review_artifact_invalid",
-                                    &format!(
-                                        "Plan-fidelity receipt review artifact is invalid: {error}"
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        push_diagnostic(
-                            &mut diagnostics,
-                            &mut reason_codes,
-                            "plan_fidelity_review_artifact_missing",
-                            "Plan-fidelity receipt review artifact is missing or unreadable.",
-                        );
-                    }
-                }
-            }
-            Err(_) => {
-                push_diagnostic(
-                    &mut diagnostics,
-                    &mut reason_codes,
-                    "plan_fidelity_review_artifact_invalid_path",
-                    "Plan-fidelity receipt review artifact path must stay repo-relative.",
-                );
-            }
-        }
     }
 
-    let provenance = &receipt.reviewer_provenance;
-    let distinct_stages = provenance
+    let distinct_stages = artifact
         .distinct_from_stages
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let provenance_valid = provenance.review_stage == PLAN_FIDELITY_REVIEW_STAGE
-        && matches!(
-            provenance.reviewer_source.as_str(),
-            "fresh-context-subagent" | "cross-model"
-        )
-        && !provenance.reviewer_id.trim().is_empty()
-        && PLAN_FIDELITY_DISTINCT_STAGES
-            .iter()
-            .all(|stage| distinct_stages.contains(stage));
-    if !provenance_valid {
-        push_diagnostic(
-            &mut diagnostics,
-            &mut reason_codes,
-            "plan_fidelity_receipt_not_independent",
-            "Plan-fidelity reviewer provenance must prove the dedicated reviewer stage stayed distinct from writing-plans and plan-eng-review.",
-        );
+    if !PLAN_FIDELITY_DISTINCT_STAGES
+        .iter()
+        .all(|stage| distinct_stages.contains(stage))
+    {
         push_diagnostic(
             &mut diagnostics,
             &mut reason_codes,
             "plan_fidelity_reviewer_provenance_invalid",
-            "Plan-fidelity receipt reviewer provenance is malformed or not independent.",
+            "Plan-fidelity review artifact must declare distinction from writing-plans and plan-eng-review.",
         );
     }
 
-    let checked_surfaces = receipt
-        .verification
-        .checked_surfaces
+    let checked_surfaces = artifact
+        .verified_surfaces
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let verified_requirement_ids = receipt
-        .verification
+    let verified_requirement_ids = artifact
         .verified_requirement_ids
         .iter()
         .cloned()
@@ -665,73 +539,47 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
     let verified_task_determinism = checked_surfaces.contains("task_determinism");
     let verified_spec_reference_fidelity = checked_surfaces.contains("spec_reference_fidelity");
 
-    for (verified, code, message) in [
-        (
-            verified_requirement_index,
-            "plan_fidelity_receipt_missing_requirement_index_check",
-            "Plan-fidelity receipt must prove the reviewer checked the full Requirement Index.",
-        ),
-        (
-            verified_execution_topology,
-            "plan_fidelity_receipt_missing_execution_topology_check",
-            "Plan-fidelity receipt must prove the reviewer checked the draft plan's execution-topology claims.",
-        ),
-        (
-            verified_task_contract,
-            "plan_fidelity_receipt_missing_task_contract_check",
-            "Plan-fidelity receipt must prove the reviewer checked every task against the approved task contract.",
-        ),
-        (
-            verified_task_determinism,
-            "plan_fidelity_receipt_missing_task_determinism_check",
-            "Plan-fidelity receipt must prove the reviewer checked deterministic task completion obligations.",
-        ),
-        (
-            verified_spec_reference_fidelity,
-            "plan_fidelity_receipt_missing_spec_reference_fidelity_check",
-            "Plan-fidelity receipt must prove the reviewer checked task-level spec-reference fidelity.",
-        ),
-    ] {
-        if !verified {
-            push_diagnostic(&mut diagnostics, &mut reason_codes, code, message);
-        }
-    }
-    if !checked_surfaces.is_subset(&expected_surfaces) {
+    if checked_surfaces != expected_surfaces {
         push_diagnostic(
             &mut diagnostics,
             &mut reason_codes,
-            "plan_fidelity_receipt_unexpected_verified_surface",
-            "Plan-fidelity receipt must use the exact required verified-surface set.",
+            "plan_fidelity_review_missing_required_surface",
+            "Plan-fidelity review artifact must use the exact required verified-surface set.",
         );
     }
-    if checked_surfaces != expected_surfaces
-        || !verified_requirement_index
-        || !verified_execution_topology
-        || !verified_task_contract
-        || !verified_task_determinism
-        || !verified_spec_reference_fidelity
-    {
+    if verified_requirement_ids != expected_requirement_ids {
         push_diagnostic(
             &mut diagnostics,
             &mut reason_codes,
-            "plan_fidelity_verification_incomplete",
-            "Plan-fidelity receipt is missing one or more required verification surfaces.",
+            "plan_fidelity_review_requirement_ids_mismatch",
+            "Plan-fidelity review artifact must enumerate the exact Requirement Index ids it verified.",
+        );
+    }
+    if artifact.review_verdict != "pass" {
+        push_diagnostic(
+            &mut diagnostics,
+            &mut reason_codes,
+            "plan_fidelity_review_artifact_not_pass",
+            "Plan-fidelity review artifact is not in pass state.",
         );
     }
 
     let state = if reason_codes.is_empty() {
-        String::from("pass")
-    } else if stale_binding {
-        String::from("stale")
+        "pass"
+    } else if artifact.review_verdict != "pass"
+        && reason_codes.len() == 1
+        && reason_codes[0] == "plan_fidelity_review_artifact_not_pass"
+    {
+        "fail"
     } else {
-        String::from("invalid")
+        "invalid"
     };
 
-    PlanFidelityGateReport {
-        state,
-        receipt_path: receipt_path_string,
-        reviewer_stage: provenance.review_stage.clone(),
-        provenance_source: provenance.reviewer_source.clone(),
+    PlanFidelityReviewReport {
+        state: state.to_owned(),
+        review_artifact_path: artifact.path.clone(),
+        reviewer_stage: artifact.review_stage.clone(),
+        provenance_source: artifact.reviewer_source.clone(),
         verified_requirement_index,
         verified_execution_topology,
         verified_task_contract,
@@ -742,17 +590,92 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
     }
 }
 
-fn receipt_artifact_binding_matches(
-    receipt: &PlanFidelityReceipt,
-    artifact: &crate::execution::topology::PlanFidelityReviewArtifact,
-) -> bool {
-    receipt.verdict == artifact.review_verdict
-        && receipt.reviewer_provenance.review_stage == artifact.review_stage
-        && receipt.reviewer_provenance.reviewer_source == artifact.reviewer_source
-        && receipt.reviewer_provenance.reviewer_id == artifact.reviewer_id
-        && receipt.reviewer_provenance.distinct_from_stages == artifact.distinct_from_stages
-        && receipt.verification.checked_surfaces == artifact.verified_surfaces
-        && receipt.verification.verified_requirement_ids == artifact.verified_requirement_ids
+fn plan_fidelity_review_artifact_candidates(repo_root: &Path, plan: &PlanDocument) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let plan_stem = Path::new(&plan.path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("plan");
+    let default = repo_root
+        .join(".featureforge")
+        .join("reviews")
+        .join(format!("{plan_stem}-plan-fidelity.md"));
+    if default.is_file() {
+        candidates.push(default);
+    }
+    let review_dir = repo_root.join(".featureforge").join("reviews");
+    if let Ok(entries) = fs::read_dir(review_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.contains("plan-fidelity") && !candidates.iter().any(|item| item == &path) {
+                candidates.push(path);
+            }
+        }
+    }
+    candidates.sort();
+    candidates
+}
+
+fn missing_plan_fidelity_review() -> PlanFidelityReviewReport {
+    let mut diagnostics = Vec::new();
+    let mut reason_codes = Vec::new();
+    push_diagnostic(
+        &mut diagnostics,
+        &mut reason_codes,
+        "missing_plan_fidelity_review_artifact",
+        "Plan-fidelity review artifact is missing for the current draft plan.",
+    );
+    PlanFidelityReviewReport::unverified(
+        "missing",
+        String::new(),
+        String::new(),
+        String::new(),
+        reason_codes,
+        diagnostics,
+    )
+}
+
+fn stale_plan_fidelity_review(review_artifact_path: String) -> PlanFidelityReviewReport {
+    let mut diagnostics = Vec::new();
+    let mut reason_codes = Vec::new();
+    push_diagnostic(
+        &mut diagnostics,
+        &mut reason_codes,
+        "stale_plan_fidelity_review_artifact",
+        "Plan-fidelity review artifact does not match the current approved spec and draft plan revision.",
+    );
+    PlanFidelityReviewReport::unverified(
+        "stale",
+        review_artifact_path,
+        String::new(),
+        String::new(),
+        reason_codes,
+        diagnostics,
+    )
+}
+
+fn invalid_plan_fidelity_review(
+    review_artifact_path: String,
+    code: &str,
+    message: String,
+) -> PlanFidelityReviewReport {
+    let mut diagnostics = Vec::new();
+    let mut reason_codes = Vec::new();
+    push_diagnostic(&mut diagnostics, &mut reason_codes, code, &message);
+    PlanFidelityReviewReport::unverified(
+        "invalid",
+        review_artifact_path,
+        String::new(),
+        String::new(),
+        reason_codes,
+        diagnostics,
+    )
 }
 
 pub fn parse_plan_source(path: &Path, source: String) -> Result<PlanDocument, DiagnosticError> {
@@ -1954,50 +1877,6 @@ fn malformed_header(header: &str) -> DiagnosticError {
         FailureClass::InstructionParseFailed,
         format!("{header} header is missing or malformed."),
     )
-}
-
-fn merge_plan_fidelity_gate(report: &mut AnalyzePlanReport, gate: &PlanFidelityGateReport) {
-    if gate.state == "pass" || gate.state == "not_applicable" {
-        return;
-    }
-    report.contract_state = String::from("invalid");
-    for code in &gate.reason_codes {
-        if !report.reason_codes.iter().any(|existing| existing == code) {
-            report.reason_codes.push(code.clone());
-        }
-    }
-    for diagnostic in &gate.diagnostics {
-        if report
-            .diagnostics
-            .iter()
-            .any(|existing| existing.code == diagnostic.code)
-        {
-            continue;
-        }
-        report.diagnostics.push(diagnostic.clone());
-    }
-}
-
-pub fn plan_fidelity_receipt_path_for_repo(repo_root: &Path) -> PathBuf {
-    let state_dir = featureforge_state_dir();
-    let slug_identity = discover_slug_identity(repo_root);
-    let branch_root = harness_branch_root(
-        &state_dir,
-        &slug_identity.repo_slug,
-        &slug_identity.branch_name,
-    )
-    .parent()
-    .map(Path::to_path_buf)
-    .unwrap_or_else(|| {
-        harness_branch_root(
-            &state_dir,
-            &slug_identity.repo_slug,
-            &slug_identity.branch_name,
-        )
-    });
-    branch_root
-        .join("workflow")
-        .join("plan-fidelity-receipt.json")
 }
 
 fn repo_root_for_artifact_paths<'a>(spec_path: &'a Path, plan_path: &'a Path) -> &'a Path {

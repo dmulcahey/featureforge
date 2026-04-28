@@ -742,12 +742,16 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewPrompt, /\*\*Approved plan path:\*\* \{APPROVED_PLAN_PATH\}/);
   assert.match(reviewPrompt, /\*\*Execution evidence path:\*\* \{EXECUTION_EVIDENCE_PATH\}/);
   assert.match(reviewPrompt, /dedicated independent reviewer for the terminal whole-diff gate/);
-  assert.match(reviewPrompt, /Dedicated Reviewer Receipt Contract/);
-  assert.match(reviewPrompt, /include structured receipt-ready metadata in your response/);
+  assert.match(reviewPrompt, /Structured Review Result Metadata/);
+  assert.match(reviewPrompt, /review-result metadata for the controller to bind to runtime-owned state/);
+  assert.match(reviewPrompt, /Do not create, repair, search for, or reference runtime receipt files/);
+  assert.doesNotMatch(reviewPrompt, /Dedicated Reviewer Receipt Contract/);
+  assert.doesNotMatch(reviewPrompt, /receipt-ready metadata/);
   assert.match(reviewPrompt, /`Source Plan`, `Source Plan Revision`, `Strategy Checkpoint Fingerprint`, `Branch`, `Repo`, `Base Branch`, `Head SHA`/);
   assert.match(reviewPrompt, /When approved plan and execution evidence paths are provided, read both artifacts and verify that checked-off plan steps are semantically satisfied by the implementation and explicitly evidenced\./);
   assert.match(reviewPrompt, /When execution evidence documents recorded topology downgrades or other execution deviations, explicitly inspect them and state whether those deviations pass final review\./);
-  assert.match(reviewPrompt, /runtime-provided base-branch context from `workflow operator` \(`base_branch`\) and release-lineage routing/);
+  assert.match(reviewPrompt, /Use caller-provided base-branch context and release-lineage routing/);
+  assert.match(reviewPrompt, /instead of deriving it locally or running workflow commands/);
   assert.doesNotMatch(reviewPrompt, /git symbolic-ref --short refs\/remotes\/origin\/HEAD/);
   assert.doesNotMatch(reviewPrompt, /for candidate in main master/);
   assert.doesNotMatch(reviewPrompt, /BASE_BRANCH_EFFECTIVE=/);
@@ -837,7 +841,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   const planFidelityReview = readUtf8(getSkillPath('plan-fidelity-review'));
   assert.match(planFidelityReview, /task-contract fidelity/);
   assert.match(planFidelityReview, /review\/plan-task-contract\.md/);
-  assert.match(planFidelityReview, /runtime-owned receipt must record exactly these `Verified Surfaces`/);
+  assert.match(planFidelityReview, /review artifact must record exactly these `Verified Surfaces`/);
   assert.match(planFidelityReview, /task_contract/);
   assert.match(planFidelityReview, /task_determinism/);
   assert.match(planFidelityReview, /spec_reference_fidelity/);
@@ -855,7 +859,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(executingPlans, /mandatory task-boundary closure loop/i);
   assert.match(
     executingPlans,
-    /if workflow\/operator reports `task_review_dispatch_required`, treat it as a compatibility\/debug lane and keep routing through workflow\/operator plus intent-level commands; do not expand the normal closure loop into manual low-level command choreography/i,
+    /workflow\/operator must route normal task-boundary closure through `task_closure_recording_ready` \/ `close-current-task`, not `task_review_dispatch_required`; if a task-review dispatch phase appears, treat it as a runtime diagnostic bug instead of manual low-level command choreography/i,
   );
   assert.match(
     executingPlans,
@@ -878,7 +882,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(subagentSkill, /The coordinator owns every `git commit`, `git merge`, and `git push` for this workflow/);
   assert.match(
     subagentSkill,
-    /If workflow\/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep routing through workflow\/operator plus the intent-level commands; do not expand the normal closure loop into low-level dispatch-lineage management\./,
+    /Workflow\/operator must not report `task_review_dispatch_required` for normal task-boundary closure; task closure routes through `close-current-task`\. If workflow\/operator reports `final_review_dispatch_required`, keep routing through workflow\/operator plus intent-level commands and do not expand the loop into low-level dispatch-lineage management\./,
   );
   assert.match(
     subagentSkill,
@@ -1796,7 +1800,7 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.doesNotMatch(usingFeatureForge, /brainstorming first, then implementation skills/);
   assert.match(
     usingFeatureForge,
-    /brainstorming first, then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> execution\./,
+    /brainstorming first, then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-eng-review; plan-fidelity-review runs only after engineering-review edits are complete, then plan-eng-review performs final approval before execution\./,
   );
   assert.match(
     usingFeatureForge,
@@ -1901,7 +1905,12 @@ test('workflow handoff skills make terminal ownership explicit', () => {
 
   const writingPlans = readUtf8(getSkillPath('writing-plans'));
   assert.match(writingPlans, /Use that repo-relative plan path consistently in later review and workflow\/operator commands/);
-  assert.match(writingPlans, /After the plan is written or updated, continue using the same repo-relative plan path in plan-fidelity-review and workflow\/operator handoffs\./);
+  assert.match(writingPlans, /Keep using the same repo-relative plan path in downstream review and workflow\/operator handoffs\./);
+  assert.match(writingPlans, /Invoke `featureforge:plan-eng-review` for the first engineering review pass\./);
+  assert.doesNotMatch(writingPlans, /Invoke `featureforge:plan-fidelity-review`\./);
+  assert.doesNotMatch(writingPlans, /runtime-owned receipt/i);
+  assert.doesNotMatch(writingPlans, /receipt records/i);
+  assert.match(writingPlans, /plan-fidelity runs only after engineering-review edits are complete/i);
   assert.doesNotMatch(writingPlans, /record the intended plan path with `expect`/);
   assert.doesNotMatch(writingPlans, /"\$_FEATUREFORGE_BIN" workflow expect --artifact plan --path/);
   assert.doesNotMatch(writingPlans, /runs `sync --artifact plan`/);
@@ -2073,7 +2082,11 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   const generatedReviewerAgent = readUtf8(path.join(REPO_ROOT, 'agents/code-reviewer.md'));
   assert.match(
     generatedReviewerAgent,
-    /runtime-owned base-branch contract as the active workflow guidance: use caller-provided `workflow operator --plan <approved-plan-path> --json` `base_branch` \/ release-lineage context when available/,
+    /Require caller-provided base branch, base SHA, head SHA, plan path if plan-routed, and any runtime context the caller wants considered/,
+  );
+  assert.match(
+    generatedReviewerAgent,
+    /Do not run workflow\/operator or plan-execution commands to obtain missing context/,
   );
   assert.match(
     generatedReviewerAgent,

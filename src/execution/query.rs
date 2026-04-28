@@ -22,7 +22,7 @@ use crate::execution::current_truth::{
     late_stage_review_blocked as shared_late_stage_review_blocked,
     late_stage_review_truth_blocked as shared_late_stage_review_truth_blocked,
     normalized_plan_qa_requirement as shared_normalized_plan_qa_requirement,
-    task_review_result_requires_verification_reason_codes,
+    public_task_boundary_decision, task_review_result_requires_verification_reason_codes,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
     task_scope_stale_review_state_reason_present as shared_task_scope_stale_review_state_reason_present,
 };
@@ -45,6 +45,7 @@ use crate::execution::router::{
 };
 use crate::execution::state::{
     ExecutionContext, ExecutionReadScope, ExecutionRuntime, GateResult, PlanExecutionStatus,
+    apply_public_read_invariants_to_status,
     apply_shared_routing_projection_to_read_scope_with_routing,
     current_branch_closure_structural_review_state_reason, load_execution_read_scope,
     missing_derived_review_state_fields, qa_pending_requires_test_plan_refresh,
@@ -224,6 +225,7 @@ fn query_review_state_internal(
 ) -> Result<ReviewStateSnapshot, JsonFailure> {
     let mut read_scope = load_execution_read_scope(runtime, plan_path, exact_plan_override)?;
     apply_shared_routing_projection_to_read_scope_with_routing(&mut read_scope, false, false)?;
+    apply_public_read_invariants_to_status(&mut read_scope.status);
     review_state_snapshot_from_read_scope_with_status(&read_scope, &read_scope.status)
 }
 
@@ -763,9 +765,9 @@ pub(crate) fn canonical_phase_for_shared_decision(
     phase_detail: &str,
 ) -> String {
     match phase_detail {
-        "task_review_dispatch_required"
-        | "task_review_result_pending"
-        | "task_closure_recording_ready" => String::from("task_closure_pending"),
+        "task_review_result_pending" | "task_closure_recording_ready" => {
+            String::from("task_closure_pending")
+        }
         "branch_closure_recording_required_for_release_readiness"
         | "release_readiness_recording_ready"
         | "release_blocker_resolution_required" => String::from("document_release_pending"),
@@ -813,9 +815,7 @@ pub(crate) fn blocking_scope_for_phase_detail(
     review_state_status: &str,
 ) -> Option<String> {
     let scope = match phase_detail {
-        "task_review_dispatch_required"
-        | "task_review_result_pending"
-        | "task_closure_recording_ready" => Some("task"),
+        "task_review_result_pending" | "task_closure_recording_ready" => Some("task"),
         "branch_closure_recording_required_for_release_readiness"
         | "release_readiness_recording_ready"
         | "release_blocker_resolution_required"
@@ -894,45 +894,26 @@ pub(crate) fn compact_operator_reason_codes(
         push_unique_reason(&mut reason_codes, "stale_unreviewed");
     }
     if let Some(status) = status {
-        if phase_detail == "task_review_dispatch_required" {
-            if status
-                .reason_codes
-                .iter()
-                .any(|code| code == "prior_task_review_dispatch_missing")
-            {
-                push_unique_reason(&mut reason_codes, "prior_task_review_dispatch_missing");
+        if matches!(
+            phase_detail,
+            "task_closure_recording_ready"
+                | "task_review_result_pending"
+                | "execution_reentry_required"
+        ) {
+            let boundary_decision = public_task_boundary_decision(status);
+            for code in boundary_decision.public_reason_codes {
+                push_unique_reason(&mut reason_codes, &code);
             }
-            if status
-                .reason_codes
-                .iter()
-                .any(|code| code == "prior_task_review_dispatch_stale")
-            {
-                push_unique_reason(&mut reason_codes, "prior_task_review_dispatch_stale");
-            }
-            push_unique_reason(&mut reason_codes, "task_review_dispatch_required");
         }
-        if phase_detail == "task_closure_recording_ready" {
-            for code in [
-                "prior_task_current_closure_missing",
-                "task_closure_baseline_repair_candidate",
-            ] {
-                if status
-                    .reason_codes
-                    .iter()
-                    .any(|reason_code| reason_code == code)
-                {
-                    push_unique_reason(&mut reason_codes, code);
-                }
-            }
-            if status.blocking_task.is_some()
-                && status.blocking_step.is_none()
-                && status.active_task.is_none()
-                && status.active_step.is_none()
-                && status.resume_task.is_none()
-                && status.resume_step.is_none()
-            {
-                push_unique_reason(&mut reason_codes, "task_closure_baseline_repair_candidate");
-            }
+        if phase_detail == "task_closure_recording_ready"
+            && status.blocking_task.is_some()
+            && status.blocking_step.is_none()
+            && status.active_task.is_none()
+            && status.active_step.is_none()
+            && status.resume_task.is_none()
+            && status.resume_step.is_none()
+        {
+            push_unique_reason(&mut reason_codes, "task_closure_baseline_repair_candidate");
         }
         if phase_detail == "execution_reentry_required" {
             for code in [
@@ -1220,7 +1201,7 @@ mod routing_helper_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -1258,19 +1239,19 @@ mod routing_helper_tests {
     }
 
     #[test]
-    fn task_review_result_pending_task_accepts_verification_reason_codes() {
+    fn task_review_result_pending_task_demotes_verification_reason_codes_to_diagnostics() {
         let status = unresolved_status();
         for reason_code in [
             "prior_task_verification_missing",
             "prior_task_verification_missing_legacy",
-            "task_verification_receipt_malformed",
+            "task_verification_summary_malformed",
         ] {
             let mut mutated = status.clone();
             mutated.reason_codes = vec![reason_code.to_owned()];
             assert_eq!(
                 task_review_result_pending_task(&mutated, Some("dispatch-task-1")),
-                Some(1),
-                "{reason_code} should keep verification blockers in the task review result lane"
+                None,
+                "{reason_code} should stay diagnostic-only instead of re-entering the task review result lane"
             );
         }
     }
@@ -1280,7 +1261,7 @@ mod routing_helper_tests {
         let status = unresolved_status();
         for reason_code in [
             "task_review_not_independent",
-            "task_review_receipt_malformed",
+            "task_review_artifact_malformed",
         ] {
             let mut mutated = status.clone();
             mutated.reason_codes = vec![reason_code.to_owned()];
@@ -1293,13 +1274,13 @@ mod routing_helper_tests {
     }
 
     #[test]
-    fn task_review_dispatch_task_accepts_stale_dispatch_reason_code() {
+    fn task_review_dispatch_task_ignores_stale_dispatch_reason_code() {
         let mut status = unresolved_status();
         status.reason_codes = vec![String::from("prior_task_review_dispatch_stale")];
         assert_eq!(
             task_review_dispatch_task(&status),
-            Some(1),
-            "stale dispatch should route through the dispatch-required lane",
+            None,
+            "stale dispatch projection lineage is diagnostic-only for public routing",
         );
     }
 
@@ -1320,6 +1301,12 @@ mod routing_helper_tests {
             "execution_reentry_required",
             vec![String::from("prior_task_review_not_green")],
         );
+        let routing = ExecutionRoutingState {
+            recommended_command: Some(String::from(
+                "featureforge plan execution repair-review-state --plan <approved-plan-path>",
+            )),
+            ..routing
+        };
         assert_eq!(
             required_follow_up_from_routing(&routing).as_deref(),
             Some("repair_review_state")
@@ -1384,14 +1371,18 @@ mod routing_helper_tests {
     }
 
     #[test]
-    fn external_review_ready_keeps_verification_blockers_in_verification_lane() {
+    fn external_review_ready_keeps_verification_blockers_out_of_pending_review_lane() {
         let (_repo_dir, _runtime, context, plan_rel) = unresolved_execution_context();
         let mut status = unresolved_status();
         status.execution_started = String::from("yes");
-        status.phase_detail = String::from("task_review_result_pending");
+        status.phase_detail = String::from("task_closure_recording_ready");
         status.blocking_task = Some(1);
         status.blocking_step = None;
-        status.reason_codes = vec![String::from("prior_task_verification_missing")];
+        status.reason_codes = vec![
+            String::from("prior_task_current_closure_missing"),
+            String::from("task_closure_baseline_repair_candidate"),
+            String::from("prior_task_verification_missing"),
+        ];
 
         let routing = shared_next_action_seed_from_decision(
             &context,
@@ -1407,12 +1398,10 @@ mod routing_helper_tests {
             },
         )
         .expect("routing derivation should succeed")
-        .expect(
-            "task-review-pending verification blockers should still produce a routing decision",
-        );
+        .expect("diagnostic verification blockers should still produce a routing decision");
 
-        assert_eq!(routing.phase_detail, "task_review_result_pending");
-        assert_eq!(routing.next_action, "run verification");
+        assert_ne!(routing.phase_detail, "task_review_result_pending");
+        assert_ne!(routing.next_action, "run verification");
     }
 
     #[test]

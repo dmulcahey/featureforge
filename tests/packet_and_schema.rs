@@ -919,7 +919,6 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "release_readiness_recording_ready",
             "runtime_reconcile_required",
             "task_closure_recording_ready",
-            "task_review_dispatch_required",
             "task_review_result_pending",
             "test_plan_refresh_required"
         ]
@@ -939,7 +938,6 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "finish branch",
             "close current task",
             "continue execution",
-            "request task review",
             "request final review",
             "execution reentry required",
             "hand off",
@@ -1106,8 +1104,9 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
         &schema,
         "recommended_command",
         &[
-            "task_review_dispatch_required",
             "task_review_result_pending",
+            "execution_in_progress",
+            "runtime_reconcile_required",
             "finish_review_gate_ready",
             "finish_completion_gate_ready",
             "final_review_dispatch_required",
@@ -1355,7 +1354,6 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
             "finish branch",
             "close current task",
             "continue execution",
-            "request task review",
             "request final review",
             "execution reentry required",
             "hand off",
@@ -1481,8 +1479,9 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
         &generated_operator_json,
         "recommended_command",
         &[
-            "task_review_dispatch_required",
             "task_review_result_pending",
+            "execution_in_progress",
+            "runtime_reconcile_required",
             "finish_review_gate_ready",
             "finish_completion_gate_ready",
             "final_review_dispatch_required",

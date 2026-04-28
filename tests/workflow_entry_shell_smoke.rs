@@ -176,7 +176,7 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
         &["status", "--plan", plan_rel],
         "status before task-boundary blocked entry fixture execution",
     );
-    let _ = plan_execution_direct_support::run_runtime_preflight_gate_json(
+    let _ = plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {

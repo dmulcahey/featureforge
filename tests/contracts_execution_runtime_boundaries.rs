@@ -807,7 +807,7 @@ fn setup_execution_in_progress(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before boundary active-context begin",
     );
-    let preflight = featureforge_support::run_runtime_preflight_gate_json(
+    let preflight = featureforge_support::internal_only_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -851,7 +851,7 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before task-boundary fixture execution",
     );
-    let preflight = featureforge_support::run_runtime_preflight_gate_json(
+    let preflight = featureforge_support::internal_only_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -1303,12 +1303,12 @@ fn execution_query_recording_ready_states_surface_required_recording_context_ids
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state);
-    let dispatch = featureforge_support::run_runtime_review_dispatch_authority_json(
+    let dispatch = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
-        &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+        &featureforge::execution::internal_args::RecordReviewDispatchArgs {
             plan: PLAN_REL.into(),
-            scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+            scope: featureforge::execution::internal_args::ReviewDispatchScopeArg::Task,
             task: Some(1),
         },
     )
@@ -1436,7 +1436,7 @@ fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned_for_task
 }
 
 #[test]
-fn removed_workflow_status_failure_stays_aligned_with_real_cli() {
+fn workflow_status_legacy_summary_flag_failure_stays_aligned_with_real_cli() {
     let repo_dir = TempDir::new().expect("non-repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
@@ -1447,35 +1447,35 @@ fn removed_workflow_status_failure_stays_aligned_with_real_cli() {
         state,
         &["workflow", "status", "--summary"],
         false,
-        "direct removed workflow status summary failure",
+        "direct workflow status legacy summary failure",
     );
     let real = run_featureforge_output(
         repo,
         state,
         &["workflow", "status", "--summary"],
         true,
-        "real-cli removed workflow status summary failure",
+        "real-cli workflow status legacy summary failure",
     );
 
     assert!(
         !direct.status.success() && !real.status.success(),
-        "removed workflow status should fail for both direct and real-cli paths",
+        "workflow status --summary should fail for both direct and real-cli paths",
     );
     assert_eq!(
         direct.stdout, real.stdout,
-        "removed workflow status failure stdout must stay aligned between direct and real-cli paths",
+        "workflow status legacy flag failure stdout must stay aligned between direct and real-cli paths",
     );
     assert_eq!(
         direct.stderr, real.stderr,
-        "removed workflow status failure stderr must stay aligned between direct and real-cli paths",
+        "workflow status legacy flag failure stderr must stay aligned between direct and real-cli paths",
     );
-    let failure = parse_json_output(&direct, "removed workflow status failure");
+    let failure = parse_json_output(&direct, "workflow status legacy flag failure");
     assert_eq!(failure["error_class"], "InvalidCommandInput");
     assert!(
         failure["message"]
             .as_str()
-            .is_some_and(|message| message.contains("unrecognized subcommand 'status'")),
-        "removed workflow status should fail at CLI parsing, got {failure:?}"
+            .is_some_and(|message| message.contains("unexpected argument '--summary'")),
+        "workflow status legacy flag should fail at CLI parsing, got {failure:?}"
     );
 }
 
@@ -1805,12 +1805,12 @@ fn runtime_remediation_fs03_internal_dispatch_target_acceptance_and_mismatch_pre
     setup_task_boundary_blocked_case(repo, state);
 
     let baseline = state_tree_digest(state);
-    let accepted = featureforge_support::run_runtime_review_dispatch_authority_json(
+    let accepted = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
-        &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+        &featureforge::execution::internal_args::RecordReviewDispatchArgs {
             plan: PLAN_REL.into(),
-            scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+            scope: featureforge::execution::internal_args::ReviewDispatchScopeArg::Task,
             task: Some(1),
         },
     )
@@ -1827,12 +1827,12 @@ fn runtime_remediation_fs03_internal_dispatch_target_acceptance_and_mismatch_pre
     );
 
     let rejected_json: Value = serde_json::from_str(
-        &featureforge_support::run_runtime_review_dispatch_authority_json(
+        &featureforge_support::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state,
-            &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+            &featureforge::execution::internal_args::RecordReviewDispatchArgs {
                 plan: PLAN_REL.into(),
-                scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+                scope: featureforge::execution::internal_args::ReviewDispatchScopeArg::Task,
                 task: Some(2),
             },
         )
@@ -1861,12 +1861,12 @@ fn runtime_remediation_fs05_internal_unsupported_field_fails_before_mutation_on_
 
     let baseline = state_tree_digest(state);
     let failure: Value = serde_json::from_str(
-        &featureforge_support::run_runtime_review_dispatch_authority_json(
+        &featureforge_support::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state,
-            &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+            &featureforge::execution::internal_args::RecordReviewDispatchArgs {
                 plan: PLAN_REL.into(),
-                scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::FinalReview,
+                scope: featureforge::execution::internal_args::ReviewDispatchScopeArg::FinalReview,
                 task: Some(1),
             },
         )
@@ -2237,7 +2237,7 @@ fn runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task() {
         .expect("FS-15 stale-boundary fixture plan should be writable");
     prepare_preflight_acceptance_workspace(repo, "boundary-runtime-remediation-fs15");
 
-    let preflight = featureforge_support::run_runtime_preflight_gate_json(
+    let preflight = featureforge_support::internal_only_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -2522,7 +2522,7 @@ fn fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_ta
         .expect("FS-19 stale-history fixture plan should be writable");
     prepare_preflight_acceptance_workspace(repo, "boundary-runtime-remediation-fs19");
 
-    let preflight = featureforge_support::run_runtime_preflight_gate_json(
+    let preflight = featureforge_support::internal_only_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {

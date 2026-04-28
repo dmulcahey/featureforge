@@ -6,14 +6,16 @@ use crate::execution::current_truth::{
     branch_closure_rerecording_assessment_with_authority,
     handoff_decision_scope as shared_handoff_decision_scope,
     late_stage_missing_task_closure_baseline_bridge_supported,
-    negative_result_requires_execution_reentry, reason_code_requires_test_plan_refresh,
-    resolve_actionable_repair_follow_up_for_status, task_boundary_block_reason_code,
-    task_review_dispatch_task, task_review_result_pending_task,
+    negative_result_requires_execution_reentry, public_task_boundary_decision,
+    reason_code_requires_test_plan_refresh, resolve_actionable_repair_follow_up_for_status,
+    task_boundary_block_reason_code, task_review_result_pending_task,
     task_review_result_requires_verification_reason_codes,
     worktree_drift_escapes_late_stage_surface,
 };
 use crate::execution::harness::{HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
-use crate::execution::reducer::{AuthoritativeStaleTarget, AuthoritativeStaleTargetScope};
+use crate::execution::reducer::{
+    AuthoritativeStaleTarget, AuthoritativeStaleTargetScope, AuthoritativeStaleTargetSource,
+};
 use crate::execution::reentry_reconcile::{
     TARGETLESS_STALE_RECONCILE_PHASE_DETAIL, TargetlessStaleReconcile,
 };
@@ -37,7 +39,6 @@ pub(crate) enum NextActionKind {
     Resume,
     Reopen,
     CloseCurrentTask,
-    RequestTaskReview,
     WaitForTaskReviewResult,
     AdvanceLateStage,
     RequestFinalReview,
@@ -119,6 +120,7 @@ pub(crate) struct AuthoritativeStaleReentryTarget<'a> {
     pub(crate) task: u32,
     pub(crate) step: Option<u32>,
     pub(crate) reason_code: &'a str,
+    pub(crate) source: AuthoritativeStaleTargetSource,
     pub(crate) source_record_id: Option<&'a str>,
 }
 
@@ -131,6 +133,7 @@ impl<'a> AuthoritativeStaleReentryTarget<'a> {
             task: target.task?,
             step: target.step,
             reason_code: target.reason_code.as_str(),
+            source: target.source,
             source_record_id: target.record_id.as_deref().or(Some(target.source.as_str())),
         })
     }
@@ -146,7 +149,8 @@ impl<'a> AuthoritativeStaleReentryTarget<'a> {
     }
 
     fn allows_task_closure_bridge(self) -> bool {
-        !matches!(self.reason_code, "prior_task_current_closure_stale")
+        self.source == AuthoritativeStaleTargetSource::BaselineBridge
+            || !matches!(self.reason_code, "prior_task_current_closure_stale")
     }
 }
 
@@ -167,6 +171,11 @@ impl NextActionAuthorityInputs<'_> {
     fn stale_target_allows_task_closure_bridge(self) -> bool {
         self.authoritative_stale_target
             .is_none_or(AuthoritativeStaleReentryTarget::allows_task_closure_bridge)
+    }
+
+    fn stale_target_is_baseline_bridge(self) -> bool {
+        self.authoritative_stale_target
+            .is_some_and(|target| target.source == AuthoritativeStaleTargetSource::BaselineBridge)
     }
 }
 
@@ -212,7 +221,6 @@ pub(crate) fn public_next_action_text(decision: &NextActionDecision) -> String {
                 String::from("continue execution")
             }
         }
-        NextActionKind::RequestTaskReview => String::from("request task review"),
         NextActionKind::WaitForTaskReviewResult => {
             if task_review_result_requires_verification_reason_codes(
                 decision.blocking_reason_codes.iter().map(String::as_str),
@@ -517,6 +525,12 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 status, plan_path, stale_task,
             ));
         }
+        if authority_inputs.stale_target_is_baseline_bridge() {
+            return Some(missing_execution_reentry_target_decision(
+                status,
+                review_state_status.as_str(),
+            ));
+        }
         return Some(execution_reentry_decision_for_task(
             context,
             status,
@@ -596,15 +610,6 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         authority_inputs,
     ) {
         return Some(decision);
-    }
-    if let Some(task_number) = task_review_dispatch_task(status) {
-        return Some(closure_prerequisite_decision(
-            status,
-            NextActionKind::RequestTaskReview,
-            "task_review_dispatch_required",
-            Some(task_number),
-            None,
-        ));
     }
     if let Some(task_number) = task_review_result_pending_task(status, task_review_dispatch_id) {
         let closure_baseline_candidate = task_closure_baseline_repair_candidate_with_stale_target(
@@ -738,7 +743,6 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                     *task_number,
                 )
         })
-        .filter(|_| task_review_dispatch_task(status).is_none())
         .filter(|task_number| {
             task_closure_baseline_repair_candidate_with_stale_target(
                 context,
@@ -1377,8 +1381,7 @@ fn closure_prerequisite_decision(
     step_number: Option<u32>,
 ) -> NextActionDecision {
     let recommended_command = match kind {
-        NextActionKind::RequestTaskReview
-        | NextActionKind::WaitForTaskReviewResult
+        NextActionKind::WaitForTaskReviewResult
         | NextActionKind::RequestFinalReview
         | NextActionKind::WaitForFinalReviewResult => None,
         _ => status.recommended_command.clone(),
@@ -1422,7 +1425,7 @@ fn task_closure_recording_ready_decision(
         task_number: Some(task_number),
         step_number: None,
         blocking_task: Some(task_number),
-        blocking_reason_codes: status.reason_codes.clone(),
+        blocking_reason_codes: public_task_boundary_decision(status).public_reason_codes,
         recommended_command: Some(format!(
             "featureforge plan execution close-current-task --plan {plan_path} --task {task_number} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
         )),
@@ -1468,9 +1471,9 @@ fn late_stage_decision(
     NextActionDecision {
         kind,
         phase: match phase_detail {
-            "task_review_dispatch_required"
-            | "task_review_result_pending"
-            | "task_closure_recording_ready" => String::from("task_closure_pending"),
+            "task_review_result_pending" | "task_closure_recording_ready" => {
+                String::from("task_closure_pending")
+            }
             "branch_closure_recording_required_for_release_readiness"
             | "release_readiness_recording_ready"
             | "release_blocker_resolution_required" => String::from("document_release_pending"),
@@ -2286,8 +2289,8 @@ fn current_task_closure_projection_refresh_task(
                                 reason_code.as_str(),
                                 "prior_task_verification_missing"
                                     | "prior_task_verification_missing_legacy"
-                                    | "task_review_receipt_malformed"
-                                    | "task_verification_receipt_malformed"
+                                    | "task_review_artifact_malformed"
+                                    | "task_verification_summary_malformed"
                             )
                         })
                 })
@@ -2480,8 +2483,8 @@ fn external_review_ready_promotes_closure_recording(status: &PlanExecutionStatus
                 "prior_task_verification_missing"
                     | "prior_task_verification_missing_legacy"
                     | "task_review_not_independent"
-                    | "task_review_receipt_malformed"
-                    | "task_verification_receipt_malformed"
+                    | "task_review_artifact_malformed"
+                    | "task_verification_summary_malformed"
             )
         })
 }

@@ -128,6 +128,10 @@ Use the `code-reviewer` agent and fill the template at `code-reviewer.md`
 
 For workflow-routed final review, dispatch a dedicated fresh-context reviewer independent of the implementation context. Do not reuse the implementation agent or its session for the terminal whole-diff review gate.
 
+FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no
+
+The controller owns any FeatureForge runtime queries before dispatch. Tell the reviewer explicitly: do not invoke FeatureForge skills, do not run `featureforge workflow` or `featureforge plan execution` commands, do not dispatch `code-reviewer` or `requesting-code-review`, and do not repair runtime state. If required runtime context is absent from the briefing, the reviewer must return a blocked review naming the missing context.
+
 When the implementation introduces unfamiliar patterns, framework APIs, dependencies, or bespoke wrappers around platform behavior, make sure the review considers built-in-before-bespoke and known ecosystem footguns.
 
 If the approved plan already called out a likely external-pattern target, you may pass that context into the reviewer briefing, but this is optional in v1.
@@ -158,7 +162,7 @@ If the approved plan already called out a likely external-pattern target, you ma
   - `cycle_break`: runtime records this automatically when the same task hits three review-dispatch/reopen cycles in one run.
 - Cycle-break trigger: cap review churn at 3 cycles per task. On the third cycle, runtime enters `cycle_break` strategy automatically (no human replanning loopback required).
 - Keep plan/scope fixed during remediation. Runtime strategy may change topology, lane ownership, worktree allocation, subagent assignment, and remediation order, but must not change approved scope or source plan revision.
-- Carry the active runtime checkpoint fingerprint into review artifacts and receipts so remediation and final review can be tied to the exact runtime strategy state.
+- Carry the active runtime checkpoint fingerprint into review-result metadata so remediation and final review can be tied to the exact runtime strategy state.
 - Check and surface runtime strategy status through `featureforge plan execution status --plan ...`:
   - `strategy_state`
   - `strategy_checkpoint_kind`
@@ -168,7 +172,7 @@ If the approved plan already called out a likely external-pattern target, you ma
 **4.5. Keep review artifacts runtime-owned:**
 
 - Do not add manual project-scoped markdown review artifacts as part of the normal public flow.
-- If runtime emits derived reviewer receipts or provenance artifacts, treat them as output only; reviewed-closure and milestone records remain authoritative for routing and finish gates.
+- If runtime emits derived reviewer projection metadata or provenance artifacts, treat them as output only; reviewed-closure and milestone records remain authoritative for routing and finish gates.
 
 ## Example
 
@@ -259,7 +263,7 @@ fi
 - when diagnostic status is required, treats non-null `active_task`, `blocking_task`, or `resume_task` as execution-dirty and rejects final review until execution returns to a clean state
 - uses `workflow operator --plan ...` as the authoritative late-stage route, requests external final review when operator reports `final_review_dispatch_required`, and records final-review outcome through `advance-late-stage` only after `--external-review-result-ready` exposes `final_review_recording_ready`
 - accepts runtime-provided supplemental review context when the current workflow handoff already includes it, but does not require manual status/evidence/task-packet harvesting in the normal path
-- treats any derived reviewer receipts or provenance artifacts as runtime-owned output, not routing authority
+- treats any derived reviewer projection metadata or provenance artifacts as runtime-owned output, not routing authority
 - must fail closed when it detects a missed reopen or stale evidence, but must not call `reopen` itself
 
 ## Red Flags

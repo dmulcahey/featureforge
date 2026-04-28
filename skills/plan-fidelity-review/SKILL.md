@@ -1,6 +1,6 @@
 ---
 name: plan-fidelity-review
-description: Use when a draft FeatureForge implementation plan needs a first-class fidelity review against the CEO-approved spec before engineering review
+description: Use when an engineering-reviewed draft FeatureForge implementation plan needs a final first-class fidelity review against the CEO-approved spec before engineering approval
 ---
 <!-- AUTO-GENERATED from SKILL.md.tmpl — do not edit directly -->
 <!-- Regenerate: node scripts/gen-skill-docs.mjs -->
@@ -50,11 +50,12 @@ Per-skill instructions may add additional formatting rules on top of this baseli
 
 # FeatureForge Artifact Contract
 
-- Review the current draft plan in `docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md`.
+- Review the current engineering-reviewed draft plan in `docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md`.
 - Read the plan's `**Source Spec:**` and load that exact spec path.
 - This stage is verification-only. Do not rewrite the plan here.
 - If no draft plan exists, stop and route to `featureforge:writing-plans`.
 - If the source spec is not workflow-valid `CEO Approved` with `**Last Reviewed By:** plan-ceo-review`, stop and route to `featureforge:plan-ceo-review`.
+- If the draft plan has not been handed off by engineering review with `**Last Reviewed By:** plan-eng-review`, stop and route to `featureforge:plan-eng-review`.
 
 ## Independent Reviewer Requirement
 
@@ -63,7 +64,7 @@ Per-skill instructions may add additional formatting rules on top of this baseli
 - Use `skills/plan-fidelity-review/reviewer-prompt.md` when briefing the reviewer.
 - The reviewer verifies exact Requirement Index coverage, execution-topology fidelity, and task-contract fidelity for the current draft plan revision.
 - Task-contract fidelity is governed by `review/plan-task-contract.md`; missing required task fields, wrong field ordering, non-deterministic `Done when` bullets, insufficient `Context`, missing required spec references, and weak self-containment are review failures.
-- The runtime-owned receipt must record exactly these `Verified Surfaces`: `requirement_index`, `execution_topology`, `task_contract`, `task_determinism`, and `spec_reference_fidelity`.
+- The review artifact must record exactly these `Verified Surfaces`: `requirement_index`, `execution_topology`, `task_contract`, `task_determinism`, and `spec_reference_fidelity`.
 
 ## Review Artifact Contract
 
@@ -83,13 +84,13 @@ Per-skill instructions may add additional formatting rules on top of this baseli
   - `Verified Surfaces`
   - `Verified Requirement IDs`
 - `Review Verdict` must be `pass` for this gate to advance.
-- Receipts missing any required verified surface are stale or invalid for the expanded plan-fidelity gate, even if they verified requirement coverage and topology under an older receipt shape.
+- Review artifacts missing any required verified surface are stale or invalid for the expanded plan-fidelity gate, even if they verified requirement coverage and topology under an older artifact shape.
 
-## Receipt Recording
+## Review Completion
 
 After the reviewer writes the artifact, hand off the review artifact path and verdict to the normal planning/review authority. Do not call removed workflow helper commands from this skill.
 
-- If receipt recording fails or the review verdict is not pass, return to `featureforge:writing-plans`.
-- If the receipt records successfully in pass state for the current plan/spec revision pair, continue to `featureforge:plan-eng-review`.
+- If the review verdict is not pass, return to `featureforge:plan-eng-review` with the artifact diagnostics.
+- If the artifact is a current pass for the current plan/spec revision pair and fingerprints, continue to `featureforge:plan-eng-review` for final approval.
 
-**The terminal state is invoking `featureforge:plan-eng-review` only after a matching pass runtime-owned plan-fidelity receipt exists.**
+**The terminal state is invoking `featureforge:plan-eng-review` only after a matching pass plan-fidelity review artifact exists.**

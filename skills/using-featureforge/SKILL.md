@@ -147,7 +147,7 @@ When multiple skills could apply, use this order:
 2. **Workflow-stage skills second** (review, planning, execution) - these own the required handoffs once their prerequisites are satisfied
 3. **Domain-specific implementation skills last** - only after the active workflow stage allows them
 
-"Let's build X" → brainstorming first, then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> execution.
+"Let's build X" → brainstorming first, then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-eng-review; plan-fidelity-review runs only after engineering-review edits are complete, then plan-eng-review performs final approval before execution.
 "Fix this bug" → debugging first, then if it changes FeatureForge product or workflow behavior follow the artifact-state workflow; otherwise continue to the appropriate implementation skill.
 
 ## Skill Types
@@ -166,8 +166,9 @@ Do NOT jump from brainstorming straight to implementation. For workflow-routed w
 
 Artifact-state routing requirements:
 
-- Plan exists, is `Draft`, and is missing, stale, malformed, non-pass, or non-independent plan-fidelity receipt evidence: invoke `featureforge:plan-fidelity-review`.
-- Plan exists, is `Draft`, and has a matching pass dedicated plan-fidelity receipt: invoke `featureforge:plan-eng-review`.
+- Plan exists, is `Draft`, and `Last Reviewed By` is not `plan-eng-review`: invoke `featureforge:plan-eng-review`.
+- Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and the current plan-fidelity review artifact is missing, stale, malformed, non-pass, or non-independent: invoke `featureforge:plan-fidelity-review`.
+- Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and has a matching pass plan-fidelity review artifact: invoke `featureforge:plan-eng-review`.
 
 ### Helper-first routing
 
@@ -182,7 +183,7 @@ If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$
 - When workflow/operator reports `phase_detail=task_closure_recording_ready`, the replay lane is complete enough to refresh closure truth; run the routed `close-current-task` command and do not reopen the same step again.
 - Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority.
 - Treat repo-local projection exports under `docs/featureforge/projections/` as optional human-readable output. Normal routing comes from workflow/operator and event-authoritative status, not from editing or refreshing projection files.
-- Use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` only when a repo-local human-readable projection export is explicitly requested; approved plan and evidence files are not modified, and materialization is never required for normal progress.
+- Use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` for state-dir-only diagnostic projection refreshes. If a repo-local human-readable projection export is explicitly requested, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress.
 - Hidden compatibility/debug command entrypoints are removed from the public CLI; keep normal progression on public commands only.
 - Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.
 - If workflow/operator reports `phase` `executing`, route directly to the runtime-selected execution owner (`featureforge:executing-plans` or `featureforge:subagent-driven-development`) and keep routing anchored to workflow/operator `phase`, `phase_detail`, `next_action`, and `recommended_command`.

@@ -60,7 +60,7 @@ For each task, enforce this exact order before dispatching the next task:
 5. After review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`.
 6. Task `N+1` may begin only after Task `N` has a current positive task-closure record; dedicated-independent review loops and verification are required inputs to `close-current-task` and are not separate begin-time authority after closure is current.
 7. Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.
-8. If workflow/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep routing through workflow/operator plus the intent-level commands; do not expand the normal closure loop into low-level dispatch-lineage management.
+8. Workflow/operator must not report `task_review_dispatch_required` for normal task-boundary closure; task closure routes through `close-current-task`. If workflow/operator reports `final_review_dispatch_required`, keep routing through workflow/operator plus intent-level commands and do not expand the loop into low-level dispatch-lineage management.
 9. No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.
 
 ### Reviewed-Closure Command Matrix
@@ -191,7 +191,7 @@ Before dispatching any implementation subagent:
 - On the first `begin` for a revision whose plan still says `**Execution Mode:** none`, initialize execution with `--execution-mode featureforge:subagent-driven-development`
 - The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.
 - Runtime read models are rendered under the state directory during normal execution. Repo-local projection files under `docs/featureforge/projections/` are optional human-readable exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.
-- Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` only when the user explicitly needs repo-local human-readable projection exports. Approved plan and evidence files are not modified, and materialization is never required for normal progress. Add `--scope execution|late-stage|all` only when a non-default export scope is needed.
+- Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` for state-dir-only diagnostic projection refreshes. If the user explicitly needs repo-local human-readable projection exports, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress. Add `--scope execution|late-stage|all` only when a non-default export scope is needed.
 
 ## Runtime Strategy Checkpoints (Automatic, Runtime-Owned)
 

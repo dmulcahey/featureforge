@@ -5,7 +5,29 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export const REPO_ROOT = path.resolve(__dirname, '../../..');
+const REQUIRED_REPO_MARKERS = ['Cargo.toml', 'README.md', 'src', 'skills'];
+
+function hasRepoMarkers(candidate) {
+  return REQUIRED_REPO_MARKERS.every((marker) => fs.existsSync(path.join(candidate, marker)));
+}
+
+export function discoverRepoRoot(startDir = __dirname) {
+  let current = path.resolve(startDir);
+  while (true) {
+    if (hasRepoMarkers(current)) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      throw new Error(
+        `Could not discover repository root from ${startDir}; missing markers: ${REQUIRED_REPO_MARKERS.join(', ')}`,
+      );
+    }
+    current = parent;
+  }
+}
+
+export const REPO_ROOT = discoverRepoRoot(__dirname);
 export const SKILLS_DIR = path.join(REPO_ROOT, 'skills');
 
 export function listSkillDirs() {

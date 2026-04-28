@@ -59,14 +59,155 @@ pub(crate) struct CurrentLateStageBranchBindings {
 }
 
 pub(crate) const RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS: &[&str] = &[
-    "task_review_dispatch_required",
     "task_review_result_pending",
+    "execution_in_progress",
+    "runtime_reconcile_required",
     "finish_review_gate_ready",
     "finish_completion_gate_ready",
     "final_review_dispatch_required",
     "final_review_outcome_pending",
     "test_plan_refresh_required",
 ];
+
+const PUBLIC_TASK_BOUNDARY_REASON_CODES: &[&str] = &[
+    "prior_task_current_closure_missing",
+    "prior_task_current_closure_stale",
+    "prior_task_current_closure_invalid",
+    "prior_task_current_closure_reviewed_state_malformed",
+    "task_cycle_break_active",
+    "current_task_closure_overlay_restore_required",
+    "prior_task_review_not_green",
+    "task_closure_baseline_repair_candidate",
+    "task_closure_recording_ready",
+];
+
+const TASK_BOUNDARY_PROJECTION_DIAGNOSTIC_REASON_CODES: &[&str] = &[
+    "prior_task_review_dispatch_missing",
+    "prior_task_review_dispatch_stale",
+    "prior_task_verification_missing",
+    "prior_task_verification_missing_legacy",
+    "task_review_not_independent",
+    "task_review_artifact_malformed",
+    "task_verification_summary_malformed",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct PublicTaskBoundaryDecision {
+    pub task: Option<u32>,
+    pub state: PublicTaskBoundaryState,
+    pub public_reason_codes: Vec<String>,
+    pub diagnostic_reason_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PublicTaskBoundaryState {
+    Clean,
+    CurrentClosureMissing,
+    CurrentClosureStale,
+    NegativeReviewCurrent,
+    CycleBreakActive,
+    OverlayRestoreRequired,
+    TaskClosureRecordingReady,
+    ExecutionReentryRequired,
+}
+
+pub(crate) fn public_task_boundary_reason_code(reason_code: &str) -> bool {
+    PUBLIC_TASK_BOUNDARY_REASON_CODES.contains(&reason_code)
+}
+
+pub(crate) fn task_boundary_projection_diagnostic_reason_code(reason_code: &str) -> bool {
+    TASK_BOUNDARY_PROJECTION_DIAGNOSTIC_REASON_CODES.contains(&reason_code)
+}
+
+pub(crate) fn public_task_boundary_decision(
+    status: &PlanExecutionStatus,
+) -> PublicTaskBoundaryDecision {
+    let task_scope = status.blocking_step.is_none()
+        && (status.blocking_task.is_some()
+            || status.phase_detail == "task_closure_recording_ready"
+            || status.reason_codes.iter().any(|reason_code| {
+                public_task_boundary_reason_code(reason_code)
+                    || task_boundary_projection_diagnostic_reason_code(reason_code)
+            }));
+    if !task_scope {
+        return PublicTaskBoundaryDecision {
+            task: None,
+            state: PublicTaskBoundaryState::Clean,
+            public_reason_codes: Vec::new(),
+            diagnostic_reason_codes: Vec::new(),
+        };
+    }
+
+    let public_reason_codes =
+        reason_codes_matching(&status.reason_codes, public_task_boundary_reason_code);
+    let diagnostic_reason_codes = reason_codes_matching(
+        &status.reason_codes,
+        task_boundary_projection_diagnostic_reason_code,
+    );
+    let state = if public_reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "task_cycle_break_active")
+    {
+        PublicTaskBoundaryState::CycleBreakActive
+    } else if public_reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "current_task_closure_overlay_restore_required")
+    {
+        PublicTaskBoundaryState::OverlayRestoreRequired
+    } else if public_reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "prior_task_review_not_green")
+    {
+        PublicTaskBoundaryState::NegativeReviewCurrent
+    } else if public_reason_codes.iter().any(|reason_code| {
+        matches!(
+            reason_code.as_str(),
+            "prior_task_current_closure_invalid"
+                | "prior_task_current_closure_reviewed_state_malformed"
+        )
+    }) {
+        PublicTaskBoundaryState::ExecutionReentryRequired
+    } else if public_reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "prior_task_current_closure_stale")
+    {
+        PublicTaskBoundaryState::CurrentClosureStale
+    } else if public_reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "prior_task_current_closure_missing")
+    {
+        PublicTaskBoundaryState::CurrentClosureMissing
+    } else if status.phase_detail == "task_closure_recording_ready"
+        || public_reason_codes.iter().any(|reason_code| {
+            matches!(
+                reason_code.as_str(),
+                "task_closure_baseline_repair_candidate" | "task_closure_recording_ready"
+            )
+        })
+    {
+        PublicTaskBoundaryState::TaskClosureRecordingReady
+    } else {
+        PublicTaskBoundaryState::Clean
+    };
+
+    PublicTaskBoundaryDecision {
+        task: status.blocking_task,
+        state,
+        public_reason_codes,
+        diagnostic_reason_codes,
+    }
+}
+
+fn reason_codes_matching(reason_codes: &[String], predicate: fn(&str) -> bool) -> Vec<String> {
+    let mut matched = Vec::new();
+    for reason_code in reason_codes {
+        if predicate(reason_code) && !matched.iter().any(|existing| existing == reason_code) {
+            matched.push(reason_code.clone());
+        }
+    }
+    matched
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReviewStateRepairReroute {
@@ -1009,17 +1150,11 @@ pub(crate) fn task_boundary_block_reason_code(status: &PlanExecutionStatus) -> O
         matches!(
             *code,
             "prior_task_review_not_green"
-                | "task_review_not_independent"
-                | "task_review_receipt_malformed"
-                | "prior_task_verification_missing"
-                | "prior_task_verification_missing_legacy"
-                | "task_verification_receipt_malformed"
-                | "prior_task_review_dispatch_missing"
-                | "prior_task_review_dispatch_stale"
                 | "prior_task_current_closure_stale"
                 | "prior_task_current_closure_invalid"
                 | "prior_task_current_closure_reviewed_state_malformed"
                 | "task_cycle_break_active"
+                | "current_task_closure_overlay_restore_required"
         )
     })
 }
@@ -1030,70 +1165,28 @@ pub(crate) fn task_review_result_requires_verification_reason_codes<'a>(
     const TASK_VERIFICATION_REASON_CODES: &[&str] = &[
         "prior_task_verification_missing",
         "prior_task_verification_missing_legacy",
-        "task_verification_receipt_malformed",
+        "task_verification_summary_malformed",
     ];
     reason_codes
         .into_iter()
         .any(|reason_code| TASK_VERIFICATION_REASON_CODES.contains(&reason_code))
 }
 
-pub(crate) fn task_review_dispatch_task(status: &PlanExecutionStatus) -> Option<u32> {
-    if status.blocking_step.is_some() {
-        return None;
-    }
-    let blocking_task = status.blocking_task?;
-    let closure_baseline_bridge_candidate = status
-        .reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate")
-        && status
-            .reason_codes
-            .iter()
-            .any(|reason_code| reason_code == "prior_task_current_closure_missing");
-    let dispatch_missing_or_stale = status.reason_codes.iter().any(|reason_code| {
-        matches!(
-            reason_code.as_str(),
-            "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale"
-        )
-    });
-    if dispatch_missing_or_stale {
-        if closure_baseline_bridge_candidate {
-            return None;
-        }
-        return Some(blocking_task);
-    }
-    if status
-        .reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate")
-    {
-        return None;
-    }
+#[cfg(test)]
+pub(crate) fn task_review_dispatch_task(_status: &PlanExecutionStatus) -> Option<u32> {
+    // Public task-boundary routing is closure-state driven. Missing or stale
+    // dispatch projection lineage is diagnostic-only; close-current-task owns
+    // recording or regenerating the derived projection metadata.
     None
 }
 
 pub(crate) fn task_review_result_pending_task(
-    status: &PlanExecutionStatus,
-    dispatch_id: Option<&str>,
+    _status: &PlanExecutionStatus,
+    _dispatch_id: Option<&str>,
 ) -> Option<u32> {
-    if status.blocking_step.is_some() {
-        return None;
-    }
-    let blocking_task = status.blocking_task?;
-    let dispatch_available = dispatch_id
-        .map(str::trim)
-        .is_some_and(|dispatch_id| !dispatch_id.is_empty());
-    let has_pending_review_or_verification_reason = status.reason_codes.iter().any(|reason_code| {
-        matches!(
-            reason_code.as_str(),
-            "prior_task_verification_missing"
-                | "prior_task_verification_missing_legacy"
-                | "task_verification_receipt_malformed"
-        )
-    });
-    if dispatch_available && has_pending_review_or_verification_reason {
-        return Some(blocking_task);
-    }
+    // Public task closure is now owned by close-current-task. Missing review or
+    // verification projection artifacts remain diagnostics, but they no longer
+    // route users into a separate task-review-result waiting lane.
     None
 }
 

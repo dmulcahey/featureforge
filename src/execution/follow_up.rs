@@ -339,9 +339,7 @@ pub(crate) fn follow_up_from_phase_detail<'a>(
         return Some(FollowUpKind::AdvanceLateStage);
     }
     match phase_detail {
-        "task_review_dispatch_required" | "final_review_dispatch_required" => {
-            Some(FollowUpKind::RequestExternalReview)
-        }
+        "final_review_dispatch_required" => Some(FollowUpKind::RequestExternalReview),
         "task_review_result_pending" => {
             if task_review_result_requires_verification(blocking_reason_codes) {
                 Some(FollowUpKind::RunVerification)
@@ -433,7 +431,7 @@ fn task_review_result_requires_verification<'a>(
             reason_code,
             "prior_task_verification_missing"
                 | "prior_task_verification_missing_legacy"
-                | "task_verification_receipt_malformed"
+                | "task_verification_summary_malformed"
         )
     })
 }

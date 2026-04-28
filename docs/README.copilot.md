@@ -82,13 +82,13 @@ Runtime strategy checkpointing is execution-owned, not planning-owned. The runti
 
 This does not send the workflow back to planning stages; it keeps remediation in execution while preserving approved plan scope.
 
-Checkpoint history is runtime-owned authoritative state (`strategy_checkpoints`). Authoritative unit-review receipts must carry the active strategy checkpoint fingerprint.
+Checkpoint history is runtime-owned authoritative state (`strategy_checkpoints`). Runtime-owned task-review state carries the active strategy checkpoint fingerprint. Agents do not repair state-dir projection files directly; public commands regenerate derived metadata when needed.
 
 Review note: this runtime strategy checkpoint layer is intentional contract hardening and should not be removed as "out-of-plan" cleanup when branch tests and runtime contracts require it.
 
 Default planning pipeline:
 
-`featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-fidelity-review -> featureforge:plan-eng-review`
+`featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review`; `featureforge:plan-fidelity-review` runs only after engineering-review edits are complete, then `featureforge:plan-eng-review` performs final approval before implementation.
 
 ## Updating
 

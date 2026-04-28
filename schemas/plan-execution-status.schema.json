@@ -118,7 +118,6 @@
         "finish branch",
         "close current task",
         "continue execution",
-        "request task review",
         "request final review",
         "execution reentry required",
         "hand off",
@@ -167,7 +166,6 @@
         "release_readiness_recording_ready",
         "runtime_reconcile_required",
         "task_closure_recording_ready",
-        "task_review_dispatch_required",
         "task_review_result_pending",
         "test_plan_refresh_required"
       ],
@@ -537,8 +535,9 @@
         "properties": {
           "phase_detail": {
             "enum": [
-              "task_review_dispatch_required",
               "task_review_result_pending",
+              "execution_in_progress",
+              "runtime_reconcile_required",
               "finish_review_gate_ready",
               "finish_completion_gate_ready",
               "final_review_dispatch_required",
@@ -884,6 +883,12 @@
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
+    },
+    "projection_diagnostics": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
     "projection_mode": {
       "type": "string"

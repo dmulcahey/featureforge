@@ -69,7 +69,7 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     );
     assert_file_contains(
         root.join("skills/plan-fidelity-review/SKILL.md"),
-        "Receipts missing any required verified surface are stale or invalid for the expanded plan-fidelity gate",
+        "Review artifacts missing any required verified surface are stale or invalid for the expanded plan-fidelity gate",
     );
     assert_file_not_contains(
         root.join("skills/plan-fidelity-review/reviewer-prompt.md"),
@@ -77,31 +77,43 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     );
     assert_file_contains(
         root.join("README.md"),
-        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-fidelity-review -> featureforge:plan-eng-review -> implementation",
+        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review`; `featureforge:plan-fidelity-review` runs only after engineering-review edits are complete, then `featureforge:plan-eng-review` performs final approval before implementation.",
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
-        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-fidelity-review -> featureforge:plan-eng-review",
+        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review`; `featureforge:plan-fidelity-review` runs only after engineering-review edits are complete, then `featureforge:plan-eng-review` performs final approval before implementation.",
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
-        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-fidelity-review -> featureforge:plan-eng-review",
+        "featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review`; `featureforge:plan-fidelity-review` runs only after engineering-review edits are complete, then `featureforge:plan-eng-review` performs final approval before implementation.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> execution.",
+        "plan-ceo-review -> writing-plans -> plan-eng-review; plan-fidelity-review runs only after engineering-review edits are complete, then plan-eng-review performs final approval before execution.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Plan exists, is `Draft`, and is missing, stale, malformed, non-pass, or non-independent plan-fidelity receipt evidence: invoke `featureforge:plan-fidelity-review`.",
+        "Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and the current plan-fidelity review artifact is missing, stale, malformed, non-pass, or non-independent: invoke `featureforge:plan-fidelity-review`.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Plan exists, is `Draft`, and has a matching pass dedicated plan-fidelity receipt: invoke `featureforge:plan-eng-review`.",
+        "Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and has a matching pass plan-fidelity review artifact: invoke `featureforge:plan-eng-review`.",
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
-        "Invoke `featureforge:plan-fidelity-review`.",
+        "Invoke `featureforge:plan-eng-review` for the first engineering review pass.",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "plan-fidelity runs only after engineering-review edits are complete",
+    );
+    assert_file_not_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "runtime-owned receipt recording",
+    );
+    assert_file_not_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "receipt records",
     );
     assert_file_not_contains(
         root.join("skills/writing-plans/SKILL.md"),
@@ -109,7 +121,7 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "Before starting engineering review, require a matching runtime-owned plan-fidelity receipt in pass state for the current plan revision and approved spec revision.",
+        "Start engineering review for a structurally parseable draft even when no plan-fidelity review artifact exists yet.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -117,7 +129,7 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "If the matching plan-fidelity receipt is missing, stale, malformed, non-pass, or non-independent, stop and hand control back to `featureforge:plan-fidelity-review`.",
+        "Do not look for or require a runtime-owned plan-fidelity receipt. The authoritative fidelity evidence is the parseable review artifact surfaced by workflow routing and `plan contract analyze-plan` as `plan_fidelity_review`.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),

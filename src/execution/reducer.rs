@@ -23,7 +23,7 @@ use crate::execution::state::{
     current_task_review_dispatch_id_for_status, derive_execution_truth_from_authority,
     derive_execution_truth_from_authority_with_gates, gate_finish_from_context,
     gate_review_from_context, preflight_from_context, project_persisted_public_repair_targets,
-    stale_current_task_closure_records, task_closure_baseline_repair_candidate_with_stale_target,
+    stale_current_task_closure_records, task_closure_baseline_bridge_ready_for_stale_target,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
 use crate::execution::transitions::AuthoritativeTransitionState;
@@ -88,6 +88,7 @@ impl RuntimeGateSnapshot {
         let mut record_ids = self
             .stale_targets
             .iter()
+            .filter(|target| target.source != AuthoritativeStaleTargetSource::BaselineBridge)
             .filter_map(|target| target.record_id.clone())
             .collect::<Vec<_>>();
         record_ids.sort();
@@ -100,6 +101,7 @@ impl RuntimeGateSnapshot {
             .stale_targets
             .iter()
             .filter(|target| target.scope == AuthoritativeStaleTargetScope::Task)
+            .filter(|target| target.source != AuthoritativeStaleTargetSource::BaselineBridge)
             .filter_map(|target| target.record_id.clone())
             .collect::<Vec<_>>();
         record_ids.sort();
@@ -146,6 +148,7 @@ pub(crate) enum AuthoritativeStaleTargetSource {
     GateFinish,
     Preflight,
     NegativeResult,
+    BaselineBridge,
     ProjectionOnly,
 }
 
@@ -157,6 +160,7 @@ impl AuthoritativeStaleTargetSource {
             Self::GateFinish => "gate_finish",
             Self::Preflight => "preflight",
             Self::NegativeResult => "negative_result",
+            Self::BaselineBridge => "baseline_bridge",
             Self::ProjectionOnly => "projection_only",
         }
     }
@@ -250,12 +254,10 @@ fn build_runtime_state_from_event_authority(
         task_review_dispatch_id,
         final_review_dispatch_authority,
     } = derived;
-    let preflight = if project_gate_checks && status.execution_started == "no" {
-        Some(if status.execution_run_id.is_some() {
-            GateState::default().finish()
-        } else {
-            preflight_from_context(context)
-        })
+    let preflight = if project_gate_checks && status.execution_run_id.is_none() {
+        Some(preflight_from_context(context))
+    } else if project_gate_checks && status.execution_started == "no" {
+        Some(GateState::default().finish())
     } else {
         None
     };
@@ -577,14 +579,28 @@ fn append_task_closure_baseline_stale_target(
         .filter(|target| target.scope == AuthoritativeStaleTargetScope::Task)
         .filter_map(|target| target.task)
         .min();
-    if task_closure_baseline_repair_candidate_with_stale_target(
+    let baseline_bridge_reason_present = status.reason_codes.iter().any(|reason_code| {
+        matches!(
+            reason_code.as_str(),
+            "prior_task_current_closure_missing" | "task_closure_baseline_repair_candidate"
+        )
+    });
+    if !baseline_bridge_reason_present {
+        return Ok(());
+    }
+    if status
+        .current_task_closures
+        .iter()
+        .any(|closure| closure.task == task)
+    {
+        return Ok(());
+    }
+    if !task_closure_baseline_bridge_ready_for_stale_target(
         context,
         status,
         task,
         earliest_stale_task,
-    )?
-    .is_none()
-    {
+    )? {
         return Ok(());
     }
     if stale_targets.iter().any(|target| {
@@ -598,8 +614,8 @@ fn append_task_closure_baseline_stale_target(
         scope: AuthoritativeStaleTargetScope::Task,
         task: Some(task),
         step: None,
-        record_id: Some(format!("task-{task}")),
-        source: AuthoritativeStaleTargetSource::ClosureGraph,
+        record_id: None,
+        source: AuthoritativeStaleTargetSource::BaselineBridge,
         reason_code,
     });
     Ok(())

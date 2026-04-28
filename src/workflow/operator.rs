@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::cli::workflow::{DoctorArgs, OperatorArgs};
+use crate::cli::workflow::OperatorArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use crate::execution::harness::EvaluatorKind;
@@ -26,6 +26,12 @@ const WORKFLOW_PHASE_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_DOCTOR_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_HANDOFF_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 3;
+
+#[derive(Debug, Clone)]
+pub struct DoctorArgs {
+    pub plan: Option<PathBuf>,
+    pub external_review_result_ready: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -47,7 +53,6 @@ enum WorkflowOperatorPhaseDetailSchema {
     BlockedRuntimeBug,
     ExecutionInProgress,
     ExecutionReentryRequired,
-    TaskReviewDispatchRequired,
     TaskReviewResultPending,
     TaskClosureRecordingReady,
     BranchClosureRecordingRequiredForReleaseReadiness,
@@ -92,8 +97,6 @@ enum WorkflowOperatorNextActionSchema {
     CloseCurrentTask,
     #[serde(rename = "continue execution")]
     ContinueExecution,
-    #[serde(rename = "request task review")]
-    RequestTaskReview,
     #[serde(rename = "request final review")]
     RequestFinalReview,
     #[serde(rename = "execution reentry required")]
@@ -438,7 +441,6 @@ pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
         &DoctorArgs {
             plan: None,
             external_review_result_ready: false,
-            json: false,
         },
     )
 }
@@ -626,7 +628,6 @@ pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
         &DoctorArgs {
             plan: None,
             external_review_result_ready: false,
-            json: false,
         },
     )
 }
@@ -1303,6 +1304,17 @@ fn build_context_from_routing(
         .as_ref()
         .map(|status| status.blocking_reason_codes.clone())
         .unwrap_or(blocking_reason_codes);
+    let mut operator_diagnostic_reason_codes = diagnostic_reason_codes;
+    if let Some(status) = execution_status.as_ref() {
+        for reason_code in &status.projection_diagnostics {
+            if !operator_diagnostic_reason_codes
+                .iter()
+                .any(|existing| existing == reason_code)
+            {
+                operator_diagnostic_reason_codes.push(reason_code.clone());
+            }
+        }
+    }
     if operator_phase_detail == "execution_reentry_required"
         && let Some(task_number) = operator_execution_command_context
             .as_ref()
@@ -1377,7 +1389,7 @@ fn build_context_from_routing(
         operator_semantic_workspace_tree_id,
         operator_raw_workspace_tree_id,
         reason_family,
-        diagnostic_reason_codes,
+        diagnostic_reason_codes: operator_diagnostic_reason_codes,
         task_review_dispatch_id,
         final_review_dispatch_id,
         finish_review_gate_pass_branch_closure_id,
@@ -1650,7 +1662,7 @@ fn task_boundary_reason_text(context: &OperatorContext) -> Option<String> {
     let blocking_task = context.operator_blocking_task?;
     let message = match context.operator_phase_detail.as_str() {
         "task_review_dispatch_required" => format!(
-            "Task {blocking_task} closure cannot be recorded/refreshed yet. Dispatch dedicated-independent review for Task {blocking_task} first."
+            "Task {blocking_task} closure reached a retired task-review dispatch lane. Rerun workflow/operator after repairing runtime routing; normal task closure must use close-current-task."
         ),
         "task_review_result_pending" => {
             if task_review_result_pending_requires_verification(context) {
@@ -1658,7 +1670,7 @@ fn task_boundary_reason_text(context: &OperatorContext) -> Option<String> {
                     "Task {blocking_task} closure cannot be recorded/refreshed yet. Run verification and then record task closure for Task {blocking_task}."
                 )
             } else if operator_blocking_reason_present(context, "task_review_not_independent")
-                || operator_blocking_reason_present(context, "task_review_receipt_malformed")
+                || operator_blocking_reason_present(context, "task_review_artifact_malformed")
                 || operator_blocking_reason_present(context, "prior_task_review_not_green")
             {
                 format!(
@@ -1876,7 +1888,7 @@ mod tests {
                 contract_state: String::from("approved"),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 1,
                 plan_candidate_count: 1,

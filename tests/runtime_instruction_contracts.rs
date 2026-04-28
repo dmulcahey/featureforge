@@ -942,7 +942,7 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_ne
     );
     assert_contains(
         &subagent_skill,
-        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` only when the user explicitly needs repo-local human-readable projection exports. Approved plan and evidence files are not modified, and materialization is never required for normal progress.",
+        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` for state-dir-only diagnostic projection refreshes. If the user explicitly needs repo-local human-readable projection exports, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress.",
         "skills/subagent-driven-development/SKILL.md",
     );
     assert_not_contains(
@@ -957,7 +957,7 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_ne
     );
     assert_contains(
         &executing_plans_skill,
-        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` only when the user explicitly needs repo-local human-readable projection exports. Approved plan and evidence files are not modified, and materialization is never required for normal progress.",
+        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` for state-dir-only diagnostic projection refreshes. If the user explicitly needs repo-local human-readable projection exports, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress.",
         "skills/executing-plans/SKILL.md",
     );
     assert_not_contains(
@@ -1648,7 +1648,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> execution.",
+        "plan-ceo-review -> writing-plans -> plan-eng-review; plan-fidelity-review runs only after engineering-review edits are complete, then plan-eng-review performs final approval before execution.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1669,7 +1669,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
-        "After the plan is written or updated, continue using the same repo-relative plan path in plan-fidelity-review and workflow/operator handoffs.",
+        "Keep using the same repo-relative plan path in downstream review and workflow/operator handoffs.",
     );
     assert_file_not_contains(
         root.join("skills/writing-plans/SKILL.md"),
@@ -1693,7 +1693,19 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
-        "Invoke `featureforge:plan-fidelity-review`.",
+        "Invoke `featureforge:plan-eng-review` for the first engineering review pass.",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "plan-fidelity runs only after engineering-review edits are complete",
+    );
+    assert_file_not_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "runtime-owned receipt recording",
+    );
+    assert_file_not_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "receipt records",
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
@@ -1749,7 +1761,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "if workflow/operator reports `task_review_dispatch_required`, treat it as a compatibility/debug lane and keep routing through workflow/operator plus intent-level commands; do not expand the normal closure loop into manual low-level command choreography",
+        "workflow/operator must route normal task-boundary closure through `task_closure_recording_ready` / `close-current-task`, not `task_review_dispatch_required`; if a task-review dispatch phase appears, treat it as a runtime diagnostic bug instead of manual low-level command choreography",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1913,7 +1925,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "If workflow/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep routing through workflow/operator plus the intent-level commands; do not expand the normal closure loop into low-level dispatch-lineage management.",
+        "Workflow/operator must not report `task_review_dispatch_required` for normal task-boundary closure; task closure routes through `close-current-task`. If workflow/operator reports `final_review_dispatch_required`, keep routing through workflow/operator plus intent-level commands and do not expand the loop into low-level dispatch-lineage management.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -2048,7 +2060,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "Do not look for a markdown `## Plan Fidelity Review Receipt` block in the plan. The authoritative evidence is the runtime-owned receipt surfaced by workflow routing and `plan contract analyze-plan`.",
+        "Do not look for or require a runtime-owned plan-fidelity receipt. The authoritative fidelity evidence is the parseable review artifact surfaced by workflow routing and `plan contract analyze-plan` as `plan_fidelity_review`.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -2380,11 +2392,15 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
-        "runtime-provided base-branch context from `workflow operator` (`base_branch`) and release-lineage routing",
+        "Use caller-provided base-branch context and release-lineage routing.",
     );
     assert_file_contains(
         root.join("agents/code-reviewer.instructions.md"),
-        "runtime-owned base-branch contract as the active workflow guidance: use caller-provided `workflow operator --plan <approved-plan-path> --json` `base_branch` / release-lineage context when available",
+        "Require caller-provided base branch, base SHA, head SHA, plan path if plan-routed, and any runtime context the caller wants considered",
+    );
+    assert_file_contains(
+        root.join("agents/code-reviewer.instructions.md"),
+        "Do not run workflow/operator or plan-execution commands to obtain missing context; stop as blocked if the required review range or plan-routed runtime context was not provided",
     );
     assert_file_contains(
         root.join("agents/code-reviewer.instructions.md"),
@@ -2396,7 +2412,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("agents/code-reviewer.md"),
-        "runtime-owned base-branch contract as the active workflow guidance: use caller-provided `workflow operator --plan <approved-plan-path> --json` `base_branch` / release-lineage context when available",
+        "Require caller-provided base branch, base SHA, head SHA, plan path if plan-routed, and any runtime context the caller wants considered",
+    );
+    assert_file_contains(
+        root.join("agents/code-reviewer.md"),
+        "Do not run workflow/operator or plan-execution commands to obtain missing context; stop as blocked if the required review range or plan-routed runtime context was not provided",
     );
     assert_file_contains(
         root.join("agents/code-reviewer.md"),
@@ -2434,7 +2454,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
 
     assert_file_contains(
         root.join("README.md"),
-        "brainstorming -> plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> implementation",
+        "brainstorming -> plan-ceo-review -> writing-plans -> plan-eng-review`; `plan-fidelity-review` runs only after engineering-review edits are complete, then `plan-eng-review` performs final approval before implementation.",
     );
     assert_file_contains(
         root.join("README.md"),

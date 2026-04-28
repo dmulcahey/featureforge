@@ -13,10 +13,11 @@ mod process_support;
 #[path = "support/projection.rs"]
 mod projection_support;
 
-use featureforge::cli::plan_execution::{RecordContractArgs, StatusArgs};
+use featureforge::cli::plan_execution::StatusArgs;
 use featureforge::contracts::evidence::read_execution_evidence;
 use featureforge::contracts::plan::parse_plan_file;
 use featureforge::diagnostics::FailureClass;
+use featureforge::execution::internal_args::RecordContractArgs;
 use featureforge::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, STABLE_EVENT_KINDS,
 };
@@ -134,7 +135,7 @@ fn parse_failure_json(output: &Output, context: &str) -> Value {
         .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
 }
 
-fn run_runtime_preflight_gate_json(
+fn internal_only_runtime_preflight_gate_json(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
@@ -498,7 +499,7 @@ fn accept_execution_preflight(repo: &Path, state: &Path) {
         .current_dir(repo);
     run_checked_output(checkout, "git checkout execution-preflight-fixture");
 
-    let preflight = run_runtime_preflight_gate_json(
+    let preflight = internal_only_runtime_preflight_gate_json(
         repo,
         state,
         PLAN_REL,
@@ -1121,7 +1122,7 @@ fn record_contract_persists_dependency_index_with_authoritative_contract_node() 
         }),
     );
 
-    let record_json = plan_execution_direct_support::run_internal_record_contract_json(
+    let record_json = plan_execution_direct_support::internal_only_unit_record_contract_json(
         repo,
         state,
         &RecordContractArgs {
@@ -1187,7 +1188,7 @@ fn record_contract_persists_observability_event_and_authoritative_mutation_count
         }),
     );
 
-    let record_json = plan_execution_direct_support::run_internal_record_contract_json(
+    let record_json = plan_execution_direct_support::internal_only_unit_record_contract_json(
         repo,
         state,
         &RecordContractArgs {

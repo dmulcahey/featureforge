@@ -7,7 +7,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::cli::plan_execution::{RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs};
 use crate::contracts::harness::{
     EvaluationReport, ExecutionContract, ExecutionHandoff, WorktreeLease, read_evaluation_report,
     read_execution_contract, read_execution_handoff,
@@ -29,6 +28,9 @@ use crate::execution::gates::{
 use crate::execution::harness::{
     ChunkId, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE, RunIdentitySnapshot,
     WorktreeLeaseBindingSnapshot,
+};
+use crate::execution::internal_args::{
+    RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs,
 };
 use crate::execution::leases::{process_is_running, validate_worktree_lease};
 use crate::execution::observability::{
@@ -342,6 +344,24 @@ pub fn ensure_preflight_authoritative_bootstrap(
         }
     };
 
+    ensure_preflight_authoritative_bootstrap_without_acquiring_lock(runtime, run_identity, chunk_id)
+}
+
+pub(crate) fn ensure_preflight_authoritative_bootstrap_with_existing_authority(
+    runtime: &ExecutionRuntime,
+    run_identity: RunIdentitySnapshot,
+    chunk_id: ChunkId,
+) -> Result<(), JsonFailure> {
+    validate_safe_identifier_token(run_identity.execution_run_id.as_str(), "execution_run_id")?;
+    validate_safe_identifier_token(chunk_id.as_str(), "chunk_id")?;
+    ensure_preflight_authoritative_bootstrap_without_acquiring_lock(runtime, run_identity, chunk_id)
+}
+
+fn ensure_preflight_authoritative_bootstrap_without_acquiring_lock(
+    runtime: &ExecutionRuntime,
+    run_identity: RunIdentitySnapshot,
+    chunk_id: ChunkId,
+) -> Result<(), JsonFailure> {
     let state_path =
         harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
     let mut state = match load_mutable_harness_state_from_event_authority(runtime, &state_path) {

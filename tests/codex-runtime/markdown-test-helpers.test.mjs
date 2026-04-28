@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   extractBashBlockUnderHeading,
   extractSection,
+  discoverRepoRoot,
   parseFrontmatter,
   readUtf8,
   REPO_ROOT,
@@ -65,5 +68,8 @@ test('extractBashBlockUnderHeading accepts sh fences through shared section extr
 
 test('readUtf8 resolves repo-relative paths from the helper repo root', () => {
   assert.match(readUtf8('README.md'), /FeatureForge/);
-  assert.ok(REPO_ROOT.endsWith('featureforge'));
+  assert.equal(discoverRepoRoot(new URL('./helpers', import.meta.url).pathname), REPO_ROOT);
+  for (const marker of ['Cargo.toml', 'README.md', 'src', 'skills']) {
+    assert.ok(fs.existsSync(path.join(REPO_ROOT, marker)), `${marker} marker should exist`);
+  }
 });
