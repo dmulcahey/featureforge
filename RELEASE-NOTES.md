@@ -4,8 +4,8 @@
 
 - harden the public runtime cutover so `Engineering Approved` plans require a
   current passing plan-fidelity gate before implementation routing, public
-  replay tests use only compiled CLI helpers, reviewer-mode runtime recursion
-  fails closed, and normal route recommendations come from typed public command
+  replay tests use only compiled CLI helpers, reviewer recursion prevention
+  remains prompt-scoped, and normal route recommendations come from typed public command
   decisions exposed as `recommended_public_command_argv` while
   `recommended_command` remains display-only compatibility text
 - split the execution runtime into clearer command, guard, event, reducer,

@@ -4,9 +4,9 @@ This file is the skill-local reviewer briefing template, not the generated agent
 
 You are reviewing code changes for production readiness against the shared FeatureForge review checklist.
 
-FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no
+## Review-subagent recursion rule
 
-If you are running as a reviewer subagent, do not invoke FeatureForge skills, do not run `featureforge workflow` or `featureforge plan execution` commands, do not dispatch `code-reviewer` or `requesting-code-review`, and do not repair runtime state. Use only the context supplied by the caller plus read-only repo inspection. If required runtime context is missing, report a blocked review and name the missing context.
+You are a reviewer. You may inspect the provided files, packet, summaries, and context and produce review findings. Do not launch, request, or delegate to additional subagents while performing this review. Do not delegate this review to another reviewer agent. Do not invoke `subagent-driven-development`, `requesting-code-review`, `plan-fidelity-review`, `plan-eng-review`, `plan-ceo-review`, or any other FeatureForge skill/workflow for the purpose of spawning another reviewer. Use only the files, packet, summaries, and context supplied to this review. If the supplied context is insufficient, return a blocked review finding that names the missing context instead of spawning another agent.
 
 **Your task:**
 1. Review `{WHAT_WAS_IMPLEMENTED}`

@@ -27,35 +27,6 @@ fn assert_file_does_not_contain(path: PathBuf, needle: &str) {
     );
 }
 
-fn assert_file_contains_ci(path: PathBuf, needle: &str) {
-    let source = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
-    assert!(
-        source.to_lowercase().contains(&needle.to_lowercase()),
-        "{} should contain {:?} case-insensitively",
-        path.display(),
-        needle
-    );
-}
-
-fn assert_file_does_not_contain_ci(path: PathBuf, needle: &str) {
-    let source = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
-    assert!(
-        !source.to_lowercase().contains(&needle.to_lowercase()),
-        "{} should not contain {:?} case-insensitively",
-        path.display(),
-        needle
-    );
-}
-
-fn plan_execution_prompt_command(command_parts: &[&str]) -> String {
-    format!(
-        "run `featureforge plan execution {}",
-        command_parts.concat()
-    )
-}
-
 #[test]
 fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     let root = repo_root();
@@ -153,69 +124,76 @@ fn reviewer_prompts_are_non_recursive_and_runtime_command_free() {
     ];
 
     for path in reviewer_paths {
+        assert_file_contains(path.clone(), "## Review-subagent recursion rule");
+        assert_file_contains(path.clone(), "You are a reviewer.");
         assert_file_contains(
             path.clone(),
-            "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no",
+            "You may inspect the provided files, packet, summaries, and context and produce review findings.",
         );
+        assert_file_contains(path.clone(), "If the supplied context is insufficient");
+        assert_file_contains(
+            path.clone(),
+            "Do not launch, request, or delegate to additional subagents while performing this review.",
+        );
+        assert_file_contains(
+            path.clone(),
+            "Do not delegate this review to another reviewer agent.",
+        );
+        assert_file_contains(path.clone(), "`subagent-driven-development`");
+        assert_file_contains(path.clone(), "`requesting-code-review`");
+        assert_file_contains(path.clone(), "`plan-fidelity-review`");
+        assert_file_contains(path.clone(), "`plan-eng-review`");
+        assert_file_contains(
+            path.clone(),
+            "return a blocked review finding that names the missing context instead of spawning another agent.",
+        );
+        assert_file_does_not_contain(
+            path.clone(),
+            "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED",
+        );
+        assert_file_does_not_contain(path.clone(), "FEATUREFORGE_REVIEWER_CONTEXT");
+        assert_file_does_not_contain(path.clone(), "ReviewerRuntimeCommandForbidden");
         assert_file_does_not_contain(path.clone(), "REVIEWER_RUNTIME_COMMANDS_ALLOWED: no");
-        assert_file_contains_ci(path.clone(), "do not invoke FeatureForge skills");
-        assert_file_contains_ci(
-            path.clone(),
-            "do not run `featureforge workflow` or `featureforge plan execution` commands",
-        );
-        assert_file_contains_ci(
-            path.clone(),
-            "do not dispatch `code-reviewer` or `requesting-code-review`",
-        );
-        assert_file_contains(path.clone(), "If required runtime context is missing");
-        assert_file_contains(path.clone(), "report a blocked review");
-        assert_file_does_not_contain(path.clone(), "Run `featureforge workflow");
-        assert_file_does_not_contain(path.clone(), "Run `featureforge plan execution");
-        for forbidden_runtime_command in [
-            "run `featureforge workflow operator".to_owned(),
-            plan_execution_prompt_command(&["status"]),
-            plan_execution_prompt_command(&["repair", "-review-state"]),
-            plan_execution_prompt_command(&["close-current-task"]),
-            plan_execution_prompt_command(&["advance-late-stage"]),
-            plan_execution_prompt_command(&["rebuild", "-evidence"]),
-            plan_execution_prompt_command(&["reconcile", "-review-state"]),
-        ] {
-            assert_file_does_not_contain_ci(path.clone(), &forbidden_runtime_command);
-        }
-        assert_file_does_not_contain_ci(path.clone(), "receipt");
+        assert_file_does_not_contain(path.clone(), "runtime command guard");
+        assert_file_does_not_contain(path.clone(), "reviewer-mode environment");
     }
 
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "The controller owns any FeatureForge runtime queries before dispatch.",
-    );
-    assert_file_contains(
-        root.join("skills/requesting-code-review/SKILL.md"),
-        "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no",
+        "The reviewer prompt owns the reviewer-only recursion contract.",
     );
     assert_file_does_not_contain(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "REVIEWER_RUNTIME_COMMANDS_ALLOWED: no",
+        "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED",
+    );
+    assert_file_does_not_contain(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "## Review-subagent recursion rule",
+    );
+    assert_file_does_not_contain(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "Do not launch, request, or delegate to additional subagents",
     );
 }
 
 #[test]
-fn codex_reviewer_agent_launch_artifact_carries_runtime_command_env_contract() {
+fn generated_codex_reviewer_agent_carries_prompt_scoped_recursion_contract() {
     let root = repo_root();
     let codex_agent = root.join(".codex/agents/code-reviewer.toml");
 
-    assert_file_contains(codex_agent.clone(), "# REVIEWER_RUNTIME_ENV_CONTRACT");
+    assert_file_contains(codex_agent.clone(), "## Review-subagent recursion rule");
     assert_file_contains(
         codex_agent.clone(),
-        "Launcher must set FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED = \"no\" before starting this reviewer.",
+        "Do not launch, request, or delegate to additional subagents while performing this review.",
     );
     assert_file_contains(
         codex_agent.clone(),
-        "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no",
+        "return a blocked review finding that names the missing context instead of spawning another agent.",
     );
-    assert_file_contains(
+    assert_file_does_not_contain(codex_agent.clone(), "# REVIEWER_RUNTIME_ENV_CONTRACT");
+    assert_file_does_not_contain(
         codex_agent.clone(),
-        "If required runtime context is missing, report a blocked review",
+        "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED",
     );
     assert_file_does_not_contain(codex_agent, "REVIEWER_RUNTIME_COMMANDS_ALLOWED: no");
 }

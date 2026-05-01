@@ -97,8 +97,6 @@ function buildCodexAgent({ name, description, body }) {
   return [
     '# AUTO-GENERATED from agents/code-reviewer.instructions.md — do not edit directly',
     `# Regenerate: ${GENERATOR_CMD}`,
-    '# REVIEWER_RUNTIME_ENV_CONTRACT',
-    '# Launcher must set FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED = "no" before starting this reviewer.',
     `name = "${escapeTomlBasicString(name)}"`,
     `description = "${escapeTomlBasicString(condensedDescription)}"`,
     'developer_instructions = """',

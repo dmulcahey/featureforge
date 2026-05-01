@@ -324,10 +324,6 @@ fn build_codex_agent(source: &AgentSource) -> String {
             "# AUTO-GENERATED from agents/code-reviewer.instructions.md — do not edit directly",
         ),
         format!("# Regenerate: {AGENT_GENERATOR_CMD}"),
-        String::from("# REVIEWER_RUNTIME_ENV_CONTRACT"),
-        String::from(
-            "# Launcher must set FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED = \"no\" before starting this reviewer.",
-        ),
         format!("name = \"{}\"", escape_toml_basic_string(&source.name)),
         format!(
             "description = \"{}\"",

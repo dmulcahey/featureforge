@@ -127,23 +127,47 @@ function assertNoPositiveReviewerRuntimeInvocation(content, label) {
   }
 }
 
-function assertReviewerSurfaceForbidsRuntimeCommands(content, label) {
+function assertReviewerSurfaceCarriesPromptScopedRecursionRule(content, label) {
+  assert.match(content, /## Review-subagent recursion rule/, `${label} should include the reviewer recursion rule heading`);
+  assert.match(content, /You are a reviewer\./, `${label} should identify the terminal reviewer role`);
   assert.match(
     content,
-    /FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED(?:\s*=\s*"no"|=no)/,
-    `${label} should state the reviewer runtime command guard env value`,
-  );
-  assert.match(content, /do not invoke FeatureForge skills/i, `${label} should forbid FeatureForge skill invocation`);
-  assert.match(
-    content,
-    /do not run `featureforge workflow` or `featureforge plan execution` commands/i,
-    `${label} should forbid FeatureForge runtime commands`,
+    /You may inspect the provided files, packet, summaries, and context and produce review findings\./,
+    `${label} should preserve read-only reviewer inspection and finding authority`,
   );
   assert.match(
     content,
-    /If required runtime context is missing, report a blocked review/i,
-    `${label} should tell reviewers to report blocked reviews instead of repairing runtime state`,
+    /Do not launch, request, or delegate to additional subagents while performing this review\./,
+    `${label} should forbid nested subagent launch or delegation`,
   );
+  assert.match(
+    content,
+    /Do not delegate this review to another reviewer agent\./,
+    `${label} should forbid delegating the review to another reviewer agent`,
+  );
+  for (const skillName of [
+    'subagent-driven-development',
+    'requesting-code-review',
+    'plan-fidelity-review',
+    'plan-eng-review',
+  ]) {
+    assert.match(
+      content,
+      new RegExp(`\`${skillName}\``),
+      `${label} should name ${skillName} as a review-spawning workflow that cannot be used for nested review`,
+    );
+  }
+  assert.match(
+    content,
+    /return a blocked review finding that names the missing context instead of spawning another agent\./,
+    `${label} should fail closed as a blocked finding when context is insufficient`,
+  );
+  assert.doesNotMatch(content, /FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED/, `${label} should not require reviewer env markers`);
+  assert.doesNotMatch(content, /FEATUREFORGE_REVIEWER_CONTEXT/, `${label} should not require reviewer context env markers`);
+  assert.doesNotMatch(content, /ReviewerRuntimeCommandForbidden/, `${label} should not teach runtime command rejection`);
+  assert.doesNotMatch(content, /REVIEWER_RUNTIME_ENV_CONTRACT/, `${label} should not carry launcher env contracts`);
+  assert.doesNotMatch(content, /runtime command guard/i, `${label} should not cite runtime guard enforcement`);
+  assert.doesNotMatch(content, /reviewer-mode environment/i, `${label} should not cite reviewer-mode environment enforcement`);
   assertNoPositiveReviewerRuntimeInvocation(content, label);
 }
 
@@ -1393,7 +1417,7 @@ test('reuse hard-fail law is critical, scoped, and example-backed across reviewe
   }
 });
 
-test('generated reviewer agent surfaces carry launcher-enforced runtime command contract', () => {
+test('generated reviewer agent surfaces carry prompt-scoped recursion contract', () => {
   const reviewerSurfaces = [
     ['reviewer agent instructions', path.join(REPO_ROOT, 'agents/code-reviewer.instructions.md')],
     ['generated reviewer markdown', path.join(REPO_ROOT, 'agents/code-reviewer.md')],
@@ -1401,19 +1425,38 @@ test('generated reviewer agent surfaces carry launcher-enforced runtime command 
   ];
 
   for (const [label, file] of reviewerSurfaces) {
-    assertReviewerSurfaceForbidsRuntimeCommands(readUtf8(file), label);
+    assertReviewerSurfaceCarriesPromptScopedRecursionRule(readUtf8(file), label);
   }
 
+  const requestingCodeReview = readUtf8(getSkillPath('requesting-code-review'));
+  assert.match(requestingCodeReview, /The reviewer prompt owns the reviewer-only recursion contract\./);
+  assert.doesNotMatch(requestingCodeReview, /FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED/);
+  assert.doesNotMatch(requestingCodeReview, /## Review-subagent recursion rule/);
+  assert.doesNotMatch(requestingCodeReview, /Do not launch, request, or delegate to additional subagents/);
+
   const generatedCodexAgent = readUtf8(path.join(REPO_ROOT, '.codex/agents/code-reviewer.toml'));
-  assert.match(generatedCodexAgent, /^# REVIEWER_RUNTIME_ENV_CONTRACT$/m);
-  assert.match(
-    generatedCodexAgent,
-    /^# Launcher must set FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED = "no" before starting this reviewer\.$/m,
-  );
+  assert.doesNotMatch(generatedCodexAgent, /^# REVIEWER_RUNTIME_ENV_CONTRACT$/m);
+  assert.doesNotMatch(generatedCodexAgent, /^# Launcher must set FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED/m);
 });
 
-test('subagent reviewer prompts forbid recursive FeatureForge runtime and skill invocation', () => {
+test('subagent reviewer prompts carry prompt-scoped recursion rule', () => {
   const reviewerPrompts = [
+    [
+      'requesting-code-review final reviewer prompt',
+      path.join(REPO_ROOT, 'skills/requesting-code-review/code-reviewer.md'),
+    ],
+    [
+      'plan fidelity reviewer prompt',
+      path.join(REPO_ROOT, 'skills/plan-fidelity-review/reviewer-prompt.md'),
+    ],
+    [
+      'accelerated ENG reviewer prompt',
+      path.join(REPO_ROOT, 'skills/plan-eng-review/accelerated-reviewer-prompt.md'),
+    ],
+    [
+      'accelerated CEO reviewer prompt',
+      path.join(REPO_ROOT, 'skills/plan-ceo-review/accelerated-reviewer-prompt.md'),
+    ],
     [
       'spec reviewer prompt',
       path.join(REPO_ROOT, 'skills/subagent-driven-development/spec-reviewer-prompt.md'),
@@ -1425,7 +1468,7 @@ test('subagent reviewer prompts forbid recursive FeatureForge runtime and skill 
   ];
 
   for (const [label, file] of reviewerPrompts) {
-    assertReviewerSurfaceForbidsRuntimeCommands(readUtf8(file), label);
+    assertReviewerSurfaceCarriesPromptScopedRecursionRule(readUtf8(file), label);
   }
 });
 
@@ -2249,7 +2292,7 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     generatedReviewerAgent,
-    /Do not run workflow\/operator or plan-execution commands to obtain missing context/,
+    /Do not derive, repair, or reconstruct missing workflow context locally/,
   );
   assert.match(
     generatedReviewerAgent,

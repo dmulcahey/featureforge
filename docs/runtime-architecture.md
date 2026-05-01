@@ -94,9 +94,10 @@ runtime progress.
 
 ## Reviewer and Public-Test Boundaries
 
-Reviewer mode is a read/review context. Runtime command recursion is blocked by the
-runtime guard when reviewer-mode environment disables FeatureForge runtime commands.
-Reviewer prompts and generated reviewer docs must preserve that prohibition.
+Reviewer recursion prevention is reviewer-prompt scoped. Review-subagent prompts define
+terminal review workers that inspect supplied context and return findings without
+spawning or delegating to nested reviewer agents. Runtime command routing does not own
+or enforce this agent-recursion policy.
 
 Public replay tests must exercise the compiled public CLI. Internal direct-runtime
 helpers belong in quarantined support files with explicit internal naming. Scanner tests

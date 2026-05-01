@@ -3389,31 +3389,6 @@
         },
         "ok": true
       }
-    },
-    {
-      "label": "reviewer_runtime_command_forbidden",
-      "note": "Reviewer runtime-command guard fails closed before status/operator state mutation",
-      "plan_execution_status": {
-        "failure": {
-          "error_class": "ReviewerRuntimeCommandForbidden",
-          "message": "Reviewer subagents may not run FeatureForge runtime commands. Return a blocked review and name the missing runtime context instead. Forbidden command group: plan execution."
-        },
-        "ok": false
-      },
-      "workflow_operator": {
-        "failure": {
-          "error_class": "ReviewerRuntimeCommandForbidden",
-          "message": "Reviewer subagents may not run FeatureForge runtime commands. Return a blocked review and name the missing runtime context instead. Forbidden command group: workflow."
-        },
-        "ok": false
-      },
-      "workflow_status": {
-        "failure": {
-          "error_class": "ReviewerRuntimeCommandForbidden",
-          "message": "Reviewer subagents may not run FeatureForge runtime commands. Return a blocked review and name the missing runtime context instead. Forbidden command group: workflow."
-        },
-        "ok": false
-      }
     }
   ],
   "schema_version": 1

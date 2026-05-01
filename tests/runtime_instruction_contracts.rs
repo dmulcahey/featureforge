@@ -2475,7 +2475,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("agents/code-reviewer.instructions.md"),
-        "Do not run workflow/operator or plan-execution commands to obtain missing context; stop as blocked if the required review range or plan-routed runtime context was not provided",
+        "Do not derive, repair, or reconstruct missing workflow context locally; stop as blocked if the required review range or plan-routed context was not provided",
     );
     assert_file_contains(
         root.join("agents/code-reviewer.instructions.md"),
@@ -2491,7 +2491,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("agents/code-reviewer.md"),
-        "Do not run workflow/operator or plan-execution commands to obtain missing context; stop as blocked if the required review range or plan-routed runtime context was not provided",
+        "Do not derive, repair, or reconstruct missing workflow context locally; stop as blocked if the required review range or plan-routed context was not provided",
     );
     assert_file_contains(
         root.join("agents/code-reviewer.md"),

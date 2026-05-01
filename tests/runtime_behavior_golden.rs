@@ -9,7 +9,7 @@ mod process_support;
 #[path = "support/public_featureforge_cli.rs"]
 mod public_featureforge_cli;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -43,7 +43,6 @@ const REQUIRED_SCENARIOS: &[&str] = &[
     "ready_for_branch_completion",
     "implementation_ready_after_fidelity_pass",
     "engineering_approved_missing_fidelity_gate",
-    "reviewer_runtime_command_forbidden",
 ];
 
 struct PublicCli<'a> {
@@ -119,49 +118,6 @@ fn run_git(repo: &Path, args: &[&str], context: &str) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-}
-
-fn git_status_short(repo: &Path) -> Vec<String> {
-    let mut command = Command::new("git");
-    command.current_dir(repo).args(["status", "--short"]);
-    let output = process_support::run(command, "git status runtime golden fixture");
-    assert!(
-        output.status.success(),
-        "git status runtime golden fixture should succeed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::to_owned)
-        .collect()
-}
-
-fn state_dir_snapshot(state: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
-    fn visit(root: &Path, base: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
-        let entries = match fs::read_dir(root) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(error) => panic!("state snapshot should read `{}`: {error}", root.display()),
-        };
-        for entry in entries {
-            let entry = entry.expect("state snapshot entry should be readable");
-            let path = entry.path();
-            if path.is_dir() {
-                visit(&path, base, out);
-            } else {
-                let rel = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
-                let bytes = fs::read(&path).unwrap_or_else(|error| {
-                    panic!("state snapshot should read `{}`: {error}", path.display())
-                });
-                out.insert(rel, bytes);
-            }
-        }
-    }
-
-    let mut snapshot = BTreeMap::new();
-    visit(state, state, &mut snapshot);
-    snapshot
 }
 
 fn commit_all(repo: &Path, message: &str) {
@@ -1071,56 +1027,12 @@ fn collect_late_stage_scenarios(scenarios: &mut Vec<Value>) {
     scenarios.push(qa_pending);
 }
 
-fn collect_reviewer_guard_scenario(scenarios: &mut Vec<Value>) {
-    let (repo_dir, state_dir) = init_repo("runtime-golden-reviewer-guard");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    write_execution_spec_and_plan(repo, 2, "not-required", true);
-    commit_all(repo, "runtime golden reviewer guard fixture");
-    let cli = PublicCli::new(repo, state);
-    let state_before = state_dir_snapshot(state);
-    let git_status_before = git_status_short(repo);
-    let reviewer_guard = capture_route_state(
-        "reviewer_runtime_command_forbidden",
-        "Reviewer runtime-command guard fails closed before status/operator state mutation",
-        &cli,
-        &[("FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED", "no")],
-    );
-    for key in [
-        "plan_execution_status",
-        "workflow_operator",
-        "workflow_status",
-    ] {
-        assert_eq!(
-            reviewer_guard[key]["ok"],
-            Value::Bool(false),
-            "reviewer guard {key} capture should fail closed: {reviewer_guard}"
-        );
-        assert_eq!(
-            reviewer_guard[key]["failure"]["error_class"], "ReviewerRuntimeCommandForbidden",
-            "reviewer guard {key} should expose ReviewerRuntimeCommandForbidden: {reviewer_guard}"
-        );
-    }
-    assert_eq!(
-        state_dir_snapshot(state),
-        state_before,
-        "reviewer guard scenario should fail before runtime state mutation"
-    );
-    assert_eq!(
-        git_status_short(repo),
-        git_status_before,
-        "reviewer guard scenario should fail before tracked-file mutation"
-    );
-    scenarios.push(reviewer_guard);
-}
-
 fn collect_runtime_golden() -> Value {
     let mut scenarios = Vec::new();
     collect_execution_progress_scenarios(&mut scenarios);
     collect_invariant_diagnostic_scenarios(&mut scenarios);
     collect_review_gate_scenarios(&mut scenarios);
     collect_late_stage_scenarios(&mut scenarios);
-    collect_reviewer_guard_scenario(&mut scenarios);
     assert_required_scenarios(&scenarios);
     json!({
         "schema_version": 1,
