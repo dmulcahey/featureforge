@@ -207,11 +207,32 @@ impl RepairRouteAction {
     }
 }
 
-fn route_decision_recommended_command(route_decision: &RouteDecision) -> Option<String> {
-    route_decision
-        .recommended_public_command
-        .as_ref()
-        .map(PublicCommand::to_display_command)
+fn public_recommendation_surfaces(
+    command: Option<&PublicCommand>,
+) -> (Option<String>, Option<Vec<String>>) {
+    (
+        command.map(PublicCommand::to_display_command),
+        recommended_public_command_argv(command),
+    )
+}
+
+fn follow_up_recommended_public_command(
+    required_follow_up: &str,
+    routed_required_follow_up: Option<&str>,
+    final_routing_phase_detail: &str,
+    final_routing_public_command: Option<&PublicCommand>,
+    fallback_public_command: Option<&PublicCommand>,
+) -> Option<PublicCommand> {
+    if required_follow_up == "request_external_review"
+        && final_routing_phase_detail
+            == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+    {
+        None
+    } else if routed_required_follow_up == Some(required_follow_up) {
+        final_routing_public_command.cloned()
+    } else {
+        fallback_public_command.cloned()
+    }
 }
 
 fn routing_recommended_command(routing: &ExecutionRoutingState) -> Option<String> {
@@ -1236,26 +1257,25 @@ pub fn repair_review_state(
     } else {
         snapshot.stale_unreviewed_closures.clone()
     };
-    let recommended_command = if let Some(required_follow_up_lane) = required_follow_up.as_deref() {
-        if required_follow_up_lane == "request_external_review"
-            && route_decision.phase_detail
-                == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-        {
-            None
-        } else if required_follow_up_lane == "execution_reentry"
-            && public_command_is_repair_review_state(
-                route_decision.recommended_public_command.as_ref(),
-            )
-        {
-            route_action.recommended_command()
-        } else if route_decision.recommended_public_command.is_some() {
-            route_decision_recommended_command(&route_decision)
+    let recommended_public_command =
+        if let Some(required_follow_up_lane) = required_follow_up.as_deref() {
+            if required_follow_up_lane == "request_external_review"
+                && route_decision.phase_detail
+                    == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+            {
+                None
+            } else if required_follow_up_lane == "execution_reentry"
+                && public_command_is_repair_review_state(
+                    route_decision.recommended_public_command.as_ref(),
+                )
+            {
+                route_action.recommended_public_command.clone()
+            } else {
+                route_decision.recommended_public_command.clone()
+            }
         } else {
-            None
-        }
-    } else {
-        route_decision_recommended_command(&route_decision)
-    };
+            route_decision.recommended_public_command.clone()
+        };
     let empty_lineage_branch_reroute_repairable = repair_can_establish_empty_lineage_branch_reroute(
         &phase_bundle,
         branch_rerecording_unsupported_reason,
@@ -1629,26 +1649,16 @@ pub fn repair_review_state(
     }
     if let Some(required_follow_up) = final_required_follow_up.as_deref() {
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
-        let recommended_command = if required_follow_up == "request_external_review"
-            && final_routing.phase_detail
-                == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-        {
-            None
-        } else if required_follow_up_from_routing(&final_routing).as_deref()
-            == Some(required_follow_up)
-        {
-            routing_recommended_command(&final_routing)
-        } else {
-            recommended_command.clone()
-        };
-        let recommended_public_command_argv = if required_follow_up_from_routing(&final_routing)
-            .as_deref()
-            == Some(required_follow_up)
-        {
-            routing_recommended_command_argv(&final_routing)
-        } else {
-            None
-        };
+        let routed_required_follow_up = required_follow_up_from_routing(&final_routing);
+        let recommended_public_command = follow_up_recommended_public_command(
+            required_follow_up,
+            routed_required_follow_up.as_deref(),
+            &final_routing.phase_detail,
+            final_routing.recommended_public_command.as_ref(),
+            recommended_public_command.as_ref(),
+        );
+        let (recommended_command, recommended_public_command_argv) =
+            public_recommendation_surfaces(recommended_public_command.as_ref());
         if required_follow_up == "execution_reentry"
             && task_scope_structural_reason.is_none()
             && branch_scope_structural_reason.is_none()
@@ -1790,7 +1800,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: None,
-            recommended_command,
+            recommended_command: route_action.recommended_command(),
             recommended_public_command_argv: route_action.recommended_command_argv(),
             trace_summary: String::from(
                 "Repair review state reconciled stale task-boundary state and refreshed routing; task closure is ready to record or refresh.",
@@ -1814,7 +1824,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: Some(required_follow_up.clone()),
-            recommended_command,
+            recommended_command: route_action.recommended_command(),
             recommended_public_command_argv: route_action.recommended_command_argv(),
             trace_summary: repair_follow_up_trace_summary(
                 required_follow_up.as_str(),
@@ -1946,7 +1956,7 @@ pub fn repair_review_state(
         missing_derived_overlays: snapshot.missing_derived_overlays,
         actions_performed,
         required_follow_up: None,
-        recommended_command,
+        recommended_command: route_action.recommended_command(),
         recommended_public_command_argv: route_action.recommended_command_argv(),
         trace_summary: if repaired_any_overlays {
             String::from(
@@ -3167,6 +3177,47 @@ mod tests {
         }
     }
 
+    fn assert_repair_output_recommendation_has_argv(output: &RepairReviewStateOutput) {
+        if output.recommended_command.is_some() {
+            assert!(
+                output.recommended_public_command_argv.is_some(),
+                "repair-review-state output must not expose display-only command text: {output:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mismatched_follow_up_fallback_derives_display_and_argv_from_typed_command() {
+        let plan = String::from("docs/featureforge/plans/plan with spaces.md");
+        let fallback = PublicCommand::Begin {
+            plan: plan.clone(),
+            task: 2,
+            step: 1,
+            execution_mode: Some(String::from("featureforge:executing-plans")),
+            fingerprint: Some(String::from("fingerprint-2")),
+        };
+        let final_routing_command = PublicCommand::RepairReviewState { plan: plan.clone() };
+
+        let command = follow_up_recommended_public_command(
+            "execution_reentry",
+            Some("repair_review_state"),
+            crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
+            Some(&final_routing_command),
+            Some(&fallback),
+        );
+        let (recommended_command, recommended_public_command_argv) =
+            public_recommendation_surfaces(command.as_ref());
+
+        assert_eq!(recommended_command, Some(fallback.to_display_command()));
+        assert_eq!(recommended_public_command_argv, Some(fallback.to_argv()));
+        assert!(
+            recommended_public_command_argv
+                .as_ref()
+                .is_some_and(|argv| argv.iter().any(|part| part == &plan)),
+            "argv must preserve the plan path as one argument"
+        );
+    }
+
     #[test]
     fn targetless_stale_reconcile_output_derives_recommendation_surfaces_from_public_command() {
         let plan = String::from("docs/featureforge/plans/plan with spaces.md");
@@ -3202,6 +3253,7 @@ mod tests {
             output.recommended_public_command_argv,
             Some(expected_argv.clone())
         );
+        assert_repair_output_recommendation_has_argv(&output);
         assert!(
             expected_argv.iter().any(|part| part == &plan),
             "argv must preserve the plan path as one argument"
@@ -3222,5 +3274,6 @@ mod tests {
         assert_eq!(output.recommended_command, None);
         assert_eq!(output.recommended_public_command_argv, None);
         assert_eq!(output.authoritative_next_action, None);
+        assert_repair_output_recommendation_has_argv(&output);
     }
 }
