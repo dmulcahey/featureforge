@@ -10,11 +10,9 @@ description: Use when you have an engineering-approved FeatureForge implementati
 
 ## Overview
 
-Load the approved plan, follow the runtime-selected topology, execute all tasks, run `featureforge:document-release`, request final review, then report when complete. When the runtime-selected topology is worktree-backed parallel, create isolated worktrees first and dispatch the parallel lanes; when it is conservative fallback, stay serial.
+Load the approved plan, follow the runtime-selected topology, execute all tasks, run `featureforge:document-release`, request final review, then report when complete. When the runtime-selected topology is worktree-backed parallel, create isolated worktrees first and dispatch the parallel lanes; when it is conservative fallback, stay serial. Extended execution and review examples live in `$_FEATUREFORGE_ROOT/references/execution-review-qa-examples.md`.
 
-**Announce at start:** "I'm using the executing-plans skill to implement this plan."
-
-**Note:** Use this skill when the runtime-selected topology calls for a separate-session coordinator or conservative fallback. Prefer `featureforge:subagent-driven-development` when the runtime-selected topology keeps execution in one session and the worktree-first orchestration model is already in place.
+Use this skill when the runtime-selected topology calls for a separate-session coordinator or conservative fallback. Prefer `featureforge:subagent-driven-development` when the runtime-selected topology keeps execution in one session and the worktree-first orchestration model is already in place.
 
 ## The Process
 
@@ -100,16 +98,9 @@ featureforge repo-safety check --intent write --stage featureforge:executing-pla
 - Use one stable task id per repo-writing task slice and pass the concrete repo-relative paths when they are known.
 - If the helper returns `allowed`, continue with that task slice.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact task slice.
-- If the user explicitly approves the protected-branch write, approve the full task-slice scope you intend to use on that branch, including the repo-relative paths and any follow-on git targets that are part of the same slice:
-
-```bash
-featureforge repo-safety approve --stage featureforge:executing-plans --task-id <current-task-slice> --reason "<explicit user approval>" --path <repo-relative-path> --write-target execution-task-slice [--write-target git-commit] [--write-target git-merge] [--write-target git-push]
-featureforge repo-safety check --intent write --stage featureforge:executing-plans --task-id <current-task-slice> --path <repo-relative-path> --write-target execution-task-slice [--write-target git-commit] [--write-target git-merge] [--write-target git-push]
-```
-
-- Continue only if the re-check returns `allowed`.
-- Before a follow-on `git commit`, `git merge`, or `git push` on the same protected-branch task slice, re-run the gate with the same task id, the same repo-relative paths, and the same approved write-target set.
-- If the protected-branch task scope changes, run a new `approve` plus full-scope `check` before continuing.
+- If the user explicitly approves protected-branch writes, approve the full task-slice scope with `featureforge repo-safety approve --stage featureforge:executing-plans --task-id <current-task-slice> --reason "<explicit user approval>" --path <repo-relative-path> --write-target execution-task-slice [--write-target git-commit] [--write-target git-merge] [--write-target git-push]`, then re-check before continuing.
+- Before a follow-on `git commit`, `git merge`, or `git push`, re-run the gate with the same task id, paths, and approved write-target set.
+- If the protected-branch task scope changes, run a new approval plus full-scope check before continuing.
 - Do not treat a worktree on `main`, `master`, `dev`, or `develop` as safe by itself; the branch must be non-protected or explicitly approved.
 
 ### Step 2: Execute Tasks
@@ -137,6 +128,7 @@ For each task:
 6. After the implementation steps for a task are complete, enforce the mandatory task-boundary closure loop before beginning the next task:
    - MUST dispatch dedicated-independent task review in a fresh-context subagent; coordinator or implementer self-review never satisfies this gate
    - if review fails, reopen/remediate/re-review until green
+   - Review findings must use deterministic repair-packet fields: `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail`.
    - when remediation churn reaches 3 cycles for the same task, follow runtime cycle-break handling before retry
    - after review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`
    - Task `N+1` may begin only after Task `N` has a current positive task-closure record
@@ -200,37 +192,7 @@ After the final review is resolved:
 - **REQUIRED SUB-SKILL:** Use featureforge:finishing-a-development-branch
 - Follow that skill to verify tests, require `qa-only` when browser QA is warranted, require `document-release` for workflow-routed work, present options, and execute the chosen completion path
 
-## When to Stop and Ask for Help
-
-**STOP executing immediately when:**
-- Hit a blocker (missing dependency, test fails, instruction unclear)
-- Plan has critical gaps preventing starting
-- You don't understand an instruction
-- Verification fails repeatedly
-
-**Ask for clarification rather than guessing.**
-
-## When to Revisit Earlier Steps
-
-Do not reopen planning or review just because execution surfaced a runtime problem. Once implementation has started, keep the approved plan fixed, record runtime deviations in authoritative state, and either continue under the runtime-selected topology or stop and ask for clarification when blocked.
-
-## Remember
-- Review plan critically first
-- Start only from an engineering-approved current plan
-- Follow plan steps exactly
-- Don't skip verifications
-- Reference skills when plan says to
-- Stop when blocked, don't guess
-- Never start implementation on a default protected branch (`main`, `master`, `dev`, or `develop`) without explicit user consent
-- When isolated execution is required, `featureforge:using-git-worktrees` is runtime-selected workspace preparation rather than optional prose guidance.
-
-## Integration
-
-**Required workflow skills:**
 - **featureforge:writing-plans** - Creates the plan this skill executes
 - **featureforge:plan-eng-review** - Provides the approved plan and the execution preflight handoff
 - **featureforge:requesting-code-review** - REQUIRED: Final review gate after execution completes
 - **featureforge:finishing-a-development-branch** - Complete development after all tasks
-
-**Optional direct invocation:**
-- **featureforge:using-git-worktrees** - Use when the user explicitly wants isolated workspace management before execution, or when runtime-directed remediation says to prepare the workspace first

@@ -86,6 +86,27 @@ cargo test --test execution_harness_state -- --nocapture
 cargo test --test execution_query -- --nocapture
 ```
 
+## Prompt Surface Budget Gate
+
+Generated top-level skill prompts are budgeted separately from companion
+references. The active cutover baseline was 7,191 generated top-level
+`skills/*/SKILL.md` lines; the compacted enforce-mode target is at most 5,600
+lines, with the current generated total at 4,829 lines.
+
+The budget gate must stay in enforce mode for release work:
+
+```bash
+node scripts/gen-skill-docs.mjs --check
+node --test tests/codex-runtime/skill-doc-budget.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs
+```
+
+Do not lower prompt budgets by moving mandatory workflow routing law, approval
+law, protected-branch repo-safety law, hidden-helper bans, fail-closed stop
+rules, reviewer-recursion prohibitions, or `recommended_public_command_argv`
+authority entirely into companion references. Companion references can carry
+examples and rationale; active top-level skills must keep terminal gates and
+stop rules directly visible.
+
 ## Performance Budget
 
 `cargo test` with no extra args is the canonical full-suite latency budget for this repository. Treat roughly 3 to 4 minutes on a warm local build as the target. If a warm local run regresses past about 240 seconds, stop and profile before merging instead of normalizing the slowdown away.
@@ -150,6 +171,8 @@ time -p cargo test --quiet --test plan_execution
 
 - generated skill-doc structure and freshness
 - explicit skill-doc generation contracts (`gen-skill-docs.unit`, `skill-doc-contracts`, `skill-doc-generation`)
+- generated top-level skill prompt budgets in enforce mode
+- mandatory-law retention, companion-reference packaging, and prompt-scoped reviewer recursion checks
 - active docs and archive layout fixtures
 - workflow-fixture invariants
 - routing and eval-document contract assertions
@@ -196,6 +219,7 @@ Editing skill templates or generated skill docs:
 
 ```bash
 node scripts/gen-skill-docs.mjs --check
+node --test tests/codex-runtime/skill-doc-budget.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs
 node scripts/run-codex-runtime-tests.mjs
 ```
 

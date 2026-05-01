@@ -29,7 +29,7 @@ _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
 
-Use three lenses:
+Use three lenses, then decide from local repo truth:
 - Layer 1: tried-and-true / built-ins / existing repo-native solutions
 - Layer 2: current practice and known footguns
 - Layer 3: first-principles reasoning for this repo and this problem
@@ -56,7 +56,7 @@ Guide completion of development work by presenting clear options and handling ch
 
 **Core principle:** Verify tests → Run required pre-completion gates → Present options → Execute choice → Clean up.
 
-**Announce at start:** "I'm using the finishing-a-development-branch skill to complete this work."
+Extended option commands and QA/release audit examples live in `$_FEATUREFORGE_ROOT/references/execution-review-qa-examples.md`.
 
 ## The Process
 
@@ -92,6 +92,7 @@ For workflow-routed terminal completion, this checkpoint does not replace the re
 - Resolve Important issues unless the user explicitly accepts the risk
 - If a fresh review already happened in the current workflow, continue silently
 - A review stops being fresh as soon as new repo changes land, including release-doc or metadata edits from `featureforge:document-release`
+- Review findings must use deterministic repair-packet fields: `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail`.
 
 ### Step 1.6: Execution-State Gate
 
@@ -111,6 +112,8 @@ Before presenting completion options:
 ### Step 1.75: Required Document Release Gate
 
 For workflow-routed work, require the `document-release` pass before presenting completion options.
+
+Required release-readiness pass for workflow-routed work before completion.
 
 For workflow-routed terminal completion, keep the order strict: `featureforge:document-release` -> terminal `featureforge:requesting-code-review` -> `featureforge workflow operator --plan <approved-plan-path>` -> any required `featureforge:qa-only` handoff -> `advance-late-stage` only when operator reports `phase_detail=qa_recording_required` -> rerun `featureforge workflow operator --plan <approved-plan-path>` and follow its next finish command.
 
@@ -136,7 +139,13 @@ Before moving on, perform a short Gate F-style confirmation:
 
 ### Step 1.85: Conditional Pre-Landing QA Gate
 
-Conditional pre-landing browser QA when the branch change surface or test-plan artifact warrants it:
+If the current work is governed by an approved FeatureForge plan, treat the approved plan's normalized `**QA Requirement:** required|not-required` metadata as authoritative for workflow-routed finish gating.
+
+For workflow-routed work, this step validates QA applicability and current-branch test-plan freshness only. It does not authorize running `featureforge:qa-only` yet; terminal `featureforge:requesting-code-review` and the next `featureforge workflow operator --plan <approved-plan-path>` reroute still come first.
+
+Match current-branch artifacts by their `**Branch:**` header, not by a filename substring glob, so `my-feature` cannot masquerade as `feature`.
+
+Use the canonical branch helper before selecting current-branch test-plan artifacts:
 
 ```bash
 _SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
@@ -156,12 +165,6 @@ done
 printf '%s\n' "$PLAN_ARTIFACT"
 ```
 
-If the current work is governed by an approved FeatureForge plan, treat the approved plan's normalized `**QA Requirement:** required|not-required` metadata as authoritative for workflow-routed finish gating.
-
-For workflow-routed work, this step validates QA applicability and current-branch test-plan freshness only. It does not authorize running `featureforge:qa-only` yet; terminal `featureforge:requesting-code-review` and the next `featureforge workflow operator --plan <approved-plan-path>` reroute still come first.
-
-Match current-branch artifacts by their `**Branch:**` header, not by a filename substring glob, so `my-feature` cannot masquerade as `feature`.
-
 Treat the current-branch test-plan artifact as a QA scope/provenance input only when its `Source Plan`, `Source Plan Revision`, and `Head SHA` match the exact approved plan path, revision, and current branch HEAD from the workflow context.
 
 If that artifact names pages, routes, or browser interactions, use it to scope the required QA handoff when QA is required or when the user explicitly wants extra browser validation.
@@ -173,21 +176,6 @@ If approved-plan `QA Requirement` is missing or invalid when deciding whether QA
 If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before invoking `featureforge:qa-only` or late-stage completion commands.
 
 If workflow/operator reports `test_plan_refresh_required`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
-
-Recommendation logic:
-- For workflow-routed work, do not present QA options in this step. After terminal `featureforge:requesting-code-review` resolves, rerun `featureforge workflow operator --plan <approved-plan-path>` and let `phase` plus `phase_detail` decide whether QA is still required.
-- For ad-hoc or non-workflow work, recommend `A)` when browser QA is clearly warranted.
-- For ad-hoc or non-workflow work, if approved-plan `QA Requirement` is `not-required`, QA remains optional unless the user explicitly wants extra browser validation.
-- For ad-hoc non-workflow work without a current-branch test-plan artifact, QA remains optional for clearly non-browser work.
-
-When browser QA is clearly warranted for ad-hoc or non-workflow work, do not present a skip option.
-
-Possible options when browser QA is required for ad-hoc or non-workflow work:
-- `A)` Run `featureforge:qa-only` now and return here after the report is written
-
-Possible options when browser QA is optional for ad-hoc or non-workflow work:
-- `A)` Run `featureforge:qa-only` now and return here after the report is written
-- `B)` Skip QA handoff this time
 
 If a fresh `qa-only` report already happened in the current workflow, continue silently.
 
@@ -227,16 +215,9 @@ featureforge repo-safety check --intent write --stage featureforge:finishing-a-d
 
 - If the helper returns `allowed`, continue with the selected completion path.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact completion scope.
-- If the user explicitly approves the protected-branch completion write, approve the full completion scope you intend to use on that branch, including any follow-on git targets that are part of the same branch-finish task:
-
-```bash
-featureforge repo-safety approve --stage featureforge:finishing-a-development-branch --task-id <current-branch-finish> --reason "<explicit user approval>" --write-target branch-finish [--write-target git-merge] [--write-target git-push] [--write-target git-worktree-cleanup]
-featureforge repo-safety check --intent write --stage featureforge:finishing-a-development-branch --task-id <current-branch-finish> --write-target branch-finish [--write-target git-merge] [--write-target git-push] [--write-target git-worktree-cleanup]
-```
-
-- Continue only if the re-check returns `allowed`.
-- Before a follow-on `git merge`, `git push`, or worktree cleanup on the same protected-branch task, re-run the gate with the same task id and the same approved write-target set.
-- If the protected-branch task scope changes, run a new `approve` plus full-scope `check` before continuing.
+- If the user explicitly approves protected-branch completion writes, approve the full completion scope with `featureforge repo-safety approve --stage featureforge:finishing-a-development-branch --task-id <current-branch-finish> --reason "<explicit user approval>" --write-target branch-finish [--write-target git-merge] [--write-target git-push] [--write-target git-worktree-cleanup]`, then re-check before continuing.
+- Before a follow-on `git merge`, `git push`, or worktree cleanup, re-run the gate with the same task id and approved write-target set.
+- If the protected-branch task scope changes, run a new approval plus full-scope check before continuing.
 - Do not treat a worktree on `main`, `master`, `dev`, or `develop` as safe by itself; the branch must be non-protected or explicitly approved.
 
 ### Step 2: Determine Base Branch
@@ -277,47 +258,10 @@ Recommendation logic:
 
 ### Step 4: Execute Choice
 
-#### Option A: Merge Locally
-
-```bash
-# Refresh the base branch first
-git fetch origin <base-branch> --quiet || true
-
-# Switch to base branch
-git checkout <base-branch>
-
-# Fast-forward to the latest merged remote state
-git merge --ff-only "origin/<base-branch>" 2>/dev/null || git pull --ff-only origin <base-branch>
-
-# Stop if the local base branch still does not match the merged remote state
-REMOTE_BASE=$(git rev-parse "origin/<base-branch>" 2>/dev/null || echo "")
-LOCAL_BASE=$(git rev-parse HEAD)
-if [ -n "$REMOTE_BASE" ] && [ "$LOCAL_BASE" != "$REMOTE_BASE" ]; then
-  echo "Base branch is not at the latest merged remote state. Stop and resolve that divergence before merging."
-  exit 1
-fi
-
-# Merge feature branch
-git merge <feature-branch>
-
-# Verify tests on merged result before cleanup
-<test command>
-
-# If tests pass
-git branch -d <feature-branch>
-```
-
-Then: Cleanup worktree (Step 5)
-
-#### Option B: Push and Create PR
-
 Use the exact `<base-branch>` resolved in Step 2. Do not redetect it during PR creation.
 
 ```bash
-# Push branch
 git push -u origin <feature-branch>
-
-# Create PR
 gh pr create --base "<base-branch>" --title "<title>" --body "$(cat <<'EOF'
 ## Summary
 <2-3 bullets of what changed>
@@ -328,107 +272,4 @@ EOF
 )"
 ```
 
-Then: Keep the branch and worktree for follow-up until the PR is merged.
-
-#### Option C: Keep As-Is
-
-Report: "Keeping branch <name>. Worktree preserved at <path>."
-
-**Don't cleanup worktree.**
-
-#### Option D: Discard
-
-**Confirm first:**
-```
-This will permanently delete:
-- Branch <name>
-- All commits: <commit-list>
-- Worktree at <path>
-
-Type 'discard' to confirm.
-```
-
-Wait for exact confirmation.
-
-If confirmed:
-```bash
-git checkout <base-branch>
-git branch -D <feature-branch>
-```
-
-Then: Cleanup worktree (Step 5)
-
-### Step 5: Cleanup Worktree
-
-**For Options A and D:**
-
-Locate the feature branch worktree by branch name, not the current branch:
-```bash
-FEATURE_WORKTREE=$(git worktree list --porcelain | awk '
-  /^worktree / { wt=$2 }
-  /^branch refs\/heads\/<feature-branch>$/ { print wt }
-')
-```
-
-If found:
-```bash
-[ -n "$FEATURE_WORKTREE" ] && git worktree remove "$FEATURE_WORKTREE"
-```
-
-**For Option C:** Keep worktree.
-
-### Step 6: Document Release Follow-Through
-
-If the document-release step already ran in this flow, summarize the release-readiness result and continue. Do not offer a skip path here for workflow-routed work.
-
-## Quick Reference
-
-| Option | Merge | Push | Keep Worktree | Cleanup Branch |
-|--------|-------|------|---------------|----------------|
-| A. Merge locally | ✓ | - | - | ✓ |
-| B. Create PR | - | ✓ | ✓ | - |
-| C. Keep as-is | - | - | ✓ | - |
-| D. Discard | - | - | - | ✓ (force) |
-
-## Common Mistakes
-
-**Skipping test verification**
-- **Problem:** Merge broken code, create failing PR
-- **Fix:** Always verify tests before offering options
-
-**Open-ended questions**
-- **Problem:** "What should I do next?" → ambiguous
-- **Fix:** Present exactly 4 structured options
-
-**Automatic worktree cleanup**
-- **Problem:** Remove worktree when might need it (Option B, C)
-- **Fix:** Only cleanup for Options A and D
-
-**No confirmation for discard**
-- **Problem:** Accidentally delete work
-- **Fix:** Require typed "discard" confirmation
-
-## Red Flags
-
-**Never:**
-- Proceed with failing tests
-- Merge without verifying tests on result
-- Delete work without confirmation
-- Force-push without explicit request
-
-**Always:**
-- Verify tests before offering options
-- Present exactly 4 options
-- Get typed confirmation for Option D
-- Clean up worktree for Options A & D only
-
-## Integration
-
-**Called by:**
-- **subagent-driven-development** - After the final review passes and all tasks are complete
-- **executing-plans** - After the final review is resolved and all tasks are complete
-
-**Pairs with:**
-- **qa-only** - Conditional pre-landing browser QA when the branch change surface or test-plan artifact warrants it
-- **document-release** - Required release-readiness pass for workflow-routed work before completion
-- **using-git-worktrees** - Optional cleanup for a worktree created by that skill
+For local merge, keep-as-is, discard, and worktree cleanup command examples, use the companion reference. Never proceed with failing tests, delete work without typed confirmation, or force-push without explicit request.

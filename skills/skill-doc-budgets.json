@@ -1,0 +1,18 @@
+{
+  "mode": "enforce",
+  "total_generated_skill_lines_max": 5600,
+  "skills": {
+    "plan-ceo-review": { "max_lines": 600 },
+    "writing-skills": { "max_lines": 500 },
+    "plan-eng-review": { "max_lines": 450 },
+    "subagent-driven-development": { "max_lines": 400 },
+    "finishing-a-development-branch": { "max_lines": 325 },
+    "test-driven-development": { "max_lines": 340 },
+    "systematic-debugging": { "max_lines": 300 },
+    "writing-plans": { "max_lines": 320 },
+    "document-release": { "max_lines": 275 },
+    "qa-only": { "max_lines": 260 },
+    "requesting-code-review": { "max_lines": 240 },
+    "executing-plans": { "max_lines": 240 }
+  }
+}

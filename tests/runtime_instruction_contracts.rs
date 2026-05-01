@@ -2431,6 +2431,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
+        "# Stop here: dispatch the dedicated fresh-context reviewer, wait for its result, then set REVIEW_RESULT=pass|fail and SUMMARY_FILE=<actual-final-review-summary>.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "\"$_FEATUREFORGE_BIN\" plan execution advance-late-stage --plan \"$APPROVED_PLAN_PATH\" --reviewer-source fresh-context-subagent --reviewer-id <actual-reviewer-id> --result \"$REVIEW_RESULT\" --summary-file \"$SUMMARY_FILE\"",
+    );
+    assert_file_not_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
         "\"$_FEATUREFORGE_BIN\" plan execution advance-late-stage --plan \"$APPROVED_PLAN_PATH\" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary.md",
     );
     assert_file_not_contains(

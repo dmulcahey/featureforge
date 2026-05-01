@@ -200,7 +200,8 @@ impl PublicCommand {
         }
     }
 
-    pub fn parse_display_command(command: &str) -> Option<Self> {
+    #[cfg(test)]
+    pub(crate) fn parse_display_command(command: &str) -> Option<Self> {
         let tokens = command.split_whitespace().collect::<Vec<_>>();
         match tokens.as_slice() {
             ["featureforge", "workflow", "operator", "--plan", plan] => {
@@ -821,6 +822,7 @@ pub(crate) fn recommended_public_command_argv(
     command.map(PublicCommand::to_argv)
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct ParsedFlags {
     execution_mode: Option<String>,
@@ -834,6 +836,7 @@ struct ParsedFlags {
     repo_export: bool,
 }
 
+#[cfg(test)]
 impl ParsedFlags {
     fn parse(tokens: &[&str]) -> Option<Self> {
         let mut parsed = Self::default();
@@ -899,6 +902,7 @@ impl ParsedFlags {
     }
 }
 
+#[cfg(test)]
 fn parse_close_current_task_flags(tokens: &[&str]) -> Option<()> {
     let mut index = 0;
     while index < tokens.len() {
@@ -922,6 +926,7 @@ fn parse_close_current_task_flags(tokens: &[&str]) -> Option<()> {
     Some(())
 }
 
+#[cfg(test)]
 fn advance_late_stage_mode_from_flags(flags: &ParsedFlags) -> PublicAdvanceLateStageMode {
     if flags.reviewer_source || flags.reviewer_id {
         return PublicAdvanceLateStageMode::FinalReviewResultTemplate;
@@ -1286,6 +1291,7 @@ fn request_fingerprint_matches_status(
         .is_none_or(|fingerprint| fingerprint == status.execution_fingerprint)
 }
 
+#[cfg(test)]
 fn parse_u32_token(token: &str) -> Option<u32> {
     token.parse::<u32>().ok()
 }

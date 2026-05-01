@@ -75,6 +75,9 @@ commands before any display string is rendered.
 `recommended_public_command_argv` for machine invocation and may render
 `recommended_command` for human compatibility, but both representations must come from
 the typed public command decision, not from reparsing a hand-written string.
+When both fields are present, consumers invoke `recommended_public_command_argv`
+exactly; `recommended_command` is display-only compatibility text and must not be
+parsed or split to recover argv.
 
 `src/workflow/status.rs` owns non-execution workflow routing such as plan-review gates.
 For implementation entry, `Engineering Approved` is not enough by itself: a current

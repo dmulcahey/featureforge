@@ -17,6 +17,11 @@
   separate public-flow and internal runtime compatibility gates, strict clippy,
   and full no-fail-fast nextest branch gate; internal-helper suites are not
   public UX proof
+- compact generated top-level skill prompts from 7,191 lines to 4,829 lines,
+  enforce the 5,600-line prompt budget in tests, keep mandatory workflow gates
+  and fail-closed routing law top-level, preserve reviewer-recursion prevention
+  as prompt-only reviewer guidance, and package extended examples in companion
+  references instead of duplicating them across active skills
 
 ## v1.10.0 - 2026-04-25
 

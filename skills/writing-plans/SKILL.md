@@ -29,7 +29,7 @@ _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
 
-Use three lenses:
+Use three lenses, then decide from local repo truth:
 - Layer 1: tried-and-true / built-ins / existing repo-native solutions
 - Layer 2: current practice and known footguns
 - Layer 3: first-principles reasoning for this repo and this problem
@@ -161,12 +161,9 @@ This structure informs the task decomposition. Each task should produce self-con
 
 ## Bite-Sized Task Granularity
 
-**Each step is one action (2-5 minutes):**
-- "Write the failing test" - step
-- "Run it to make sure it fails" - step
-- "Implement the minimal code to make the test pass" - step
-- "Run the tests and make sure they pass" - step
-- "Commit" - step
+Optional task step checklists should be concrete, ordered, and small enough for an executor to verify. Use one action per step: write the failing test, run it to verify failure, implement, rerun, update docs, commit. Keep exact commands and expected outcomes when they matter.
+
+See `$_FEATUREFORGE_ROOT/references/writing-plans-examples.md` for expanded task and execution-topology examples.
 
 ## Plan Document Header
 
@@ -227,37 +224,7 @@ This structure informs the task decomposition. Each task should produce self-con
 - Modify: `exact/path/to/existing.py`
 - Test: `tests/exact/path/to/test.py`
 
-- [ ] **Step 1: Write the failing test**
-
-```python
-def test_specific_behavior():
-    result = function(input)
-    assert result == expected
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `pytest tests/path/test.py::test_name -v`
-Expected: FAIL with "function not defined"
-
-- [ ] **Step 3: Write minimal implementation**
-
-```python
-def function(input):
-    return expected
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `pytest tests/path/test.py::test_name -v`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add tests/path/test.py src/path/file.py
-git commit -m "feat: add specific feature"
-```
+- [ ] **Step 1:** [optional execution aid with exact command/expected result when useful]
 ````
 
 - `## Task N:` is canonical. Do not use `### Task N:`.
@@ -276,37 +243,15 @@ git commit -m "feat: add specific feature"
 - Parallel directives must declare exact workspace isolation, not just the word `worktree`. Either declare one isolated worktree per task or state an explicit worktree count that exactly matches the parallel batch size.
 - `## Dependency Diagram` must reflect the same fastest-safe topology the task list and `Execution Strategy` claim.
 
-Use this canonical topology shape when the plan has a serial seam plus a parallel worktree batch:
+Canonical topology examples stay in `$_FEATUREFORGE_ROOT/references/writing-plans-examples.md`; keep the governing rules here:
 
-````markdown
-## Execution Strategy
-
-- Execute Tasks 1, 2, and 3 serially. They all revise the approved foundation that later execution work depends on.
-- Execute Task 4 serially. It is the only seam-extraction slice before parallel work starts.
+- Execute Task 1 serially when it establishes a shared foundation.
+- After the serial seam, create two worktrees and run Tasks 2 and 3 in parallel only when their write scopes and ownership are disjoint.
+- Task 2 owns one exact implementation surface; Task 3 owns another exact implementation surface.
+- Execute Task 4 serially as the reintegration point when parallel work must merge before later tasks.
 - After Task 4, create three worktrees and run Tasks 5, 6, and 7 in parallel:
   - Task 5 owns lease and downgrade artifact contracts plus observability helpers.
-  - Task 6 owns topology recommendation and execution-skill orchestration.
-  - Task 7 owns dedicated final-review modules and reviewer docs.
-- Execute Task 8 serially after Tasks 5 and 6 merge back. It is the execution-state and reconcile reintegration point.
-- Execute Task 9 serially after Task 8 is green and Task 7 is ready. It is the status and final-review reintegration point.
-- Execute Task 10 last as the release-facing parity and regression gate.
-
-## Dependency Diagram
-
-```text
-Task 1 -> Task 2
-Task 2 -> Task 3
-Task 3 -> Task 4
-Task 4 -> Task 5
-Task 4 -> Task 6
-Task 4 -> Task 7
-Task 5 -> Task 8
-Task 6 -> Task 8
-Task 7 -> Task 9
-Task 8 -> Task 9
-Task 9 -> Task 10
-```
-````
+- Execute Task 8 serially after Tasks 5 and 6 merge back.
 
 - Use `Files:` blocks as concrete write-scope truth for every task.
 - If tasks share hotspot files, do not pretend they are parallel. Move the hotspot into an explicit later serial seam and name that seam in `## Execution Strategy`.

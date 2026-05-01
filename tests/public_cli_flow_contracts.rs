@@ -138,6 +138,40 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
     );
 }
 
+#[test]
+fn display_command_parsing_is_test_only_not_route_authority() {
+    let command_eligibility = read_repo_file("src/execution/command_eligibility.rs");
+    assert!(
+        command_eligibility.contains("#[cfg(test)]\n    pub(crate) fn parse_display_command"),
+        "display-command parsing should be compiled only for public-command boundary tests"
+    );
+
+    let mut violations = Vec::new();
+    for file in production_command_authority_files() {
+        let rel = repo_relative(&file);
+        let source = fs::read_to_string(&file)
+            .unwrap_or_else(|error| panic!("{} should be readable: {error}", file.display()));
+        for call in rust_source_scan::normalized_call_path_hits(&rel, &source, &[]) {
+            if call.raw_path == "PublicCommand::parse_display_command"
+                || call
+                    .path
+                    .ends_with("::PublicCommand::parse_display_command")
+            {
+                violations.push(format!(
+                    "{rel}:{} calls `{}` as production command authority",
+                    call.line, call.raw_path
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "production routing, mutation, and read-model code must not parse display command strings:\n{}",
+        violations.join("\n")
+    );
+}
+
 fn concat_source_expr(parts: &[&str]) -> String {
     let quoted_parts = parts
         .iter()
@@ -1855,6 +1889,29 @@ fn rust_test_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     collect_rust_test_files(root, &mut files);
     files.sort();
+    files
+}
+
+fn production_command_authority_files() -> Vec<PathBuf> {
+    let mut files = [
+        "src/execution/command_eligibility.rs",
+        "src/execution/mutate.rs",
+        "src/execution/next_action.rs",
+        "src/execution/query.rs",
+        "src/execution/read_model.rs",
+        "src/execution/review_state.rs",
+        "src/execution/router.rs",
+        "src/execution/state.rs",
+        "src/execution/state/runtime_methods.rs",
+        "src/workflow/operator.rs",
+        "src/workflow/status.rs",
+    ]
+    .into_iter()
+    .map(|relative| repo_root().join(relative))
+    .collect::<Vec<_>>();
+    files.extend(rust_test_files(&repo_root().join("src/execution/commands")));
+    files.sort();
+    files.dedup();
     files
 }
 

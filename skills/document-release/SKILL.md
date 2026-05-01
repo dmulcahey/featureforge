@@ -29,7 +29,7 @@ _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
 
-Use three lenses:
+Use three lenses, then decide from local repo truth:
 - Layer 1: tried-and-true / built-ins / existing repo-native solutions
 - Layer 2: current practice and known footguns
 - Layer 3: first-principles reasoning for this repo and this problem
@@ -60,6 +60,8 @@ For workflow-routed terminal sequencing, `featureforge:document-release` must ru
 
 When you need explicit late-stage phase/action/skill grounding while updating docs, cite `review/late-stage-precedence-reference.md`.
 
+Extended audit examples live in `$_FEATUREFORGE_ROOT/references/execution-review-qa-examples.md`.
+
 ## Step 0: Require base branch context
 
 For workflow-routed work, `BASE_BRANCH` is runtime-owned context from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`) and the active release-readiness lineage. Use that exact value and do not redetect.
@@ -75,21 +77,6 @@ git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true
 ```
 
 Do not use PR metadata or repo default-branch APIs as a fallback.
-
-## Core rules
-
-**Only stop for:**
-- Risky narrative rewrites
-- Security or architecture explanation changes
-- Large removals or section reshaping
-- Ambiguous `VERSION` / release-notes consistency questions
-- New `TODOS.md` items that require judgment
-
-**Never stop for:**
-- Straight factual corrections from the diff
-- Updating file paths, counts, commands, or skill names
-- Fixing stale cross-references
-- Minor discoverability improvements
 
 ## Optional Project Memory Follow-Up
 
@@ -123,9 +110,7 @@ Run repo-appropriate commands such as:
 
 ```bash
 git diff "origin/$BASE_BRANCH...HEAD" --stat 2>/dev/null || git diff "$BASE_BRANCH...HEAD" --stat 2>/dev/null || git diff --stat
-git log "origin/$BASE_BRANCH"..HEAD --oneline 2>/dev/null || git log "$BASE_BRANCH"..HEAD --oneline || git log --oneline -20
 git diff "origin/$BASE_BRANCH...HEAD" --name-only 2>/dev/null || git diff "$BASE_BRANCH...HEAD" --name-only || git diff --name-only
-find . -maxdepth 2 -name "*.md" -not -path "./.git/*" -not -path "./node_modules/*" -not -path "./.featureforge/*" | sort
 ```
 
 Classify the diff into:
@@ -136,29 +121,7 @@ Classify the diff into:
 
 ## Step 2: Per-file documentation audit
 
-Read each documentation file and cross-reference it against the diff.
-
-**README.md**
-- Feature list still accurate?
-- Setup instructions still accurate?
-- Examples still valid?
-
-**ARCHITECTURE.md**
-- Diagrams and system descriptions still accurate?
-- Be conservative. Only update things clearly contradicted by the diff.
-
-**CONTRIBUTING.md / install docs / workflow docs**
-- Would a new contributor succeed with these instructions?
-- Do commands still exist?
-- Are generated-file or build instructions still correct?
-
-**Other `.md` files**
-- Identify the file's audience and purpose
-- Flag contradictions against the current diff
-
-Classify each change as:
-- `Auto-update` for safe factual corrections
-- `Ask user` for risky or subjective edits
+Read relevant docs, classify safe factual corrections as `Auto-update`, and mark risky narrative, security, architecture, versioning, or TODO changes as `Ask user`.
 
 ## Step 3: Apply safe factual updates
 
@@ -235,19 +198,7 @@ For workflow-routed implementation work, runtime emits a project-scoped release-
 - Use the runtime-provided base branch from Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
 - This markdown output is a derived operator handoff companion. Runtime-owned reviewed-closure and late-stage milestone records remain the authoritative gate-truth surface.
 
-```bash
-_SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
-if [ -n "$_SLUG_ENV" ]; then
-  eval "$_SLUG_ENV"
-fi
-unset _SLUG_ENV
-USER=$(whoami)
-DATETIME=$(date +%Y%m%d-%H%M%S)
-HEAD_SHA=$(git rev-parse HEAD)
-mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
-```
-
-Use this snippet only to inspect runtime-emitted artifact locations after recording; do not use it to hand-write companion artifacts.
+Inspect runtime-emitted artifact locations after recording only when needed; do not hand-write companion artifacts.
 
 For workflow-routed release-readiness, the runtime writes the derived companion artifact to:
 - `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/featureforge-{safe-branch}-release-readiness-{datetime}.md`
@@ -316,10 +267,4 @@ fi
 
 ## Output
 
-Provide:
-- Files audited
-- Files changed
-- Risky changes that were deferred or skipped
-- Any remaining discoverability, VERSION, or TODO questions
-
-If documentation still looks stale after the safe pass, say so explicitly.
+Report files audited, files changed, risky changes deferred, and any remaining discoverability, VERSION, or TODO questions. If documentation still looks stale after the safe pass, say so explicitly.

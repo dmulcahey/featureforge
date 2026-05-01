@@ -288,6 +288,155 @@ test('active docs and agent-facing prompts do not expose forbidden receipt vocab
   );
 });
 
+function commandAuthorityDocs() {
+  return listActiveDocSkillAgentFiles()
+    .filter((relPath) => {
+      const content = readUtf8(path.join(REPO_ROOT, relPath));
+      return content.includes('recommended_public_command_argv')
+        || content.includes('recommended_command');
+    });
+}
+
+function assertNoRecommendedCommandParsingGuidance(content, label) {
+  const recommendedCommandRef = '\\brecommended_command\\b';
+  const authorityVerb = [
+    'parse',
+    'parsed',
+    'shell-parse',
+    'shell-parsed',
+    'whitespace-split',
+    'split',
+    'reconstruct',
+    'recover',
+    'derive',
+    'build',
+    'execute',
+    'invoke',
+    'run',
+    'use',
+    'follow',
+    'call',
+  ].join('|');
+  const positiveBeforeDisplay = new RegExp(
+    `\\b(?:${authorityVerb})\\b[^.\\n;]*?${recommendedCommandRef}`,
+    'gi',
+  );
+  const displayBeforePositive = new RegExp(
+    `${recommendedCommandRef}[^.\\n;]*?\\b(?:${authorityVerb})\\b|${recommendedCommandRef}[^.\\n;]*?\\bexact next command\\b`,
+    'gi',
+  );
+  const strongProhibition = /\b(?:do not|don't|must not|never|cannot|can't|should not|may not|is not to|are not to|not to)\b/i;
+  const prohibitionImmediatelyBeforeMatch =
+    /\b(?:do not|don't|must not|never|cannot|can't|should not|may not|not to)(?:\s+be)?\s*$/i;
+  const positiveTerm = new RegExp(`\\b(?:${authorityVerb})\\b|\\bexact next command\\b`, 'i');
+  const argvInsteadOfDisplay = /\b(?:recommended_public_command_argv|argv(?: vector)?|returned argv)\b[^.\n;]*\b(?:instead of|rather than)\b[^.\n;]*\brecommended_command\b/i;
+
+  const isPositiveBeforeDisplayNegated = (line, matchStart) => {
+    const prefix = line.slice(Math.max(0, matchStart - 80), matchStart);
+    return prohibitionImmediatelyBeforeMatch.test(prefix);
+  };
+  const isDisplayBeforePositiveNegated = (matchText) => {
+    const afterDisplay = matchText.slice(matchText.search(new RegExp(recommendedCommandRef, 'i')) + 'recommended_command'.length);
+    const termMatch = positiveTerm.exec(afterDisplay);
+    if (!termMatch) return false;
+    const beforePositiveTerm = afterDisplay.slice(0, termMatch.index);
+    return strongProhibition.test(beforePositiveTerm)
+      || /\b(?:is not|are not|not)\b[^.\n;]*\bauthoritative\b/i.test(matchText);
+  };
+  const violations = [];
+
+  for (const [index, line] of content.split('\n').entries()) {
+    if (!line.includes('recommended_command')) continue;
+    const lineNumber = index + 1;
+    for (const match of line.matchAll(positiveBeforeDisplay)) {
+      const matchText = match[0];
+      if (
+        !argvInsteadOfDisplay.test(matchText)
+        && !isPositiveBeforeDisplayNegated(line, match.index)
+      ) {
+        violations.push(`${label}:${lineNumber}: ${matchText.trim()}`);
+      }
+    }
+    for (const match of line.matchAll(displayBeforePositive)) {
+      const matchText = match[0];
+      if (
+        !argvInsteadOfDisplay.test(matchText)
+        && !isDisplayBeforePositiveNegated(matchText)
+      ) {
+        violations.push(`${label}:${lineNumber}: ${matchText.trim()}`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    [...new Set(violations)],
+    [],
+    'active docs must not tell agents to parse, split, reconstruct, or execute recommended_command display text',
+  );
+}
+
+test('recommended_command guidance scanner rejects display-string execution samples', () => {
+  for (const sample of [
+    'If `recommended_command` is not empty, run it as the next command.',
+    'Use `recommended_command` when argv is missing.',
+    'Follow `recommended_command` as the exact next command.',
+    'Parse `recommended_command` to recover argv.',
+    'Split `recommended_command` and invoke the tokens.',
+    'Do not parse `recommended_command`; run `recommended_command` as the next command.',
+    'Do not parse `recommended_command`, but run `recommended_command` as the next command.',
+    'Do not parse `recommended_command` and run `recommended_command` as the next command.',
+    'Use `recommended_command` instead of `recommended_public_command_argv`.',
+    'Run `recommended_command` without checking argv.',
+  ]) {
+    assert.throws(
+      () => assertNoRecommendedCommandParsingGuidance(sample, 'sample.md'),
+      /active docs must not tell agents/,
+      `scanner should reject: ${sample}`,
+    );
+  }
+  assert.doesNotThrow(() => {
+    assertNoRecommendedCommandParsingGuidance(
+      'Do not parse `recommended_command`; it is display-only compatibility text.',
+      'sample.md',
+    );
+  });
+  assert.doesNotThrow(() => {
+    assertNoRecommendedCommandParsingGuidance(
+      'Follow `recommended_public_command_argv` instead of `recommended_command`.',
+      'sample.md',
+    );
+  });
+  assert.doesNotThrow(() => {
+    assertNoRecommendedCommandParsingGuidance(
+      'Run `recommended_public_command_argv`; do not parse `recommended_command`.',
+      'sample.md',
+    );
+  });
+});
+
+test('active docs keep recommended_public_command_argv authoritative and recommended_command display-only', () => {
+  const argvAuthorityPattern = /recommended_public_command_argv[^.\n]*(?:authoritative|exact|machine invocation|machine-invocation)|(?:authoritative|exact|machine invocation|machine-invocation|follow the argv|run the returned|invoke that argv vector)[^.\n]*recommended_public_command_argv/i;
+  const displayOnlyPattern = /recommended_command[^.\n]*(?:display-only|display only|human-readable|human compatibility|fallback text|compatibility text)|(?:display-only|display only|human-readable|human compatibility|fallback text|compatibility text)[^.\n]*recommended_command/i;
+  const violations = [];
+
+  for (const relPath of commandAuthorityDocs()) {
+    const content = readUtf8(path.join(REPO_ROOT, relPath));
+    assertNoRecommendedCommandParsingGuidance(content, relPath);
+    if (content.includes('recommended_public_command_argv') && !argvAuthorityPattern.test(content)) {
+      violations.push(`${relPath}: missing recommended_public_command_argv authority wording`);
+    }
+    if (content.includes('recommended_command') && !displayOnlyPattern.test(content)) {
+      violations.push(`${relPath}: missing recommended_command display-only wording`);
+    }
+  }
+
+  assert.deepEqual(
+    violations,
+    [],
+    'active command docs must prefer argv authority and keep display command text non-authoritative',
+  );
+});
+
 function buildTimedHookPatterns(timings, targetPattern, gapPattern = '[^.\\n]{0,160}') {
   const obligationPattern = '(?:must|always|required|requires|should|need(?:s)? to|have(?:s)? to|ought to)';
   const imperativeActionPattern = '(?:consult|search|update|use|record)';
@@ -494,6 +643,11 @@ test('generated non-router skill docs include the shared Search Before Building 
     const section = extractSection(content, 'Search Before Building');
     assert.ok(section, `${skill} should include the Search Before Building section`);
     const normalized = normalizeWhitespace(section);
+    assert.match(
+      normalized,
+      /Before introducing a custom pattern, external service, concurrency primitive, auth\/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability\/landscape check first\./,
+      `${skill} should keep the search-before-building trigger top-level`,
+    );
     assert.match(normalized, /Layer 1: tried-and-true \/ built-ins \/ existing repo-native solutions/, `${skill} should describe Layer 1`);
     assert.match(normalized, /Layer 2: current practice and known footguns/, `${skill} should describe Layer 2`);
     assert.match(normalized, /Layer 3: first-principles reasoning for this repo and this problem/, `${skill} should describe Layer 3`);
@@ -503,6 +657,141 @@ test('generated non-router skill docs include the shared Search Before Building 
     assert.match(normalized, /If safe sanitization is not possible, skip external search\./, `${skill} should require skipping unsafe external search`);
     assert.match(normalized, /See `\$_FEATUREFORGE_ROOT\/references\/search-before-building\.md`\./, `${skill} should link to the shared reference`);
   }
+});
+
+test('shared generated preamble references are packaged and linked from generated skills', () => {
+  for (const relativePath of [
+    'references/search-before-building.md',
+    'references/agent-grounding.md',
+    'references/contributor-mode.md',
+  ]) {
+    assert.equal(fs.existsSync(path.join(REPO_ROOT, relativePath)), true, `${relativePath} should be packaged`);
+  }
+
+  for (const skill of listGeneratedSkills()) {
+    const content = readUtf8(getSkillPath(skill));
+    assert.match(
+      content,
+      /`\$_FEATUREFORGE_ROOT\/references\/search-before-building\.md`/,
+      `${skill} should link to the shared search-before-building reference`,
+    );
+  }
+
+  for (const skill of listGeneratedSkills()) {
+    const template = readUtf8(getTemplatePath(skill));
+    if (!template.includes('{{REVIEW_PREAMBLE}}')) continue;
+
+    const content = readUtf8(getSkillPath(skill));
+    assert.match(
+      content,
+      /`\$_FEATUREFORGE_ROOT\/references\/agent-grounding\.md`/,
+      `${skill} should link to the shared agent-grounding reference`,
+    );
+    assert.match(
+      content,
+      /`\$_FEATUREFORGE_ROOT\/references\/contributor-mode\.md`/,
+      `${skill} should link to the shared contributor-mode reference`,
+    );
+  }
+});
+
+test('planning and plan-review compaction references are packaged and linked from owning skills', () => {
+  for (const relativePath of [
+    'references/plan-ceo-review-rubric.md',
+    'references/plan-eng-review-rubric.md',
+    'references/writing-plans-examples.md',
+  ]) {
+    assert.equal(fs.existsSync(path.join(REPO_ROOT, relativePath)), true, `${relativePath} should be packaged`);
+  }
+
+  assert.match(
+    readUtf8(getSkillPath('plan-ceo-review')),
+    /`\$_FEATUREFORGE_ROOT\/references\/plan-ceo-review-rubric\.md`/,
+    'plan-ceo-review should link to its compacted rubric reference',
+  );
+  assert.match(
+    readUtf8(getSkillPath('plan-eng-review')),
+    /`\$_FEATUREFORGE_ROOT\/references\/plan-eng-review-rubric\.md`/,
+    'plan-eng-review should link to its compacted rubric reference',
+  );
+  assert.match(
+    readUtf8(getSkillPath('writing-plans')),
+    /`\$_FEATUREFORGE_ROOT\/references\/writing-plans-examples\.md`/,
+    'writing-plans should link to its compacted examples reference',
+  );
+});
+
+test('execution review QA and debugging compaction references are packaged and linked from owning skills', () => {
+  for (const relativePath of [
+    'references/execution-review-qa-examples.md',
+    'references/debugging-tdd-examples.md',
+  ]) {
+    assert.equal(fs.existsSync(path.join(REPO_ROOT, relativePath)), true, `${relativePath} should be packaged`);
+  }
+
+  for (const skill of [
+    'executing-plans',
+    'subagent-driven-development',
+    'finishing-a-development-branch',
+    'requesting-code-review',
+    'document-release',
+    'qa-only',
+  ]) {
+    assert.match(
+      readUtf8(getSkillPath(skill)),
+      /`\$_FEATUREFORGE_ROOT\/references\/execution-review-qa-examples\.md`/,
+      `${skill} should link to compacted execution/review/QA examples`,
+    );
+  }
+
+  for (const skill of ['systematic-debugging', 'test-driven-development']) {
+    assert.match(
+      readUtf8(getSkillPath(skill)),
+      /`\$_FEATUREFORGE_ROOT\/references\/debugging-tdd-examples\.md`/,
+      `${skill} should link to compacted debugging/TDD examples`,
+    );
+  }
+});
+
+test('writing-skills compaction keeps authoring gates and companion references top-level', () => {
+  for (const relativePath of [
+    'skills/writing-skills/codex-best-practices.md',
+    'skills/writing-skills/copilot-best-practices.md',
+    'skills/writing-skills/testing-skills-with-subagents.md',
+    'skills/writing-skills/persuasion-principles.md',
+    'skills/writing-skills/graphviz-conventions.dot',
+    'skills/writing-skills/render-graphs.js',
+  ]) {
+    assert.equal(fs.existsSync(path.join(REPO_ROOT, relativePath)), true, `${relativePath} should be packaged`);
+  }
+
+  const writingSkills = readUtf8(getSkillPath('writing-skills'));
+  for (const expectedPath of [
+    '$_FEATUREFORGE_ROOT/skills/writing-skills/codex-best-practices.md',
+    '$_FEATUREFORGE_ROOT/skills/writing-skills/copilot-best-practices.md',
+    '$_FEATUREFORGE_ROOT/skills/writing-skills/testing-skills-with-subagents.md',
+    '$_FEATUREFORGE_ROOT/skills/writing-skills/persuasion-principles.md',
+    '$_FEATUREFORGE_ROOT/skills/writing-skills/graphviz-conventions.dot',
+  ]) {
+    assert.match(
+      writingSkills,
+      new RegExp(escapeRegex(expectedPath)),
+      `writing-skills should link top-level to ${expectedPath}`,
+    );
+  }
+
+  assert.match(writingSkills, /`SKILL\.md` must start with YAML frontmatter containing only:/);
+  assert.match(writingSkills, /`name`: lowercase letters, numbers, and hyphens\./);
+  assert.match(writingSkills, /`description`: third-person trigger text that starts with `Use when\.\.\.`; describe when to load the skill, not the workflow it will follow\./);
+  assert.match(writingSkills, /Keep generated top-level skill docs under their manifest budget in `skills\/skill-doc-budgets\.json`\./);
+  assert.match(writingSkills, /Do not use absolute local paths in checked-in skill text\./);
+  assert.match(writingSkills, /Do not use `@path` links for ordinary references; they force-load files and waste context\./);
+  assert.match(writingSkills, /Edit `skills\/<skill>\/SKILL\.md\.tmpl` when it exists\./);
+  assert.match(writingSkills, /Run `node scripts\/gen-skill-docs\.mjs --check`\./);
+  assert.match(writingSkills, /Never hand-edit generated `SKILL\.md` output while leaving its template stale\./);
+  assert.match(writingSkills, /Keep Codex and GitHub Copilot behavior aligned:/);
+  assert.match(writingSkills, /The iron law: no new skill or material skill edit without a failing pressure scenario first\./);
+  assert.match(writingSkills, /Stop after each skill and complete this checklist before starting another skill\./);
 });
 
 test('using-featureforge omits the removed bypass-gate contract', () => {
@@ -821,7 +1110,10 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewSkill, /When diagnostic status is required, if any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`\./);
   assert.match(reviewSkill, /treat workflow\/operator as authoritative for the public late-stage route; status is diagnostic only\./);
   assert.match(reviewSkill, /only request a fresh external final review when workflow\/operator reports `phase=final_review_pending` with `phase_detail=final_review_dispatch_required`\./);
-  assert.match(reviewSkill, /After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and require `phase_detail=final_review_recording_ready` before recording the result with `featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass\|fail --summary-file <final-review-summary>`\./);
+  assert.match(
+    reviewSkill,
+    /After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`; when it reports `phase_detail=final_review_recording_ready`, execute that response's `recommended_public_command_argv` when present\. Treat `recommended_command` as display-only fallback text; the explicit `featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass\|fail --summary-file <final-review-summary>` shape is only the public fallback shape when argv is absent\./,
+  );
   assert.match(reviewSkill, /Pass the exact approved plan path into the reviewer context\. When runtime-owned execution evidence or task-packet context is already available from the current workflow handoff, pass it through as supplemental context; do not make the public flow harvest it manually\./);
   assert.match(
     reviewSkill,
@@ -850,7 +1142,16 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.doesNotMatch(reviewSkill, /review gate rejected the current execution evidence/);
   assert.match(reviewSkill, /RECORDING_READY_JSON=\$\("\$_FEATUREFORGE_BIN" workflow operator --plan "\$APPROVED_PLAN_PATH" --external-review-result-ready --json\)/);
   assert.match(reviewSkill, /if \[ "\$RECORDING_PHASE_DETAIL" != "final_review_recording_ready" \]; then/);
-  assert.match(reviewSkill, /"\$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "\$APPROVED_PLAN_PATH" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary\.md/);
+  assert.match(
+    reviewSkill,
+    /If RECORDING_READY_JSON includes recommended_public_command_argv, execute that argv exactly\. Do not parse recommended_command; it is display-only fallback text\./,
+  );
+  assert.match(
+    reviewSkill,
+    /The explicit command below is the public fallback shape when argv is absent and all placeholders have been replaced with actual review values\./,
+  );
+  assert.match(reviewSkill, /"\$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "\$APPROVED_PLAN_PATH" --reviewer-source fresh-context-subagent --reviewer-id <actual-reviewer-id> --result "\$REVIEW_RESULT" --summary-file "\$SUMMARY_FILE"/);
+  assert.doesNotMatch(reviewSkill, /--result pass --summary-file review-summary\.md/);
   assert.doesNotMatch(reviewSkill, /STATUS_JSON=/);
   assert.doesNotMatch(reviewSkill, /TASK_PACKET_CONTEXT_TASK_1=/);
 
@@ -1507,6 +1808,7 @@ test('review prompts use deterministic repair-packet findings tied to obligation
   const planEngOutsideVoice = readUtf8(path.join(REPO_ROOT, 'skills/plan-eng-review/outside-voice-prompt.md'));
   const subagentDrivenDevelopment = readUtf8(getSkillPath('subagent-driven-development'));
   const requestingCodeReview = readUtf8(getSkillPath('requesting-code-review'));
+  const executionReviewQaExamples = readUtf8(path.join(REPO_ROOT, 'references/execution-review-qa-examples.md'));
   const reviewerAgentSource = readUtf8(path.join(REPO_ROOT, 'agents/code-reviewer.instructions.md'));
   const generatedReviewerAgent = readUtf8(path.join(REPO_ROOT, 'agents/code-reviewer.md'));
   const generatedCodexAgent = readUtf8(path.join(REPO_ROOT, '.codex/agents/code-reviewer.toml'));
@@ -1559,19 +1861,39 @@ test('review prompts use deterministic repair-packet findings tied to obligation
   assert.match(finalReviewBriefing, /Keep `Required Fix` as the smallest acceptable repair delta/);
   assert.match(planEngOutsideVoice, /Findings: none/);
   assert.match(planEngOutsideVoice, /Tensions:` only for non-blocking strategic tension notes/);
-  assert.match(subagentDrivenDevelopment, /### Finding TASK_DONE_WHEN_UNMET/);
-  assert.match(subagentDrivenDevelopment, /### Finding TASK2_SCOPE_EXTRA_JSON_FLAG/);
-  assert.match(subagentDrivenDevelopment, /\*\*Violated Field or Obligation:\*\* PLAN_DEVIATION_FOUND/);
-  assert.match(subagentDrivenDevelopment, /\*\*Violated Field or Obligation:\*\* PACKET_REUSE_SCOPE/);
-  assert.match(subagentDrivenDevelopment, /\*\*Required Fix:\*\* Add progress reporting at the packet-required interval\./);
-  assert.match(subagentDrivenDevelopment, /\*\*Required Fix:\*\* Remove the unrequested `--json` flag from the Task 2 diff or route the scope expansion back through plan approval\./);
-  assert.doesNotMatch(subagentDrivenDevelopment, /Add progress reporting at the packet-required interval and remove the unrequested `--json` flag/);
-  assert.match(subagentDrivenDevelopment, /### Finding TASK2_PROGRESS_INTERVAL_CONSTANT/);
-  assert.doesNotMatch(subagentDrivenDevelopment, /Missing: Progress reporting/);
-  assert.doesNotMatch(subagentDrivenDevelopment, /Issues \(Important\): Magic number/);
-  assert.match(requestingCodeReview, /### Finding FINAL_REVIEW_PROGRESS_INDICATORS/);
-  assert.doesNotMatch(requestingCodeReview, /Important: Missing progress indicators/);
-  assert.doesNotMatch(requestingCodeReview, /Minor: Magic number \(100\)/);
+  assert.match(executionReviewQaExamples, /### Finding TASK2_DONE_WHEN_2_PROGRESS_REPORTING/);
+  assert.match(executionReviewQaExamples, /### Finding TASK2_SCOPE_EXTRA_JSON_FLAG/);
+  assert.match(executionReviewQaExamples, /\*\*Violated Field or Obligation:\*\* DONE_WHEN_2/);
+  assert.match(executionReviewQaExamples, /\*\*Violated Field or Obligation:\*\* PLAN_DEVIATION_FOUND/);
+  assert.doesNotMatch(executionReviewQaExamples, /\*\*Violated Field or Obligation:\*\* PLAN_DEVIATION_FOUND\n\*\*Evidence:\*\* The task packet requires progress indicators/);
+  assert.doesNotMatch(executionReviewQaExamples, /\*\*Violated Field or Obligation:\*\* PACKET_REUSE_SCOPE\n\*\*Evidence:\*\* The task packet did not approve a new JSON output mode/);
+  assert.match(executionReviewQaExamples, /\*\*Required Fix:\*\* Add progress reporting at the packet-required interval\./);
+  assert.match(executionReviewQaExamples, /\*\*Required Fix:\*\* Remove the unrequested `--json` flag from the Task 2 diff or route the scope expansion back through plan approval\./);
+  assert.doesNotMatch(executionReviewQaExamples, /Add progress reporting at the packet-required interval and remove the unrequested `--json` flag/);
+  assert.match(executionReviewQaExamples, /### Finding TASK2_PROGRESS_INTERVAL_CONSTANT/);
+  assert.doesNotMatch(executionReviewQaExamples, /Missing: Progress reporting/);
+  assert.doesNotMatch(executionReviewQaExamples, /Issues \(Important\): Magic number/);
+  assert.match(executionReviewQaExamples, /### Finding FINAL_REVIEW_PROGRESS_INDICATORS/);
+  assert.match(executionReviewQaExamples, /\*\*Task:\*\* Task 4/);
+  assert.doesNotMatch(executionReviewQaExamples, /\*\*Task:\*\* Whole diff/);
+  assert.doesNotMatch(executionReviewQaExamples, /Important: Missing progress indicators/);
+  assert.doesNotMatch(executionReviewQaExamples, /Minor: Magic number \(100\)/);
+  assert.match(executionReviewQaExamples, /Repeat until no tasks remain -> document-release -> requesting-code-review -> workflow operator/);
+  assert.match(executionReviewQaExamples, /If workflow operator routes QA, run qa-only -> advance-late-stage for qa_recording_required -> workflow operator/);
+  assert.match(executionReviewQaExamples, /When workflow operator reports branch completion ready -> finishing-a-development-branch/);
+  assert.match(executionReviewQaExamples, /Local merge example:/);
+  assert.match(executionReviewQaExamples, /git merge --no-ff <feature-branch>/);
+  assert.match(executionReviewQaExamples, /cargo nextest run --all-targets --all-features --no-fail-fast/);
+  assert.match(executionReviewQaExamples, /Discard example after typed confirmation:/);
+  assert.match(executionReviewQaExamples, /git branch -D <feature-branch>/);
+  assert.doesNotMatch(executionReviewQaExamples, /git push origin --delete <feature-branch>/);
+  assert.match(executionReviewQaExamples, /Only delete a remote branch when the typed confirmation explicitly names remote branch deletion\./);
+  assert.match(executionReviewQaExamples, /Keep-as-is means leave the branch and worktree untouched/);
+  assert.match(executionReviewQaExamples, /PR-created branches also keep their worktree unless the user explicitly chooses cleanup after the PR exists\./);
+  assert.match(executionReviewQaExamples, /Worktree cleanup example after the branch is merged, explicitly discarded, or the user explicitly chooses cleanup:/);
+  assert.doesNotMatch(executionReviewQaExamples, /Worktree cleanup example after the branch is merged, PR-created, kept, or explicitly discarded:/);
+  assert.match(executionReviewQaExamples, /git worktree remove <worktree-path>/);
+  assert.match(executionReviewQaExamples, /require typed confirmation before deleting commits or worktrees/);
   assert.match(reviewerAgentSource, /Keep `Required Fix` delta-oriented so the next repair step can be executed without reinterpretation/);
   assert.match(generatedReviewerAgent, /Keep `Required Fix` delta-oriented so the next repair step can be executed without reinterpretation/);
   assert.match(generatedCodexAgent, /Keep `Required Fix` delta-oriented so the next repair step can be executed without reinterpretation/);
@@ -1763,6 +2085,12 @@ test('repo-writing workflow skills document the protected-branch repo-safety gat
   assert.match(planEngReview, /plan-artifact-write/, 'plan-eng-review should gate plan-body writes');
   assert.match(planEngReview, /approval-header-write/, 'plan-eng-review should gate approval-header writes separately');
   assert.doesNotMatch(planEngReview, /repo-file-write/, 'plan-eng-review should not regress to repo-file-write');
+
+  const executingPlans = readUtf8(getSkillPath('executing-plans'));
+  assert.match(executingPlans, /--write-target execution-task-slice \[--write-target git-commit\] \[--write-target git-merge\] \[--write-target git-push\]/);
+
+  const finishingBranch = readUtf8(getSkillPath('finishing-a-development-branch'));
+  assert.match(finishingBranch, /--write-target branch-finish \[--write-target git-merge\] \[--write-target git-push\] \[--write-target git-worktree-cleanup\]/);
 });
 
 test('project-memory workflow hooks stay consult-only and non-gating', () => {
@@ -2163,6 +2491,9 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.match(requestingReview, /For the final cross-task review gate in workflow-routed work/);
   assert.doesNotMatch(requestingReview, /After each task in subagent-driven development/);
   assert.match(requestingReview, /plan contract analyze-plan --spec "\$SOURCE_SPEC_PATH" --plan "\$APPROVED_PLAN_PATH" --format json/);
+  assert.match(requestingReview, /Stop here: dispatch the dedicated fresh-context reviewer, wait for its result, then set REVIEW_RESULT=pass\|fail and SUMMARY_FILE=<actual-final-review-summary>\./);
+  assert.match(requestingReview, /--result "\$REVIEW_RESULT" --summary-file "\$SUMMARY_FILE"/);
+  assert.doesNotMatch(requestingReview, /--result pass --summary-file review-summary\.md/);
 
   const finishSkill = readUtf8(getSkillPath('finishing-a-development-branch'));
   assert.match(finishSkill, /If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow\./);

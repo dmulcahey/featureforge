@@ -137,6 +137,10 @@ test('generated preambles include the shared Search Before Building section for 
 
   for (const preamble of [basePreamble, reviewPreamble]) {
     assert.match(preamble, /## Search Before Building/);
+    assert.match(
+      preamble,
+      /Before introducing a custom pattern, external service, concurrency primitive, auth\/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability\/landscape check first\./,
+    );
     assert.match(preamble, /Layer 1: tried-and-true \/ built-ins \/ existing repo-native solutions/);
     assert.match(preamble, /Layer 2: current practice and known footguns/);
     assert.match(preamble, /Layer 3: first-principles reasoning for this repo and this problem/);
@@ -149,4 +153,6 @@ test('generated preambles include the shared Search Before Building section for 
 
   assert.doesNotMatch(basePreamble, /## Contributor Mode/);
   assert.match(reviewPreamble, /## Contributor Mode/);
+  assert.match(reviewPreamble, /See `\$_FEATUREFORGE_ROOT\/references\/agent-grounding\.md`/);
+  assert.match(reviewPreamble, /Use `\$_FEATUREFORGE_ROOT\/references\/contributor-mode\.md`/);
 });
