@@ -77,6 +77,7 @@ pub(in crate::execution::commands) fn equivalent_current_release_readiness_rerun
         result: result.to_owned(),
         code: None,
         recommended_command: None,
+        recommended_public_command_argv: None,
         rederive_via_workflow_operator: None,
         required_follow_up: (result == "blocked").then(|| String::from("resolve_release_blocker")),
         trace_summary: String::from(
@@ -132,6 +133,7 @@ pub(in crate::execution::commands) fn equivalent_current_final_review_rerun(
         result: params.result.to_owned(),
         code: None,
         recommended_command: None,
+        recommended_public_command_argv: None,
         rederive_via_workflow_operator: None,
         required_follow_up: params.required_follow_up,
         trace_summary: String::from(
@@ -193,6 +195,7 @@ pub(in crate::execution::commands) fn equivalent_current_browser_qa_rerun(
         result: result.to_owned(),
         code: None,
         recommended_command: None,
+        recommended_public_command_argv: None,
         rederive_via_workflow_operator: None,
         required_follow_up,
         trace_summary: String::from(

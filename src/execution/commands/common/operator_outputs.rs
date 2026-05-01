@@ -87,11 +87,51 @@ pub(in crate::execution::commands) fn late_stage_negative_result_override_active
     )
 }
 
-pub(in crate::execution::commands) fn recommended_operator_command(
+pub(in crate::execution::commands) fn workflow_operator_requery_public_command(
     plan: &Path,
     external_review_result_ready: bool,
-) -> String {
-    workflow_operator_requery_command(plan, external_review_result_ready)
+) -> PublicCommand {
+    PublicCommand::WorkflowOperator {
+        plan: plan.display().to_string(),
+        external_review_result_ready,
+    }
+}
+
+pub(in crate::execution::commands) fn public_command_surfaces(
+    command: &PublicCommand,
+) -> (String, Vec<String>) {
+    (command.to_display_command(), command.to_argv())
+}
+
+pub(in crate::execution::commands) fn optional_public_command_surfaces(
+    command: Option<&PublicCommand>,
+) -> (Option<String>, Option<Vec<String>>) {
+    (
+        command.map(PublicCommand::to_display_command),
+        recommended_public_command_argv(command),
+    )
+}
+
+pub(in crate::execution::commands) fn workflow_operator_requery_surfaces(
+    plan: &Path,
+    external_review_result_ready: bool,
+) -> (String, Vec<String>) {
+    public_command_surfaces(&workflow_operator_requery_public_command(
+        plan,
+        external_review_result_ready,
+    ))
+}
+
+pub(in crate::execution::commands) fn workflow_operator_requery_optional_surfaces(
+    plan: &Path,
+    external_review_result_ready: bool,
+) -> (Option<String>, Option<Vec<String>>) {
+    let (recommended_command, recommended_public_command_argv) =
+        workflow_operator_requery_surfaces(plan, external_review_result_ready);
+    (
+        Some(recommended_command),
+        Some(recommended_public_command_argv),
+    )
 }
 
 pub(in crate::execution::commands) struct CloseCurrentTaskFollowUpRecommendation {
@@ -103,10 +143,7 @@ pub(in crate::execution::commands) struct CloseCurrentTaskFollowUpRecommendation
 fn close_current_task_public_command_surfaces(
     command: Option<&PublicCommand>,
 ) -> (Option<String>, Option<Vec<String>>) {
-    (
-        command.map(PublicCommand::to_display_command),
-        recommended_public_command_argv(command),
-    )
+    optional_public_command_surfaces(command)
 }
 
 pub(in crate::execution::commands) fn close_current_task_command_matches_follow_up(
@@ -251,11 +288,14 @@ pub(in crate::execution::commands) fn shared_out_of_phase_record_branch_closure_
     branch_closure_id: Option<String>,
     trace_summary: &str,
 ) -> RecordBranchClosureOutput {
+    let (recommended_command, recommended_public_command_argv) =
+        workflow_operator_requery_surfaces(plan, false);
     RecordBranchClosureOutput {
         action: String::from("blocked"),
         branch_closure_id,
         code: Some(String::from("out_of_phase_requery_required")),
-        recommended_command: Some(recommended_operator_command(plan, false)),
+        recommended_command: Some(recommended_command),
+        recommended_public_command_argv: Some(recommended_public_command_argv),
         rederive_via_workflow_operator: Some(true),
         superseded_branch_closure_ids: Vec::new(),
         required_follow_up: None,
@@ -276,6 +316,8 @@ pub(in crate::execution::commands) fn shared_out_of_phase_advance_late_stage_out
         external_review_result_ready,
         trace_summary,
     } = params;
+    let (recommended_command, recommended_public_command_argv) =
+        workflow_operator_requery_surfaces(plan, external_review_result_ready);
     AdvanceLateStageOutput {
         action: String::from("blocked"),
         stage_path: stage_path.to_owned(),
@@ -284,10 +326,8 @@ pub(in crate::execution::commands) fn shared_out_of_phase_advance_late_stage_out
         dispatch_id,
         result: result.to_owned(),
         code: Some(String::from("out_of_phase_requery_required")),
-        recommended_command: Some(recommended_operator_command(
-            plan,
-            external_review_result_ready,
-        )),
+        recommended_command: Some(recommended_command),
+        recommended_public_command_argv: Some(recommended_public_command_argv),
         rederive_via_workflow_operator: Some(true),
         required_follow_up: None,
         trace_summary: trace_summary.to_owned(),
@@ -347,6 +387,7 @@ pub(in crate::execution::commands) fn advance_late_stage_follow_up_or_requery_ou
             result: result.to_owned(),
             code: None,
             recommended_command: None,
+            recommended_public_command_argv: None,
             rederive_via_workflow_operator: None,
             required_follow_up: Some(required_follow_up),
             trace_summary: trace_summary.to_owned(),
@@ -390,6 +431,7 @@ pub(in crate::execution::commands) fn release_readiness_follow_up_or_requery_out
             result: result.to_owned(),
             code: None,
             recommended_command: None,
+            recommended_public_command_argv: None,
             rederive_via_workflow_operator: None,
             required_follow_up: Some(required_follow_up),
             trace_summary: trace_summary.to_owned(),

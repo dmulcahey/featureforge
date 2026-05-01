@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
-use crate::execution::command_eligibility::recommended_public_command_argv;
+use crate::execution::command_eligibility::{PublicCommandKind, recommended_public_command_argv};
 #[cfg(test)]
 use crate::execution::context::EvidenceAttempt;
 use crate::execution::context::{
@@ -650,18 +650,15 @@ fn explicit_public_target_allowed(status: &PlanExecutionStatus) -> bool {
         && status.state_kind != phase::DETAIL_BLOCKED_RUNTIME_BUG
 }
 
-fn route_exposes_repair_review_state_target(status: &PlanExecutionStatus) -> bool {
+fn recommended_public_command_is(status: &PlanExecutionStatus, kind: PublicCommandKind) -> bool {
     status
-        .recommended_command
-        .as_deref()
-        .is_some_and(|command| {
-            command.starts_with("featureforge plan execution repair-review-state --plan ")
-        })
-        || status.next_public_action.as_ref().is_some_and(|action| {
-            action
-                .command
-                .starts_with("featureforge plan execution repair-review-state --plan ")
-        })
+        .recommended_public_command
+        .as_ref()
+        .is_some_and(|command| command.kind() == kind)
+}
+
+fn route_exposes_repair_review_state_target(status: &PlanExecutionStatus) -> bool {
+    recommended_public_command_is(status, PublicCommandKind::RepairReviewState)
         || status.review_state_status != "clean"
         || matches!(
             status.phase_detail.as_str(),
@@ -736,17 +733,8 @@ fn project_public_route_mutation_targets(status: &mut PlanExecutionStatus) {
         );
     }
 
-    let recommended_advance = status
-        .recommended_command
-        .as_deref()
-        .is_some_and(|command| {
-            command.starts_with("featureforge plan execution advance-late-stage --plan ")
-        })
-        || status.next_public_action.as_ref().is_some_and(|action| {
-            action
-                .command
-                .starts_with("featureforge plan execution advance-late-stage --plan ")
-        });
+    let recommended_advance =
+        recommended_public_command_is(status, PublicCommandKind::AdvanceLateStage);
     if (recommended_advance || status.phase_detail == phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING)
         && explicit_public_target_allowed(status)
     {

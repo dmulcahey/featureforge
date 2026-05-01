@@ -772,6 +772,17 @@ fn advance_late_stage_final_review_with_dispatch_id_requeries_when_dispatch_foll
             "featureforge workflow operator --plan docs/featureforge/plans/example.md --external-review-result-ready",
         )
     );
+    assert_eq!(
+        output.recommended_public_command_argv,
+        Some(vec![
+            String::from("featureforge"),
+            String::from("workflow"),
+            String::from("operator"),
+            String::from("--plan"),
+            String::from("docs/featureforge/plans/example.md"),
+            String::from("--external-review-result-ready"),
+        ])
+    );
     assert_eq!(output.rederive_via_workflow_operator, Some(true));
     assert_eq!(output.required_follow_up, None);
 }
@@ -846,6 +857,7 @@ fn advance_late_stage_final_review_with_matching_dispatch_lineage_keeps_dispatch
     assert_eq!(output.action, "blocked");
     assert_eq!(output.code, None);
     assert_eq!(output.recommended_command, None);
+    assert_eq!(output.recommended_public_command_argv, None);
     assert_eq!(output.rederive_via_workflow_operator, None);
     assert_eq!(
         output.required_follow_up,

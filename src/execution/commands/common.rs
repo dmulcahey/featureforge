@@ -104,7 +104,6 @@ pub(super) use crate::execution::transitions::{
     enforce_authoritative_phase, load_authoritative_transition_state,
     load_or_initialize_authoritative_transition_state,
 };
-pub(super) use crate::execution::workflow_operator_requery_command;
 pub(super) use crate::git::{commit_object_fingerprint, discover_repository};
 pub(super) use crate::paths::{
     harness_authoritative_artifact_path, normalize_repo_relative_path,

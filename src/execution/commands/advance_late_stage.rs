@@ -66,6 +66,7 @@ pub fn record_branch_closure(
                 branch_closure_id: None,
                 code: None,
                 recommended_command: None,
+                recommended_public_command_argv: None,
                 rederive_via_workflow_operator: None,
                 superseded_branch_closure_ids: Vec::new(),
                 required_follow_up: Some(String::from("repair_review_state")),
@@ -85,6 +86,7 @@ pub fn record_branch_closure(
                 branch_closure_id: None,
                 code: None,
                 recommended_command: None,
+                recommended_public_command_argv: None,
                 rederive_via_workflow_operator: None,
                 superseded_branch_closure_ids: Vec::new(),
                 required_follow_up: blocked_follow_up_for_operator(&operator),
@@ -112,6 +114,7 @@ pub fn record_branch_closure(
                 branch_closure_id: None,
                 code: None,
                 recommended_command: None,
+                recommended_public_command_argv: None,
                 rederive_via_workflow_operator: None,
                 superseded_branch_closure_ids: Vec::new(),
                 required_follow_up: Some(String::from("repair_review_state")),
@@ -153,6 +156,7 @@ pub fn record_branch_closure(
             branch_closure_id: None,
             code: None,
             recommended_command: None,
+            recommended_public_command_argv: None,
             rederive_via_workflow_operator: None,
             superseded_branch_closure_ids: Vec::new(),
             required_follow_up: Some(String::from("repair_review_state")),
@@ -219,6 +223,7 @@ pub fn record_branch_closure(
         branch_closure_id: Some(branch_closure_id),
         code: None,
         recommended_command: None,
+        recommended_public_command_argv: None,
         rederive_via_workflow_operator: None,
         superseded_branch_closure_ids,
         required_follow_up: None,
@@ -347,6 +352,8 @@ pub fn record_qa(
         current_authoritative_branch_closure_id_optional(&context)?.unwrap_or_default();
     let (operator, runtime_state) =
         current_workflow_operator_with_runtime_state(runtime, &args.plan, false)?;
+    let workflow_operator_requery =
+        || workflow_operator_requery_optional_surfaces(&args.plan, false);
     let mut required_follow_up = blocked_follow_up_for_operator(&operator);
     if required_follow_up.is_none()
         && operator.phase == crate::execution::phase::PHASE_EXECUTING
@@ -366,12 +373,14 @@ pub fn record_qa(
                 && operator.phase_detail
                     == crate::execution::phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED);
     if qa_refresh_reroute_active {
+        let (recommended_command, recommended_public_command_argv) = workflow_operator_requery();
         return Ok(RecordQaOutput {
             action: String::from("blocked"),
             branch_closure_id,
             result: args.result.as_str().to_owned(),
             code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(&args.plan, false)),
+            recommended_command,
+            recommended_public_command_argv,
             rederive_via_workflow_operator: Some(true),
             required_follow_up: None,
             trace_summary: String::from(
@@ -385,12 +394,14 @@ pub fn record_qa(
         && operator.review_state_status == "missing_current_closure"
         && operator.current_branch_closure_id.is_none()
     {
+        let (recommended_command, recommended_public_command_argv) = workflow_operator_requery();
         return Ok(RecordQaOutput {
             action: String::from("blocked"),
             branch_closure_id,
             result: args.result.as_str().to_owned(),
             code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(&args.plan, false)),
+            recommended_command,
+            recommended_public_command_argv,
             rederive_via_workflow_operator: Some(true),
             required_follow_up: None,
             trace_summary: String::from(
@@ -401,12 +412,14 @@ pub fn record_qa(
     if required_follow_up.as_deref() == Some("repair_review_state")
         && operator.review_state_status == "clean"
     {
+        let (recommended_command, recommended_public_command_argv) = workflow_operator_requery();
         return Ok(RecordQaOutput {
             action: String::from("blocked"),
             branch_closure_id,
             result: args.result.as_str().to_owned(),
             code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(&args.plan, false)),
+            recommended_command,
+            recommended_public_command_argv,
             rederive_via_workflow_operator: Some(true),
             required_follow_up: None,
             trace_summary: String::from(
@@ -418,12 +431,15 @@ pub fn record_qa(
         if operator.review_state_status == "stale_unreviewed"
             || required_follow_up.as_deref() != Some("repair_review_state")
         {
+            let (recommended_command, recommended_public_command_argv) =
+                workflow_operator_requery();
             return Ok(RecordQaOutput {
                 action: String::from("blocked"),
                 branch_closure_id,
                 result: args.result.as_str().to_owned(),
                 code: Some(String::from("out_of_phase_requery_required")),
-                recommended_command: Some(recommended_operator_command(&args.plan, false)),
+                recommended_command,
+                recommended_public_command_argv,
                 rederive_via_workflow_operator: Some(true),
                 required_follow_up: None,
                 trace_summary: String::from(
@@ -437,6 +453,7 @@ pub fn record_qa(
             result: args.result.as_str().to_owned(),
             code: None,
             recommended_command: None,
+            recommended_public_command_argv: None,
             rederive_via_workflow_operator: None,
             required_follow_up,
             trace_summary: String::from(
@@ -467,12 +484,15 @@ pub fn record_qa(
             return Ok(output);
         }
         if !allow_fail_recording_while_override_out_of_phase {
+            let (recommended_command, recommended_public_command_argv) =
+                workflow_operator_requery();
             return Ok(RecordQaOutput {
                 action: String::from("blocked"),
                 branch_closure_id,
                 result: args.result.as_str().to_owned(),
                 code: Some(String::from("out_of_phase_requery_required")),
-                recommended_command: Some(recommended_operator_command(&args.plan, false)),
+                recommended_command,
+                recommended_public_command_argv,
                 rederive_via_workflow_operator: Some(true),
                 required_follow_up: None,
                 trace_summary: String::from(
@@ -508,6 +528,7 @@ pub fn record_qa(
                 result: args.result.as_str().to_owned(),
                 code: None,
                 recommended_command: None,
+                recommended_public_command_argv: None,
                 rederive_via_workflow_operator: None,
                 required_follow_up: None,
                 trace_summary: String::from(
@@ -538,12 +559,15 @@ pub fn record_qa(
                 if error.error_class == FailureClass::ExecutionStateNotReady.as_str()
                     || error.error_class == FailureClass::QaArtifactNotFresh.as_str() =>
             {
+                let (recommended_command, recommended_public_command_argv) =
+                    workflow_operator_requery();
                 return Ok(RecordQaOutput {
                     action: String::from("blocked"),
                     branch_closure_id,
                     result: args.result.as_str().to_owned(),
                     code: Some(String::from("out_of_phase_requery_required")),
-                    recommended_command: Some(recommended_operator_command(&args.plan, false)),
+                    recommended_command,
+                    recommended_public_command_argv,
                     rederive_via_workflow_operator: Some(true),
                     required_follow_up: None,
                     trace_summary: String::from(
@@ -671,13 +695,16 @@ pub fn record_qa(
     let (
         code,
         recommended_command,
+        recommended_public_command_argv,
         rederive_via_workflow_operator,
         required_follow_up,
         trace_summary,
     ) = if args.result == ReviewOutcomeArg::Fail && qa_override_out_of_phase {
+        let (recommended_command, recommended_public_command_argv) = workflow_operator_requery();
         (
             Some(String::from("out_of_phase_requery_required")),
-            Some(recommended_operator_command(&args.plan, false)),
+            recommended_command,
+            recommended_public_command_argv,
             Some(true),
             None,
             String::from(
@@ -686,6 +713,7 @@ pub fn record_qa(
         )
     } else {
         (
+            None,
             None,
             None,
             None,
@@ -710,6 +738,7 @@ pub fn record_qa(
         result: args.result.as_str().to_owned(),
         code,
         recommended_command,
+        recommended_public_command_argv,
         rederive_via_workflow_operator,
         required_follow_up,
         trace_summary,
@@ -1025,6 +1054,7 @@ pub(super) fn advance_late_stage_impl(
                         result: result.to_owned(),
                         code: None,
                         recommended_command: None,
+                        recommended_public_command_argv: None,
                         rederive_via_workflow_operator: None,
                         required_follow_up: (result == "fail")
                             .then(|| {
@@ -1063,6 +1093,7 @@ pub(super) fn advance_late_stage_impl(
                     result: result.to_owned(),
                     code: None,
                     recommended_command: None,
+                    recommended_public_command_argv: None,
                     rederive_via_workflow_operator: None,
                     required_follow_up: None,
                     trace_summary: String::from(
@@ -1125,13 +1156,17 @@ pub(super) fn advance_late_stage_impl(
         let (
             code,
             recommended_command,
+            recommended_public_command_argv,
             rederive_via_workflow_operator,
             required_follow_up,
             trace_summary,
         ) = if result == "fail" && final_review_override_out_of_phase {
+            let (recommended_command, recommended_public_command_argv) =
+                workflow_operator_requery_optional_surfaces(&args.plan, true);
             (
                 Some(String::from("out_of_phase_requery_required")),
-                Some(recommended_operator_command(&args.plan, true)),
+                recommended_command,
+                recommended_public_command_argv,
                 Some(true),
                 None,
                 String::from(
@@ -1140,6 +1175,7 @@ pub(super) fn advance_late_stage_impl(
             )
         } else {
             (
+                None,
                 None,
                 None,
                 None,
@@ -1167,6 +1203,7 @@ pub(super) fn advance_late_stage_impl(
             result: result.to_owned(),
             code,
             recommended_command,
+            recommended_public_command_argv,
             rederive_via_workflow_operator,
             required_follow_up,
             trace_summary,
@@ -1233,6 +1270,7 @@ pub(super) fn advance_late_stage_impl(
             result: String::from("recorded"),
             code: output.code,
             recommended_command: output.recommended_command,
+            recommended_public_command_argv: output.recommended_public_command_argv,
             rederive_via_workflow_operator: output.rederive_via_workflow_operator,
             required_follow_up: output.required_follow_up,
             trace_summary: output.trace_summary,
@@ -1271,6 +1309,7 @@ pub(super) fn advance_late_stage_impl(
             result: output.result,
             code: output.code,
             recommended_command: output.recommended_command,
+            recommended_public_command_argv: output.recommended_public_command_argv,
             rederive_via_workflow_operator: output.rederive_via_workflow_operator,
             required_follow_up: output.required_follow_up,
             trace_summary: output.trace_summary,
@@ -1370,6 +1409,7 @@ pub(super) fn advance_late_stage_impl(
                 result: result.to_owned(),
                 code: None,
                 recommended_command: None,
+                recommended_public_command_argv: None,
                 rederive_via_workflow_operator: None,
                 required_follow_up: (result == "blocked")
                     .then(|| String::from("resolve_release_blocker")),
@@ -1388,6 +1428,7 @@ pub(super) fn advance_late_stage_impl(
                 result: result.to_owned(),
                 code: None,
                 recommended_command: None,
+                recommended_public_command_argv: None,
                 rederive_via_workflow_operator: None,
                 required_follow_up: None,
                 trace_summary: String::from(
@@ -1446,6 +1487,7 @@ pub(super) fn advance_late_stage_impl(
         result: result.to_owned(),
         code: None,
         recommended_command: None,
+        recommended_public_command_argv: None,
         rederive_via_workflow_operator: None,
         required_follow_up: (result == "blocked").then(|| String::from("resolve_release_blocker")),
         trace_summary: String::from(

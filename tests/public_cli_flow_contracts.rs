@@ -74,6 +74,50 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
         "close-current-task follow-up routing should use typed public command authority"
     );
 
+    let read_model = read_repo_file("src/execution/read_model.rs");
+    let route_target_start = read_model
+        .find("fn route_exposes_repair_review_state_target")
+        .expect("read model should expose public route repair target projection");
+    let route_target_end = read_model[route_target_start..]
+        .find("\nfn should_preserve_local_preflight_route")
+        .map(|offset| route_target_start + offset)
+        .expect("read model target projection slice should have a stable following helper");
+    let route_target_projection = &read_model[route_target_start..route_target_end];
+    for forbidden in [
+        "recommended_command",
+        "next_public_action",
+        ".starts_with(",
+        ".contains(",
+    ] {
+        assert!(
+            !route_target_projection.contains(forbidden),
+            "read-model public repair targets must use typed command authority, not rendered route text via `{forbidden}`"
+        );
+    }
+    assert!(
+        route_target_projection.contains(
+            "recommended_public_command_is(status, PublicCommandKind::RepairReviewState)"
+        ) && route_target_projection
+            .contains("recommended_public_command_is(status, PublicCommandKind::AdvanceLateStage)"),
+        "read-model public repair target projection should classify typed PublicCommand variants"
+    );
+
+    let transfer = read_repo_file("src/execution/commands/transfer.rs");
+    assert!(
+        transfer.contains("recommended_public_command_argv"),
+        "transfer output should expose argv with any follow-up command"
+    );
+    assert!(
+        transfer.contains("PublicCommand::TransferHandoff"),
+        "transfer scope reroutes should derive display and argv from typed PublicCommand::TransferHandoff"
+    );
+    assert!(
+        !transfer.contains(
+            "format!(\n                    \"featureforge plan execution transfer --plan"
+        ),
+        "transfer must not hand-build public reroute command strings"
+    );
+
     let eligibility = read_repo_file("src/execution/command_eligibility.rs");
     let route_guard_start = eligibility
         .find("fn route_exposes_public_mutation_request")

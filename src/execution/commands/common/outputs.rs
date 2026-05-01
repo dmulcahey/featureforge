@@ -182,6 +182,8 @@ pub struct RecordBranchClosureOutput {
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
     pub superseded_branch_closure_ids: Vec<String>,
@@ -204,6 +206,8 @@ pub struct AdvanceLateStageOutput {
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -220,6 +224,8 @@ pub struct RecordQaOutput {
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
