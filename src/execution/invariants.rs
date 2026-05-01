@@ -4,6 +4,7 @@ use crate::execution::command_eligibility::{
     PublicCommand, PublicCommandKind, command_invokes_hidden_lane, decide_public_mutation,
     recommended_public_command_argv,
 };
+use crate::execution::next_action::reopen_public_command_with_reason;
 use crate::execution::reentry_reconcile::{
     TARGETLESS_STALE_RECONCILE_PHASE_DETAIL, TARGETLESS_STALE_RECONCILE_REASON_CODE,
     TargetlessStaleReconcile,
@@ -396,14 +397,14 @@ fn inject_current_stale_overlap(status: &mut PlanExecutionStatus) {
     }
     status.review_state_status = String::from("stale_unreviewed");
     status.phase_detail = String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED);
-    status.recommended_public_command = Some(PublicCommand::Reopen {
-        plan: String::from("injected"),
-        task: current.task,
-        step: 1,
-        source: Some(String::from("featureforge:executing-plans")),
-        reason: Some(String::from("injected")),
-        fingerprint: None,
-    });
+    status.recommended_public_command = Some(reopen_public_command_with_reason(
+        "injected",
+        current.task,
+        1,
+        "featureforge:executing-plans",
+        "injected",
+        None,
+    ));
     status.recommended_public_command_argv =
         recommended_public_command_argv(status.recommended_public_command.as_ref());
     status.recommended_command = Some(format!(

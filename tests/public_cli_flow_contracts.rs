@@ -4,6 +4,7 @@ mod rust_source_scan;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 const INTERNAL_RUNTIME_HELPER_HEADER: &str = "//! INTERNAL_RUNTIME_HELPER_TEST: this file intentionally exercises unavailable runtime internals.";
 
@@ -238,6 +239,135 @@ fn public_test_files_do_not_use_internal_helpers_or_hidden_commands() {
         violations.is_empty(),
         "public-flow tests must not use internal helpers or hidden command literals:\n{}",
         violations.join("\n")
+    );
+}
+
+#[test]
+fn public_runtime_flow_gate_suites_are_all_protected() {
+    let public_script = read_repo_file("scripts/run-public-runtime-flow-tests.sh");
+    let binaries = public_runtime_flow_test_binaries_from_script(&public_script);
+    assert!(
+        !binaries.is_empty(),
+        "public runtime flow gate should select explicit test binaries"
+    );
+
+    for binary in binaries {
+        let rel = format!("tests/{binary}.rs");
+        assert!(
+            public_runtime_flow_test_files().contains(&rel),
+            "public runtime flow gate binary `{binary}` should be tracked as a public-flow file"
+        );
+        assert!(
+            is_protected_public_flow_file(&rel),
+            "public runtime flow gate binary `{binary}` should be protected from internal helper imports and hidden commands"
+        );
+    }
+}
+
+#[test]
+fn release_gates_keep_public_flow_and_internal_compatibility_suites_separate() {
+    let public_script = read_repo_file("scripts/run-public-runtime-flow-tests.sh");
+    assert!(
+        public_script.contains("cargo nextest run"),
+        "public runtime flow gate should be a runnable nextest command"
+    );
+    for required in [
+        "--test public_cli_flow_contracts",
+        "--test public_replay_churn",
+        "--test runtime_behavior_golden",
+        "--no-fail-fast",
+    ] {
+        assert!(
+            public_script.contains(required),
+            "public runtime flow gate must include `{required}`"
+        );
+    }
+    for forbidden in [
+        "internal_only_compatibility",
+        "support/internal_only_direct_helpers.rs",
+        "support/internal_runtime_direct.rs",
+        "support/plan_execution_direct.rs",
+        "support/workflow_direct.rs",
+    ] {
+        assert!(
+            !public_script.contains(forbidden),
+            "public runtime flow gate must not depend on internal helper coverage via `{forbidden}`"
+        );
+    }
+
+    let internal_script = read_repo_file("scripts/run-internal-runtime-compatibility-tests.sh");
+    assert!(
+        internal_script.contains("cargo nextest run"),
+        "internal compatibility gate should be a runnable nextest command"
+    );
+    assert!(
+        internal_script.contains("internal_only_compatibility"),
+        "internal compatibility gate should run explicitly quarantined internal-only tests"
+    );
+    for forbidden in [
+        "--test public_cli_flow_contracts",
+        "--test public_replay_churn",
+        "--test runtime_behavior_golden",
+    ] {
+        assert!(
+            !internal_script.contains(forbidden),
+            "internal compatibility gate must not be presented as the public runtime flow suite via `{forbidden}`"
+        );
+    }
+
+    let testing_docs = read_repo_file("docs/testing.md");
+    for required in [
+        "scripts/run-public-runtime-flow-tests.sh",
+        "scripts/run-internal-runtime-compatibility-tests.sh",
+        "Public-flow proof",
+        "internal runtime compatibility",
+        "do not count it as public-flow",
+        "public UX proof",
+    ] {
+        assert!(
+            testing_docs.contains(required),
+            "release checklist docs must report public-flow and internal compatibility results separately via `{required}`"
+        );
+    }
+
+    let release_notes = read_repo_file("RELEASE-NOTES.md");
+    for required in [
+        "separate public-flow and internal runtime compatibility gates",
+        "internal-helper suites are not",
+        "public UX proof",
+    ] {
+        assert!(
+            release_notes.contains(required),
+            "release notes must not cite internal-helper tests as public-flow proof; missing `{required}`"
+        );
+    }
+}
+
+#[test]
+fn scanner_rejects_internal_only_quarantine_inside_public_gate_suite() {
+    let helper = hidden_literal(&[
+        "internal_only_try_run_",
+        "plan_execution_output_direct(repo, state, args, context);",
+    ]);
+    let hidden_command = hidden_literal(&["record", "-review-dispatch"]);
+    let fixture = format!(
+        "#[test]\nfn internal_only_compatibility_fixture() {{\n    {helper}\n    let _ = &[\"{hidden_command}\"];\n}}\n"
+    );
+
+    let violations =
+        scan_source_for_public_flow_violations("tests/runtime_behavior_golden.rs", &fixture);
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("plan_execution_output_direct")),
+        "public gate suites must not hide internal-helper coverage in internal_only_* tests, got {violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains(&hidden_command)),
+        "public gate suites must not hide hidden command coverage in internal_only_* tests, got {violations:?}"
     );
 }
 
@@ -484,32 +614,38 @@ fn scanner_rejects_public_flow_header_bypass_fixture() {
 
 #[test]
 fn scanner_rejects_public_flow_internal_support_imports() {
-    let fixture = r#"
-#[path = "support/featureforge.rs"]
+    let featureforge_support = hidden_literal(&["support/", "featureforge.rs"]);
+    let internal_runtime_direct = hidden_literal(&["support/", "internal_runtime_direct.rs"]);
+    let plan_execution_direct = hidden_literal(&["support/", "plan_execution_direct.rs"]);
+    let workflow_direct = hidden_literal(&["support/", "workflow_direct.rs"]);
+    let fixture = format!(
+        r#"
+#[path = "{featureforge_support}"]
 mod featureforge_support;
-#[path = "support/internal_runtime_direct.rs"]
+#[path = "{internal_runtime_direct}"]
 mod internal_runtime_direct;
-#[path = "support/plan_execution_direct.rs"]
+#[path = "{plan_execution_direct}"]
 mod plan_execution_direct_support;
-#[path = "support/workflow_direct.rs"]
+#[path = "{workflow_direct}"]
 mod workflow_direct_support;
 
 #[test]
-fn public_replay_fixture() {}
-"#;
+fn public_replay_fixture() {{}}
+"#
+    );
     let violations =
-        scan_source_for_public_flow_violations("tests/public_replay_churn.rs", fixture);
+        scan_source_for_public_flow_violations("tests/public_replay_churn.rs", &fixture);
 
     for forbidden in [
-        "support/featureforge.rs",
-        "support/internal_runtime_direct.rs",
-        "support/plan_execution_direct.rs",
-        "support/workflow_direct.rs",
+        featureforge_support,
+        internal_runtime_direct,
+        plan_execution_direct,
+        workflow_direct,
     ] {
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains(forbidden)),
+                .any(|violation| violation.contains(&forbidden)),
             "scanner should reject public-flow import `{forbidden}`, got {violations:?}"
         );
     }
@@ -657,26 +793,27 @@ fn public_fixture() {
 
 #[test]
 fn scanner_rejects_direct_internal_support_imports_even_in_mixed_protected_files() {
-    let fixture = r#"
-#[path = "support/internal_runtime_direct.rs"]
+    let internal_runtime_direct = hidden_literal(&["support/", "internal_runtime_direct.rs"]);
+    let plan_execution_direct = hidden_literal(&["support/", "plan_execution_direct.rs"]);
+    let fixture = format!(
+        r#"
+#[path = "{internal_runtime_direct}"]
 mod internal_runtime_direct;
-#[path = "support/plan_execution_direct.rs"]
+#[path = "{plan_execution_direct}"]
 mod plan_execution_direct_support;
 
 #[test]
-fn internal_only_compatibility_fixture() {}
-"#;
+fn internal_only_compatibility_fixture() {{}}
+"#
+    );
     let violations =
-        scan_source_for_public_flow_violations("tests/workflow_shell_smoke.rs", fixture);
+        scan_source_for_public_flow_violations("tests/workflow_shell_smoke.rs", &fixture);
 
-    for forbidden in [
-        "support/internal_runtime_direct.rs",
-        "support/plan_execution_direct.rs",
-    ] {
+    for forbidden in [internal_runtime_direct, plan_execution_direct] {
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains(forbidden)),
+                .any(|violation| violation.contains(&forbidden)),
             "scanner should reject direct internal support import `{forbidden}` even in mixed protected files, got {violations:?}"
         );
     }
@@ -752,16 +889,14 @@ fn scan_source_for_public_flow_violations(rel: &str, source: &str) -> Vec<String
         }
     }
     if is_protected_public_flow_file(rel) {
-        for forbidden in forbidden_internal_support_imports(source) {
+        for forbidden in forbidden_internal_support_imports(rel, source) {
             violations.push(format!(
                 "{rel} imports internal support module `{forbidden}` from a protected public-flow test surface"
             ));
         }
-        if source.contains("internal_only_direct_helpers.rs")
-            && protected_internal_quarantine_import_exception_reason(rel).is_none()
-        {
+        for forbidden in internal_quarantine_bridge_imports(rel, source) {
             violations.push(format!(
-                "{rel} imports internal-only quarantine bridge `internal_only_direct_helpers.rs` from a protected public-flow test surface"
+                "{rel} imports internal-only quarantine bridge `{forbidden}` from a protected public-flow test surface"
             ));
         }
     }
@@ -933,6 +1068,9 @@ fn is_protected_public_flow_file(rel: &str) -> bool {
     if rel.starts_with("tests/support/") {
         return false;
     }
+    if public_runtime_flow_test_files().contains(rel) {
+        return true;
+    }
     let file_name = Path::new(rel)
         .file_name()
         .and_then(|name| name.to_str())
@@ -945,7 +1083,6 @@ fn is_protected_public_flow_file(rel: &str) -> bool {
             | "liveness_model_checker.rs"
             | "plan_execution.rs"
             | "plan_execution_topology.rs"
-            | "public_replay_churn.rs"
             | "workflow_entry_shell_smoke.rs"
             | "workflow_runtime.rs"
             | "workflow_runtime_final_review.rs"
@@ -1011,20 +1148,97 @@ fn explicit_internal_helper_scope_exception_reason(
 }
 
 fn function_scope_allows_internal_helpers(rel: &str, function_name: &str) -> bool {
+    if public_runtime_flow_test_files().contains(rel) {
+        return false;
+    }
     function_name.starts_with("internal_only_")
         || explicit_internal_helper_scope_exception_reason(rel, function_name).is_some()
 }
 
-fn forbidden_internal_support_imports(source: &str) -> Vec<&'static str> {
+fn forbidden_internal_support_imports(rel: &str, source: &str) -> Vec<String> {
+    let syntax = rust_source_scan::parse_rust_source(rel, source);
+    let forbidden = forbidden_internal_support_paths();
+    syntax
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Mod(module) => Some(module),
+            _ => None,
+        })
+        .flat_map(|module| module.attrs.iter())
+        .filter_map(path_attr_value)
+        .filter(|path| forbidden.contains(path))
+        .collect()
+}
+
+fn internal_quarantine_bridge_imports(rel: &str, source: &str) -> Vec<String> {
+    if protected_internal_quarantine_import_exception_reason(rel).is_some() {
+        return Vec::new();
+    }
+    rust_source_scan::parse_rust_source(rel, source)
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Mod(module) => Some(module),
+            _ => None,
+        })
+        .flat_map(|module| module.attrs.iter())
+        .filter_map(path_attr_value)
+        .filter(|path| path == "support/internal_only_direct_helpers.rs")
+        .collect()
+}
+
+fn forbidden_internal_support_paths() -> HashSet<String> {
     [
-        "support/featureforge.rs",
-        "support/plan_execution_direct.rs",
-        "support/workflow_direct.rs",
-        "support/internal_runtime_direct.rs",
+        hidden_literal(&["support/", "featureforge.rs"]),
+        hidden_literal(&["support/", "plan_execution_direct.rs"]),
+        hidden_literal(&["support/", "workflow_direct.rs"]),
+        hidden_literal(&["support/", "internal_runtime_direct.rs"]),
     ]
     .into_iter()
-    .filter(|forbidden| source.contains(forbidden))
     .collect()
+}
+
+fn path_attr_value(attr: &syn::Attribute) -> Option<String> {
+    if !attr.path().is_ident("path") {
+        return None;
+    }
+    let syn::Meta::NameValue(name_value) = &attr.meta else {
+        return None;
+    };
+    let syn::Expr::Lit(expr_lit) = &name_value.value else {
+        return None;
+    };
+    let syn::Lit::Str(lit) = &expr_lit.lit else {
+        return None;
+    };
+    Some(lit.value())
+}
+
+fn public_runtime_flow_test_files() -> &'static HashSet<String> {
+    static PUBLIC_RUNTIME_FLOW_TEST_FILES: OnceLock<HashSet<String>> = OnceLock::new();
+    PUBLIC_RUNTIME_FLOW_TEST_FILES.get_or_init(|| {
+        let script = read_repo_file("scripts/run-public-runtime-flow-tests.sh");
+        public_runtime_flow_test_binaries_from_script(&script)
+            .into_iter()
+            .map(|binary| format!("tests/{binary}.rs"))
+            .collect()
+    })
+}
+
+fn public_runtime_flow_test_binaries_from_script(script: &str) -> Vec<String> {
+    let mut binaries = Vec::new();
+    let mut tokens = script.split_whitespace();
+    while let Some(token) = tokens.next() {
+        if token == "--test"
+            && let Some(binary) = tokens.next()
+        {
+            binaries.push(binary.trim_matches('\\').to_owned());
+        }
+    }
+    binaries.sort();
+    binaries.dedup();
+    binaries
 }
 
 fn function_name_for_line(

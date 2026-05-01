@@ -26,10 +26,13 @@ use crate::execution::observability::{
     REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, REASON_CODE_STALE_PROVENANCE,
 };
 use crate::execution::projection_renderer::is_projection_export_path;
-use crate::execution::reducer::{RuntimeGateSnapshot, RuntimeState};
+use crate::execution::reducer::RuntimeState;
 use crate::execution::semantic_identity::{
     branch_definition_identity_for_context, semantic_paths_changed_between_raw_trees,
     semantic_tree_entries_for_raw_tree, semantic_workspace_snapshot,
+};
+use crate::execution::stale_target_projection::{
+    AuthoritativeStaleTargetScope, RuntimeGateSnapshot,
 };
 use crate::execution::state::{
     ExecutionContext, GateResult, NO_REPO_FILES_MARKER, PlanExecutionStatus,
@@ -1576,7 +1579,7 @@ fn repair_follow_up_target_still_bound(
             };
             gate_snapshot.is_some_and(|snapshot| {
                 snapshot.stale_targets.iter().any(|target| {
-                    target.scope == crate::execution::reducer::AuthoritativeStaleTargetScope::Branch
+                    target.scope == AuthoritativeStaleTargetScope::Branch
                         && target.record_id.as_deref() == Some(record_id)
                 })
             })

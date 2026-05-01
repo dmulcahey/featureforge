@@ -230,6 +230,256 @@ fn router_does_not_construct_reopen_commands_outside_shared_next_action() {
 }
 
 #[test]
+fn public_route_decision_rules_have_focused_module_owners() {
+    let public_route = read_repo_file("src/execution/public_route_selection.rs");
+    assert!(
+        public_route.contains("pub(crate) fn shared_next_action_seed_from_runtime_state"),
+        "public-route seed projection must live in src/execution/public_route_selection.rs"
+    );
+    assert!(
+        public_route.contains("fn shared_next_action_seed_from_precomputed_decision"),
+        "public-route exact command projection must stay in the focused public-route module"
+    );
+
+    let repair_target = read_repo_file("src/execution/repair_target_selection.rs");
+    assert!(
+        repair_target.contains("pub(crate) fn execution_reentry_target"),
+        "repair target selection must live in src/execution/repair_target_selection.rs"
+    );
+    assert!(
+        repair_target.contains("pub(crate) fn select_authoritative_stale_reentry_target"),
+        "authoritative stale repair-target selection must stay in the focused repair-target module"
+    );
+
+    let late_stage = read_repo_file("src/execution/late_stage_route_selection.rs");
+    assert!(
+        late_stage.contains("pub(crate) fn select_late_stage_public_route"),
+        "late-stage public route selection must live in src/execution/late_stage_route_selection.rs"
+    );
+    assert!(
+        late_stage.contains("pub(crate) fn late_stage_decision"),
+        "late-stage route command/phase projection must stay in the focused late-stage module"
+    );
+
+    let router = read_repo_file("src/execution/router.rs");
+    assert!(
+        !router.contains("fn shared_next_action_seed_from_precomputed_decision")
+            && !router.contains("fn marker_free_started_execution"),
+        "router.rs must delegate shared public-route seed projection instead of owning it"
+    );
+
+    let next_action = read_repo_file("src/execution/next_action.rs");
+    assert!(
+        !next_action.contains("pub(crate) fn execution_reentry_target")
+            && !next_action.contains("pub(crate) fn select_authoritative_stale_reentry_target"),
+        "next_action.rs must delegate repair-target selection to repair_target_selection.rs"
+    );
+    assert!(
+        next_action.contains("select_late_stage_public_route")
+            && !next_action.contains("HarnessPhase::FinalReviewPending =>")
+            && !next_action.contains("HarnessPhase::QaPending =>")
+            && !next_action.contains("HarnessPhase::ReadyForBranchCompletion =>"),
+        "next_action.rs must delegate late-stage route ordering to late_stage_route_selection.rs"
+    );
+}
+
+#[test]
+fn execution_reentry_target_construction_has_focused_owner() {
+    let allowed_owner = "src/execution/repair_target_selection.rs";
+    let mut violations = Vec::new();
+    for path in rust_source_files(&repo_root().join("src/execution")) {
+        let rel = repo_relative(&path);
+        if rel == allowed_owner || rel.ends_with("/unit_tests.rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{rel} should be readable: {error}"));
+        let mut byte_offset = 0;
+        for (index, line) in source.lines().enumerate() {
+            let trimmed = line.trim();
+            let constructs_reentry_target = trimmed.contains("ExecutionReentryTarget::new(")
+                || trimmed.contains("ExecutionReentryTarget {")
+                || trimmed.contains("ExecutionReentryTargetSource::");
+            if constructs_reentry_target && !line_is_in_cfg_test_module(&source, byte_offset) {
+                violations.push(format!("{rel}:{}: {trimmed}", index + 1));
+            }
+            byte_offset += line.len() + 1;
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "execution reentry target construction and source selection must stay in {allowed_owner}:\n{}",
+        violations.join("\n")
+    );
+
+    let owner = read_repo_file(allowed_owner);
+    assert!(
+        owner.contains("pub(crate) fn execution_reentry_target")
+            && owner.contains("ExecutionReentryTargetSource::NegativeReviewOrVerificationResult"),
+        "{allowed_owner} must remain the focused repair-target selection owner, including negative-result reentry targets"
+    );
+}
+
+#[test]
+fn reopen_and_repair_public_commands_have_shared_next_action_owner() {
+    let allowed_owner = "src/execution/next_action.rs";
+    let enum_owner = "src/execution/command_eligibility.rs";
+    let mut violations = Vec::new();
+    for path in rust_source_files(&repo_root().join("src/execution")) {
+        let rel = repo_relative(&path);
+        if rel == allowed_owner || rel == enum_owner || rel.ends_with("/unit_tests.rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{rel} should be readable: {error}"));
+        let mut byte_offset = 0;
+        for (index, line) in source.lines().enumerate() {
+            let trimmed = line.trim();
+            let constructs_reopen = trimmed.contains("PublicCommand::Reopen {")
+                && !trimmed.contains("{ .. }")
+                && !line_is_in_cfg_test_module(&source, byte_offset);
+            let constructs_repair = trimmed.contains("PublicCommand::RepairReviewState {")
+                && !trimmed.contains("{ .. }")
+                && !line_is_in_cfg_test_module(&source, byte_offset);
+            if constructs_reopen || constructs_repair {
+                violations.push(format!("{rel}:{}: {trimmed}", index + 1));
+            }
+            byte_offset += line.len() + 1;
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "production reopen/repair public commands must be constructed through the shared next-action helpers:\n{}",
+        violations.join("\n")
+    );
+
+    let owner = read_repo_file(allowed_owner);
+    assert!(
+        owner.contains("pub(crate) fn repair_review_state_public_command")
+            && owner.contains("pub(crate) fn reopen_public_command"),
+        "{allowed_owner} must remain the shared construction owner for repair/reopen public commands"
+    );
+}
+
+fn line_is_in_cfg_test_module(source: &str, byte_offset: usize) -> bool {
+    source[..byte_offset]
+        .rfind("#[cfg(test)]")
+        .is_some_and(|cfg_offset| source[cfg_offset..byte_offset].contains("mod "))
+}
+
+#[test]
+fn stale_unreviewed_closure_projection_has_single_owner() {
+    let allowed_owner = "src/execution/stale_target_projection.rs";
+    let mut violations = Vec::new();
+    for path in rust_source_files(&repo_root().join("src/execution")) {
+        let rel = repo_relative(&path);
+        if rel == allowed_owner {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{rel} should be readable: {error}"));
+        for (index, line) in source.lines().enumerate() {
+            if line.contains(".stale_unreviewed_closures =") {
+                violations.push(format!("{rel}:{}: {}", index + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "`stale_unreviewed_closures` must be projected only by the focused stale-target module:\n{}",
+        violations.join("\n")
+    );
+
+    let owner = read_repo_file(allowed_owner);
+    assert!(
+        owner.contains("pub(crate) fn project_stale_unreviewed_closures"),
+        "{allowed_owner} must expose the single stale closure projection function"
+    );
+    assert!(
+        owner.contains("pub(crate) fn project_review_state_stale_unreviewed_closures"),
+        "{allowed_owner} must expose the review-state stale closure projection function"
+    );
+
+    let mut stale_target_reader_violations = Vec::new();
+    for path in rust_source_files(&repo_root().join("src/execution")) {
+        let rel = repo_relative(&path);
+        if rel == allowed_owner {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{rel} should be readable: {error}"));
+        for (index, line) in source.lines().enumerate() {
+            if line.contains("task_stale_record_ids()") || line.contains("stale_record_ids()") {
+                stale_target_reader_violations.push(format!(
+                    "{rel}:{}: {}",
+                    index + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+    assert!(
+        stale_target_reader_violations.is_empty(),
+        "stale closure record-id selection must stay inside the focused stale-target module:\n{}",
+        stale_target_reader_violations.join("\n")
+    );
+
+    let query = read_repo_file("src/execution/query.rs");
+    assert!(
+        query.contains("project_review_state_stale_unreviewed_closures"),
+        "review-state query must consume stale_target_projection instead of selecting stale closure ids locally"
+    );
+    assert!(
+        !query.contains("let stale_unreviewed_closures = if"),
+        "review-state query must not rebuild stale closure projection control flow locally"
+    );
+}
+
+#[test]
+fn stale_target_projection_uses_preloaded_authority_for_current_task_stale_records() {
+    let owner = read_repo_file("src/execution/stale_target_projection.rs");
+    assert!(
+        owner.contains("event_authority_state: Option<&AuthoritativeTransitionState>"),
+        "stale-target projection must thread the reducer/query authoritative-state snapshot through current task stale-target projection"
+    );
+    assert!(
+        owner.contains(
+            "Some(state) => stale_current_task_closure_records_from_authoritative_state(context, state)?"
+        ),
+        "stale-target projection must consume the supplied authoritative-state snapshot instead of reloading transition state from disk"
+    );
+    assert!(
+        owner.contains("None => stale_current_task_closure_records(context)?"),
+        "stale-target projection must preserve the no-snapshot fallback for standalone callers"
+    );
+}
+
+#[test]
+fn current_task_closure_status_projection_has_single_owner() {
+    let owner = read_repo_file("src/execution/current_closure_projection.rs");
+    assert!(
+        owner.contains("pub(crate) fn project_current_task_closures"),
+        "current task-closure DTO projection must live in the focused current-closure module"
+    );
+
+    let read_model = read_repo_file("src/execution/read_model.rs");
+    assert!(
+        !read_model.contains(".map(|record| PublicReviewStateTaskClosure"),
+        "read_model.rs must consume current_closure_projection::project_current_task_closures instead of rebuilding current task-closure DTOs inline"
+    );
+    let query = read_repo_file("src/execution/query.rs");
+    assert!(
+        query.contains("project_current_task_closures"),
+        "review-state query must consume current_closure_projection::project_current_task_closures"
+    );
+    assert!(
+        !query.contains("ReviewStateTaskClosure {")
+            && !query.contains("still_current_task_closure_records(context)?"),
+        "review-state query must not rebuild current task-closure DTO projection inline"
+    );
+}
+
+#[test]
 fn read_model_modules_do_not_append_events_or_import_mutations() {
     for rel in [
         "src/execution/read_model.rs",
@@ -318,6 +568,264 @@ fn command_common_remains_a_facade_over_bounded_domain_modules() {
             source.lines().count() <= 900,
             "{rel} should remain a focused command-support module instead of becoming the next catch-all"
         );
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FocusedRuntimeModuleLineCap {
+    rel: &'static str,
+    max_lines: usize,
+    boundary: &'static str,
+}
+
+const FOCUSED_RUNTIME_MODULE_LINE_CAPS: &[FocusedRuntimeModuleLineCap] = &[
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/current_closure_projection.rs",
+        max_lines: 450,
+        boundary: "current task-closure DTO and reason projection",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/stale_target_projection.rs",
+        max_lines: 850,
+        boundary: "stale target and stale closure projection",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/repair_target_selection.rs",
+        max_lines: 450,
+        boundary: "execution reentry and repair target selection",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/late_stage_route_selection.rs",
+        max_lines: 350,
+        boundary: "late-stage public route selection",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/public_route_selection.rs",
+        max_lines: 400,
+        boundary: "public next-action route seed projection",
+    },
+];
+
+fn source_line_count(source: &str) -> usize {
+    source.lines().count()
+}
+
+#[test]
+fn focused_runtime_modules_have_line_caps() {
+    let boundary_doc =
+        read_repo_file("docs/featureforge/reference/execution-runtime-module-boundaries.md");
+    for cap in FOCUSED_RUNTIME_MODULE_LINE_CAPS {
+        let source = read_repo_file(cap.rel);
+        let line_count = source_line_count(&source);
+        assert!(
+            line_count <= cap.max_lines,
+            "{} has {line_count} lines, above the focused-module cap of {} for {}",
+            cap.rel,
+            cap.max_lines,
+            cap.boundary
+        );
+        assert!(
+            boundary_doc.contains(&format!("| `{}` | {}", cap.rel, cap.max_lines)),
+            "execution runtime module boundary doc must record the focused-module cap for {}",
+            cap.rel
+        );
+    }
+}
+
+const REDUCED_RUNTIME_FACADE_LINE_CAPS: &[FocusedRuntimeModuleLineCap] = &[
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/state.rs",
+        max_lines: 350,
+        boundary: "compatibility facade over execution state/read APIs",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/mutate.rs",
+        max_lines: 80,
+        boundary: "compatibility facade over public mutation command modules",
+    },
+];
+
+#[test]
+fn reduced_runtime_facades_have_line_caps() {
+    let boundary_doc =
+        read_repo_file("docs/featureforge/reference/execution-runtime-module-boundaries.md");
+    for cap in REDUCED_RUNTIME_FACADE_LINE_CAPS {
+        let source = read_repo_file(cap.rel);
+        let line_count = source_line_count(&source);
+        assert!(
+            line_count <= cap.max_lines,
+            "{} has {line_count} lines, above the reduced-facade cap of {} for {}",
+            cap.rel,
+            cap.max_lines,
+            cap.boundary
+        );
+        assert!(
+            boundary_doc.contains(&format!("| `{}` | {}", cap.rel, cap.max_lines)),
+            "execution runtime module boundary doc must record the reduced-facade cap for {}",
+            cap.rel
+        );
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LargeRuntimeModuleBoundary {
+    rel: &'static str,
+    status: &'static str,
+}
+
+const LARGE_RUNTIME_MODULE_LINE_THRESHOLD: usize = 2_000;
+
+const LARGE_RUNTIME_MODULE_BOUNDARIES: &[LargeRuntimeModuleBoundary] = &[
+    LargeRuntimeModuleBoundary {
+        rel: "src/execution/transitions.rs",
+        status: "documented exception",
+    },
+    LargeRuntimeModuleBoundary {
+        rel: "src/execution/read_model.rs",
+        status: "scheduled follow-up",
+    },
+    LargeRuntimeModuleBoundary {
+        rel: "src/execution/event_log.rs",
+        status: "documented exception",
+    },
+    LargeRuntimeModuleBoundary {
+        rel: "src/execution/review_state.rs",
+        status: "scheduled follow-up",
+    },
+    LargeRuntimeModuleBoundary {
+        rel: "src/execution/context.rs",
+        status: "documented exception",
+    },
+    LargeRuntimeModuleBoundary {
+        rel: "src/execution/next_action.rs",
+        status: "scheduled follow-up",
+    },
+    LargeRuntimeModuleBoundary {
+        rel: "src/execution/authority.rs",
+        status: "documented exception",
+    },
+    LargeRuntimeModuleBoundary {
+        rel: "src/execution/current_truth.rs",
+        status: "scheduled follow-up",
+    },
+    LargeRuntimeModuleBoundary {
+        rel: "src/execution/projection_renderer.rs",
+        status: "documented exception",
+    },
+    LargeRuntimeModuleBoundary {
+        rel: "src/execution/router.rs",
+        status: "scheduled follow-up",
+    },
+];
+
+fn markdown_section_for_heading<'a>(doc: &'a str, heading: &str) -> Option<&'a str> {
+    let start = doc.find(heading)?;
+    let rest = &doc[start..];
+    let section_end = rest
+        .get(heading.len()..)
+        .and_then(|after_heading| after_heading.find("\n### "))
+        .map(|relative_end| heading.len() + relative_end)
+        .unwrap_or(rest.len());
+    Some(&rest[..section_end])
+}
+
+#[test]
+fn large_runtime_modules_have_documented_exception_or_followup() {
+    let execution_root = repo_root().join("src/execution");
+    let actual_large_modules = rust_source_files(&execution_root)
+        .into_iter()
+        .filter(|path| path.parent() == Some(execution_root.as_path()))
+        .filter_map(|path| {
+            let rel = repo_relative(&path);
+            let source = fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{rel} should be readable: {error}"));
+            (source_line_count(&source) > LARGE_RUNTIME_MODULE_LINE_THRESHOLD).then_some(rel)
+        })
+        .collect::<BTreeSet<_>>();
+    let expected_large_modules = LARGE_RUNTIME_MODULE_BOUNDARIES
+        .iter()
+        .map(|boundary| boundary.rel.to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        actual_large_modules, expected_large_modules,
+        "top-level execution modules above {LARGE_RUNTIME_MODULE_LINE_THRESHOLD} lines must be either documented exceptions or scheduled follow-ups",
+    );
+
+    let boundary_doc =
+        read_repo_file("docs/featureforge/reference/execution-runtime-module-boundaries.md");
+    for boundary in LARGE_RUNTIME_MODULE_BOUNDARIES {
+        let heading = format!("### `{}`", boundary.rel);
+        let section = markdown_section_for_heading(&boundary_doc, &heading).unwrap_or_else(|| {
+            panic!(
+                "execution runtime module boundary doc must have a section for {}",
+                boundary.rel
+            )
+        });
+        assert!(
+            section.contains(&format!("- Status: {}", boundary.status)),
+            "{} must be marked as `{}` in the boundary doc",
+            boundary.rel,
+            boundary.status
+        );
+        match boundary.status {
+            "documented exception" => assert!(
+                section.contains("- Why exception:"),
+                "{} documented exception must explain why the large module is acceptable",
+                boundary.rel
+            ),
+            "scheduled follow-up" => assert!(
+                section.contains("- Follow-up:"),
+                "{} scheduled follow-up must name the next extraction direction",
+                boundary.rel
+            ),
+            other => panic!("unsupported large-module boundary status `{other}`"),
+        }
+        assert!(
+            section.contains("- Boundary guard:"),
+            "{} must document the active boundary guard that prevents drift",
+            boundary.rel
+        );
+    }
+}
+
+#[test]
+fn task9_import_direction_boundary_matrix_covers_required_edges() {
+    let operator = read_repo_file("src/workflow/operator.rs");
+    assert_no_import_path_prefix(
+        "src/workflow/operator.rs",
+        &operator,
+        &["crate::execution::commands", "crate::execution::mutate"],
+        "must not depend on command or mutation internals",
+    );
+
+    for rel in [
+        "src/execution/query.rs",
+        "src/execution/read_model.rs",
+        "src/execution/read_model_support.rs",
+        "src/execution/status.rs",
+    ] {
+        let source = read_repo_file(rel);
+        assert_no_import_path_prefix(
+            rel,
+            &source,
+            &["crate::execution::commands", "crate::execution::mutate"],
+            "must not depend on mutation command modules",
+        );
+    }
+
+    for (rel, source) in execution_command_sources() {
+        assert_no_import_path_prefix(
+            &rel,
+            &source,
+            &[
+                "crate::execution::read_model",
+                "crate::execution::read_model_support",
+                "crate::workflow::operator",
+                "crate::workflow::status",
+            ],
+            "must not import presentation or read-model modules",
+        );
+        assert_command_status_imports_are_dto_only(&rel, &source);
     }
 }
 

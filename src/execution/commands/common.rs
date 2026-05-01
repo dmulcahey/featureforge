@@ -79,12 +79,13 @@ pub(super) use crate::execution::recording::{
     record_release_readiness as persist_release_readiness_record,
     resolve_current_task_closure_postconditions_for_current_workspace,
 };
-pub(super) use crate::execution::reducer::{RuntimeGateSnapshot, RuntimeState};
+pub(super) use crate::execution::reducer::RuntimeState;
 pub(super) use crate::execution::router::project_runtime_routing_state_with_reduced_state;
 pub(super) use crate::execution::semantic_identity::{
     branch_definition_identity_for_context, semantic_paths_changed_between_raw_trees,
     semantic_workspace_snapshot, task_definition_identity_for_task,
 };
+pub(super) use crate::execution::stale_target_projection::RuntimeGateSnapshot;
 pub(super) use crate::execution::state::{
     EvidenceAttempt, ExecutionContext, ExecutionEvidence, ExecutionRuntime, FileProof,
     NO_REPO_FILES_MARKER, PlanExecutionStatus, RebuildEvidenceCandidate, RebuildEvidenceCounts,

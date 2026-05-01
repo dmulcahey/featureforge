@@ -32,6 +32,11 @@ pub use crate::execution::context::{
 pub(crate) use crate::execution::context::{
     load_execution_context_for_exact_plan, parse_step_line,
 };
+pub(crate) use crate::execution::current_closure_projection::{
+    TaskCurrentClosureStatus, current_task_closure_overlay_restore_required,
+    still_current_task_closure_records,
+    still_current_task_closure_records_from_authoritative_state, task_current_closure_status,
+};
 use crate::execution::current_truth::{
     current_branch_closure_has_tracked_drift as shared_current_branch_closure_has_tracked_drift,
     current_late_stage_branch_bindings as shared_current_late_stage_branch_bindings,
@@ -72,10 +77,9 @@ pub(crate) use crate::execution::read_model::{
     ExecutionReentryCurrentTaskClosureTargets, FinalReviewDispatchAuthority,
     apply_public_read_invariants_to_status, apply_shared_routing_projection_to_read_scope,
     apply_shared_routing_projection_to_read_scope_with_routing,
-    branch_closure_record_matches_plan_exemption, closure_baseline_candidate_task,
-    compute_status_blocking_records, current_branch_closure_id,
-    current_branch_closure_structural_review_state_reason, current_branch_reviewed_state_id,
-    current_final_review_dispatch_authority_for_context,
+    branch_closure_record_matches_plan_exemption, compute_status_blocking_records,
+    current_branch_closure_id, current_branch_closure_structural_review_state_reason,
+    current_branch_reviewed_state_id, current_final_review_dispatch_authority_for_context,
     current_task_review_dispatch_id_for_status, derive_execution_truth_from_authority,
     derive_execution_truth_from_authority_with_gates, document_release_pending_phase_detail,
     execution_reentry_current_task_closure_targets_from_stale_tasks,
@@ -86,33 +90,30 @@ pub(crate) use crate::execution::read_model::{
     prerelease_branch_closure_refresh_required, project_persisted_public_repair_targets,
     recommended_execution_source, reopen_exact_execution_command_for_task,
     resolve_exact_execution_command, shared_repair_review_state_reroute_decision,
-    stale_current_task_closure_records, status_workspace_state_id,
-    task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
-    usable_current_branch_closure_identity,
+    status_workspace_state_id, task_scope_review_state_repair_reason,
+    task_scope_structural_review_state_reason, usable_current_branch_closure_identity,
     usable_current_branch_closure_identity_from_authoritative_state,
     validated_current_branch_closure_identity,
 };
 pub(crate) use crate::execution::read_model_support::{
-    TaskCurrentClosureStatus, active_step, authoritative_unit_review_receipt_path,
+    active_step, authoritative_unit_review_receipt_path,
     context_all_task_scopes_closed_by_authority, current_review_dispatch_id_from_lineage,
-    current_review_dispatch_id_if_still_current, current_task_closure_overlay_restore_required,
-    latest_attempt_for_step, latest_attempt_indices_by_step, latest_attempted_step_for_task,
+    current_review_dispatch_id_if_still_current, latest_attempt_for_step,
+    latest_attempt_indices_by_step, latest_attempted_step_for_task,
     latest_completed_attempts_by_file, latest_completed_attempts_by_step,
     pre_reducer_earliest_unresolved_stale_task, qa_pending_requires_test_plan_refresh,
     resolve_branch_closure_reviewed_tree_sha, resolve_task_closure_reviewed_tree_sha,
-    still_current_task_closure_records,
-    still_current_task_closure_records_from_authoritative_state,
     task_boundary_reason_code_from_message, task_closure_baseline_bridge_ready_for_stale_target,
     task_closure_baseline_candidate_can_preempt_stale_target,
     task_closure_baseline_repair_candidate_with_stale_target, task_closure_recording_prerequisites,
     task_closures_are_non_branch_contributing, task_completion_lineage_fingerprint,
-    task_current_closure_status,
 };
 pub use crate::execution::runtime::{ExecutionRuntime, state_dir};
 use crate::execution::semantic_identity::{
     normalized_plan_source_for_approved_plan_preflight,
     normalized_plan_source_for_semantic_identity,
 };
+pub(crate) use crate::execution::stale_target_projection::closure_baseline_candidate_task;
 pub(crate) use crate::execution::status::GateProjectionInputs;
 pub use crate::execution::status::{
     GateDiagnostic, GateResult, GateState, PlanExecutionStatus, PublicExecutionCommandContext,

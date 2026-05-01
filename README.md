@@ -165,6 +165,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-targets --all-features --no-fail-fast
 ```
 
+Runtime release checks keep public-flow proof separate from internal
+compatibility coverage:
+
+```bash
+scripts/run-public-runtime-flow-tests.sh
+scripts/run-internal-runtime-compatibility-tests.sh
+```
+
 The Rust verification command is intentionally the full nextest suite. It covers
 more than 1100 tests; use targeted `cargo nextest run --test ...` commands only
 while iterating on a known failure, then rerun the full command before claiming a

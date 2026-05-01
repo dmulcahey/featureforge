@@ -11,6 +11,8 @@ const REQUIRED_SOURCE_ARCHIVE_PATHS = [
   'scripts/gen-agent-docs.mjs',
   'scripts/gen-skill-docs.mjs',
   'scripts/run-codex-runtime-tests.mjs',
+  'scripts/run-internal-runtime-compatibility-tests.sh',
+  'scripts/run-public-runtime-flow-tests.sh',
   'scripts/verify-source-archive.mjs',
   'docs/testing.md',
   'tests/codex-runtime/eval-observability.test.mjs',

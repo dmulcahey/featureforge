@@ -548,11 +548,8 @@
             "<path>",
             "--verification-result",
             "pass|fail|not-run",
-            "[--verification-summary-file",
-            "<path>",
-            "when",
-            "verification",
-            "ran]"
+            "--verification-summary-file",
+            "<path>"
           ],
           "recording_context": {
             "task_number": 1
@@ -704,11 +701,8 @@
             "<path>",
             "--verification-result",
             "pass|fail|not-run",
-            "[--verification-summary-file",
-            "<path>",
-            "when",
-            "verification",
-            "ran]"
+            "--verification-summary-file",
+            "<path>"
           ],
           "recording_context": {
             "task_number": 1
@@ -795,11 +789,8 @@
             "<path>",
             "--verification-result",
             "pass|fail|not-run",
-            "[--verification-summary-file",
-            "<path>",
-            "when",
-            "verification",
-            "ran]"
+            "--verification-summary-file",
+            "<path>"
           ],
           "recording_context": {
             "task_number": 1
@@ -967,11 +958,8 @@
             "<path>",
             "--verification-result",
             "pass|fail|not-run",
-            "[--verification-summary-file",
-            "<path>",
-            "when",
-            "verification",
-            "ran]"
+            "--verification-summary-file",
+            "<path>"
           ],
           "recording_context": {
             "task_number": 1
@@ -1058,11 +1046,8 @@
             "<path>",
             "--verification-result",
             "pass|fail|not-run",
-            "[--verification-summary-file",
-            "<path>",
-            "when",
-            "verification",
-            "ran]"
+            "--verification-summary-file",
+            "<path>"
           ],
           "recording_context": {
             "task_number": 1

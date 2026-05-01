@@ -56,6 +56,27 @@ Use that matrix to prove the intended surfaces directly. It does not replace
 the branch gate: after focused validation passes, still run
 `cargo nextest run --all-targets --all-features --no-fail-fast`.
 
+## Public And Internal Runtime Gates
+
+Public-flow proof and internal runtime compatibility are separate gates. Record
+their results separately in release checklists and CI summaries:
+
+```bash
+scripts/run-public-runtime-flow-tests.sh
+scripts/run-internal-runtime-compatibility-tests.sh
+```
+
+The public-flow gate runs the compiled-binary public route suites:
+`public_cli_flow_contracts`, `public_replay_churn`, and
+`runtime_behavior_golden`. These suites are the public UX proof for runtime
+reachability and replay churn.
+
+The internal runtime compatibility gate runs tests named
+`internal_only_compatibility*`. It preserves low-level direct-helper coverage
+for legacy and boundary compatibility, but do not count it as public-flow or
+public UX proof. Internal helper results may support compatibility confidence;
+they cannot replace the public-flow gate above.
+
 For final runtime cutover checks that touched execution query or workflow-entry
 coverage, extend the matrix with:
 
@@ -213,6 +234,8 @@ node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/review-accelerator-contract.eval.mjs
 npm --prefix tests/brainstorm-server test
 node scripts/verify-source-archive.mjs
+scripts/run-public-runtime-flow-tests.sh
+scripts/run-internal-runtime-compatibility-tests.sh
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --test liveness_model_checker
 cargo nextest run --all-targets --all-features --no-fail-fast

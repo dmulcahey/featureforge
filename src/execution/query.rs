@@ -10,6 +10,7 @@ use crate::cli::plan_execution::StatusArgs;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
 use crate::execution::command_eligibility::PublicCommand;
+use crate::execution::current_closure_projection::project_current_task_closures;
 #[cfg(test)]
 use crate::execution::current_truth::late_stage_stale_unreviewed as shared_late_stage_stale_unreviewed;
 use crate::execution::current_truth::{
@@ -47,18 +48,23 @@ use crate::execution::router::{
     RouteDecision, project_non_runtime_workflow_routing_state, project_runtime_routing_state,
     required_follow_up_from_route_decision, route_decision_from_routing,
 };
+use crate::execution::stale_target_projection::{
+    ReviewStateStaleClosureProjection, ReviewStateStaleClosureProjectionInputs,
+    project_review_state_stale_unreviewed_closures,
+};
 use crate::execution::state::{
     ExecutionContext, ExecutionReadScope, ExecutionRuntime, GateResult, PlanExecutionStatus,
     apply_public_read_invariants_to_status,
     apply_shared_routing_projection_to_read_scope_with_routing,
     current_branch_closure_structural_review_state_reason, load_execution_read_scope,
     missing_derived_review_state_fields, qa_pending_requires_test_plan_refresh,
-    shared_repair_review_state_reroute_decision, still_current_task_closure_records,
-    task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
+    shared_repair_review_state_reroute_decision, task_scope_review_state_repair_reason,
+    task_scope_structural_review_state_reason,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
 #[cfg(test)]
 use crate::execution::state::{load_execution_context, load_execution_context_for_exact_plan};
+use crate::execution::status::PublicReviewStateTaskClosure;
 use crate::git::discover_slug_identity_and_head;
 use crate::workflow::late_stage_precedence::{
     GateState, LateStageSignals, resolve as resolve_late_stage_precedence,
@@ -69,14 +75,7 @@ use crate::workflow::status::{
     WorkflowRoute, WorkflowRuntime, explicit_plan_override_route as resolve_explicit_plan_override,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ReviewStateTaskClosure {
-    pub task: u32,
-    pub closure_record_id: String,
-    pub reviewed_state_id: String,
-    pub contract_identity: String,
-    pub effective_reviewed_surface_paths: Vec<String>,
-}
+pub type ReviewStateTaskClosure = PublicReviewStateTaskClosure;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReviewStateBranchClosure {
@@ -258,12 +257,6 @@ fn review_state_snapshot_from_read_scope_with_runtime_state(
     let late_stage_stale_unreviewed = gate_snapshot.late_stage_stale_unreviewed;
     let late_stage_missing_current_closure_public_truth =
         gate_snapshot.missing_current_closure_stale_provenance;
-    let status_reports_stale_unreviewed_closures = !status.stale_unreviewed_closures.is_empty();
-    let late_stage_stale_projection_active = late_stage_stale_unreviewed
-        || late_stage_missing_current_closure_public_truth
-        || (gate_snapshot.branch_closure_tracked_drift
-            && (status.review_state_status != "missing_current_closure"
-                || status_reports_stale_unreviewed_closures));
     let task_scope_stale_unreviewed = task_scope_review_state_is_stale_unreviewed(status);
     let task_scope_structural_reason = task_scope_structural_review_state_reason(status);
     let branch_scope_structural_reason =
@@ -278,19 +271,12 @@ fn review_state_snapshot_from_read_scope_with_runtime_state(
             gate_snapshot.stale_reason_codes.clone(),
         ),
     );
-    let current_task_closures = still_current_task_closure_records(context)?
+    let current_task_closures = project_current_task_closures(context, authoritative_state)?
         .into_iter()
-        .filter(|record| {
+        .filter(|closure| {
             closure_graph
-                .current_task_closure(record.task)
-                .is_none_or(|evaluation| evaluation.identity.record_id == record.closure_record_id)
-        })
-        .map(|record| ReviewStateTaskClosure {
-            task: record.task,
-            closure_record_id: record.closure_record_id,
-            reviewed_state_id: record.reviewed_state_id,
-            contract_identity: record.contract_identity,
-            effective_reviewed_surface_paths: record.effective_reviewed_surface_paths,
+                .current_task_closure(closure.task)
+                .is_none_or(|evaluation| evaluation.identity.record_id == closure.closure_record_id)
         })
         .collect::<Vec<_>>();
     let current_branch_closure = closure_graph.current_branch_closure().map(|evaluation| {
@@ -325,19 +311,16 @@ fn review_state_snapshot_from_read_scope_with_runtime_state(
             .cmp(&closure_graph.superseded_by(right))
             .then(left.cmp(right))
     });
-    let late_stage_stale_unreviewed_closures = status.stale_unreviewed_closures.clone();
-    let reducer_task_stale_record_ids = gate_snapshot.task_stale_record_ids();
-    let stale_unreviewed_closures = if task_scope_structural_reason.is_some() {
-        reducer_task_stale_record_ids.clone()
-    } else if late_stage_stale_projection_active {
-        late_stage_stale_unreviewed_closures
-    } else if branch_scope_structural_reason.is_some() {
-        Vec::new()
-    } else if task_scope_stale_unreviewed {
-        reducer_task_stale_record_ids
-    } else {
-        Vec::new()
-    };
+    let ReviewStateStaleClosureProjection {
+        late_stage_stale_projection_active,
+        stale_unreviewed_closures,
+    } = project_review_state_stale_unreviewed_closures(ReviewStateStaleClosureProjectionInputs {
+        status,
+        gate_snapshot,
+        task_scope_stale_unreviewed,
+        task_scope_structural_reason_present: task_scope_structural_reason.is_some(),
+        branch_scope_structural_reason_present: branch_scope_structural_reason.is_some(),
+    });
     let missing_derived_overlays =
         missing_derived_review_state_fields(authoritative_state, overlay);
     let missing_derived_overlays_present = !missing_derived_overlays.is_empty();

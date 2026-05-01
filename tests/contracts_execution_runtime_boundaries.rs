@@ -1427,25 +1427,28 @@ fn internal_only_compatibility_execution_query_recording_ready_states_surface_re
     );
     assert_routing_parity_with_operator_json(&routing, &operator);
 
-    let router_source = fs::read_to_string(repo_root().join("src/execution/router.rs"))
-        .expect("execution router source should be readable");
+    let public_route_source =
+        fs::read_to_string(repo_root().join("src/execution/public_route_selection.rs"))
+            .expect("execution public route selection source should be readable");
 
     assert!(
-        router_source.contains("phase::DETAIL_TASK_CLOSURE_RECORDING_READY")
-            && router_source.contains("task_number: Some(task_number)")
-            && router_source.contains("dispatch_id: task_review_dispatch_id.clone()"),
+        public_route_source.contains("phase::DETAIL_TASK_CLOSURE_RECORDING_READY")
+            && public_route_source.contains("task_number: Some(task_number)")
+            && public_route_source.contains("dispatch_id: task_review_dispatch_id.clone()"),
         "task_closure_recording_ready should expose task_number and may surface dispatch_id in recording_context",
     );
     assert!(
-        router_source.contains("phase::DETAIL_RELEASE_READINESS_RECORDING_READY")
-            && router_source.contains("phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED")
-            && router_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
+        public_route_source.contains("phase::DETAIL_RELEASE_READINESS_RECORDING_READY")
+            && public_route_source.contains("phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED")
+            && public_route_source
+                .contains("branch_closure_id: Some(branch_closure_id.to_owned())"),
         "release-readiness recording-ready states should expose branch_closure_id recording_context ids",
     );
     assert!(
-        router_source.contains("phase::DETAIL_FINAL_REVIEW_RECORDING_READY")
-            && router_source.contains("dispatch_id: final_review_dispatch_id.clone()")
-            && router_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
+        public_route_source.contains("phase::DETAIL_FINAL_REVIEW_RECORDING_READY")
+            && public_route_source.contains("dispatch_id: final_review_dispatch_id.clone()")
+            && public_route_source
+                .contains("branch_closure_id: Some(branch_closure_id.to_owned())"),
         "final_review_recording_ready should expose branch_closure_id and may surface dispatch_id in the routing constructor",
     );
 }

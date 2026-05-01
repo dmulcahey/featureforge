@@ -14,7 +14,9 @@
   outside materialization, and phase-detail literal drift
 - add runtime architecture and validation documentation for the public-surface
   hardening matrix, replay acceptance checks, generated-doc freshness checks,
-  strict clippy, and full no-fail-fast nextest branch gate
+  separate public-flow and internal runtime compatibility gates, strict clippy,
+  and full no-fail-fast nextest branch gate; internal-helper suites are not
+  public UX proof
 
 ## v1.10.0 - 2026-04-25
 

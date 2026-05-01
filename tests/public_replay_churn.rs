@@ -19,7 +19,9 @@ use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::follow_up::execution_step_repair_target_id;
 use featureforge::git::discover_slug_identity;
 use featureforge::git::sha256_hex;
-use featureforge::paths::{harness_authoritative_artifact_path, harness_state_path};
+use featureforge::paths::{
+    branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
+};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -30,6 +32,11 @@ const REVIEW_SPEC_REL: &str = "docs/featureforge/specs/public-replay-review-desi
 const REVIEW_PLAN_REL: &str = "docs/featureforge/plans/public-replay-review-plan.md";
 const EXEC_SPEC_REL: &str = "docs/featureforge/specs/public-replay-execution-design.md";
 const EXEC_PLAN_REL: &str = "docs/featureforge/plans/public-replay-execution-plan.md";
+const OLD_SESSION_SPEC_REL: &str = "docs/featureforge/specs/public-replay-old-session-design.md";
+const OLD_SESSION_FS11_PLAN_REL: &str =
+    "docs/featureforge/plans/public-replay-old-session-fs11-plan.md";
+const OLD_SESSION_FS15_PLAN_REL: &str =
+    "docs/featureforge/plans/public-replay-old-session-fs15-plan.md";
 
 struct PublicCli<'a> {
     repo: &'a Path,
@@ -172,8 +179,11 @@ fn public_json_hidden_token_violation(value: &Value) -> Option<(String, String)>
     for hidden in [
         concat!("record", "-review-dispatch"),
         concat!("gate", "-review"),
+        concat!("gate", "-finish"),
         concat!("rebuild", "-evidence"),
         concat!("--dispatch", "-id"),
+        concat!("unit", "-review receipt"),
+        concat!("task", "-verification receipt"),
         concat!("\"pre", "flight\""),
         concat!("featureforge plan execution pre", "flight"),
         concat!("featureforge workflow pre", "flight"),
@@ -464,6 +474,43 @@ fn write_current_pass_plan_fidelity_review_artifact(
     );
 }
 
+fn write_old_session_spec(repo: &Path) {
+    write_file(
+        &repo.join(OLD_SESSION_SPEC_REL),
+        "# Public Replay Old Session Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n\n## Requirement Index\n\n- [REQ-011][behavior] Public routing must keep stale earlier task boundaries ahead of later resume overlays.\n- [REQ-012][behavior] Authoritative run identity must survive missing or malformed execution control-plane acceptance state.\n- [REQ-013][behavior] Later parked open-step state must not mask earlier stale repair boundaries.\n- [REQ-014][behavior] Missing current task closure baseline routes through public close-current-task.\n- [REQ-015][behavior] Earliest stale boundary selection must not jump to a later stale task after repair.\n- [REQ-016][behavior] Current positive task closures allow downstream begin even if review projection artifacts drift.\n",
+    );
+}
+
+fn write_old_session_fs11_plan(repo: &Path) {
+    write_file(
+        &repo.join(OLD_SESSION_FS11_PLAN_REL),
+        &format!(
+            "# Public Replay Old Session FS11 Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** featureforge:executing-plans\n**Source Spec:** `{OLD_SESSION_SPEC_REL}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n**QA Requirement:** not-required\n\n## Requirement Coverage Matrix\n\n- REQ-011 -> Task 2, Task 3\n- REQ-013 -> Task 2, Task 3\n\n## Execution Strategy\n\n- Seed a forward resume overlay on Task 3 Step 6 while keeping Task 2 as the earliest stale boundary.\n\n## Dependency Diagram\n\n```text\nTask 2 -> Task 3\n```\n\n## Task 2: Earliest stale boundary task\n\n**Spec Coverage:** REQ-011, REQ-013\n**Goal:** Task 2 remains the earliest unresolved stale boundary.\n\n**Context:**\n- Spec Coverage: REQ-011, REQ-013.\n\n**Constraints:**\n- Keep one step for deterministic stale-boundary replay.\n\n**Done when:**\n- Task 2 remains the earliest unresolved stale boundary.\n\n**Files:**\n- Modify: `docs/public-replay-old-session-task-2.md`\n\n- [ ] **Step 1: Execute Task 2 baseline step**\n\n## Task 3: Forward resume overlay task\n\n**Spec Coverage:** REQ-011, REQ-013\n**Goal:** Task 3 Step 6 is the forward overlay target that must never outrank Task 2.\n\n**Context:**\n- Spec Coverage: REQ-011, REQ-013.\n\n**Constraints:**\n- Keep six steps to preserve the exact Task 3 Step 6 contradiction shape.\n\n**Done when:**\n- Task 3 Step 6 is the forward overlay target that must never outrank Task 2.\n\n**Files:**\n- Modify: `docs/public-replay-old-session-task-3.md`\n\n- [ ] **Step 1: Build Task 3 step scaffold**\n- [ ] **Step 2: Build Task 3 step scaffold**\n- [ ] **Step 3: Build Task 3 step scaffold**\n- [ ] **Step 4: Build Task 3 step scaffold**\n- [ ] **Step 5: Build Task 3 step scaffold**\n- [ ] **Step 6: Build Task 3 step scaffold**\n"
+        ),
+    );
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        ".featureforge/reviews/public-replay-old-session-fs11-plan-fidelity.md",
+        OLD_SESSION_FS11_PLAN_REL,
+        OLD_SESSION_SPEC_REL,
+    );
+}
+
+fn write_old_session_fs15_plan(repo: &Path) {
+    write_file(
+        &repo.join(OLD_SESSION_FS15_PLAN_REL),
+        &format!(
+            "# Public Replay Old Session FS15 Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** featureforge:executing-plans\n**Source Spec:** `{OLD_SESSION_SPEC_REL}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n**QA Requirement:** not-required\n\n## Requirement Coverage Matrix\n\n- REQ-015 -> Task 1, Task 2, Task 6\n\n## Execution Strategy\n\n- Repair Task 1 through the public task-closure route before resuming forward work.\n- Execute Task 2 before Task 6 to keep stale-boundary ordering deterministic.\n\n## Dependency Diagram\n\n```text\nTask 1 -> Task 2 -> Task 6\n```\n\n## Task 1: Earlier repaired task\n\n**Spec Coverage:** REQ-015\n**Goal:** Recreate the earlier repair transition before stale-boundary targeting continues.\n\n**Context:**\n- Spec Coverage: REQ-015.\n\n**Constraints:**\n- Keep each task to one step for deterministic stale-target routing assertions.\n\n**Done when:**\n- Task 1 has a current positive closure before later stale targets are seeded.\n\n**Files:**\n- Modify: `docs/public-replay-old-session-task-1.md`\n\n- [ ] **Step 1: Repair Task 1 through the public closure route**\n\n## Task 2: Earliest stale boundary\n\n**Spec Coverage:** REQ-015\n**Goal:** Task 2 represents the earliest unresolved stale boundary.\n\n**Context:**\n- Spec Coverage: REQ-015.\n\n**Constraints:**\n- Keep each task to one step for deterministic stale-target routing assertions.\n\n**Done when:**\n- Task 2 represents the earliest unresolved stale boundary.\n\n**Files:**\n- Modify: `docs/public-replay-old-session-task-2.md`\n\n- [ ] **Step 1: Execute Task 2 baseline step**\n\n## Task 6: Later stale overlay target\n\n**Spec Coverage:** REQ-015\n**Goal:** Task 6 represents the later stale overlay that must not outrank Task 2.\n\n**Context:**\n- Spec Coverage: REQ-015.\n\n**Constraints:**\n- Keep each task to one step for deterministic stale-target routing assertions.\n\n**Done when:**\n- Task 6 remains behind Task 2 in stale-boundary targeting.\n\n**Files:**\n- Modify: `docs/public-replay-old-session-task-6.md`\n\n- [ ] **Step 1: Execute Task 6 baseline step**\n"
+        ),
+    );
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        ".featureforge/reviews/public-replay-old-session-fs15-plan-fidelity.md",
+        OLD_SESSION_FS15_PLAN_REL,
+        OLD_SESSION_SPEC_REL,
+    );
+}
+
 fn status(cli: &mut PublicCli<'_>, context: &str) -> Value {
     status_for_plan(cli, EXEC_PLAN_REL, context)
 }
@@ -487,17 +534,28 @@ fn workflow_status(cli: &mut PublicCli<'_>, context: &str) -> Value {
 }
 
 fn begin_task(cli: &mut PublicCli<'_>, task: u32, fingerprint: &str, context: &str) -> Value {
+    begin_task_for_plan(cli, EXEC_PLAN_REL, task, 1, fingerprint, context)
+}
+
+fn begin_task_for_plan(
+    cli: &mut PublicCli<'_>,
+    plan_rel: &str,
+    task: u32,
+    step: u32,
+    fingerprint: &str,
+    context: &str,
+) -> Value {
     cli.json(
         &[
             "plan",
             "execution",
             "begin",
             "--plan",
-            EXEC_PLAN_REL,
+            plan_rel,
             "--task",
             &task.to_string(),
             "--step",
-            "1",
+            &step.to_string(),
             "--execution-mode",
             "featureforge:executing-plans",
             "--expect-execution-fingerprint",
@@ -508,25 +566,45 @@ fn begin_task(cli: &mut PublicCli<'_>, task: u32, fingerprint: &str, context: &s
 }
 
 fn complete_task_1(cli: &mut PublicCli<'_>, fingerprint: &str, context: &str) -> Value {
+    complete_task_for_plan(
+        cli,
+        EXEC_PLAN_REL,
+        1,
+        1,
+        "docs/public-replay-output.md",
+        fingerprint,
+        context,
+    )
+}
+
+fn complete_task_for_plan(
+    cli: &mut PublicCli<'_>,
+    plan_rel: &str,
+    task: u32,
+    step: u32,
+    file_rel: &str,
+    fingerprint: &str,
+    context: &str,
+) -> Value {
     cli.json(
         &[
             "plan",
             "execution",
             "complete",
             "--plan",
-            EXEC_PLAN_REL,
+            plan_rel,
             "--task",
-            "1",
+            &task.to_string(),
             "--step",
-            "1",
+            &step.to_string(),
             "--source",
             "featureforge:executing-plans",
             "--claim",
-            "Completed public replay Task 1.",
+            &format!("Completed public replay Task {task}."),
             "--manual-verify-summary",
-            "Verified public replay Task 1.",
+            &format!("Verified public replay Task {task}."),
             "--file",
-            "docs/public-replay-output.md",
+            file_rel,
             "--expect-execution-fingerprint",
             fingerprint,
         ],
@@ -535,17 +613,28 @@ fn complete_task_1(cli: &mut PublicCli<'_>, fingerprint: &str, context: &str) ->
 }
 
 fn reopen_task_1(cli: &mut PublicCli<'_>, fingerprint: &str, context: &str) -> Value {
+    reopen_task_for_plan(cli, EXEC_PLAN_REL, 1, 1, fingerprint, context)
+}
+
+fn reopen_task_for_plan(
+    cli: &mut PublicCli<'_>,
+    plan_rel: &str,
+    task: u32,
+    step: u32,
+    fingerprint: &str,
+    context: &str,
+) -> Value {
     cli.json(
         &[
             "plan",
             "execution",
             "reopen",
             "--plan",
-            EXEC_PLAN_REL,
+            plan_rel,
             "--task",
-            "1",
+            &task.to_string(),
             "--step",
-            "1",
+            &step.to_string(),
             "--source",
             "featureforge:executing-plans",
             "--reason",
@@ -558,23 +647,65 @@ fn reopen_task_1(cli: &mut PublicCli<'_>, fingerprint: &str, context: &str) -> V
 }
 
 fn write_task_1_summary_files(repo: &Path) -> (PathBuf, PathBuf) {
-    let review_summary = repo.join("docs/task-1-review-summary.md");
-    let verification_summary = repo.join("docs/task-1-verification-summary.md");
-    write_file(&review_summary, "Task 1 public replay review passed.\n");
+    write_task_summary_files(repo, 1)
+}
+
+fn write_task_summary_files(repo: &Path, task: u32) -> (PathBuf, PathBuf) {
+    let review_summary = repo.join(format!("docs/task-{task}-review-summary.md"));
+    let verification_summary = repo.join(format!("docs/task-{task}-verification-summary.md"));
+    write_file(
+        &review_summary,
+        &format!("Task {task} public replay review passed.\n"),
+    );
     write_file(
         &verification_summary,
-        "Task 1 public replay verification passed.\n",
+        &format!("Task {task} public replay verification passed.\n"),
     );
     (review_summary, verification_summary)
 }
 
 fn close_task_1(cli: &mut PublicCli<'_>, repo: &Path, context: &str) -> Value {
-    let (review_summary, verification_summary) = write_task_1_summary_files(repo);
-    close_task_1_with_summary_files(cli, &review_summary, &verification_summary, context)
+    close_task_for_plan(cli, repo, EXEC_PLAN_REL, 1, context)
+}
+
+fn close_task_for_plan(
+    cli: &mut PublicCli<'_>,
+    repo: &Path,
+    plan_rel: &str,
+    task: u32,
+    context: &str,
+) -> Value {
+    let (review_summary, verification_summary) = write_task_summary_files(repo, task);
+    close_task_for_plan_with_summary_files(
+        cli,
+        plan_rel,
+        task,
+        &review_summary,
+        &verification_summary,
+        context,
+    )
 }
 
 fn close_task_1_with_summary_files(
     cli: &mut PublicCli<'_>,
+    review_summary: &Path,
+    verification_summary: &Path,
+    context: &str,
+) -> Value {
+    close_task_for_plan_with_summary_files(
+        cli,
+        EXEC_PLAN_REL,
+        1,
+        review_summary,
+        verification_summary,
+        context,
+    )
+}
+
+fn close_task_for_plan_with_summary_files(
+    cli: &mut PublicCli<'_>,
+    plan_rel: &str,
+    task: u32,
     review_summary: &Path,
     verification_summary: &Path,
     context: &str,
@@ -585,9 +716,9 @@ fn close_task_1_with_summary_files(
             "execution",
             "close-current-task",
             "--plan",
-            EXEC_PLAN_REL,
+            plan_rel,
             "--task",
-            "1",
+            &task.to_string(),
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -686,7 +817,67 @@ fn public_recommended_command_argv(value: &Value, context: &str) -> Vec<String> 
         &command_parts.iter().map(String::as_str).collect::<Vec<_>>(),
         context,
     );
+    assert_public_argv_has_no_display_only_tokens(&command_parts, context);
     command_parts
+}
+
+fn assert_public_argv_has_no_display_only_tokens(command_parts: &[String], context: &str) {
+    for part in command_parts {
+        assert!(
+            !part.contains('[') && !part.contains(']'),
+            "{context}: recommended argv must not include human optional-syntax markers, got {command_parts:?}"
+        );
+        assert!(
+            !matches!(part.as_str(), "when" | "verification" | "ran" | "ran]"),
+            "{context}: recommended argv must not include human prose tokens, got {command_parts:?}"
+        );
+    }
+}
+
+fn assert_recommended_public_command_targets_task(
+    value: &Value,
+    expected_command: &str,
+    expected_task: u32,
+    context: &str,
+) {
+    let command_parts = public_recommended_command_argv(value, context);
+    assert_recommended_public_command_parts_include(&command_parts, expected_command, context);
+    let expected_task_arg = expected_task.to_string();
+    assert!(
+        command_parts
+            .windows(2)
+            .any(|window| window[0] == "--task" && window[1] == expected_task_arg),
+        "{context}: recommended argv should target Task {expected_task}, got {command_parts:?}"
+    );
+}
+
+fn assert_recommended_public_command_parts_include(
+    command_parts: &[String],
+    expected_command: &str,
+    context: &str,
+) {
+    assert!(
+        command_parts.iter().any(|part| part == expected_command),
+        "{context}: recommended argv should route through `{expected_command}`, got {command_parts:?}"
+    );
+}
+
+fn assert_public_route_targets_task(value: &Value, expected_task: u32, context: &str) {
+    let targets_expected_task = value["blocking_task"].as_u64() == Some(u64::from(expected_task))
+        || value["task_number"].as_u64() == Some(u64::from(expected_task))
+        || value["execution_command_context"]["task_number"].as_u64()
+            == Some(u64::from(expected_task));
+    assert!(
+        targets_expected_task,
+        "{context}: public route should target Task {expected_task}: {value}"
+    );
+}
+
+fn assert_public_command_budget(label: &str, observed: usize, max: usize) {
+    assert!(
+        observed <= max,
+        "{label}: public replay exceeded command budget {observed}/{max}"
+    );
 }
 
 fn concrete_public_command_args(
@@ -724,22 +915,89 @@ fn concrete_public_command_args(
             "docs/task-recommended-verification-summary.md",
             &format!("Recommended close-current-task verification passed for {context}.\n"),
         );
+        let mut filled_args = command_parts[1..].to_vec();
+        if !filled_args
+            .windows(2)
+            .any(|window| window[0] == "--task" && window[1] == task)
+        {
+            filled_args.extend([String::from("--task"), task]);
+        }
+        fill_public_argv_template_value(&mut filled_args, "--review-result", "pass|fail", "pass");
+        fill_public_argv_template_value(
+            &mut filled_args,
+            "--review-summary-file",
+            "<path>",
+            &review_summary,
+        );
+        fill_public_argv_template_value(
+            &mut filled_args,
+            "--verification-result",
+            "pass|fail|not-run",
+            "pass",
+        );
+        fill_public_argv_template_value(
+            &mut filled_args,
+            "--verification-summary-file",
+            "<path>",
+            &verification_summary,
+        );
+        assert!(
+            !filled_args
+                .iter()
+                .any(|part| part.contains('<') || part.contains('|')),
+            "{context}: filled close-current-task argv should be executable without template tokens, got {filled_args:?}"
+        );
+        assert!(
+            filled_args
+                .windows(2)
+                .any(|window| window[0] == "--plan" && window[1] == plan),
+            "{context}: filled close-current-task argv should preserve advertised plan target, got {filled_args:?}"
+        );
+        args = filled_args;
+    }
+    if command_parts.get(1).is_some_and(|part| part == "plan")
+        && command_parts.get(2).is_some_and(|part| part == "execution")
+        && command_parts.get(3).is_some_and(|part| part == "reopen")
+        && command_parts
+            .iter()
+            .any(|part| part.contains('<') || part == "<reason>")
+    {
+        let plan = command_parts
+            .windows(2)
+            .find(|window| window[0] == "--plan")
+            .map(|window| window[1].clone())
+            .expect("reopen recommendation should include --plan");
+        let task = command_parts
+            .windows(2)
+            .find(|window| window[0] == "--task")
+            .map(|window| window[1].clone())
+            .expect("reopen recommendation should include --task");
+        let step = command_parts
+            .windows(2)
+            .find(|window| window[0] == "--step")
+            .map(|window| window[1].clone())
+            .expect("reopen recommendation should include --step");
+        let fingerprint = command_parts
+            .windows(2)
+            .find(|window| window[0] == "--expect-execution-fingerprint")
+            .map(|window| window[1].clone())
+            .expect("reopen recommendation should include --expect-execution-fingerprint");
         args = vec![
             String::from("plan"),
             String::from("execution"),
-            String::from("close-current-task"),
+            String::from("reopen"),
             String::from("--plan"),
             plan,
             String::from("--task"),
             task,
-            String::from("--review-result"),
-            String::from("pass"),
-            String::from("--review-summary-file"),
-            review_summary,
-            String::from("--verification-result"),
-            String::from("pass"),
-            String::from("--verification-summary-file"),
-            verification_summary,
+            String::from("--step"),
+            step,
+            String::from("--source"),
+            String::from("featureforge:executing-plans"),
+            String::from("--reason"),
+            format!("Recommended reopen executed for {context}."),
+            String::from("--expect-execution-fingerprint"),
+            fingerprint,
         ];
     }
     assert!(
@@ -748,6 +1006,21 @@ fn concrete_public_command_args(
         "{context}: recommended command contains unresolved placeholders: {command_parts:?}"
     );
     args
+}
+
+fn fill_public_argv_template_value(
+    args: &mut [String],
+    flag: &str,
+    placeholder: &str,
+    replacement: &str,
+) {
+    for index in 1..args.len() {
+        if args[index - 1] == flag && args[index] == placeholder {
+            args[index] = replacement.to_owned();
+            return;
+        }
+    }
+    panic!("recommended argv should include `{flag} {placeholder}`, got {args:?}");
 }
 
 fn write_recommended_summary_file(repo: &Path, rel: &str, contents: &str) -> String {
@@ -1025,10 +1298,258 @@ fn update_state_fields(repo: &Path, state: &Path, fields: &[(&str, Value)]) {
     );
 }
 
+fn execution_acceptance_state_path(repo: &Path, state: &Path) -> PathBuf {
+    let (repo_slug, branch_name) = state_identity(repo);
+    state
+        .join("projects")
+        .join(repo_slug)
+        .join("branches")
+        .join(branch_storage_key(&branch_name))
+        .join(concat!("execution-pre", "flight"))
+        .join("acceptance-state.json")
+}
+
+fn corrupt_execution_acceptance_state(repo: &Path, state: &Path) {
+    let path = execution_acceptance_state_path(repo, state);
+    assert!(
+        path.is_file(),
+        "fixture should have persisted public begin acceptance state at {}",
+        path.display()
+    );
+    write_file(
+        &path,
+        concat!(
+            "{ malformed execution pre",
+            "flight acceptance for public replay }\n"
+        ),
+    );
+}
+
+fn seed_old_session_fs11_stale_boundary_fixture(repo: &Path, state: &Path) {
+    // Fixture-only quarantine: this creates the historical broken runtime shape;
+    // the replay assertions below use only the compiled public CLI.
+    update_state_fields(
+        repo,
+        state,
+        &[
+            (
+                "task_closure_record_history",
+                json!({
+                    "task-2-stale-old-session": {
+                        "closure_record_id": "task-2-stale-old-session",
+                        "task": 2,
+                        "source_plan_path": OLD_SESSION_FS11_PLAN_REL,
+                        "source_plan_revision": 1,
+                        "record_sequence": 10,
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["docs/public-replay-old-session-task-2.md"]
+                    }
+                }),
+            ),
+            (
+                "current_open_step_state",
+                json!({
+                    "task": 3,
+                    "step": 6,
+                    "note_state": "Interrupted",
+                    "note_summary": "FS-11 forward reentry overlay must not outrank stale Task 2 boundary",
+                    "source_plan_path": OLD_SESSION_FS11_PLAN_REL,
+                    "source_plan_revision": 1,
+                    "authoritative_sequence": 30
+                }),
+            ),
+            ("active_task", Value::Null),
+            ("active_step", Value::Null),
+            ("resume_task", json!(3)),
+            ("resume_step", json!(6)),
+        ],
+    );
+}
+
+fn seed_old_session_fs15_stale_boundary_fixture(repo: &Path, state: &Path) {
+    // Fixture-only quarantine: the synthetic stale records encode the old
+    // later-target failure; replay remains public CLI only.
+    update_state_fields(
+        repo,
+        state,
+        &[
+            (
+                "task_closure_record_history",
+                json!({
+                    "task-2-stale-old-session": {
+                        "closure_record_id": "task-2-stale-old-session",
+                        "task": 2,
+                        "source_plan_path": OLD_SESSION_FS15_PLAN_REL,
+                        "source_plan_revision": 1,
+                        "record_sequence": 10,
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["docs/public-replay-old-session-task-2.md"]
+                    },
+                    "task-6-stale-old-session": {
+                        "closure_record_id": "task-6-stale-old-session",
+                        "task": 6,
+                        "source_plan_path": OLD_SESSION_FS15_PLAN_REL,
+                        "source_plan_revision": 1,
+                        "record_sequence": 20,
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["docs/public-replay-old-session-task-6.md"]
+                    }
+                }),
+            ),
+            (
+                "current_open_step_state",
+                json!({
+                    "task": 6,
+                    "step": 1,
+                    "note_state": "Interrupted",
+                    "note_summary": "FS-15 later resume overlay must not outrank stale Task 2 boundary",
+                    "source_plan_path": OLD_SESSION_FS15_PLAN_REL,
+                    "source_plan_revision": 1,
+                    "authoritative_sequence": 30
+                }),
+            ),
+            ("active_task", Value::Null),
+            ("active_step", Value::Null),
+            ("resume_task", json!(6)),
+            ("resume_step", json!(1)),
+        ],
+    );
+}
+
 fn setup_execution_fixture(name: &str) -> (TempDir, TempDir) {
     let (repo_dir, state_dir) = init_repo(name);
     write_execution_spec_and_plan(repo_dir.path());
     commit_all(repo_dir.path(), "public replay execution fixture");
+    (repo_dir, state_dir)
+}
+
+fn setup_old_session_fs11_fixture(name: &str) -> (TempDir, TempDir) {
+    let (repo_dir, state_dir) = init_repo(name);
+    let repo = repo_dir.path();
+    write_old_session_spec(repo);
+    write_old_session_fs11_plan(repo);
+    write_file(
+        &repo.join("docs/public-replay-old-session-task-2.md"),
+        "Old session Task 2 baseline.\n",
+    );
+    write_file(
+        &repo.join("docs/public-replay-old-session-task-3.md"),
+        "Old session Task 3 baseline.\n",
+    );
+    commit_all(repo, "public replay old session FS11 fixture");
+
+    let mut cli = PublicCli::new(repo, state_dir.path());
+    let status_before = status_for_plan(&mut cli, OLD_SESSION_FS11_PLAN_REL, "FS-11 setup status");
+    let begin = begin_task_for_plan(
+        &mut cli,
+        OLD_SESSION_FS11_PLAN_REL,
+        2,
+        1,
+        status_before["execution_fingerprint"]
+            .as_str()
+            .expect("FS-11 setup status should expose execution fingerprint"),
+        "FS-11 setup public begin task 2",
+    );
+    append_repo_file(
+        repo,
+        "docs/public-replay-old-session-task-2.md",
+        "Old session Task 2 changed before stale-boundary replay.",
+    );
+    complete_task_for_plan(
+        &mut cli,
+        OLD_SESSION_FS11_PLAN_REL,
+        2,
+        1,
+        "docs/public-replay-old-session-task-2.md",
+        begin["execution_fingerprint"]
+            .as_str()
+            .expect("FS-11 setup begin should expose execution fingerprint"),
+        "FS-11 setup public complete task 2",
+    );
+    seed_old_session_fs11_stale_boundary_fixture(repo, state_dir.path());
+    (repo_dir, state_dir)
+}
+
+fn setup_old_session_fs15_fixture(name: &str) -> (TempDir, TempDir) {
+    let (repo_dir, state_dir) = init_repo(name);
+    let repo = repo_dir.path();
+    write_old_session_spec(repo);
+    write_old_session_fs15_plan(repo);
+    for task in [1, 2, 6] {
+        write_file(
+            &repo.join(format!("docs/public-replay-old-session-task-{task}.md")),
+            &format!("Old session Task {task} baseline.\n"),
+        );
+    }
+    commit_all(repo, "public replay old session FS15 fixture");
+
+    let mut cli = PublicCli::new(repo, state_dir.path());
+    let status_before = status_for_plan(&mut cli, OLD_SESSION_FS15_PLAN_REL, "FS-15 setup status");
+    let begin_task_1 = begin_task_for_plan(
+        &mut cli,
+        OLD_SESSION_FS15_PLAN_REL,
+        1,
+        1,
+        status_before["execution_fingerprint"]
+            .as_str()
+            .expect("FS-15 setup status should expose execution fingerprint"),
+        "FS-15 setup public begin task 1",
+    );
+    append_repo_file(
+        repo,
+        "docs/public-replay-old-session-task-1.md",
+        "Old session Task 1 changed before current closure.",
+    );
+    complete_task_for_plan(
+        &mut cli,
+        OLD_SESSION_FS15_PLAN_REL,
+        1,
+        1,
+        "docs/public-replay-old-session-task-1.md",
+        begin_task_1["execution_fingerprint"]
+            .as_str()
+            .expect("FS-15 setup begin task 1 should expose execution fingerprint"),
+        "FS-15 setup public complete task 1",
+    );
+    close_task_for_plan(
+        &mut cli,
+        repo,
+        OLD_SESSION_FS15_PLAN_REL,
+        1,
+        "FS-15 setup public close task 1",
+    );
+    let status_after_task_1 = status_for_plan(
+        &mut cli,
+        OLD_SESSION_FS15_PLAN_REL,
+        "FS-15 setup status after task 1",
+    );
+    let begin_task_2 = begin_task_for_plan(
+        &mut cli,
+        OLD_SESSION_FS15_PLAN_REL,
+        2,
+        1,
+        status_after_task_1["execution_fingerprint"]
+            .as_str()
+            .expect("FS-15 setup status after task 1 should expose execution fingerprint"),
+        "FS-15 setup public begin task 2",
+    );
+    append_repo_file(
+        repo,
+        "docs/public-replay-old-session-task-2.md",
+        "Old session Task 2 changed before stale-boundary replay.",
+    );
+    complete_task_for_plan(
+        &mut cli,
+        OLD_SESSION_FS15_PLAN_REL,
+        2,
+        1,
+        "docs/public-replay-old-session-task-2.md",
+        begin_task_2["execution_fingerprint"]
+            .as_str()
+            .expect("FS-15 setup begin task 2 should expose execution fingerprint"),
+        "FS-15 setup public complete task 2",
+    );
+    seed_old_session_fs15_stale_boundary_fixture(repo, state_dir.path());
     (repo_dir, state_dir)
 }
 
@@ -1240,6 +1761,338 @@ fn public_replay_begin_owns_allowed_preflight_without_hidden_command() {
         1,
         "{} bridge should need one public begin after route discovery",
         concat!("pre", "flight")
+    );
+}
+
+#[test]
+fn public_replay_fs11_rebase_resume_targets_earliest_boundary_within_budget() {
+    let (repo_dir, state_dir) = setup_old_session_fs11_fixture("public-replay-fs11-rebase-resume");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    let checkpoint = cli.checkpoint();
+
+    let operator = workflow_operator(
+        &mut cli,
+        OLD_SESSION_FS11_PLAN_REL,
+        "FS-11 public replay operator",
+    );
+    assert_public_json_excludes_hidden_tokens(&operator, "FS-11 public replay operator");
+    assert_public_route_targets_task(&operator, 2, "FS-11 public replay operator");
+    assert!(
+        !operator["recommended_command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--task 3"),
+        "FS-11 public replay must not recommend the later Task 3 begin dead end: {operator}"
+    );
+    assert_recommended_public_command_targets_task(
+        &operator,
+        "reopen",
+        2,
+        "FS-11 public replay operator",
+    );
+
+    let reopened = invoke_recommended_public_command_for_context(
+        &mut cli,
+        &operator,
+        "FS-11 public replay operator-routed reopen",
+    );
+    assert_eq!(
+        reopened["resume_task"],
+        json!(2),
+        "FS-11 public replay should resume the earliest stale Task 2 boundary: {reopened}"
+    );
+    assert_public_command_budget(
+        "FS11-PUBLIC-REPLAY-BUDGET",
+        cli.delta_since(&checkpoint, "workflow operator") + cli.delta_since(&checkpoint, "reopen"),
+        3,
+    );
+}
+
+#[test]
+fn public_replay_fs12_authoritative_run_survives_malformed_preflight_within_budget() {
+    let (repo_dir, state_dir) =
+        setup_execution_fixture(concat!("public-replay-fs12-pre", "flight"));
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+
+    let status_before = status(&mut cli, "FS-12 public replay setup status");
+    let begin = begin_task(
+        &mut cli,
+        1,
+        status_before["execution_fingerprint"]
+            .as_str()
+            .expect("FS-12 setup status should expose execution fingerprint"),
+        "FS-12 public replay setup begin",
+    );
+    let execution_run_id = begin["execution_run_id"]
+        .as_str()
+        .expect("FS-12 setup begin should expose execution_run_id")
+        .to_owned();
+    corrupt_execution_acceptance_state(repo, state);
+    let checkpoint = cli.checkpoint();
+
+    let operator = workflow_operator(
+        &mut cli,
+        EXEC_PLAN_REL,
+        concat!("FS-12 public replay operator after malformed pre", "flight"),
+    );
+    assert_public_json_excludes_hidden_tokens(&operator, "FS-12 public replay operator");
+    assert_ne!(
+        operator["next_action"],
+        json!("execution preflight"),
+        "FS-12 public replay must not route back to execution acceptance when authoritative run identity exists: {operator}"
+    );
+
+    append_repo_file(
+        repo,
+        "docs/public-replay-output.md",
+        "FS-12 public replay work after malformed acceptance state.",
+    );
+    let complete = complete_task_1(
+        &mut cli,
+        begin["execution_fingerprint"]
+            .as_str()
+            .expect("FS-12 setup begin should expose execution fingerprint"),
+        concat!("FS-12 public replay complete after malformed pre", "flight"),
+    );
+    assert_public_json_excludes_hidden_tokens(&complete, "FS-12 public replay complete");
+    assert_eq!(
+        complete["execution_run_id"],
+        json!(execution_run_id),
+        "FS-12 public replay complete should preserve authoritative run identity: {complete}"
+    );
+    let close = close_task_1(
+        &mut cli,
+        repo,
+        concat!(
+            "FS-12 public replay close-current-task after malformed pre",
+            "flight"
+        ),
+    );
+    assert_public_json_excludes_hidden_tokens(&close, "FS-12 public replay close-current-task");
+    assert!(
+        matches!(
+            close["action"].as_str(),
+            Some("recorded" | "already_current")
+        ),
+        "FS-12 public replay close-current-task should work without hidden acceptance replay: {close}"
+    );
+    assert_public_command_budget(
+        "FS12-PUBLIC-REPLAY-BUDGET",
+        cli.delta_since(&checkpoint, "workflow operator")
+            + cli.delta_since(&checkpoint, "complete")
+            + cli.delta_since(&checkpoint, "close-current-task"),
+        3,
+    );
+}
+
+#[test]
+fn public_replay_fs13_later_open_step_does_not_mask_earlier_boundary() {
+    let (repo_dir, state_dir) =
+        setup_old_session_fs11_fixture("public-replay-fs13-later-open-step");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    let checkpoint = cli.checkpoint();
+
+    let operator = workflow_operator(
+        &mut cli,
+        OLD_SESSION_FS11_PLAN_REL,
+        "FS-13 public replay operator before recovery",
+    );
+    assert_public_json_excludes_hidden_tokens(&operator, "FS-13 public replay operator");
+    assert_public_route_targets_task(&operator, 2, "FS-13 public replay operator");
+    assert_recommended_public_command_targets_task(
+        &operator,
+        "reopen",
+        2,
+        "FS-13 public replay operator",
+    );
+
+    let reopened = invoke_recommended_public_command_for_context(
+        &mut cli,
+        &operator,
+        "FS-13 public replay operator-routed reopen",
+    );
+    assert_eq!(
+        reopened["resume_task"],
+        json!(2),
+        "FS-13 public replay should reopen the earlier stale Task 2 boundary: {reopened}"
+    );
+    let status_after_repair = status_for_plan(
+        &mut cli,
+        OLD_SESSION_FS11_PLAN_REL,
+        "FS-13 status after reopen",
+    );
+    assert_ne!(
+        status_after_repair["resume_task"],
+        json!(3),
+        "FS-13 public replay should suppress the later parked Task 3 resume marker after repair: {status_after_repair}"
+    );
+    assert_public_route_targets_task(&status_after_repair, 2, "FS-13 status after repair");
+    assert_public_command_budget(
+        "FS13-PUBLIC-REPLAY-BUDGET",
+        cli.delta_since(&checkpoint, "workflow operator")
+            + cli.delta_since(&checkpoint, "reopen")
+            + cli.delta_since(&checkpoint, "status"),
+        3,
+    );
+}
+
+#[test]
+fn public_replay_fs14_missing_closure_baseline_routes_to_close_within_budget() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-fs14-missing-closure");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    complete_task_1_without_closure(&mut cli, repo);
+    let checkpoint = cli.checkpoint();
+
+    let operator = workflow_operator(&mut cli, EXEC_PLAN_REL, "FS-14 public replay operator");
+    assert_public_json_excludes_hidden_tokens(&operator, "FS-14 public replay operator");
+    assert_eq!(
+        operator["phase_detail"], "task_closure_recording_ready",
+        "FS-14 public replay should route missing closure baseline to task closure recording: {operator}"
+    );
+    assert_recommended_public_command_targets_task(
+        &operator,
+        "close-current-task",
+        1,
+        "FS-14 public replay operator",
+    );
+    let close = invoke_recommended_public_command_for_context(
+        &mut cli,
+        &operator,
+        "FS-14 public replay close-current-task",
+    );
+    assert!(
+        matches!(
+            close["action"].as_str(),
+            Some("recorded" | "already_current")
+        ),
+        "FS-14 public replay close-current-task should rebuild the closure baseline: {close}"
+    );
+    assert_public_command_budget(
+        "FS14-PUBLIC-REPLAY-BUDGET",
+        cli.delta_since(&checkpoint, "workflow operator")
+            + cli.delta_since(&checkpoint, "close-current-task"),
+        2,
+    );
+}
+
+#[test]
+fn public_replay_fs15_repair_keeps_earliest_stale_boundary_within_budget() {
+    let (repo_dir, state_dir) = setup_old_session_fs15_fixture("public-replay-fs15-earliest-stale");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    let checkpoint = cli.checkpoint();
+
+    let operator = workflow_operator(
+        &mut cli,
+        OLD_SESSION_FS15_PLAN_REL,
+        "FS-15 public replay operator",
+    );
+    assert_public_json_excludes_hidden_tokens(&operator, "FS-15 public replay operator");
+    assert_public_route_targets_task(&operator, 2, "FS-15 public replay operator");
+    assert_recommended_public_command_targets_task(
+        &operator,
+        "reopen",
+        2,
+        "FS-15 public replay operator",
+    );
+
+    let reopened = invoke_recommended_public_command_for_context(
+        &mut cli,
+        &operator,
+        "FS-15 public replay operator-routed reopen",
+    );
+    assert_eq!(
+        reopened["resume_task"],
+        json!(2),
+        "FS-15 public replay should reopen the earliest stale Task 2 boundary: {reopened}"
+    );
+    assert!(
+        !operator["recommended_command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--task 6"),
+        "FS-15 public replay operator must not jump to the later Task 6 stale target: {operator}"
+    );
+    assert_public_command_budget(
+        "FS15-PUBLIC-REPLAY-BUDGET",
+        cli.delta_since(&checkpoint, "workflow operator") + cli.delta_since(&checkpoint, "reopen"),
+        2,
+    );
+}
+
+#[test]
+fn public_replay_fs16_current_closure_allows_next_begin_after_projection_drift() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-fs16-projection-drift");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    complete_task_1_without_closure(&mut cli, repo);
+    let close = close_task_1(&mut cli, repo, "FS-16 setup close current task 1");
+    assert_eq!(close["action"], "recorded");
+    let status_after_close = status(&mut cli, "FS-16 setup status after close");
+    let closure_id = current_task_1_closure_id(&status_after_close);
+    let materialized = cli.json(
+        &[
+            "plan",
+            "execution",
+            "materialize-projections",
+            "--plan",
+            EXEC_PLAN_REL,
+        ],
+        "FS-16 setup explicit projection materialization",
+    );
+    assert_eq!(materialized["action"], json!("materialized"));
+    let removed_projection_artifacts =
+        remove_task_projection_artifacts(repo, state, &status_after_close, 1);
+    assert!(
+        !removed_projection_artifacts.is_empty(),
+        "FS-16 setup should remove projection artifacts before public replay"
+    );
+    let checkpoint = cli.checkpoint();
+
+    let status_after_drift = status(
+        &mut cli,
+        "FS-16 public replay status after projection drift",
+    );
+    assert_eq!(
+        current_task_1_closure_id(&status_after_drift),
+        closure_id,
+        "FS-16 public replay should keep the current positive closure despite projection drift"
+    );
+    assert_public_json_excludes_hidden_tokens(&status_after_drift, "FS-16 public replay status");
+    assert_recommended_public_command_targets_task(
+        &status_after_drift,
+        "begin",
+        2,
+        "FS-16 public replay status",
+    );
+    let begin = begin_task(
+        &mut cli,
+        2,
+        status_after_drift["execution_fingerprint"]
+            .as_str()
+            .expect("FS-16 status should expose execution fingerprint"),
+        "FS-16 public replay begin task 2",
+    );
+    assert_public_json_excludes_hidden_tokens(&begin, "FS-16 public replay begin task 2");
+    assert_eq!(
+        begin["active_task"],
+        json!(2),
+        "FS-16 public replay should allow downstream begin without regenerating receipt projections"
+    );
+    assert_public_command_budget(
+        "FS16-PUBLIC-REPLAY-BUDGET",
+        cli.delta_since(&checkpoint, "status") + cli.delta_since(&checkpoint, "begin"),
+        2,
     );
 }
 

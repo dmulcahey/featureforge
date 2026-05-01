@@ -21,6 +21,7 @@ use crate::execution::follow_up::{
     execution_step_repair_target_id, normalize_follow_up_alias,
     repair_follow_up_source_decision_hash,
 };
+use crate::execution::next_action::reopen_public_command_with_reason;
 use crate::execution::query::{
     ExecutionRoutingState, ReviewStateBranchClosure, ReviewStateSnapshot, ReviewStateTaskClosure,
     apply_read_surface_invariants_to_routing,
@@ -2626,14 +2627,14 @@ fn reopen_execution_reentry_repair_command_argv(
         .and_then(|routing| routing.execution_status.as_ref())
         .map(|status| status.execution_fingerprint.clone())
         .unwrap_or_else(|| String::from("<fingerprint>"));
-    PublicCommand::Reopen {
-        plan: args.plan.display().to_string(),
-        task: task_number,
-        step: step_number,
-        source: Some(String::from("featureforge:executing-plans")),
-        reason: Some(String::from("<reason>")),
-        fingerprint: Some(fingerprint),
-    }
+    reopen_public_command_with_reason(
+        &args.plan.display().to_string(),
+        task_number,
+        step_number,
+        "featureforge:executing-plans",
+        "<reason>",
+        Some(fingerprint.as_str()),
+    )
     .to_argv()
 }
 

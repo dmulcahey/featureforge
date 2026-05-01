@@ -13,6 +13,12 @@ use crate::execution::context::{
     overlay_execution_evidence_attempts_from_authority, overlay_step_state_from_authority,
     refresh_execution_fingerprint, same_branch_worktrees,
 };
+use crate::execution::current_closure_projection::{
+    project_current_task_closure_repair_reason_codes, project_current_task_closures,
+    still_current_task_closure_records,
+    still_current_task_closure_records_from_authoritative_state,
+    structural_current_task_closure_failures,
+};
 #[cfg(test)]
 use crate::execution::current_truth::task_review_result_pending_task;
 use crate::execution::current_truth::{
@@ -82,13 +88,9 @@ use crate::execution::read_model_support::{
     execution_started, latest_attempted_step_for_task, prior_task_number_for_begin,
     projected_earliest_stale_task_from_status, qa_pending_requires_test_plan_refresh,
     require_prior_task_closure_for_begin, resolve_branch_closure_reviewed_tree_sha,
-    stale_unreviewed_allows_task_closure_baseline_bridge, still_current_task_closure_records,
-    still_current_task_closure_records_from_authoritative_state,
-    structural_current_task_closure_failures, task_boundary_reason_code_from_message,
-    task_closure_baseline_repair_candidate_with_stale_target,
-    task_closure_matches_current_workspace, task_closure_recording_prerequisites,
+    stale_unreviewed_allows_task_closure_baseline_bridge, task_boundary_reason_code_from_message,
+    task_closure_baseline_repair_candidate_with_stale_target, task_closure_recording_prerequisites,
     task_closure_recording_reason_code, task_completion_lineage_fingerprint,
-    valid_current_task_closure_records,
 };
 use crate::execution::recording::current_task_closure_postconditions_would_mutate;
 use crate::execution::reducer::RuntimeState;
@@ -103,12 +105,15 @@ use crate::execution::semantic_identity::{
     branch_definition_identity_for_context, semantic_workspace_snapshot,
     task_definition_identity_for_task,
 };
+use crate::execution::stale_target_projection::project_stale_unreviewed_closures;
 #[cfg(test)]
 use crate::execution::state::record_review_dispatch_blocked_output_from_gate;
+#[cfg(test)]
+use crate::execution::status::PublicReviewStateTaskClosure;
 use crate::execution::status::{
     GateProjectionInputs, GateResult, GateState, PlanExecutionStatus,
     PublicExecutionCommandContext, PublicRecordingContext, PublicRepairTarget,
-    PublicReviewStateTaskClosure, StatusBlockingRecord,
+    StatusBlockingRecord,
 };
 use crate::execution::topology::{
     load_preflight_acceptance, pending_chunk_id, preflight_acceptance_for_context,
@@ -817,8 +822,7 @@ pub(crate) fn apply_shared_routing_projection_to_read_scope_with_routing(
         read_scope.authoritative_state.as_ref(),
         source_route_decision_hash.as_deref(),
     );
-    read_scope.status.stale_unreviewed_closures =
-        runtime_state.status.stale_unreviewed_closures.clone();
+    project_stale_unreviewed_closures(&mut read_scope.status, &runtime_state.gate_snapshot);
     let fallback_gate_finish;
     let gate_finish = match runtime_state.gate_snapshot.gate_finish.as_ref() {
         Some(gate_finish) => gate_finish,
@@ -2245,21 +2249,10 @@ fn hydrate_status_authority_fields_for_routing(
 ) {
     if status.current_task_closures.is_empty()
         && let Some(authoritative_state) = authoritative_state
-        && let Ok(records) = still_current_task_closure_records_from_authoritative_state(
-            context,
-            authoritative_state,
-        )
+        && let Ok(current_task_closures) =
+            project_current_task_closures(context, Some(authoritative_state))
     {
-        status.current_task_closures = records
-            .into_iter()
-            .map(|record| PublicReviewStateTaskClosure {
-                task: record.task,
-                closure_record_id: record.closure_record_id,
-                reviewed_state_id: record.reviewed_state_id,
-                contract_identity: record.contract_identity,
-                effective_reviewed_surface_paths: record.effective_reviewed_surface_paths,
-            })
-            .collect();
+        status.current_task_closures = current_task_closures;
     }
     let Some(event_authority_state) = authoritative_state else {
         return;
@@ -2314,27 +2307,8 @@ pub(crate) fn apply_current_task_closure_repair_status_overlay(
     if context.steps.iter().any(|step| !step.checked) {
         return;
     }
-    let Ok(structural_failures) = structural_current_task_closure_failures(context) else {
-        return;
-    };
-    for failure in structural_failures {
-        push_status_reason_code_once(status, &failure.reason_code);
-    }
-    let Ok(current_records) = valid_current_task_closure_records(context) else {
-        return;
-    };
-    for record in current_records {
-        match task_closure_matches_current_workspace(context, &record) {
-            Ok(true) => {}
-            Ok(false) => {
-                push_status_reason_code_once(status, "prior_task_current_closure_stale");
-            }
-            Err(error) => {
-                if let Some(reason_code) = task_boundary_reason_code_from_message(&error.message) {
-                    push_status_reason_code_once(status, reason_code);
-                }
-            }
-        }
+    for reason_code in project_current_task_closure_repair_reason_codes(context) {
+        push_status_reason_code_once(status, &reason_code);
     }
 }
 
@@ -2514,20 +2488,7 @@ pub(crate) fn populate_public_status_contract_fields(
     status.current_branch_meaningful_drift =
         shared_current_branch_closure_has_tracked_drift(context, event_authority_state)
             .unwrap_or(false);
-    let current_task_closures = match event_authority_state {
-        Some(state) => still_current_task_closure_records_from_authoritative_state(context, state)?,
-        None => still_current_task_closure_records(context)?,
-    }
-    .into_iter()
-    .map(|record| PublicReviewStateTaskClosure {
-        task: record.task,
-        closure_record_id: record.closure_record_id,
-        reviewed_state_id: record.reviewed_state_id,
-        contract_identity: record.contract_identity,
-        effective_reviewed_surface_paths: record.effective_reviewed_surface_paths,
-    })
-    .collect::<Vec<_>>();
-    status.current_task_closures = current_task_closures;
+    status.current_task_closures = project_current_task_closures(context, event_authority_state)?;
     status.superseded_closures_summary = closure_graph.superseded_record_ids();
     status.finish_review_gate_pass_branch_closure_id =
         late_stage_bindings.finish_review_gate_pass_branch_closure_id;
@@ -3309,37 +3270,6 @@ pub(crate) fn execution_reentry_current_task_closure_targets_from_stale_tasks(
         structural_tasks: structural_tasks.into_iter().collect(),
         structural_scope_keys: structural_scope_keys.into_iter().collect(),
     })
-}
-
-pub(crate) fn closure_baseline_candidate_task(context: &ExecutionContext) -> Option<u32> {
-    if let Some(next_unchecked_task) = context
-        .steps
-        .iter()
-        .find(|step| !step.checked)
-        .map(|step| step.task_number)
-    {
-        return context
-            .tasks_by_number
-            .keys()
-            .copied()
-            .filter(|task_number| *task_number < next_unchecked_task)
-            .max();
-    }
-    context.tasks_by_number.keys().copied().max()
-}
-
-pub(crate) fn stale_current_task_closure_records(
-    context: &ExecutionContext,
-) -> Result<Vec<crate::execution::transitions::CurrentTaskClosureRecord>, JsonFailure> {
-    Ok(valid_current_task_closure_records(context)?
-        .into_iter()
-        .filter(|record| {
-            matches!(
-                task_closure_matches_current_workspace(context, record),
-                Ok(false)
-            )
-        })
-        .collect())
 }
 
 #[cfg(test)]

@@ -659,11 +659,8 @@ impl PublicCommand {
                             "<path>",
                             "--verification-result",
                             "pass|fail|not-run",
-                            "[--verification-summary-file",
+                            "--verification-summary-file",
                             "<path>",
-                            "when",
-                            "verification",
-                            "ran]",
                         ],
                     );
                 }
@@ -1526,6 +1523,41 @@ mod tests {
                 .expect("template should map to public close-current-task mutation")
                 .kind,
             PublicMutationKind::CloseCurrentTask
+        );
+    }
+
+    #[test]
+    fn close_current_task_public_argv_omits_human_optional_hint_text() {
+        let command = PublicCommand::CloseCurrentTask {
+            plan: String::from("docs/plan.md"),
+            task: Some(1),
+            include_result_template: true,
+        };
+
+        assert_eq!(
+            command.to_display_command(),
+            "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
+        );
+        assert_eq!(
+            command.to_argv(),
+            vec![
+                "featureforge",
+                "plan",
+                "execution",
+                "close-current-task",
+                "--plan",
+                "docs/plan.md",
+                "--task",
+                "1",
+                "--review-result",
+                "pass|fail",
+                "--review-summary-file",
+                "<path>",
+                "--verification-result",
+                "pass|fail|not-run",
+                "--verification-summary-file",
+                "<path>",
+            ]
         );
     }
 }

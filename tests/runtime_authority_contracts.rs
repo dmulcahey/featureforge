@@ -252,15 +252,17 @@ fn gate_and_stale_decisioning_do_not_split_after_reducer() {
             ));
         }
     }
-    let next_action = fs::read_to_string(repo_root.join("src/execution/next_action.rs"))
-        .expect("next_action source should be readable");
-    let execution_reentry_target = rust_function_body(&next_action, "execution_reentry_target")
-        .expect("next_action should contain `execution_reentry_target`");
+    let repair_target_selection =
+        fs::read_to_string(repo_root.join("src/execution/repair_target_selection.rs"))
+            .expect("repair_target_selection source should be readable");
+    let execution_reentry_target =
+        rust_function_body(&repair_target_selection, "execution_reentry_target")
+            .expect("repair_target_selection should contain `execution_reentry_target`");
     if execution_reentry_target.contains("ExecutionReentryTargetSource::ClosureGraphStaleTarget")
         && execution_reentry_target.contains("status.blocking_task")
     {
         violations.push(String::from(
-            "src/execution/next_action.rs::execution_reentry_target fabricates closure-graph stale targets from status.blocking_task",
+            "src/execution/repair_target_selection.rs::execution_reentry_target fabricates closure-graph stale targets from status.blocking_task",
         ));
     }
     assert!(
