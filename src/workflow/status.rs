@@ -782,12 +782,11 @@ fn resolve_route(
                     contract_state,
                     reason_codes,
                     diagnostics,
-                    plan_fidelity_review: fidelity_review_visible_for_route(
+                    plan_fidelity_review: fidelity_review_for_route(
                         &plan,
                         next_skill,
-                        &plan_fidelity_gate,
-                    )
-                    .then_some(plan_fidelity_gate),
+                        plan_fidelity_gate,
+                    ),
                     scan_truncated,
                     spec_candidate_count,
                     plan_candidate_count: 1,
@@ -817,12 +816,11 @@ fn resolve_route(
                     contract_state,
                     reason_codes: combined_reason_codes,
                     diagnostics: combined_diagnostics,
-                    plan_fidelity_review: fidelity_review_visible_for_route(
+                    plan_fidelity_review: fidelity_review_for_route(
                         &plan,
                         next_skill,
-                        &plan_fidelity_gate,
-                    )
-                    .then_some(plan_fidelity_gate),
+                        plan_fidelity_gate,
+                    ),
                     scan_truncated,
                     spec_candidate_count,
                     plan_candidate_count: 1,
@@ -869,12 +867,11 @@ fn resolve_route(
                 contract_state,
                 reason_codes,
                 diagnostics,
-                plan_fidelity_review: fidelity_review_visible_for_route(
+                plan_fidelity_review: fidelity_review_for_route(
                     &plan,
                     next_skill,
-                    &plan_fidelity_gate,
-                )
-                .then_some(plan_fidelity_gate),
+                    plan_fidelity_gate,
+                ),
                 scan_truncated,
                 spec_candidate_count,
                 plan_candidate_count: 1,
@@ -911,7 +908,9 @@ fn resolve_route(
                         crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
                     )],
                     diagnostics: Vec::new(),
-                    plan_fidelity_review: Some(implementation_fidelity_gate),
+                    plan_fidelity_review: Some(
+                        implementation_fidelity_gate.without_required_artifact_template(),
+                    ),
                     scan_truncated,
                     spec_candidate_count,
                     plan_candidate_count: 1,
@@ -1130,12 +1129,11 @@ pub(crate) fn explicit_plan_override_route(
                 next_skill: String::from(next_skill),
                 reason_codes,
                 diagnostics,
-                plan_fidelity_review: fidelity_review_visible_for_route(
+                plan_fidelity_review: fidelity_review_for_route(
                     &plan,
                     next_skill,
-                    &plan_fidelity_gate,
-                )
-                .then_some(plan_fidelity_gate),
+                    plan_fidelity_gate,
+                ),
                 reason: reason.clone(),
                 note: reason,
                 ..base_route
@@ -1157,12 +1155,11 @@ pub(crate) fn explicit_plan_override_route(
                 next_skill: String::from(next_skill),
                 reason_codes: combined_reason_codes,
                 diagnostics: combined_diagnostics,
-                plan_fidelity_review: fidelity_review_visible_for_route(
+                plan_fidelity_review: fidelity_review_for_route(
                     &plan,
                     next_skill,
-                    &plan_fidelity_gate,
-                )
-                .then_some(plan_fidelity_gate),
+                    plan_fidelity_gate,
+                ),
                 reason: reason.clone(),
                 note: reason,
                 ..base_route
@@ -1201,12 +1198,7 @@ pub(crate) fn explicit_plan_override_route(
             next_skill: String::from(next_skill),
             reason_codes,
             diagnostics,
-            plan_fidelity_review: fidelity_review_visible_for_route(
-                &plan,
-                next_skill,
-                &plan_fidelity_gate,
-            )
-            .then_some(plan_fidelity_gate),
+            plan_fidelity_review: fidelity_review_for_route(&plan, next_skill, plan_fidelity_gate),
             reason: reason.clone(),
             note: reason,
             ..base_route
@@ -1230,7 +1222,9 @@ pub(crate) fn explicit_plan_override_route(
                     crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
                 )],
                 diagnostics: Vec::new(),
-                plan_fidelity_review: Some(implementation_fidelity_gate),
+                plan_fidelity_review: Some(
+                    implementation_fidelity_gate.without_required_artifact_template(),
+                ),
                 reason: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
                 note: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
                 ..base_route
@@ -2301,7 +2295,32 @@ fn fidelity_review_visible_for_route(
             && matches!(gate.state.as_str(), "pass" | "fail"))
         || (next_skill == "featureforge:plan-eng-review"
             && plan.workflow_state == "Engineering Approved"
-            && matches!(gate.state.as_str(), "pass" | "fail"))
+            && !plan_fidelity_allows_implementation(gate))
+}
+
+fn fidelity_review_for_route(
+    plan: &WorkflowPlanCandidate,
+    next_skill: &str,
+    gate: PlanFidelityReviewReport,
+) -> Option<PlanFidelityReviewReport> {
+    if !fidelity_review_visible_for_route(plan, next_skill, &gate) {
+        return None;
+    }
+    if fidelity_review_template_visible_for_route(plan, next_skill, &gate) {
+        Some(gate)
+    } else {
+        Some(gate.without_required_artifact_template())
+    }
+}
+
+fn fidelity_review_template_visible_for_route(
+    plan: &WorkflowPlanCandidate,
+    next_skill: &str,
+    gate: &PlanFidelityReviewReport,
+) -> bool {
+    next_skill == "featureforge:plan-fidelity-review"
+        || (plan.workflow_state == "Engineering Approved"
+            && !plan_fidelity_allows_implementation(gate))
 }
 
 fn combine_plan_and_fidelity_reason_codes(

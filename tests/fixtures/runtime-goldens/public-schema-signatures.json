@@ -248,6 +248,284 @@
                 "array"
               ]
             },
+            "required_artifact_template": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {
+                "artifact_path": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "content": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "required_distinct_from_stages": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "array"
+                  ]
+                },
+                "required_requirement_ids": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "array"
+                  ]
+                },
+                "required_verified_surfaces": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "array"
+                  ]
+                },
+                "review_stage": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "review_verdict_options": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "array"
+                  ]
+                },
+                "reviewed_plan_fingerprint": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "reviewed_plan_path": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "reviewed_plan_revision": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "integer"
+                  ]
+                },
+                "reviewed_spec_fingerprint": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "reviewed_spec_path": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "reviewed_spec_revision": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "integer"
+                  ]
+                },
+                "reviewer_id_placeholder": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "reviewer_source_options": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "array"
+                  ]
+                },
+                "summary_placeholder": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                }
+              },
+              "required": [
+                "artifact_path",
+                "content",
+                "required_distinct_from_stages",
+                "required_requirement_ids",
+                "required_verified_surfaces",
+                "review_stage",
+                "review_verdict_options",
+                "reviewed_plan_fingerprint",
+                "reviewed_plan_path",
+                "reviewed_plan_revision",
+                "reviewed_spec_fingerprint",
+                "reviewed_spec_path",
+                "reviewed_spec_revision",
+                "reviewer_id_placeholder",
+                "reviewer_source_options",
+                "summary_placeholder"
+              ],
+              "types": [
+                "null",
+                "object"
+              ]
+            },
             "review_artifact_path": {
               "additional_properties": null,
               "const": null,
@@ -1712,6 +1990,284 @@
               "required": [],
               "types": [
                 "array"
+              ]
+            },
+            "required_artifact_template": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {
+                "artifact_path": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "content": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "required_distinct_from_stages": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "array"
+                  ]
+                },
+                "required_requirement_ids": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "array"
+                  ]
+                },
+                "required_verified_surfaces": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "array"
+                  ]
+                },
+                "review_stage": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "review_verdict_options": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "array"
+                  ]
+                },
+                "reviewed_plan_fingerprint": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "reviewed_plan_path": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "reviewed_plan_revision": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "integer"
+                  ]
+                },
+                "reviewed_spec_fingerprint": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "reviewed_spec_path": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "reviewed_spec_revision": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "integer"
+                  ]
+                },
+                "reviewer_id_placeholder": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                },
+                "reviewer_source_options": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "array"
+                  ]
+                },
+                "summary_placeholder": {
+                  "additional_properties": null,
+                  "const": null,
+                  "enum": [],
+                  "items": null,
+                  "min_properties": null,
+                  "properties": {},
+                  "required": [],
+                  "types": [
+                    "string"
+                  ]
+                }
+              },
+              "required": [
+                "artifact_path",
+                "content",
+                "required_distinct_from_stages",
+                "required_requirement_ids",
+                "required_verified_surfaces",
+                "review_stage",
+                "review_verdict_options",
+                "reviewed_plan_fingerprint",
+                "reviewed_plan_path",
+                "reviewed_plan_revision",
+                "reviewed_spec_fingerprint",
+                "reviewed_spec_path",
+                "reviewed_spec_revision",
+                "reviewer_id_placeholder",
+                "reviewer_source_options",
+                "summary_placeholder"
+              ],
+              "types": [
+                "null",
+                "object"
               ]
             },
             "review_artifact_path": {

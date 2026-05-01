@@ -29,12 +29,19 @@ Stable finding IDs:
 - `TASK_SPEC_REFERENCE_REQUIRED`
 - `TASK_SCOPE_SPEC_MISMATCH`
 
-Return exactly one markdown artifact using this shape:
+Return exactly one markdown artifact. If your briefing includes
+`plan_fidelity_review.required_artifact_template`, write the supplied
+`artifact_path` and use the supplied `content` verbatim, changing only the
+reviewer id, review verdict, and findings/summary content placeholders. Do not
+invent, rename, reorder, omit, or hand-type parseable headers when a runtime
+template is available.
+
+If no runtime template is supplied, use this shape:
 
 ## Plan Fidelity Review Summary
 
 **Review Stage:** featureforge:plan-fidelity-review
-**Review Verdict:** pass | needs-changes
+**Review Verdict:** pass | fail
 **Reviewed Plan:** `<repo-relative-plan-path>`
 **Reviewed Plan Revision:** <integer>
 **Reviewed Plan Fingerprint:** <sha256>

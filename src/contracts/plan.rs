@@ -69,6 +69,29 @@ pub const PLAN_FIDELITY_REQUIRED_SURFACES: [&str; 5] = [
 ];
 pub const PLAN_FIDELITY_DISTINCT_STAGES: [&str; 2] =
     ["featureforge:writing-plans", "featureforge:plan-eng-review"];
+pub const PLAN_FIDELITY_REVIEWER_SOURCE_OPTIONS: [&str; 2] =
+    ["fresh-context-subagent", "cross-model"];
+pub const PLAN_FIDELITY_REVIEW_VERDICT_OPTIONS: [&str; 2] = ["pass", "fail"];
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlanFidelityReviewArtifactTemplate {
+    pub artifact_path: String,
+    pub content: String,
+    pub review_stage: String,
+    pub review_verdict_options: Vec<String>,
+    pub reviewed_plan_path: String,
+    pub reviewed_plan_revision: u32,
+    pub reviewed_plan_fingerprint: String,
+    pub reviewed_spec_path: String,
+    pub reviewed_spec_revision: u32,
+    pub reviewed_spec_fingerprint: String,
+    pub reviewer_source_options: Vec<String>,
+    pub reviewer_id_placeholder: String,
+    pub required_distinct_from_stages: Vec<String>,
+    pub required_verified_surfaces: Vec<String>,
+    pub required_requirement_ids: Vec<String>,
+    pub summary_placeholder: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PlanFidelityReviewReport {
@@ -83,6 +106,8 @@ pub struct PlanFidelityReviewReport {
     pub verified_spec_reference_fidelity: bool,
     pub reason_codes: Vec<String>,
     pub diagnostics: Vec<ContractDiagnostic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_artifact_template: Option<PlanFidelityReviewArtifactTemplate>,
 }
 
 impl PlanFidelityReviewReport {
@@ -117,6 +142,7 @@ impl PlanFidelityReviewReport {
             verified_spec_reference_fidelity: false,
             reason_codes,
             diagnostics,
+            required_artifact_template: None,
         }
     }
 
@@ -126,6 +152,11 @@ impl PlanFidelityReviewReport {
             && self.verified_task_contract
             && self.verified_task_determinism
             && self.verified_spec_reference_fidelity
+    }
+
+    pub fn without_required_artifact_template(mut self) -> Self {
+        self.required_artifact_template = None;
+        self
     }
 }
 
@@ -395,7 +426,11 @@ pub fn evaluate_plan_fidelity_review(
 ) -> PlanFidelityReviewReport {
     let candidates = plan_fidelity_review_artifact_candidates(repo_root, plan);
     if candidates.is_empty() {
-        return missing_plan_fidelity_review();
+        return attach_required_plan_fidelity_artifact_template(
+            missing_plan_fidelity_review(),
+            spec,
+            plan,
+        );
     }
 
     let mut stale_candidate = None;
@@ -453,20 +488,25 @@ pub fn evaluate_plan_fidelity_review(
             .map(|report| report.state.as_str())
             .collect::<BTreeSet<_>>();
         if verdicts.len() > 1 {
-            return invalid_plan_fidelity_review(
-                String::new(),
-                "ambiguous_plan_fidelity_review_artifact",
-                "Multiple current plan-fidelity review artifacts bind to this plan fingerprint with conflicting verdicts."
-                    .to_owned(),
+            return attach_required_plan_fidelity_artifact_template(
+                invalid_plan_fidelity_review(
+                    String::new(),
+                    "ambiguous_plan_fidelity_review_artifact",
+                    "Multiple current plan-fidelity review artifacts bind to this plan fingerprint with conflicting verdicts."
+                        .to_owned(),
+                ),
+                spec,
+                plan,
             );
         }
     }
     if let Some(report) = current_reports.into_iter().next() {
-        return report;
+        return attach_required_plan_fidelity_artifact_template(report, spec, plan);
     }
-    stale_candidate
+    let report = stale_candidate
         .or(invalid_candidate)
-        .unwrap_or_else(missing_plan_fidelity_review)
+        .unwrap_or_else(missing_plan_fidelity_review);
+    attach_required_plan_fidelity_artifact_template(report, spec, plan)
 }
 
 fn evaluate_parsed_plan_fidelity_review_artifact(
@@ -498,10 +538,7 @@ fn evaluate_parsed_plan_fidelity_review_artifact(
     }
 
     if artifact.review_stage != PLAN_FIDELITY_REVIEW_STAGE
-        || !matches!(
-            artifact.reviewer_source.as_str(),
-            "fresh-context-subagent" | "cross-model"
-        )
+        || !PLAN_FIDELITY_REVIEWER_SOURCE_OPTIONS.contains(&artifact.reviewer_source.as_str())
         || artifact.reviewer_id.trim().is_empty()
     {
         push_diagnostic(
@@ -603,15 +640,127 @@ fn evaluate_parsed_plan_fidelity_review_artifact(
         verified_spec_reference_fidelity,
         reason_codes,
         diagnostics,
+        required_artifact_template: None,
     }
+}
+
+fn attach_required_plan_fidelity_artifact_template(
+    mut report: PlanFidelityReviewReport,
+    spec: &SpecDocument,
+    plan: &PlanDocument,
+) -> PlanFidelityReviewReport {
+    if !plan_fidelity_report_requires_artifact_template(&report) {
+        return report;
+    }
+    let artifact_path = if report.review_artifact_path.trim().is_empty() {
+        default_plan_fidelity_review_artifact_path(plan)
+    } else {
+        report.review_artifact_path.clone()
+    };
+    report.required_artifact_template = Some(build_plan_fidelity_review_artifact_template(
+        spec,
+        plan,
+        artifact_path,
+    ));
+    report
+}
+
+fn plan_fidelity_report_requires_artifact_template(report: &PlanFidelityReviewReport) -> bool {
+    matches!(
+        report.state.as_str(),
+        "missing" | "stale" | "invalid" | "fail"
+    )
+}
+
+fn build_plan_fidelity_review_artifact_template(
+    spec: &SpecDocument,
+    plan: &PlanDocument,
+    artifact_path: String,
+) -> PlanFidelityReviewArtifactTemplate {
+    let reviewed_plan_fingerprint = sha256_hex(plan.source.as_bytes());
+    let reviewed_spec_fingerprint = sha256_hex(spec.source.as_bytes());
+    let reviewer_source_options = PLAN_FIDELITY_REVIEWER_SOURCE_OPTIONS
+        .iter()
+        .map(|source| (*source).to_owned())
+        .collect::<Vec<_>>();
+    let review_verdict_options = PLAN_FIDELITY_REVIEW_VERDICT_OPTIONS
+        .iter()
+        .map(|verdict| (*verdict).to_owned())
+        .collect::<Vec<_>>();
+    let required_distinct_from_stages = PLAN_FIDELITY_DISTINCT_STAGES
+        .iter()
+        .map(|stage| (*stage).to_owned())
+        .collect::<Vec<_>>();
+    let required_verified_surfaces = PLAN_FIDELITY_REQUIRED_SURFACES
+        .iter()
+        .map(|surface| (*surface).to_owned())
+        .collect::<Vec<_>>();
+    let required_requirement_ids = spec
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+    let reviewer_id_placeholder = String::from("<reviewer-id>");
+    let summary_placeholder = String::from("<review-summary>");
+    let content = format!(
+        "## Plan Fidelity Review Summary\n\n\
+**Review Stage:** {review_stage}\n\
+**Review Verdict:** <review-verdict-pass-or-fail>\n\
+**Reviewed Plan:** `{reviewed_plan_path}`\n\
+**Reviewed Plan Revision:** {reviewed_plan_revision}\n\
+**Reviewed Plan Fingerprint:** {reviewed_plan_fingerprint}\n\
+**Reviewed Spec:** `{reviewed_spec_path}`\n\
+**Reviewed Spec Revision:** {reviewed_spec_revision}\n\
+**Reviewed Spec Fingerprint:** {reviewed_spec_fingerprint}\n\
+**Reviewer Source:** fresh-context-subagent\n\
+**Reviewer ID:** {reviewer_id_placeholder}\n\
+**Distinct From Stages:** {distinct_stages}\n\
+**Verified Surfaces:** {verified_surfaces}\n\
+**Verified Requirement IDs:** {requirement_ids}\n\n\
+## Findings Summary\n\n\
+{summary_placeholder}\n",
+        review_stage = PLAN_FIDELITY_REVIEW_STAGE,
+        reviewed_plan_path = plan.path.as_str(),
+        reviewed_plan_revision = plan.plan_revision,
+        reviewed_plan_fingerprint = reviewed_plan_fingerprint.as_str(),
+        reviewed_spec_path = spec.path.as_str(),
+        reviewed_spec_revision = spec.spec_revision,
+        reviewed_spec_fingerprint = reviewed_spec_fingerprint.as_str(),
+        reviewer_id_placeholder = reviewer_id_placeholder.as_str(),
+        distinct_stages = required_distinct_from_stages.join(", "),
+        verified_surfaces = required_verified_surfaces.join(", "),
+        requirement_ids = required_requirement_ids.join(", "),
+        summary_placeholder = summary_placeholder.as_str(),
+    );
+
+    PlanFidelityReviewArtifactTemplate {
+        artifact_path,
+        content,
+        review_stage: PLAN_FIDELITY_REVIEW_STAGE.to_owned(),
+        review_verdict_options,
+        reviewed_plan_path: plan.path.clone(),
+        reviewed_plan_revision: plan.plan_revision,
+        reviewed_plan_fingerprint,
+        reviewed_spec_path: spec.path.clone(),
+        reviewed_spec_revision: spec.spec_revision,
+        reviewed_spec_fingerprint,
+        reviewer_source_options,
+        reviewer_id_placeholder,
+        required_distinct_from_stages,
+        required_verified_surfaces,
+        required_requirement_ids,
+        summary_placeholder,
+    }
+}
+
+fn default_plan_fidelity_review_artifact_path(plan: &PlanDocument) -> String {
+    let plan_stem = plan_fidelity_plan_stem(&plan.path);
+    format!(".featureforge/reviews/{plan_stem}-plan-fidelity.md")
 }
 
 fn plan_fidelity_review_artifact_candidates(repo_root: &Path, plan: &PlanDocument) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    let plan_stem = Path::new(&plan.path)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("plan");
+    let plan_stem = plan_fidelity_plan_stem(&plan.path);
     let default = repo_root
         .join(".featureforge")
         .join("reviews")
@@ -636,6 +785,13 @@ fn plan_fidelity_review_artifact_candidates(repo_root: &Path, plan: &PlanDocumen
     }
     candidates.sort();
     candidates
+}
+
+fn plan_fidelity_plan_stem(plan_path: &str) -> &str {
+    Path::new(plan_path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("plan")
 }
 
 fn missing_plan_fidelity_review() -> PlanFidelityReviewReport {

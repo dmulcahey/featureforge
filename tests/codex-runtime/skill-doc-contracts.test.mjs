@@ -960,13 +960,21 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   const planFidelityReview = readUtf8(getSkillPath('plan-fidelity-review'));
   assert.match(planFidelityReview, /task-contract fidelity/);
   assert.match(planFidelityReview, /review\/plan-task-contract\.md/);
+  assert.match(planFidelityReview, /plan_fidelity_review\.required_artifact_template/);
+  assert.match(planFidelityReview, /template `content` verbatim/);
+  assert.match(planFidelityReview, /Do not invent, rename, reorder, omit, or hand-type parseable artifact headers/);
   assert.match(planFidelityReview, /review artifact must record exactly these `Verified Surfaces`/);
   assert.match(planFidelityReview, /task_contract/);
   assert.match(planFidelityReview, /task_determinism/);
   assert.match(planFidelityReview, /spec_reference_fidelity/);
 
   const planFidelityPrompt = readUtf8(path.join(REPO_ROOT, 'skills/plan-fidelity-review/reviewer-prompt.md'));
+  assert.match(planFidelityPrompt, /plan_fidelity_review\.required_artifact_template/);
+  assert.match(planFidelityPrompt, /use the supplied `content` verbatim/);
+  assert.match(planFidelityPrompt, /Do not\s+invent, rename, reorder, omit, or hand-type parseable headers/);
   assert.match(planFidelityPrompt, /verify every task against the approved task contract in `review\/plan-task-contract\.md`/);
+  assert.match(planFidelityPrompt, /\*\*Review Verdict:\*\* pass \| fail/);
+  assert.doesNotMatch(planFidelityPrompt, /pass \| needs-changes/);
   assert.match(planFidelityPrompt, /\*\*Verified Surfaces:\*\* requirement_index, execution_topology, task_contract, task_determinism, spec_reference_fidelity/);
   assert.match(planFidelityPrompt, /TASK_MISSING_GOAL/);
   assert.match(planFidelityPrompt, /TASK_DONE_WHEN_NON_DETERMINISTIC/);

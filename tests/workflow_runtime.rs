@@ -3874,6 +3874,24 @@ fn workflow_status_routes_engineering_reviewed_draft_without_fidelity_artifact_t
         "missing_plan_fidelity_review_artifact"
     );
     assert_eq!(status_json["plan_fidelity_review"]["state"], "missing");
+    let template = &status_json["plan_fidelity_review"]["required_artifact_template"];
+    assert_eq!(
+        template["artifact_path"],
+        ".featureforge/reviews/2026-01-22-document-review-system-plan-fidelity.md"
+    );
+    assert_eq!(template["reviewed_plan_path"], plan_path);
+    assert_eq!(template["reviewed_spec_path"], spec_path);
+    assert_eq!(
+        template["required_verified_surfaces"],
+        serde_json::json!(PLAN_FIDELITY_REQUIRED_SURFACES)
+    );
+    assert!(
+        template["content"]
+            .as_str()
+            .expect("template content should be a string")
+            .contains("**Reviewer ID:** <reviewer-id>"),
+        "active plan-fidelity route should expose fillable artifact content: {template}"
+    );
     let status_text =
         serde_json::to_string(&status_json).expect("status json should serialize cleanly");
     assert!(
@@ -3998,6 +4016,12 @@ fn canonical_workflow_status_routes_draft_plan_with_non_pass_fidelity_artifact_t
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
     assert_eq!(status_json["plan_fidelity_review"]["state"], "fail");
+    assert!(
+        status_json["plan_fidelity_review"]
+            .get("required_artifact_template")
+            .is_none(),
+        "draft engineering-review route should not expose the fidelity template after a reviewer returned a fail verdict: {status_json}"
+    );
     let status_text =
         serde_json::to_string(&status_json).expect("status json should serialize cleanly");
     assert!(
@@ -4272,6 +4296,12 @@ fn workflow_status_blocks_engineering_approved_plan_without_fidelity_artifact() 
         "engineering_approval_missing_plan_fidelity_review"
     );
     assert_eq!(status_json["plan_fidelity_review"]["state"], "missing");
+    assert!(
+        status_json["plan_fidelity_review"]
+            .get("required_artifact_template")
+            .is_some(),
+        "Engineering Approved plans blocked on fidelity should expose the artifact template: {status_json}"
+    );
     let status_text =
         serde_json::to_string(&status_json).expect("status json should serialize cleanly");
     assert!(
@@ -4553,6 +4583,12 @@ fn workflow_status_allows_engineering_approved_plan_with_current_pass_fidelity_a
     assert_eq!(status_json["status"], "implementation_ready");
     assert_eq!(status_json["next_skill"], "");
     assert_eq!(status_json["plan_fidelity_review"]["state"], "pass");
+    assert!(
+        status_json["plan_fidelity_review"]
+            .get("required_artifact_template")
+            .is_none(),
+        "implementation-ready routes must not expose a required artifact template: {status_json}"
+    );
     assert_eq!(
         status_json["plan_fidelity_review"]["verified_requirement_index"],
         true

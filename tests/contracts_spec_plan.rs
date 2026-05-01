@@ -13,7 +13,7 @@ use featureforge::contracts::plan::{
     evaluate_plan_fidelity_review, parse_plan_file,
 };
 use featureforge::contracts::spec::parse_spec_file;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-22-plan-contract-fixture-design.md";
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-plan-contract-fixture.md";
@@ -2986,6 +2986,125 @@ fn analyze_plan_reports_missing_plan_fidelity_review_artifact_for_draft_plan() {
             .iter()
             .filter_map(Value::as_str)
             .any(|code| code.contains("plan_fidelity"))
+    );
+}
+
+#[test]
+fn analyze_plan_returns_fillable_plan_fidelity_artifact_template() {
+    let repo_root = unique_temp_dir("contract-analyze-plan-fidelity-template");
+    let state_dir = unique_temp_dir("contract-analyze-plan-fidelity-template-state");
+    install_valid_draft_artifacts(&repo_root);
+
+    let report = parse_success_json(
+        &run_rust(
+            &repo_root,
+            &state_dir,
+            &[
+                "analyze-plan",
+                "--spec",
+                SPEC_REL,
+                "--plan",
+                PLAN_REL,
+                "--format",
+                "json",
+            ],
+            "rust analyze draft plan with required plan-fidelity template",
+        ),
+        "rust analyze draft plan with required plan-fidelity template",
+    );
+
+    let template = &report["plan_fidelity_review"]["required_artifact_template"];
+    assert_eq!(
+        template["artifact_path"],
+        ".featureforge/reviews/2026-03-22-plan-contract-fixture-plan-fidelity.md"
+    );
+    assert_eq!(
+        template["review_stage"],
+        "featureforge:plan-fidelity-review"
+    );
+    assert_eq!(template["review_verdict_options"], json!(["pass", "fail"]));
+    assert_eq!(template["reviewed_plan_path"], PLAN_REL);
+    assert_eq!(template["reviewed_plan_revision"], 1);
+    assert_eq!(
+        template["reviewed_plan_fingerprint"],
+        report["plan_fingerprint"]
+    );
+    assert_eq!(template["reviewed_spec_path"], SPEC_REL);
+    assert_eq!(template["reviewed_spec_revision"], 1);
+    assert_eq!(
+        template["reviewed_spec_fingerprint"],
+        report["spec_fingerprint"]
+    );
+    assert_eq!(
+        template["reviewer_source_options"],
+        json!(["fresh-context-subagent", "cross-model"])
+    );
+    assert_eq!(
+        template["required_distinct_from_stages"],
+        json!(["featureforge:writing-plans", "featureforge:plan-eng-review"])
+    );
+    assert_eq!(
+        template["required_verified_surfaces"],
+        json!(PLAN_FIDELITY_REQUIRED_SURFACES)
+    );
+    let spec = parse_spec_file(repo_root.join(SPEC_REL)).expect("spec fixture should parse");
+    let requirement_ids = spec
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(template["required_requirement_ids"], json!(requirement_ids));
+
+    let template_content = template["content"]
+        .as_str()
+        .expect("required artifact template content should be a string");
+    assert!(template_content.contains("## Plan Fidelity Review Summary"));
+    assert!(template_content.contains("**Review Verdict:** <review-verdict-pass-or-fail>"));
+    assert!(template_content.contains("**Reviewer ID:** <reviewer-id>"));
+    assert!(template_content.contains("<review-summary>"));
+
+    let artifact_rel = template["artifact_path"]
+        .as_str()
+        .expect("required artifact template should expose artifact path");
+    let artifact_path = repo_root.join(artifact_rel);
+    fs::create_dir_all(
+        artifact_path
+            .parent()
+            .expect("template artifact path should have a parent"),
+    )
+    .expect("template artifact parent should be created");
+    let filled = template_content
+        .replace("<review-verdict-pass-or-fail>", "pass")
+        .replace("<reviewer-id>", "template-reviewer-1")
+        .replace(
+            "<review-summary>",
+            "The reviewer checked every required surface and found no issues.",
+        );
+    fs::write(&artifact_path, filled).expect("filled template artifact should write");
+
+    let pass_report = parse_success_json(
+        &run_rust(
+            &repo_root,
+            &state_dir,
+            &[
+                "analyze-plan",
+                "--spec",
+                SPEC_REL,
+                "--plan",
+                PLAN_REL,
+                "--format",
+                "json",
+            ],
+            "rust analyze draft plan with filled plan-fidelity template",
+        ),
+        "rust analyze draft plan with filled plan-fidelity template",
+    );
+    assert_eq!(pass_report["plan_fidelity_review"]["state"], "pass");
+    assert!(
+        pass_report["plan_fidelity_review"]
+            .get("required_artifact_template")
+            .is_none(),
+        "passing plan-fidelity gate should not require another artifact template: {pass_report}"
     );
 }
 

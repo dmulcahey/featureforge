@@ -2137,6 +2137,42 @@
             "reason_codes": [
               "missing_plan_fidelity_review_artifact"
             ],
+            "required_artifact_template": {
+              "artifact_path": ".featureforge/reviews/runtime-golden-execution-plan-plan-fidelity.md",
+              "content": "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** <review-verdict-pass-or-fail>\n**Reviewed Plan:** `docs/featureforge/plans/runtime-golden-execution-plan.md`\n**Reviewed Plan Revision:** 1\n**Reviewed Plan Fingerprint:** <SHA256>\n**Reviewed Spec:** `docs/featureforge/specs/runtime-golden-execution-design.md`\n**Reviewed Spec Revision:** 1\n**Reviewed Spec Fingerprint:** <SHA256>\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** <reviewer-id>\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** requirement_index, execution_topology, task_contract, task_determinism, spec_reference_fidelity\n**Verified Requirement IDs:** REQ-001, REQ-002\n\n## Findings Summary\n\n<review-summary>\n",
+              "required_distinct_from_stages": [
+                "featureforge:writing-plans",
+                "featureforge:plan-eng-review"
+              ],
+              "required_requirement_ids": [
+                "REQ-001",
+                "REQ-002"
+              ],
+              "required_verified_surfaces": [
+                "requirement_index",
+                "execution_topology",
+                "task_contract",
+                "task_determinism",
+                "spec_reference_fidelity"
+              ],
+              "review_stage": "featureforge:plan-fidelity-review",
+              "review_verdict_options": [
+                "pass",
+                "fail"
+              ],
+              "reviewed_plan_fingerprint": "<SHA256>",
+              "reviewed_plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+              "reviewed_plan_revision": 1,
+              "reviewed_spec_fingerprint": "<SHA256>",
+              "reviewed_spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+              "reviewed_spec_revision": 1,
+              "reviewer_id_placeholder": "<reviewer-id>",
+              "reviewer_source_options": [
+                "fresh-context-subagent",
+                "cross-model"
+              ],
+              "summary_placeholder": "<review-summary>"
+            },
             "review_artifact_path": "",
             "reviewer_stage": "",
             "state": "missing",
