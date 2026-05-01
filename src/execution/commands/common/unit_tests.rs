@@ -1225,6 +1225,7 @@ fn close_current_task_outcome_class_treats_review_fail_verification_pass_as_nega
 
 #[test]
 fn blocked_close_current_task_output_from_operator_keeps_shared_follow_up_and_command() {
+    let plan_with_spaces = "docs/featureforge/plans/example plan.md";
     let operator = ExecutionRoutingState {
         route_decision: None,
         route: WorkflowRoute {
@@ -1258,11 +1259,9 @@ fn blocked_close_current_task_output_from_operator_keeps_shared_follow_up_and_co
         recording_context: None,
         execution_command_context: None,
         next_action: String::from("repair review state / reenter execution"),
-        recommended_public_command: repair_review_state_public_command(
-            "docs/featureforge/plans/example.md",
-        ),
+        recommended_public_command: repair_review_state_public_command(plan_with_spaces),
         recommended_command: Some(String::from(
-            "featureforge plan execution repair-review-state --plan docs/featureforge/plans/example.md",
+            "featureforge plan execution repair-review-state --plan stale-display-path.md",
         )),
         blocking_scope: None,
         blocking_task: Some(3),
@@ -1292,8 +1291,19 @@ fn blocked_close_current_task_output_from_operator_keeps_shared_follow_up_and_co
     assert_eq!(
         output.recommended_command.as_deref(),
         Some(
-            "featureforge plan execution repair-review-state --plan docs/featureforge/plans/example.md"
+            "featureforge plan execution repair-review-state --plan docs/featureforge/plans/example plan.md"
         )
+    );
+    assert_eq!(
+        output.recommended_public_command_argv,
+        Some(vec![
+            String::from("featureforge"),
+            String::from("plan"),
+            String::from("execution"),
+            String::from("repair-review-state"),
+            String::from("--plan"),
+            String::from(plan_with_spaces),
+        ])
     );
     assert_eq!(output.rederive_via_workflow_operator, None);
 }

@@ -29,6 +29,7 @@ pub(in crate::execution::commands) fn current_workflow_operator_with_runtime_sta
     routing.phase_detail = route_decision.phase_detail;
     routing.review_state_status = route_decision.review_state_status;
     routing.next_action = route_decision.next_action;
+    routing.recommended_public_command = route_decision.recommended_public_command;
     routing.recommended_command = route_decision.recommended_command;
     Ok((routing, runtime_state))
 }
@@ -93,49 +94,77 @@ pub(in crate::execution::commands) fn recommended_operator_command(
     workflow_operator_requery_command(plan, external_review_result_ready)
 }
 
+pub(in crate::execution::commands) struct CloseCurrentTaskFollowUpRecommendation {
+    pub(in crate::execution::commands) required_follow_up: Option<String>,
+    pub(in crate::execution::commands) recommended_command: Option<String>,
+    pub(in crate::execution::commands) recommended_public_command_argv: Option<Vec<String>>,
+}
+
+fn close_current_task_public_command_surfaces(
+    command: Option<&PublicCommand>,
+) -> (Option<String>, Option<Vec<String>>) {
+    (
+        command.map(PublicCommand::to_display_command),
+        recommended_public_command_argv(command),
+    )
+}
+
 pub(in crate::execution::commands) fn close_current_task_command_matches_follow_up(
     required_follow_up: Option<&str>,
-    recommended_command: &str,
+    recommended_command: &PublicCommand,
 ) -> bool {
     match required_follow_up {
-        Some("execution_reentry") => {
-            recommended_command.starts_with("featureforge plan execution begin --plan ")
-                || recommended_command.starts_with("featureforge plan execution reopen --plan ")
-                || recommended_command.starts_with("featureforge plan execution complete --plan ")
+        Some("execution_reentry") => matches!(
+            recommended_command,
+            PublicCommand::Begin { .. }
+                | PublicCommand::Reopen { .. }
+                | PublicCommand::Complete { .. }
+        ),
+        Some("repair_review_state") => {
+            matches!(recommended_command, PublicCommand::RepairReviewState { .. })
         }
-        Some("repair_review_state") => recommended_command
-            .starts_with("featureforge plan execution repair-review-state --plan "),
         Some("request_external_review")
         | Some("wait_for_external_review_result")
         | Some("run_verification") => {
-            recommended_command.starts_with("featureforge workflow operator --plan ")
+            matches!(recommended_command, PublicCommand::WorkflowOperator { .. })
         }
-        Some("record_handoff") => {
-            recommended_command.starts_with("featureforge plan execution transfer --plan ")
-        }
+        Some("record_handoff") => matches!(
+            recommended_command,
+            PublicCommand::TransferHandoff { .. } | PublicCommand::TransferRepairStep { .. }
+        ),
         Some("advance_late_stage") | Some("resolve_release_blocker") => {
-            recommended_command.contains("featureforge plan execution advance-late-stage --plan")
+            matches!(recommended_command, PublicCommand::AdvanceLateStage { .. })
         }
         Some(_) | None => false,
     }
 }
 
-pub(in crate::execution::commands) fn close_current_task_follow_up_and_command(
+pub(in crate::execution::commands) fn close_current_task_recommendation_for_follow_up(
+    required_follow_up: Option<&str>,
     operator: &ExecutionRoutingState,
-) -> (Option<String>, Option<String>) {
-    let required_follow_up = close_current_task_required_follow_up(operator);
-    let recommended_command = required_follow_up.as_ref().and_then(|follow_up| {
+) -> (Option<String>, Option<Vec<String>>) {
+    let recommended_public_command = required_follow_up.and_then(|follow_up| {
         operator
-            .recommended_command
-            .clone()
-            .filter(|recommended_command| {
-                close_current_task_command_matches_follow_up(
-                    Some(follow_up.as_str()),
-                    recommended_command.as_str(),
-                )
+            .recommended_public_command
+            .as_ref()
+            .filter(|command| {
+                close_current_task_command_matches_follow_up(Some(follow_up), command)
             })
     });
-    (required_follow_up, recommended_command)
+    close_current_task_public_command_surfaces(recommended_public_command)
+}
+
+pub(in crate::execution::commands) fn close_current_task_follow_up_and_command(
+    operator: &ExecutionRoutingState,
+) -> CloseCurrentTaskFollowUpRecommendation {
+    let required_follow_up = close_current_task_required_follow_up(operator);
+    let (recommended_command, recommended_public_command_argv) =
+        close_current_task_recommendation_for_follow_up(required_follow_up.as_deref(), operator);
+    CloseCurrentTaskFollowUpRecommendation {
+        required_follow_up,
+        recommended_command,
+        recommended_public_command_argv,
+    }
 }
 
 pub(in crate::execution::commands) fn with_close_current_task_operator_blocker_metadata(
@@ -145,7 +174,8 @@ pub(in crate::execution::commands) fn with_close_current_task_operator_blocker_m
     output.blocking_scope = operator.blocking_scope.clone();
     output.blocking_task = operator.blocking_task;
     output.blocking_reason_codes = operator.blocking_reason_codes.clone();
-    output.authoritative_next_action = operator.recommended_command.clone();
+    output.authoritative_next_action =
+        close_current_task_public_command_surfaces(operator.recommended_public_command.as_ref()).0;
     output
 }
 
@@ -155,8 +185,7 @@ pub(in crate::execution::commands) fn blocked_close_current_task_output_from_ope
     operator: &ExecutionRoutingState,
     trace_summary: &str,
 ) -> CloseCurrentTaskOutput {
-    let (required_follow_up, recommended_command) =
-        close_current_task_follow_up_and_command(operator);
+    let follow_up = close_current_task_follow_up_and_command(operator);
     with_close_current_task_operator_blocker_metadata(
         CloseCurrentTaskOutput {
             action: String::from("blocked"),
@@ -167,9 +196,10 @@ pub(in crate::execution::commands) fn blocked_close_current_task_output_from_ope
             superseded_task_closure_ids: Vec::new(),
             closure_record_id: None,
             code: None,
-            recommended_command,
+            recommended_command: follow_up.recommended_command,
+            recommended_public_command_argv: follow_up.recommended_public_command_argv,
             rederive_via_workflow_operator: None,
-            required_follow_up,
+            required_follow_up: follow_up.required_follow_up,
             blocking_scope: None,
             blocking_task: None,
             blocking_reason_codes: Vec::new(),
@@ -190,6 +220,7 @@ pub(in crate::execution::commands) fn blocked_close_current_task_output(
         closure_record_id,
         code,
         recommended_command,
+        recommended_public_command_argv,
         rederive_via_workflow_operator,
         required_follow_up,
         trace_summary,
@@ -204,6 +235,7 @@ pub(in crate::execution::commands) fn blocked_close_current_task_output(
         closure_record_id,
         code,
         recommended_command,
+        recommended_public_command_argv,
         rederive_via_workflow_operator,
         required_follow_up,
         blocking_scope: None,

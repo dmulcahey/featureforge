@@ -58,6 +58,22 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
         );
     }
 
+    let operator_outputs = read_repo_file("src/execution/commands/common/operator_outputs.rs");
+    for forbidden in [
+        "recommended_command.starts_with(",
+        "recommended_command.contains(",
+        "operator.recommended_command.clone().filter",
+    ] {
+        assert!(
+            !operator_outputs.contains(forbidden),
+            "close-current-task follow-up routing must not recover authority from rendered strings via `{forbidden}`"
+        );
+    }
+    assert!(
+        operator_outputs.contains("operator.recommended_public_command"),
+        "close-current-task follow-up routing should use typed public command authority"
+    );
+
     let eligibility = read_repo_file("src/execution/command_eligibility.rs");
     let route_guard_start = eligibility
         .find("fn route_exposes_public_mutation_request")

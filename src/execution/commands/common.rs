@@ -14,9 +14,10 @@ pub(super) use crate::cli::plan_execution::{
 };
 pub(super) use crate::diagnostics::{FailureClass, JsonFailure};
 pub(super) use crate::execution::command_eligibility::{
-    PublicMutationKind, PublicMutationRequest, PublicTransferMode, blocked_follow_up_for_operator,
-    close_current_task_required_follow_up, late_stage_required_follow_up,
-    negative_result_follow_up, operator_requires_review_state_repair,
+    PublicCommand, PublicMutationKind, PublicMutationRequest, PublicTransferMode,
+    blocked_follow_up_for_operator, close_current_task_required_follow_up,
+    late_stage_required_follow_up, negative_result_follow_up,
+    operator_requires_review_state_repair, recommended_public_command_argv,
     release_readiness_required_follow_up, require_public_mutation,
 };
 pub(super) use crate::execution::command_model::{

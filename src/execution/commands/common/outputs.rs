@@ -19,6 +19,8 @@ pub struct CloseCurrentTaskOutput {
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,6 +106,7 @@ pub(in crate::execution::commands) fn close_current_task_already_current_output(
         closure_record_id: Some(closure_record_id),
         code: None,
         recommended_command: None,
+        recommended_public_command_argv: None,
         rederive_via_workflow_operator: None,
         required_follow_up: None,
         blocking_scope: None,
@@ -256,6 +259,7 @@ pub(in crate::execution::commands) struct BlockedCloseCurrentTaskOutputContext<'
     pub(in crate::execution::commands) closure_record_id: Option<String>,
     pub(in crate::execution::commands) code: Option<String>,
     pub(in crate::execution::commands) recommended_command: Option<String>,
+    pub(in crate::execution::commands) recommended_public_command_argv: Option<Vec<String>>,
     pub(in crate::execution::commands) rederive_via_workflow_operator: Option<bool>,
     pub(in crate::execution::commands) required_follow_up: Option<String>,
     pub(in crate::execution::commands) trace_summary: &'a str,
