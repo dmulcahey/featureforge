@@ -4,8 +4,14 @@ function getEvalModel(env) {
   return env.OPENAI_EVAL_MODEL || env.EVAL_MODEL || null;
 }
 
+function isEnabledValue(value) {
+  return value === '1' || String(value).toLowerCase() === 'true';
+}
+
 export function evalsEnabled(env = process.env) {
-  return env.FEATUREFORGE_RUN_EVALS === '1' || env.RUN_EVALS === '1' || env.EVALS === '1';
+  return isEnabledValue(env.FEATUREFORGE_RUN_EVALS)
+    || isEnabledValue(env.RUN_EVALS)
+    || isEnabledValue(env.EVALS);
 }
 
 export function requireEvalEnv(env = process.env) {
@@ -64,6 +70,7 @@ export async function runJsonJudgeEval({ name, system, prompt }, env = process.e
   const parsed = JSON.parse(outputText);
   const usage = body.usage || {};
   const record = {
+    ...parsed,
     name,
     passed: Boolean(parsed.passed),
     summary: parsed.summary ?? null,

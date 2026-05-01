@@ -1,8 +1,5 @@
 #[path = "support/bin.rs"]
 mod bin_support;
-#[allow(dead_code)]
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/workflow.rs"]
@@ -148,6 +145,25 @@ fn harness_state_file_path(repo: &Path, state: &Path) -> std::path::PathBuf {
     harness_state_path(state, &identity.repo_slug, &identity.branch_name)
 }
 
+fn read_authoritative_harness_state(repo: &Path, state: &Path, purpose: &str) -> Value {
+    let state_path = harness_state_file_path(repo, state);
+    featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(&state_path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "event-authoritative workflow-entry harness state should reduce for {purpose} at {}: {}",
+                state_path.display(),
+                error.message
+            )
+        })
+        .unwrap_or_else(|| {
+            serde_json::from_str(
+                &fs::read_to_string(&state_path)
+                    .unwrap_or_else(|error| panic!("harness state should read for {purpose}: {error}")),
+            )
+            .unwrap_or_else(|error| panic!("harness state should parse for {purpose}: {error}"))
+        })
+}
+
 fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
     let state_path = harness_state_file_path(repo, state);
     if let Some(parent) = state_path.parent() {
@@ -158,10 +174,8 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
         serde_json::to_string_pretty(payload).expect("harness state should serialize"),
     )
     .expect("harness state should be writable");
-    let events_path = state_path.with_file_name("events.jsonl");
-    let legacy_backup_path = state_path.with_file_name("state.legacy.json");
-    let _ = fs::remove_file(events_path);
-    let _ = fs::remove_file(legacy_backup_path);
+    featureforge::execution::event_log::sync_fixture_event_log_for_tests(&state_path, payload)
+        .expect("workflow-entry harness fixture should sync typed event authority");
 }
 
 fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
@@ -475,11 +489,7 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     setup_task_boundary_blocked_case(repo, state, plan_rel);
 
-    let mut harness_state_json: Value = serde_json::from_str(
-        &fs::read_to_string(harness_state_file_path(repo, state))
-            .expect("harness state should be readable before FS-09 fixture mutation"),
-    )
-    .expect("harness state should remain valid json before FS-09 fixture mutation");
+    let mut harness_state_json = read_authoritative_harness_state(repo, state, "FS-09 mutation");
     harness_state_json["current_task_closure_records"] = serde_json::json!({});
     harness_state_json["strategy_review_dispatch_lineage"] = serde_json::json!({});
     harness_state_json["review_state_repair_follow_up"] = Value::from("execution_reentry");

@@ -10,7 +10,9 @@ use crate::execution::current_truth::current_late_stage_branch_bindings as share
 use crate::execution::follow_up::RepairFollowUpRecord;
 use crate::execution::query::normalize_persisted_follow_up_alias;
 use crate::execution::state::{
-    ExecutionContext, ExecutionRuntime, validated_current_branch_closure_identity,
+    ExecutionContext, ExecutionRuntime,
+    still_current_task_closure_records_from_authoritative_state,
+    validated_current_branch_closure_identity,
 };
 use crate::execution::transitions::{
     AuthoritativeTransitionState, BranchClosureResultRecord, BrowserQaResultRecord,
@@ -149,6 +151,69 @@ pub(crate) fn resolve_current_task_closure_postconditions(
     Ok(changed)
 }
 
+pub(crate) fn resolve_current_task_closure_postconditions_for_current_workspace(
+    context: &ExecutionContext,
+    authoritative_state: &mut AuthoritativeTransitionState,
+    task_number: u32,
+    closure_record_id: Option<&str>,
+) -> Result<Option<String>, JsonFailure> {
+    let current_closure =
+        still_current_task_closure_records_from_authoritative_state(context, authoritative_state)?
+            .into_iter()
+            .find(|record| {
+                record.task == task_number
+                    && closure_record_id
+                        .is_none_or(|record_id| record.closure_record_id == record_id)
+            });
+    let Some(current_closure) = current_closure else {
+        return Ok(None);
+    };
+    if authoritative_state
+        .task_closure_negative_result(task_number)
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let reviewed_state_id = current_closure
+        .semantic_reviewed_state_id
+        .as_deref()
+        .unwrap_or(current_closure.reviewed_state_id.as_str());
+    if resolve_current_task_closure_postconditions(
+        authoritative_state,
+        task_number,
+        &current_closure.closure_record_id,
+        reviewed_state_id,
+    )? {
+        Ok(Some(current_closure.closure_record_id))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) fn resolve_current_task_closure_postconditions_for_current_workspace_and_persist(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    task_number: u32,
+    closure_record_id: Option<&str>,
+) -> Result<Option<String>, JsonFailure> {
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(None);
+    };
+    let resolved_closure_id = resolve_current_task_closure_postconditions_for_current_workspace(
+        context,
+        authoritative_state,
+        task_number,
+        closure_record_id,
+    )?;
+    if resolved_closure_id.is_some() {
+        authoritative_state
+            .persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    }
+    Ok(resolved_closure_id)
+}
+
 pub(crate) fn current_task_closure_postconditions_would_mutate(
     authoritative_state: &AuthoritativeTransitionState,
     task_number: u32,
@@ -190,9 +255,7 @@ fn current_task_closure_postcondition_resolution(
     let current_positive_closure_on_current_reviewed_state = current_closure.closure_record_id
         == closure_record_id
         && (current_closure.reviewed_state_id == reviewed_state_id
-            || authoritative_state
-                .current_task_closure_result(task_number)
-                .is_some_and(|record| record.closure_record_id == closure_record_id))
+            || current_closure.semantic_reviewed_state_id.as_deref() == Some(reviewed_state_id))
         && current_closure.review_result == "pass"
         && current_closure.verification_result == "pass"
         && current_closure
@@ -246,6 +309,7 @@ fn current_task_closure_postcondition_resolution(
 }
 
 pub(crate) fn record_current_task_closure(
+    context: &ExecutionContext,
     authoritative_state: &mut AuthoritativeTransitionState,
     input: CurrentTaskClosureWrite<'_>,
 ) -> Result<(), JsonFailure> {
@@ -269,11 +333,11 @@ pub(crate) fn record_current_task_closure(
         verification_result: input.verification_result,
         verification_summary_hash: input.verification_summary_hash,
     })?;
-    let _ = resolve_current_task_closure_postconditions(
+    let _ = resolve_current_task_closure_postconditions_for_current_workspace(
+        context,
         authoritative_state,
         input.task,
-        input.closure_record_id,
-        input.reviewed_state_id,
+        Some(input.closure_record_id),
     )?;
     authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "close_current_task")
 }

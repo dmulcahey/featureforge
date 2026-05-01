@@ -119,6 +119,14 @@ impl PlanFidelityReviewReport {
             diagnostics,
         }
     }
+
+    pub fn verified_surfaces_are_complete(&self) -> bool {
+        self.verified_requirement_index
+            && self.verified_execution_topology
+            && self.verified_task_contract
+            && self.verified_task_determinism
+            && self.verified_spec_reference_fidelity
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -208,7 +216,7 @@ pub fn analyze_plan(
     let spec = parse_spec_file(spec_path)?;
     let plan = parse_plan_file(plan_path)?;
     let mut report = analyze_documents(&spec, &plan);
-    if plan.workflow_state == "Draft" {
+    if plan_fidelity_review_applicable(&plan) {
         report.plan_fidelity_review = evaluate_plan_fidelity_review(
             &spec,
             &plan,
@@ -216,6 +224,14 @@ pub fn analyze_plan(
         );
     }
     Ok(report)
+}
+
+pub fn plan_fidelity_review_applicable(plan: &PlanDocument) -> bool {
+    plan_fidelity_review_applicable_workflow_state(&plan.workflow_state)
+}
+
+pub fn plan_fidelity_review_applicable_workflow_state(workflow_state: &str) -> bool {
+    matches!(workflow_state, "Draft" | "Engineering Approved")
 }
 
 pub fn analyze_documents(spec: &SpecDocument, plan: &PlanDocument) -> AnalyzePlanReport {
@@ -629,7 +645,7 @@ fn missing_plan_fidelity_review() -> PlanFidelityReviewReport {
         &mut diagnostics,
         &mut reason_codes,
         "missing_plan_fidelity_review_artifact",
-        "Plan-fidelity review artifact is missing for the current draft plan.",
+        "Plan-fidelity review artifact is missing for the current plan.",
     );
     PlanFidelityReviewReport::unverified(
         "missing",
@@ -648,7 +664,7 @@ fn stale_plan_fidelity_review(review_artifact_path: String) -> PlanFidelityRevie
         &mut diagnostics,
         &mut reason_codes,
         "stale_plan_fidelity_review_artifact",
-        "Plan-fidelity review artifact does not match the current approved spec and draft plan revision.",
+        "Plan-fidelity review artifact does not match the current approved spec and plan revision.",
     );
     PlanFidelityReviewReport::unverified(
         "stale",

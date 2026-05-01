@@ -2,16 +2,18 @@
 mod dir_tree_support;
 #[path = "support/executable.rs"]
 mod executable_support;
-#[path = "support/featureforge.rs"]
-mod featureforge_support;
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/internal_only_direct_helpers.rs"]
+mod internal_only_direct_helpers;
 #[path = "support/prebuilt.rs"]
 mod prebuilt_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/projection.rs"]
 mod projection_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 #[path = "support/runtime_json.rs"]
 mod runtime_json_support;
 #[path = "support/runtime_surfaces.rs"]
@@ -22,6 +24,8 @@ mod workflow_support;
 use dir_tree_support::copy_dir_recursive;
 use executable_support::make_executable;
 use featureforge::cli::plan_execution::{ReviewOutcomeArg, StatusArgs};
+use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
+use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::final_review::{
     parse_final_review_receipt, resolve_release_base_branch,
 };
@@ -44,6 +48,7 @@ use featureforge::paths::{
 };
 use featureforge::workflow::operator;
 use files_support::write_file;
+use internal_only_direct_helpers::internal_runtime_direct;
 use prebuilt_support::write_canonical_prebuilt_layout;
 use process_support::run;
 use runtime_json_support::{discover_execution_runtime, plan_execution_status_json};
@@ -529,21 +534,68 @@ fn install_full_contract_ready_artifacts(repo: &Path) {
         spec_rel,
     );
     fs::write(&plan_path, adjusted_plan).expect("ready plan fixture should write");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 }
 
 fn install_ready_artifacts(repo: &Path) {
     install_full_contract_ready_artifacts(repo);
 }
 
+fn write_current_pass_plan_fidelity_review_artifact(
+    repo: &Path,
+    artifact_rel: &str,
+    plan_rel: &str,
+    spec_rel: &str,
+) {
+    let artifact_path = repo.join(artifact_rel);
+    let plan = parse_plan_file(repo.join(plan_rel)).expect("plan fixture should parse");
+    let spec = parse_spec_file(repo.join(spec_rel)).expect("spec fixture should parse");
+    let plan_fingerprint = sha256_hex(&fs::read(repo.join(plan_rel)).expect("plan should read"));
+    let spec_fingerprint = sha256_hex(&fs::read(repo.join(spec_rel)).expect("spec should read"));
+    let verified_requirement_ids = spec
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+
+    if let Some(parent) = artifact_path.parent() {
+        fs::create_dir_all(parent).expect("plan-fidelity artifact parent should be creatable");
+    }
+    fs::write(
+        artifact_path,
+        format!(
+            "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** pass\n**Reviewed Plan:** `{plan_rel}`\n**Reviewed Plan Revision:** {}\n**Reviewed Plan Fingerprint:** {plan_fingerprint}\n**Reviewed Spec:** `{spec_rel}`\n**Reviewed Spec Revision:** {}\n**Reviewed Spec Fingerprint:** {spec_fingerprint}\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** fixture-plan-fidelity-reviewer\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** {}\n**Verified Requirement IDs:** {}\n",
+            plan.plan_revision,
+            spec.spec_revision,
+            PLAN_FIDELITY_REQUIRED_SURFACES.join(", "),
+            verified_requirement_ids.join(", "),
+        ),
+    )
+    .expect("plan-fidelity review artifact should write");
+}
+
+fn write_current_pass_plan_fidelity_review_artifact_for_plan(repo: &Path, plan_rel: &str) {
+    let plan = parse_plan_file(repo.join(plan_rel)).expect("plan fixture should parse");
+    let spec_rel = plan.source_spec_path.clone();
+    let plan_stem = Path::new(plan_rel)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("plan");
+    let artifact_rel = format!(".featureforge/reviews/{plan_stem}-plan-fidelity.md");
+    write_current_pass_plan_fidelity_review_artifact(repo, &artifact_rel, plan_rel, &spec_rel);
+}
+
 fn write_two_task_workflow_plan(repo: &Path, plan_rel: &str) {
+    let spec_rel = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
     write_file(
         &repo.join(plan_rel),
-        r#"# Runtime Integration Hardening Implementation Plan
+        &format!(
+            r#"# Runtime Integration Hardening Implementation Plan
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
 **Execution Mode:** none
-**Source Spec:** `docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md`
+**Source Spec:** `{spec_rel}`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
 **QA Requirement:** not-required
@@ -609,6 +661,13 @@ Task 1 -> Task 2
 - [ ] **Step 1: Repair an invalidated prior step**
 - [ ] **Step 2: Finalize the execution handoff**
 "#,
+        ),
+    );
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        ".featureforge/reviews/two-task-plan-fidelity.md",
+        plan_rel,
+        spec_rel,
     );
 }
 
@@ -765,7 +824,7 @@ fn close_two_task_fixture_task_1(repo: &Path, state_dir: &Path, plan_rel: &str) 
 }
 
 fn run_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    featureforge_support::run_featureforge_real_cli(
+    public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -781,7 +840,7 @@ fn run_featureforge_real_cli(
     args: &[&str],
     context: &str,
 ) -> Output {
-    featureforge_support::run_featureforge_real_cli(
+    public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -798,7 +857,7 @@ fn run_featureforge_with_env(
     extra_env: &[(&str, &str)],
     context: &str,
 ) -> Output {
-    featureforge_support::run_featureforge_with_env_control_real_cli(
+    public_featureforge_cli::run_featureforge_with_env_control_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -861,7 +920,7 @@ fn run_featureforge_json_real_cli(
     args: &[&str],
     context: &str,
 ) -> Value {
-    let output = featureforge_support::run_featureforge_real_cli(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -904,7 +963,7 @@ fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = featureforge_support::run_featureforge_real_cli(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -935,7 +994,7 @@ fn internal_only_run_plan_execution_json_direct_or_cli(
         let rest = &args[3..];
         let external_review_result_ready = rest == ["--external-review-result-ready"];
         if rest.is_empty() || external_review_result_ready {
-            return featureforge_support::internal_only_unit_explain_review_state_json(
+            return internal_runtime_direct::internal_only_unit_explain_review_state_json(
                 repo,
                 state_dir,
                 &StatusArgs {
@@ -1152,12 +1211,13 @@ fn internal_only_plan_execution_failure_json(
         let task = task.parse::<u32>().unwrap_or_else(|error| {
             panic!("{context} should use a valid task number, got {task:?}: {error}")
         });
-        let failure = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
-            repo,
-            state_dir,
-            &record_review_dispatch_args(plan_rel, scope, Some(task)),
-        )
-        .expect_err("{context} should fail closed");
+        let failure =
+            internal_runtime_direct::internal_only_runtime_review_dispatch_authority_json(
+                repo,
+                state_dir,
+                &record_review_dispatch_args(plan_rel, scope, Some(task)),
+            )
+            .expect_err("{context} should fail closed");
         return serde_json::from_str(&failure)
             .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"));
     }
@@ -1176,19 +1236,20 @@ fn internal_only_plan_execution_failure_json(
                 panic!("{context} should use a supported review-dispatch scope, got {other:?}")
             }
         };
-        let failure = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
-            repo,
-            state_dir,
-            &record_review_dispatch_args(plan_rel, scope, None),
-        )
-        .expect_err("{context} should fail closed");
+        let failure =
+            internal_runtime_direct::internal_only_runtime_review_dispatch_authority_json(
+                repo,
+                state_dir,
+                &record_review_dispatch_args(plan_rel, scope, None),
+            )
+            .expect_err("{context} should fail closed");
         return serde_json::from_str(&failure)
             .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"));
     }
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = featureforge_support::run_featureforge_real_cli(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -1235,7 +1296,7 @@ fn run_plan_execution_json_real_cli(
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = featureforge_support::run_featureforge_real_cli(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -1252,6 +1313,46 @@ fn run_plan_execution_json_real_cli(
     );
     serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
+}
+
+fn materialize_state_dir_projections(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    context: &str,
+) -> Value {
+    let materialized = run_plan_execution_json_real_cli(
+        repo,
+        state_dir,
+        &["materialize-projections", "--plan", plan_rel],
+        context,
+    );
+    assert_eq!(materialized["action"], Value::from("materialized"));
+    assert_eq!(materialized["runtime_truth_changed"], Value::Bool(false));
+    materialized
+}
+
+fn materialize_all_state_dir_projections(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    context: &str,
+) -> Value {
+    let materialized = run_plan_execution_json_real_cli(
+        repo,
+        state_dir,
+        &[
+            "materialize-projections",
+            "--plan",
+            plan_rel,
+            "--scope",
+            "all",
+        ],
+        context,
+    );
+    assert_eq!(materialized["action"], Value::from("materialized"));
+    assert_eq!(materialized["runtime_truth_changed"], Value::Bool(false));
+    materialized
 }
 
 fn expect_internal_plan_execution_json(result: Result<Value, String>, context: &str) -> Value {
@@ -1339,7 +1440,7 @@ fn internal_only_runtime_preflight_gate_json(
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_only_runtime_preflight_gate_json(
+        internal_runtime_direct::internal_only_runtime_preflight_gate_json(
             repo,
             state_dir,
             &status_args(plan_rel),
@@ -1361,7 +1462,7 @@ fn internal_only_runtime_review_gate_json(
         status_args(plan_rel)
     };
     expect_internal_plan_execution_json(
-        featureforge_support::internal_only_runtime_review_gate_json(repo, state_dir, &args),
+        internal_runtime_direct::internal_only_runtime_review_gate_json(repo, state_dir, &args),
         context,
     )
 }
@@ -1379,7 +1480,7 @@ fn internal_only_runtime_finish_gate_json(
         status_args(plan_rel)
     };
     expect_internal_plan_execution_json(
-        featureforge_support::internal_only_runtime_finish_gate_json(repo, state_dir, &args),
+        internal_runtime_direct::internal_only_runtime_finish_gate_json(repo, state_dir, &args),
         context,
     )
 }
@@ -1393,7 +1494,7 @@ fn internal_only_runtime_review_dispatch_authority_json(
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_only_runtime_review_dispatch_authority_json(
+        internal_runtime_direct::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state_dir,
             &record_review_dispatch_args(plan_rel, scope, task),
@@ -1409,7 +1510,7 @@ fn internal_only_unit_record_branch_closure_json(
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_only_unit_record_branch_closure_json(
+        internal_runtime_direct::internal_only_unit_record_branch_closure_json(
             repo,
             state_dir,
             &record_branch_closure_args(plan_rel),
@@ -1428,7 +1529,7 @@ fn internal_only_unit_record_release_readiness_json(
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_only_unit_record_release_readiness_json(
+        internal_runtime_direct::internal_only_unit_record_release_readiness_json(
             repo,
             state_dir,
             &record_release_readiness_args(plan_rel, branch_closure_id, result, summary_file),
@@ -1444,7 +1545,7 @@ fn internal_only_unit_record_final_review_json(
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_only_unit_record_final_review_json(repo, state_dir, args),
+        internal_runtime_direct::internal_only_unit_record_final_review_json(repo, state_dir, args),
         context,
     )
 }
@@ -1458,7 +1559,7 @@ fn internal_only_unit_record_qa_json(
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_only_unit_record_qa_json(
+        internal_runtime_direct::internal_only_unit_record_qa_json(
             repo,
             state_dir,
             &record_qa_args(plan_rel, result, summary_file),
@@ -1474,7 +1575,7 @@ fn internal_only_unit_reconcile_review_state_json(
     context: &str,
 ) -> Value {
     expect_internal_plan_execution_json(
-        featureforge_support::internal_only_unit_reconcile_review_state_json(
+        internal_runtime_direct::internal_only_unit_reconcile_review_state_json(
             repo,
             state_dir,
             &status_args(plan_rel),
@@ -1492,7 +1593,7 @@ fn run_plan_execution_failure_json_real_cli(
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = featureforge_support::run_featureforge_real_cli(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -1566,7 +1667,7 @@ fn run_recommended_plan_execution_command_output_real_cli(
         "{context} should expose a plan execution command, got {recommended_command:?}"
     );
     let command_args = parts[3..].iter().map(String::as_str).collect::<Vec<_>>();
-    featureforge_support::run_featureforge_real_cli(
+    public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -1834,6 +1935,12 @@ fn task_completion_lineage_fingerprint_from_evidence(
     );
     let evidence_rel = status["evidence_path"].as_str()?;
     let plan_revision = status["plan_revision"].as_u64()?;
+    materialize_state_dir_projections(
+        repo,
+        state_dir,
+        plan_rel,
+        "materialize evidence projection before deriving task completion lineage",
+    );
     let evidence_source = projection_support::read_state_dir_projection(&status, evidence_rel);
 
     let mut latest_by_step: BTreeMap<u32, EvidenceAttemptLineageFields> = BTreeMap::new();
@@ -2079,15 +2186,51 @@ fn write_branch_review_artifact_with_result(
 ) {
     let branch = current_branch_name(repo);
     let safe_branch = branch_storage_key(&branch);
-    let strategy_checkpoint_fingerprint = run_plan_execution_json(
+    let mut status = run_plan_execution_json(
         repo,
         state_dir,
         &["status", "--plan", plan_rel],
         "plan execution status for shell-smoke review artifact fixture",
-    )["last_strategy_checkpoint_fingerprint"]
+    );
+    if status["last_strategy_checkpoint_fingerprint"]
         .as_str()
-        .expect("shell-smoke review artifact fixture should expose strategy checkpoint fingerprint")
-        .to_owned();
+        .is_none()
+    {
+        let materialized = run_plan_execution_json(
+            repo,
+            state_dir,
+            &["materialize-projections", "--plan", plan_rel],
+            "materialize state-dir projections for shell-smoke review artifact fixture",
+        );
+        assert_eq!(materialized["runtime_truth_changed"], Value::Bool(false));
+        status = run_plan_execution_json(
+            repo,
+            state_dir,
+            &["status", "--plan", plan_rel],
+            "plan execution status after shell-smoke review artifact fixture materialization",
+        );
+    }
+    let strategy_checkpoint_fingerprint =
+        if let Some(fingerprint) = status["last_strategy_checkpoint_fingerprint"].as_str() {
+            fingerprint.to_owned()
+        } else {
+            let fingerprint = sha256_hex(
+                format!(
+                    "shell-smoke-review-artifact-fixture:{branch}:{plan_rel}:{}",
+                    current_head_sha(repo)
+                )
+                .as_bytes(),
+            );
+            update_authoritative_harness_state(
+                repo,
+                state_dir,
+                &[(
+                    "last_strategy_checkpoint_fingerprint",
+                    Value::String(fingerprint.clone()),
+                )],
+            );
+            fingerprint
+        };
     let reviewer_artifact_path = project_artifact_dir(repo, state_dir).join(format!(
         "tester-{safe_branch}-independent-review-20260324-120950.md"
     ));
@@ -2470,6 +2613,7 @@ fn complete_workflow_fixture_execution_with_qa_requirement_slow(
         &complete_args,
         "plan execution complete for shell-smoke parity fixture",
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 }
 
 fn complete_workflow_fixture_execution(repo: &Path, state_dir: &Path, plan_rel: &str) {
@@ -2679,6 +2823,22 @@ fn internal_only_compatibility_normal_execution_commands_do_not_dirty_tracked_pr
         "plan execution final review dispatch before no-churn advance-late-stage",
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
+    let dispatch_materialized = internal_only_run_plan_execution_json_direct_or_cli(
+        late_repo,
+        late_state,
+        &[
+            "materialize-projections",
+            "--plan",
+            plan_rel,
+            "--scope",
+            "late-stage",
+        ],
+        "materialize final-review dispatch state before direct release-ready fixture mutation",
+    );
+    assert_eq!(
+        dispatch_materialized["runtime_truth_changed"],
+        Value::Bool(false)
+    );
     mark_current_branch_closure_release_ready(late_repo, late_state, "branch-release-closure");
     let summary_path = late_repo.join("final-review-summary.md");
     write_file(&summary_path, "Independent final review passed.\n");
@@ -3120,18 +3280,38 @@ fn internal_only_compatibility_tampered_state_dir_projection_is_not_materialized
     let evidence_rel = status_after_complete["evidence_path"]
         .as_str()
         .expect("status should expose approved evidence path");
+    materialize_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        "materialize state-dir projection before tampering",
+    );
     projection_support::write_state_dir_projection(
         &status_after_complete,
         evidence_rel,
         "# Execution Evidence: tampered\n\n### Task 99 Step 99\n",
     );
-    let status_failure = run_plan_execution_failure_json(
+    let status_after_tamper = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "tampered state-dir projection status should fail closed",
+        "tampered state-dir projection status should ignore stale read model",
     );
-    assert_eq!(status_failure["error_class"], "MalformedExecutionState");
+    assert_eq!(
+        status_after_tamper["execution_fingerprint"],
+        status_after_complete["execution_fingerprint"],
+        "normal status must not promote a stale tampered state-dir projection into runtime truth"
+    );
+    assert_eq!(
+        status_after_tamper["tracked_projections_current"],
+        Value::Bool(false),
+        "normal status should surface projection staleness without trusting the tampered read model"
+    );
+    assert_ne!(
+        status_after_tamper["blocking_task"],
+        Value::from(99_u64),
+        "normal status must not route from the tampered state-dir projection contents"
+    );
 
     let failure = run_plan_execution_failure_json(
         repo,
@@ -3390,6 +3570,12 @@ fn internal_only_compatibility_missing_state_dir_projection_does_not_promote_tra
             evidence_path.display()
         )
     });
+    materialize_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        "materialize state-dir projection before deleting it",
+    );
     projection_support::remove_state_dir_projection(&status_before_delete, evidence_rel);
 
     let status_after_delete = internal_only_run_plan_execution_json_direct_or_cli(
@@ -3493,14 +3679,7 @@ fn update_authoritative_harness_state(repo: &Path, state_dir: &Path, updates: &[
         &repo_slug(repo, state_dir),
         &current_branch_name(repo),
     );
-    let mut payload: Value = match fs::read_to_string(&state_path) {
-        Ok(source) => serde_json::from_str(&source)
-            .expect("authoritative shell-smoke harness state should remain valid json"),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Value::Object(serde_json::Map::new())
-        }
-        Err(error) => panic!("authoritative shell-smoke harness state should be readable: {error}"),
-    };
+    let mut payload: Value = authoritative_harness_state_for_update(&state_path);
     let explicit_reviewed_state_update = updates
         .iter()
         .any(|(key, _)| *key == "current_branch_closure_reviewed_state_id");
@@ -3566,6 +3745,31 @@ fn update_authoritative_harness_state(repo: &Path, state_dir: &Path, updates: &[
     write_authoritative_harness_state(repo, state_dir, &payload);
 }
 
+fn authoritative_harness_state_for_update(state_path: &Path) -> Value {
+    if let Some(payload) = reduced_authoritative_harness_state_for_path(state_path) {
+        return payload;
+    }
+    if state_path.is_file() {
+        return serde_json::from_str(
+            &fs::read_to_string(state_path)
+                .expect("authoritative shell-smoke harness state should be readable"),
+        )
+        .expect("authoritative shell-smoke harness state should remain valid json");
+    }
+    Value::Object(serde_json::Map::new())
+}
+
+fn reduced_authoritative_harness_state_for_path(state_path: &Path) -> Option<Value> {
+    featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(state_path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "event-authoritative shell-smoke harness state should be reducible for {}: {}",
+                state_path.display(),
+                error.message
+            )
+        })
+}
+
 fn bind_explicit_reopen_repair_target(repo: &Path, state_dir: &Path, task: u32, step: u32) {
     update_authoritative_harness_state(
         repo,
@@ -3599,11 +3803,7 @@ fn authoritative_harness_state(repo: &Path, state_dir: &Path) -> Value {
         &repo_slug(repo, state_dir),
         &current_branch_name(repo),
     );
-    serde_json::from_str(
-        &fs::read_to_string(&state_path)
-            .expect("authoritative shell-smoke harness state should be readable"),
-    )
-    .expect("authoritative shell-smoke harness state should remain valid json")
+    authoritative_harness_state_for_update(&state_path)
 }
 
 fn authoritative_harness_state_digest(repo: &Path, state_dir: &Path) -> String {
@@ -5269,6 +5469,7 @@ fn setup_task_boundary_blocked_case_slow(
 ) {
     install_full_contract_ready_artifacts(repo);
     write_file(&repo.join(plan_rel), task_boundary_blocked_plan_source());
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
     prepare_preflight_acceptance_workspace(repo, "workflow-shell-smoke-task-boundary-blocked");
 
     let status_before_begin = run_plan_execution_json(
@@ -5470,6 +5671,7 @@ fn setup_non_overlapping_task_boundary_blocked_case(repo: &Path, state_dir: &Pat
         &repo.join(plan_rel),
         &non_overlapping_task_boundary_blocked_plan_source(),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
     write_repo_file(
         repo,
         "docs/example-output.md",
@@ -6415,18 +6617,7 @@ fn internal_only_compatibility_plan_execution_gate_review_records_finish_review_
     );
     assert_eq!(gate_review["allowed"], Value::Bool(true));
 
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state_after: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path).expect(concat!(
-            "authoritative state should be readable after gate",
-            "-review"
-        )),
-    )
-    .expect(concat!(
-        "authoritative state should remain valid json after gate",
-        "-review"
-    ));
+    let authoritative_state_after = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state_after["finish_review_gate_pass_branch_closure_id"],
         Value::from("branch-release-closure")
@@ -6487,18 +6678,7 @@ fn internal_only_compatibility_plan_execution_gate_review_records_finish_checkpo
     );
     assert_eq!(gate_review["rederive_via_workflow_operator"], Value::Null);
 
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state_after: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path).expect(concat!(
-            "authoritative state should be readable after gate",
-            "-review"
-        )),
-    )
-    .expect(concat!(
-        "authoritative state should remain valid json after gate",
-        "-review"
-    ));
+    let authoritative_state_after = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state_after["finish_review_gate_pass_branch_closure_id"],
         Value::Null
@@ -6604,18 +6784,7 @@ fn internal_only_compatibility_plan_execution_explain_review_state_does_not_reco
         ),
     );
 
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state_after: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path).expect(concat!(
-            "authoritative state should remain readable after explain",
-            "-review-state"
-        )),
-    )
-    .expect(concat!(
-        "authoritative state should remain valid json after explain",
-        "-review-state"
-    ));
+    let authoritative_state_after = authoritative_harness_state(repo, state);
     assert!(
         authoritative_state_after["finish_review_gate_pass_branch_closure_id"].is_null(),
         "{} must not persist the finish-review gate pass checkpoint: {}",
@@ -6884,12 +7053,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_records_task_cl
         Value::from(Vec::<String>::new())
     );
     assert!(close_json["closure_record_id"].as_str().is_some());
-    let state_path = harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&state_path)
-            .expect("task closure authoritative state should be readable"),
-    )
-    .expect("task closure authoritative state should remain valid json");
+    let authoritative_state = authoritative_harness_state(repo, state);
     let closure_record_id = close_json["closure_record_id"]
         .as_str()
         .expect("close-current-task should expose closure_record_id");
@@ -6989,12 +7153,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_records_task_cl
             "current_task_closure_postconditions_resolved"
         )])
     );
-    let state_after_cycle_break_cleanup: Value = serde_json::from_str(
-        &fs::read_to_string(&state_path).expect(
-            "task closure authoritative state should be readable after cycle-break cleanup",
-        ),
-    )
-    .expect("task closure authoritative state should remain valid json after cycle-break cleanup");
+    let state_after_cycle_break_cleanup = authoritative_harness_state(repo, state);
     assert!(
         state_after_cycle_break_cleanup["strategy_state"].is_null(),
         "same-task cycle-break strategy state should clear on already-current close: {state_after_cycle_break_cleanup:?}"
@@ -7053,13 +7212,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_records_task_cl
                 == Value::from(Vec::<String>::new()),
         "unbound cleanup should not report resolved postconditions: {unbound_cycle_break_rerun_json}"
     );
-    let state_after_unbound_cycle_break: Value =
-        serde_json::from_str(&fs::read_to_string(&state_path).expect(
-            "task closure authoritative state should be readable after unbound overlay check",
-        ))
-        .expect(
-            "task closure authoritative state should remain valid json after unbound overlay check",
-        );
+    let state_after_unbound_cycle_break = authoritative_harness_state(repo, state);
     assert_eq!(
         state_after_unbound_cycle_break["strategy_state"],
         Value::from("cycle_breaking"),
@@ -7254,12 +7407,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_requires_fresh_
         "plan execution task review dispatch for stale close-current-task fixture",
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
-    let state_path = harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&state_path)
-            .expect("stale close-current-task fixture authoritative state should read"),
-    )
-    .expect("stale close-current-task fixture authoritative state should remain valid json");
+    let authoritative_state = authoritative_harness_state(repo, state);
     let _dispatch_id =
         authoritative_state["strategy_review_dispatch_lineage"]["task-1"]["dispatch_id"]
             .as_str()
@@ -7332,20 +7480,10 @@ fn internal_only_compatibility_workflow_operator_routes_stale_task_review_dispat
         "task review dispatch should succeed before stale operator routing coverage",
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
-    let state_path = harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let mut authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&state_path)
-            .expect("stale task-review dispatch fixture should read authoritative state"),
-    )
-    .expect("stale task-review dispatch fixture should remain valid json");
+    let mut authoritative_state = authoritative_harness_state(repo, state);
     authoritative_state["strategy_review_dispatch_lineage"]["task-1"]["source_step"] =
         Value::from(99);
-    fs::write(
-        &state_path,
-        serde_json::to_string_pretty(&authoritative_state)
-            .expect("stale task-review dispatch fixture should serialize authoritative state"),
-    )
-    .expect("stale task-review dispatch fixture should persist authoritative state");
+    write_authoritative_harness_state(repo, state, &authoritative_state);
 
     let operator_json = run_featureforge_with_env_json(
         repo,
@@ -7738,12 +7876,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_requires_dispat
         .as_str()
         .expect("missing reviewed-state binding fixture should expose dispatch id")
         .to_owned();
-    let state_path = harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let mut authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&state_path)
-            .expect("missing reviewed-state binding fixture authoritative state should read"),
-    )
-    .expect("missing reviewed-state binding fixture authoritative state should remain valid json");
+    let mut authoritative_state = authoritative_harness_state(repo, state);
     authoritative_state["strategy_review_dispatch_lineage"]["task-1"]
         .as_object_mut()
         .expect("dispatch lineage should remain an object")
@@ -7752,11 +7885,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_requires_dispat
         .as_object_mut()
         .expect("dispatch lineage should remain an object")
         .remove("semantic_reviewed_state_id");
-    write_file(
-        &state_path,
-        &serde_json::to_string(&authoritative_state)
-            .expect("missing reviewed-state binding fixture state should serialize"),
-    );
+    write_authoritative_harness_state(repo, state, &authoritative_state);
 
     let review_summary_path = repo.join("task-1-failed-review-summary.md");
     write_file(&review_summary_path, "Task 1 review found a blocker.\n");
@@ -7851,12 +7980,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_records_failed_
     assert_eq!(close_json["task_closure_status"], "not_current");
     assert_eq!(close_json["required_follow_up"], "execution_reentry");
 
-    let state_path = harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&state_path)
-            .expect("failed task closure authoritative state should be readable"),
-    )
-    .expect("failed task closure authoritative state should remain valid json");
+    let authoritative_state = authoritative_harness_state(repo, state);
     let record = &authoritative_state["task_closure_negative_result_records"]["task-1"];
     assert_eq!(record["dispatch_id"], Value::from(dispatch_id.clone()));
     assert_eq!(record["closure_record_id"], Value::Null);
@@ -7955,12 +8079,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_records_failed_
     assert_eq!(close_json["task_closure_status"], "not_current");
     assert_eq!(close_json["required_follow_up"], "execution_reentry");
 
-    let state_path = harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&state_path)
-            .expect("failed review authoritative state should be readable"),
-    )
-    .expect("failed review authoritative state should remain valid json");
+    let authoritative_state = authoritative_harness_state(repo, state);
     let record = &authoritative_state["task_closure_negative_result_records"]["task-1"];
     assert_eq!(record["dispatch_id"], Value::from(dispatch_id.clone()));
     assert_eq!(record["closure_record_id"], Value::Null);
@@ -8123,12 +8242,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_records_failed_
     assert_eq!(close_json["task_closure_status"], "not_current");
     assert_eq!(close_json["required_follow_up"], "execution_reentry");
 
-    let state_path = harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&state_path)
-            .expect("review-fail verification-pass authoritative state should be readable"),
-    )
-    .expect("review-fail verification-pass authoritative state should remain valid json");
+    let authoritative_state = authoritative_harness_state(repo, state);
     let record = &authoritative_state["task_closure_negative_result_records"]["task-1"];
     assert_eq!(record["dispatch_id"], Value::from(dispatch_id.clone()));
     assert_eq!(record["review_result"], "fail");
@@ -8839,13 +8953,7 @@ fn internal_only_compatibility_plan_execution_transfer_reuses_equivalent_artifac
         Value::from(existing_record.display().to_string())
     );
 
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative harness state should remain readable after transfer rerun"),
-    )
-    .expect("authoritative harness state should remain valid json after transfer rerun");
+    let authoritative_state = authoritative_harness_state(repo, state);
     let expected_fingerprint = sha256_hex(
         fs::read(&existing_record)
             .expect("equivalent transfer artifact should remain readable")
@@ -9607,12 +9715,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_supersedes_over
         Value::from(vec![task1_closure_record_id.clone()])
     );
 
-    let state_path = harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&state_path)
-            .expect("supersession authoritative state should be readable"),
-    )
-    .expect("supersession authoritative state should remain valid json");
+    let authoritative_state = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state["current_task_closure_records"]["task-1"],
         Value::Null,
@@ -9670,6 +9773,12 @@ fn internal_only_compatibility_plan_execution_close_current_task_supersedes_over
                 .iter()
                 .any(|closure| closure == &Value::from(task1_closure_record_id.clone()))),
         "json: {explain:?}"
+    );
+    materialize_all_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        "materialize branch-closure projection after task supersession",
     );
     let branch_record_source = fs::read_to_string(
         project_artifact_dir(repo, state).join(format!("branch-closure-{branch_closure_id}.md")),
@@ -11206,13 +11315,7 @@ fn internal_only_compatibility_plan_execution_advance_late_stage_final_review_re
         "first final-review recording should succeed",
     );
     assert_eq!(first["action"], "recorded");
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should read after final-review recording"),
-    )
-    .expect("authoritative state should remain valid json after final-review recording");
+    let authoritative_state = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state["current_final_review_dispatch_id"],
         Value::from(dispatch_id.clone())
@@ -11742,6 +11845,19 @@ fn internal_only_compatibility_workflow_operator_keeps_branch_completion_routing
         "first final-review recording should succeed before reviewer-artifact tamper coverage",
     );
     assert_eq!(first["action"], "recorded");
+    let materialized = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "materialize-projections",
+            "--plan",
+            plan_rel,
+            "--scope",
+            "late-stage",
+        ],
+        "materialize final-review reviewer projection before tamper",
+    );
+    assert_eq!(materialized["runtime_truth_changed"], Value::Bool(false));
 
     let authoritative_state_before = authoritative_harness_state(repo, state);
     let final_review_record_id = authoritative_state_before["current_final_review_record_id"]
@@ -13957,6 +14073,12 @@ fn internal_only_compatibility_plan_execution_record_branch_closure_records_curr
             "-branch-closure should expose branch_closure_id"
         ));
     assert_eq!(branch_closure_json["action"], "recorded");
+    materialize_all_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        concat!("materialize record", "-branch-closure projection"),
+    );
     let record_path =
         project_artifact_dir(repo, state).join(format!("branch-closure-{branch_closure_id}.md"));
     let record_source =
@@ -14323,6 +14445,12 @@ fn internal_only_compatibility_plan_execution_record_branch_closure_uses_recorde
         .as_str()
         .expect("real provenance branch closure should expose an id")
         .to_owned();
+    materialize_all_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        "materialize real provenance branch-closure projection",
+    );
     let record_source = fs::read_to_string(
         project_artifact_dir(repo, state).join(format!("branch-closure-{branch_closure_id}.md")),
     )
@@ -14425,6 +14553,15 @@ fn internal_only_compatibility_plan_execution_record_branch_closure_re_records_w
         Value::from(format!(
             "featureforge plan execution advance-late-stage --plan {plan_rel}"
         ))
+    );
+    materialize_all_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        concat!(
+            "materialize re-recorded record",
+            "-branch-closure projection"
+        ),
     );
     let second_record_path = project_artifact_dir(repo, state)
         .join(format!("branch-closure-{second_branch_closure_id}.md"));
@@ -14966,7 +15103,6 @@ fn internal_only_compatibility_plan_execution_record_branch_closure_rerecords_la
         )),
         "repair-review-state must not fabricate a task closure target when no current task closure baseline exists: {repair_json}"
     );
-
     let record_json = internal_only_unit_record_branch_closure_json(
         repo,
         state,
@@ -15689,13 +15825,7 @@ fn internal_only_compatibility_plan_execution_record_branch_closure_clears_stale
             "record",
             "-branch-closure should expose branch_closure_id"
         ));
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should be readable after branch closure recording"),
-    )
-    .expect("authoritative state should remain valid json");
+    let authoritative_state = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state["current_branch_closure_id"],
         Value::from(branch_closure_id)
@@ -16713,7 +16843,7 @@ fn internal_only_compatibility_internal_gate_review_uses_shared_public_route_for
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_with_current_closure_case(repo, state, plan_rel, &base_branch);
 
-    let gate_review = featureforge_support::internal_only_runtime_review_gate_json(
+    let gate_review = internal_runtime_direct::internal_only_runtime_review_gate_json(
         repo,
         state,
         &StatusArgs {
@@ -16737,18 +16867,19 @@ fn internal_only_compatibility_internal_gate_review_uses_shared_public_route_for
     );
     assert!(gate_review["rederive_via_workflow_operator"].is_null());
 
-    let gate_review_external_ready = featureforge_support::internal_only_runtime_review_gate_json(
-        repo,
-        state,
-        &StatusArgs {
-            plan: PathBuf::from(plan_rel),
-            external_review_result_ready: true,
-        },
-    )
-    .expect(concat!(
-        "internal gate",
-        "-review should preserve external-ready context"
-    ));
+    let gate_review_external_ready =
+        internal_runtime_direct::internal_only_runtime_review_gate_json(
+            repo,
+            state,
+            &StatusArgs {
+                plan: PathBuf::from(plan_rel),
+                external_review_result_ready: true,
+            },
+        )
+        .expect(concat!(
+            "internal gate",
+            "-review should preserve external-ready context"
+        ));
     assert_eq!(gate_review_external_ready["allowed"], false);
     assert_eq!(gate_review_external_ready["action"], "blocked");
     assert_eq!(gate_review_external_ready["code"], Value::Null);
@@ -16823,7 +16954,7 @@ fn internal_only_compatibility_internal_gate_finish_uses_shared_public_route_for
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_with_current_closure_case(repo, state, plan_rel, &base_branch);
 
-    let gate_finish = featureforge_support::internal_only_runtime_finish_gate_json(
+    let gate_finish = internal_runtime_direct::internal_only_runtime_finish_gate_json(
         repo,
         state,
         &StatusArgs {
@@ -16847,18 +16978,19 @@ fn internal_only_compatibility_internal_gate_finish_uses_shared_public_route_for
     );
     assert!(gate_finish["rederive_via_workflow_operator"].is_null());
 
-    let gate_finish_external_ready = featureforge_support::internal_only_runtime_finish_gate_json(
-        repo,
-        state,
-        &StatusArgs {
-            plan: PathBuf::from(plan_rel),
-            external_review_result_ready: true,
-        },
-    )
-    .expect(concat!(
-        "internal gate",
-        "-finish should preserve external-ready context"
-    ));
+    let gate_finish_external_ready =
+        internal_runtime_direct::internal_only_runtime_finish_gate_json(
+            repo,
+            state,
+            &StatusArgs {
+                plan: PathBuf::from(plan_rel),
+                external_review_result_ready: true,
+            },
+        )
+        .expect(concat!(
+            "internal gate",
+            "-finish should preserve external-ready context"
+        ));
     assert_eq!(gate_finish_external_ready["allowed"], false);
     assert_eq!(gate_finish_external_ready["action"], "blocked");
     assert_eq!(gate_finish_external_ready["code"], Value::Null);
@@ -18025,20 +18157,21 @@ fn internal_only_compatibility_plan_execution_record_qa_same_summary_on_new_bran
     assert_eq!(first["branch_closure_id"], "branch-release-closure-a");
     let authoritative_state_path =
         harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let first_project_artifacts: Vec<PathBuf> = fs::read_dir(project_artifact_dir(repo, state))
-        .expect("project artifact dir should be readable")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.contains("-test-outcome-"))
-        })
-        .collect();
-    let first_project_artifact_count = first_project_artifacts.len();
-    assert!(
-        first_project_artifact_count > 0,
-        "closure A should append a QA project artifact"
+    let materialized_after_first = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "materialize-projections",
+            "--plan",
+            plan_rel,
+            "--scope",
+            "execution",
+        ],
+        "materialize QA record A before direct branch-closure fixture rewrite",
+    );
+    assert_eq!(
+        materialized_after_first["runtime_truth_changed"],
+        Value::Bool(false)
     );
 
     republish_fixture_late_stage_truth_for_branch_closure(repo, state, "branch-release-closure-b");
@@ -18077,6 +18210,20 @@ fn internal_only_compatibility_plan_execution_record_qa_same_summary_on_new_bran
         && operator_json["phase_detail"] == "qa_recording_required"
     {
         assert_eq!(second["action"], "recorded");
+        let materialized = run_plan_execution_json_real_cli(
+            repo,
+            state,
+            &[
+                "materialize-projections",
+                "--plan",
+                plan_rel,
+                "--scope",
+                "execution",
+            ],
+            "materialize QA record B before direct authoritative state inspection",
+        );
+        assert_eq!(materialized["action"], Value::from("materialized"));
+        assert_eq!(materialized["runtime_truth_changed"], Value::Bool(false));
         let second_authoritative_state: Value = serde_json::from_str(
             &fs::read_to_string(&authoritative_state_path)
                 .expect("qa authoritative state should read after closure B"),
@@ -18085,36 +18232,6 @@ fn internal_only_compatibility_plan_execution_record_qa_same_summary_on_new_bran
         assert_eq!(
             second_authoritative_state["current_qa_branch_closure_id"],
             Value::from("branch-release-closure-b")
-        );
-        let second_project_artifacts: Vec<PathBuf> =
-            fs::read_dir(project_artifact_dir(repo, state))
-                .expect("project artifact dir should be readable after closure B")
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.contains("-test-outcome-"))
-                })
-                .collect();
-        for artifact in &first_project_artifacts {
-            assert!(
-                artifact.exists(),
-                "closure A QA artifact should remain after closure B records: {}",
-                artifact.display()
-            );
-            assert!(
-                second_project_artifacts
-                    .iter()
-                    .any(|candidate| candidate == artifact),
-                "closure A QA artifact should remain listed after closure B records: {}",
-                artifact.display()
-            );
-        }
-        let second_project_artifact_count = second_project_artifacts.len();
-        assert!(
-            second_project_artifact_count > first_project_artifact_count,
-            "a new QA artifact should be appended for closure B"
         );
         assert_eq!(
             second_authoritative_state["current_qa_summary_hash"],
@@ -18148,13 +18265,6 @@ fn internal_only_compatibility_plan_execution_record_qa_same_summary_on_new_bran
             blocked_authoritative_state["current_qa_branch_closure_id"],
             Value::from("branch-release-closure-a")
         );
-        for artifact in &first_project_artifacts {
-            assert!(
-                artifact.exists(),
-                "closure A QA artifact should remain after blocked closure B record: {}",
-                artifact.display()
-            );
-        }
         assert!(
             second["required_follow_up"] == "repair_review_state"
                 || second["required_follow_up"] == Value::Null,
@@ -19238,13 +19348,7 @@ fn internal_only_compatibility_plan_execution_reconcile_review_state_restores_mi
         .as_str()
         .expect("branch closure should expose branch_closure_id")
         .to_owned();
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state_before: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should be readable before overlay corruption"),
-    )
-    .expect("authoritative state should remain valid json before overlay corruption");
+    let authoritative_state_before = authoritative_harness_state(repo, state);
     let expected_reviewed_state_id =
         authoritative_state_before["current_branch_closure_reviewed_state_id"]
             .as_str()
@@ -19283,11 +19387,7 @@ fn internal_only_compatibility_plan_execution_reconcile_review_state_restores_mi
             String::from("restored_current_branch_closure_contract_identity"),
         ])
     );
-    let authoritative_state_after: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should be readable after reconcile"),
-    )
-    .expect("authoritative state should remain valid json after reconcile");
+    let authoritative_state_after = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state_after["current_branch_closure_id"],
         Value::from(branch_closure_id)
@@ -19328,13 +19428,7 @@ fn internal_only_compatibility_plan_execution_reconcile_review_state_restores_br
         .as_str()
         .expect("branch closure should expose branch_closure_id")
         .to_owned();
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state_before: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should be readable before overlay corruption"),
-    )
-    .expect("authoritative state should remain valid json before overlay corruption");
+    let authoritative_state_before = authoritative_harness_state(repo, state);
     let expected_reviewed_state_id =
         authoritative_state_before["current_branch_closure_reviewed_state_id"]
             .as_str()
@@ -19346,6 +19440,15 @@ fn internal_only_compatibility_plan_execution_reconcile_review_state_restores_br
             .expect("branch closure should seed contract identity overlay")
             .to_owned();
 
+    materialize_all_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        concat!(
+            "materialize record",
+            "-branch-closure projection before overlay restore fixture removal"
+        ),
+    );
     let branch_closure_path =
         project_artifact_dir(repo, state).join(format!("branch-closure-{branch_closure_id}.md"));
     fs::remove_file(&branch_closure_path).expect(
@@ -19379,11 +19482,7 @@ fn internal_only_compatibility_plan_execution_reconcile_review_state_restores_br
             String::from("restored_current_branch_closure_contract_identity"),
         ])
     );
-    let authoritative_state_after: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should be readable after reconcile"),
-    )
-    .expect("authoritative state should remain valid json after reconcile");
+    let authoritative_state_after = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state_after["current_branch_closure_id"],
         Value::from(branch_closure_id)
@@ -19460,13 +19559,7 @@ fn internal_only_compatibility_plan_execution_reconcile_review_state_preserves_r
     );
     assert_eq!(reconcile["action"], "reconciled");
 
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state_after: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should be readable after reconcile"),
-    )
-    .expect("authoritative state should remain valid json after reconcile");
+    let authoritative_state_after = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state_after["current_release_readiness_result"],
         Value::from("ready")
@@ -23262,13 +23355,7 @@ fn internal_only_compatibility_plan_execution_reconcile_review_state_restores_mi
         "stale reconcile overlay restoration coverage",
     );
 
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state_before: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should be readable before stale overlay corruption"),
-    )
-    .expect("authoritative state should remain valid json before stale overlay corruption");
+    let authoritative_state_before = authoritative_harness_state(repo, state);
     let expected_reviewed_state_id =
         authoritative_state_before["current_branch_closure_reviewed_state_id"]
             .as_str()
@@ -23307,11 +23394,7 @@ fn internal_only_compatibility_plan_execution_reconcile_review_state_restores_mi
             String::from("restored_current_branch_closure_contract_identity"),
         ])
     );
-    let authoritative_state_after: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should be readable after stale reconcile"),
-    )
-    .expect("authoritative state should remain valid json after stale reconcile");
+    let authoritative_state_after = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state_after["current_branch_closure_reviewed_state_id"],
         Value::from(expected_reviewed_state_id)
@@ -24367,6 +24450,12 @@ fn fs20_reopening_downstream_stale_task_does_not_unwind_upstream_current_closure
     let evidence_rel = status_after_reopen["evidence_path"]
         .as_str()
         .expect("FS-20 status after reopen should expose evidence_path");
+    materialize_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        "FS-20 materialize state-dir projections before downstream reopen runtime-owned churn",
+    );
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     write_file(
         &plan_path,
@@ -24462,6 +24551,12 @@ fn fs20_late_stage_chain_is_not_unwound_by_runtime_owned_plan_and_execution_evid
     let evidence_rel = baseline_status["evidence_path"]
         .as_str()
         .expect("FS-20 late-stage baseline should expose evidence_path");
+    materialize_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        "FS-20 materialize state-dir projections before late-stage runtime-owned churn",
+    );
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 late-stage plan should read");
     write_file(
         &plan_path,
@@ -25145,15 +25240,7 @@ fn fs13_normal_recovery_never_requires_manual_plan_note_edit() {
             .starts_with("featureforge plan execution repair-review-state --plan "),
         "FS-13 shell-smoke should keep repair-review-state as the public command after note tamper while Task 2 remains the structured stale-boundary target, got {recommended_after_tamper}"
     );
-    let authoritative_state_after_tamper: Value = serde_json::from_str(
-        &fs::read_to_string(harness_state_path(
-            state,
-            &repo_slug(repo, state),
-            &current_branch_name(repo),
-        ))
-        .expect("FS-13 shell-smoke authoritative state should remain readable before follow-up"),
-    )
-    .expect("FS-13 shell-smoke authoritative state should remain valid json before follow-up");
+    let authoritative_state_after_tamper = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state_after_tamper["current_open_step_state"]["note_state"],
         Value::from("Interrupted"),
@@ -25182,13 +25269,7 @@ fn fs13_normal_recovery_never_requires_manual_plan_note_edit() {
         follow_up_output.status.success(),
         "FS-13 shell-smoke follow-up command should remain runnable without manual execution-note edits, got {follow_up_json:?}"
     );
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(authoritative_state_path)
-            .expect("FS-13 shell-smoke authoritative state should remain readable"),
-    )
-    .expect("FS-13 shell-smoke authoritative state should remain valid json");
+    let authoritative_state = authoritative_harness_state(repo, state);
     assert!(
         authoritative_state["current_open_step_state"].is_null(),
         "FS-13 shell-smoke routed follow-up should clear the stale parked open-step state before surfacing the Task 2 close-current-task command"
@@ -25383,7 +25464,7 @@ fn internal_only_compatibility_internal_record_review_dispatch_target_mismatch_f
     let digest_before = authoritative_harness_state_digest(repo, state);
 
     let failure: Value = serde_json::from_str(
-        &featureforge_support::internal_only_runtime_review_dispatch_authority_json(
+        &internal_runtime_direct::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state,
             &RecordReviewDispatchArgs {
@@ -25428,7 +25509,7 @@ fn internal_only_compatibility_internal_record_review_dispatch_final_review_scop
     let digest_before = authoritative_harness_state_digest(repo, state);
 
     let failure: Value = serde_json::from_str(
-        &featureforge_support::internal_only_runtime_review_dispatch_authority_json(
+        &internal_runtime_direct::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state,
             &RecordReviewDispatchArgs {

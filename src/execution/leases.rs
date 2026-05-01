@@ -312,7 +312,7 @@ pub(crate) fn preflight_requires_authoritative_handoff(
         .harness_phase
         .as_deref()
         .map(str::trim)
-        .is_some_and(|phase| phase == "handoff_required");
+        .is_some_and(|phase| phase == crate::execution::phase::PHASE_HANDOFF_REQUIRED);
     Ok(overlay.handoff_required || phase_requires_handoff)
 }
 

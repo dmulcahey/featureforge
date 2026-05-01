@@ -1,4 +1,6 @@
-use crate::execution::command_eligibility::public_execution_mutation_is_authorized;
+use crate::execution::command_eligibility::{
+    PublicAdvanceLateStageMode, PublicCommand, public_execution_mutation_is_authorized,
+};
 use crate::execution::current_truth::{
     BranchRerecordingAssessment, BranchRerecordingUnsupportedReason,
     branch_closure_rerecording_assessment_with_authority,
@@ -24,6 +26,7 @@ use crate::execution::state::{
     prerelease_branch_closure_refresh_required, qa_pending_requires_test_plan_refresh,
     recommended_execution_source, reopen_exact_execution_command_for_task,
     resolve_exact_execution_command, task_closure_baseline_bridge_ready_for_stale_target,
+    task_closure_baseline_candidate_can_preempt_stale_target,
     task_closure_baseline_repair_candidate_with_stale_target,
     task_closures_are_non_branch_contributing, task_scope_structural_review_state_reason,
 };
@@ -57,7 +60,7 @@ pub(crate) struct NextActionDecision {
     pub step_number: Option<u32>,
     pub blocking_task: Option<u32>,
     pub blocking_reason_codes: Vec<String>,
-    pub recommended_command: Option<String>,
+    pub recommended_public_command: Option<PublicCommand>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,6 +121,7 @@ pub(crate) struct AuthoritativeStaleReentryTarget<'a> {
     pub(crate) reason_code: &'a str,
     pub(crate) source: AuthoritativeStaleTargetSource,
     pub(crate) source_record_id: Option<&'a str>,
+    pub(crate) task_closure_bridge_allowed: bool,
 }
 
 impl<'a> AuthoritativeStaleReentryTarget<'a> {
@@ -131,6 +135,7 @@ impl<'a> AuthoritativeStaleReentryTarget<'a> {
             reason_code: target.reason_code.as_str(),
             source: target.source,
             source_record_id: target.record_id.as_deref().or(Some(target.source.as_str())),
+            task_closure_bridge_allowed: target.task_closure_bridge_allowed,
         })
     }
 
@@ -145,8 +150,7 @@ impl<'a> AuthoritativeStaleReentryTarget<'a> {
     }
 
     fn allows_task_closure_bridge(self) -> bool {
-        self.source == AuthoritativeStaleTargetSource::BaselineBridge
-            || !matches!(self.reason_code, "prior_task_current_closure_stale")
+        self.task_closure_bridge_allowed
     }
 }
 
@@ -155,6 +159,7 @@ pub(crate) struct NextActionAuthorityInputs<'a> {
     pub(crate) persisted_repair_follow_up: Option<&'a str>,
     pub(crate) branch_rerecording_assessment: Option<&'a BranchRerecordingAssessment>,
     pub(crate) gate_finish: Option<&'a GateResult>,
+    pub(crate) has_authoritative_stale_target: bool,
     pub(crate) authoritative_stale_target: Option<AuthoritativeStaleReentryTarget<'a>>,
 }
 
@@ -163,9 +168,13 @@ impl NextActionAuthorityInputs<'_> {
         self.authoritative_stale_target.map(|target| target.task)
     }
 
-    fn stale_target_allows_task_closure_bridge(self) -> bool {
-        self.authoritative_stale_target
-            .is_none_or(AuthoritativeStaleReentryTarget::allows_task_closure_bridge)
+    fn stale_target_allows_task_closure_bridge_for_task(self, task_number: u32) -> bool {
+        self.authoritative_stale_target.is_none_or(|target| {
+            if target.task < task_number {
+                return false;
+            }
+            target.task > task_number || target.allows_task_closure_bridge()
+        })
     }
 
     fn stale_target_is_baseline_bridge(self) -> bool {
@@ -183,34 +192,130 @@ pub(crate) struct NextActionRequestInputs<'a> {
     pub(crate) final_review_dispatch_lineage_present: bool,
 }
 
+fn repair_review_state_public_command(plan_path: &str) -> PublicCommand {
+    PublicCommand::RepairReviewState {
+        plan: plan_path.to_owned(),
+    }
+}
+
+fn close_current_task_public_command(plan_path: &str, task_number: u32) -> PublicCommand {
+    PublicCommand::CloseCurrentTask {
+        plan: plan_path.to_owned(),
+        task: Some(task_number),
+        include_result_template: true,
+    }
+}
+
+fn transfer_handoff_public_command(plan_path: &str, scope: &str) -> PublicCommand {
+    PublicCommand::TransferHandoff {
+        plan: plan_path.to_owned(),
+        scope: scope.to_owned(),
+    }
+}
+
+fn advance_late_stage_public_command(
+    plan_path: &str,
+    mode: PublicAdvanceLateStageMode,
+) -> PublicCommand {
+    PublicCommand::AdvanceLateStage {
+        plan: plan_path.to_owned(),
+        mode,
+    }
+}
+
+fn begin_public_command(
+    plan_path: &str,
+    task_number: u32,
+    step_number: u32,
+    execution_mode: Option<&str>,
+    fingerprint: &str,
+) -> PublicCommand {
+    PublicCommand::Begin {
+        plan: plan_path.to_owned(),
+        task: task_number,
+        step: step_number,
+        execution_mode: execution_mode.map(str::to_owned),
+        fingerprint: Some(fingerprint.to_owned()),
+    }
+}
+
+fn complete_public_command(
+    plan_path: &str,
+    task_number: u32,
+    step_number: u32,
+    source: &str,
+    fingerprint: &str,
+) -> PublicCommand {
+    PublicCommand::Complete {
+        plan: plan_path.to_owned(),
+        task: task_number,
+        step: step_number,
+        source: Some(source.to_owned()),
+        fingerprint: Some(fingerprint.to_owned()),
+    }
+}
+
+fn reopen_public_command(
+    plan_path: &str,
+    task_number: u32,
+    step_number: u32,
+    source: &str,
+    fingerprint: &str,
+) -> PublicCommand {
+    PublicCommand::Reopen {
+        plan: plan_path.to_owned(),
+        task: task_number,
+        step: step_number,
+        source: Some(source.to_owned()),
+        reason: Some(String::from("<reason>")),
+        fingerprint: Some(fingerprint.to_owned()),
+    }
+}
+
 pub(crate) fn public_next_action_text(decision: &NextActionDecision) -> String {
     match decision.kind {
         NextActionKind::Begin | NextActionKind::Resume | NextActionKind::Reopen => {
+            let negative_result_reentry = decision
+                .blocking_reason_codes
+                .iter()
+                .any(|reason_code| reason_code == "negative_result_requires_execution_reentry");
             let structural_task_repair_lane =
                 decision.blocking_reason_codes.iter().any(|reason_code| {
                     matches!(
                         reason_code.as_str(),
                         "prior_task_current_closure_invalid"
                             | "prior_task_current_closure_reviewed_state_malformed"
-                    )
+                    ) || (reason_code == "prior_task_current_closure_stale"
+                        && !negative_result_reentry)
                 });
-            let stale_unreviewed_repair_lane = decision.review_state_status == "stale_unreviewed";
-            if decision.phase == "execution_preflight"
-                || decision.phase_detail == "execution_preflight_required"
+            let stale_unreviewed_repair_lane = decision.review_state_status == "stale_unreviewed"
+                && decision
+                    .recommended_public_command
+                    .as_ref()
+                    .is_none_or(|command| {
+                        matches!(command, PublicCommand::RepairReviewState { .. })
+                    });
+            if decision.phase == crate::execution::phase::PHASE_EXECUTION_PREFLIGHT
+                || decision.phase_detail
+                    == crate::execution::phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED
             {
                 String::from("execution preflight")
-            } else if decision.phase_detail == "execution_reentry_required"
+            } else if decision.phase_detail
+                == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
                 && (structural_task_repair_lane || stale_unreviewed_repair_lane)
             {
                 String::from("repair review state / reenter execution")
-            } else if decision.phase_detail == "execution_reentry_required" {
+            } else if decision.phase_detail
+                == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
+            {
                 String::from("execution reentry required")
             } else {
                 String::from("continue execution")
             }
         }
         NextActionKind::CloseCurrentTask => {
-            if decision.phase_detail == "task_closure_recording_ready" {
+            if decision.phase_detail == crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+            {
                 String::from("close current task")
             } else {
                 String::from("continue execution")
@@ -226,7 +331,9 @@ pub(crate) fn public_next_action_text(decision: &NextActionDecision) -> String {
             }
         }
         NextActionKind::AdvanceLateStage => {
-            if decision.phase_detail == "release_blocker_resolution_required" {
+            if decision.phase_detail
+                == crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED
+            {
                 String::from("resolve release blocker")
             } else {
                 String::from("advance late stage")
@@ -286,6 +393,7 @@ pub(crate) fn compute_next_action_decision_with_inputs(
             persisted_repair_follow_up: persisted_repair_follow_up.as_deref(),
             branch_rerecording_assessment: branch_rerecording_assessment.as_ref(),
             gate_finish: None,
+            has_authoritative_stale_target: false,
             authoritative_stale_target: None,
         },
     )
@@ -305,9 +413,32 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         final_review_dispatch_lineage_present,
     } = request_inputs;
     let review_state_status = canonical_review_state_status(status);
+    if review_state_status == "stale_unreviewed"
+        && !status.stale_unreviewed_closures.is_empty()
+        && authority_inputs.authoritative_stale_target.is_none()
+        && !authority_inputs.has_authoritative_stale_target
+    {
+        return Some(missing_execution_reentry_target_decision(
+            status,
+            review_state_status.as_str(),
+        ));
+    }
     // Step 4.1 (ordered pass #1): hard structural corruption must route to repair before any
     // open-step, stale-boundary, or closure-prerequisite routing is attempted.
     if hard_structural_corruption_detected(status) {
+        if review_state_status == "stale_unreviewed"
+            && let Some(stale_task) = authority_inputs.earliest_stale_task()
+            && Some(stale_task) != status.blocking_task
+        {
+            return Some(execution_reentry_decision_for_task(
+                context,
+                status,
+                plan_path,
+                review_state_status.as_str(),
+                stale_task,
+                true,
+            ));
+        }
         if let Some(task_number) =
             execution_reentry_blocking_task(context, status, authority_inputs)
         {
@@ -333,7 +464,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         return Some(late_stage_decision(
             status,
             NextActionKind::AdvanceLateStage,
-            "branch_closure_recording_required_for_release_readiness",
+            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
             plan_path,
         ));
     }
@@ -344,6 +475,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         && status.current_branch_closure_id.is_none()
         && status.current_task_closures.is_empty()
         && let Some(task_number) = closure_baseline_candidate_task(context)
+        && authority_inputs.stale_target_allows_task_closure_bridge_for_task(task_number)
     {
         return Some(task_closure_recording_ready_decision(
             status,
@@ -376,20 +508,25 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         || status
             .reason_codes
             .iter()
-            .any(|reason_code| reason_code == "handoff_required");
-    let authoritative_stale_reentry_active = authority_inputs.earliest_stale_task().is_some();
-    let baseline_reentry_target = (!handoff_route_active && !authoritative_stale_reentry_active)
-        .then(|| execution_reentry_target(context, status, plan_path, authority_inputs))
+            .any(|reason_code| reason_code == crate::execution::phase::PHASE_HANDOFF_REQUIRED);
+    let authoritative_stale_task = authority_inputs.earliest_stale_task();
+    let baseline_reentry_target = (!handoff_route_active)
+        .then(|| task_closure_baseline_reentry_target(context, status, authority_inputs))
         .flatten()
         .filter(|target| {
-            target.source == ExecutionReentryTargetSource::TaskClosureBaselineRepairCandidate
+            task_closure_baseline_candidate_can_preempt_stale_target(
+                status,
+                target.task,
+                authoritative_stale_task,
+            ) && authority_inputs.stale_target_allows_task_closure_bridge_for_task(target.task)
         });
     let earliest_stale_boundary = if handoff_route_active {
         None
     } else {
-        authority_inputs
-            .earliest_stale_task()
-            .or_else(|| baseline_reentry_target.as_ref().map(|target| target.task))
+        authoritative_stale_task
+            .into_iter()
+            .chain(baseline_reentry_target.as_ref().map(|target| target.task))
+            .min()
     };
     let open_step_task = status.active_task.or(status.resume_task).or(status
         .blocking_task
@@ -403,7 +540,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
     let open_step_preempted_by_execution_reentry_blocker =
         execution_reentry_blocking_task(context, status, authority_inputs)
             .is_some_and(|blocking_task| Some(blocking_task) != open_step_task)
-            || (status.phase_detail == "execution_reentry_required"
+            || (status.phase_detail == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
                 && status.blocking_step.is_none()
                 && status
                     .blocking_task
@@ -444,6 +581,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
             && task_scope_structural_review_state_reason(status).is_none();
         if execution_reentry_requires_review_state_repair(Some(context), status)
             && !stale_boundary_open_step_resume_allowed
+            && !late_stage_negative_result_reroute(status, review_state_status.as_str())
             && !status.reason_codes.is_empty()
         {
             return Some(execution_repair_decision(
@@ -456,6 +594,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         }
         if let Some(exact_decision) = decision_from_exact_execution_command(
             status,
+            plan_path,
             resolve_exact_execution_command(status, plan_path),
         ) {
             return Some(exact_decision);
@@ -490,7 +629,8 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                         authority_inputs.earliest_stale_task(),
                     )
                     .unwrap_or(false)
-                        && authority_inputs.stale_target_allows_task_closure_bridge()
+                        && authority_inputs
+                            .stale_target_allows_task_closure_bridge_for_task(stale_task)
                         && missing_current_closure_allows_task_closure_baseline_route(
                             context,
                             status,
@@ -528,6 +668,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
     // Step 4.1 (ordered pass #4): current-task closure recording prerequisites.
     if review_state_status != "stale_unreviewed"
         && execution_reentry_requires_review_state_repair(Some(context), status)
+        && !late_stage_negative_result_reroute(status, review_state_status.as_str())
     {
         return Some(execution_repair_decision(
             context,
@@ -540,7 +681,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
     if status.harness_phase == HarnessPhase::Executing
         && review_state_status == "missing_current_closure"
         && status.current_branch_closure_id.is_none()
-        && status.phase_detail != "execution_reentry_required"
+        && status.phase_detail != crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         && status.blocking_task.is_none()
         && status.blocking_step.is_none()
         && status.active_task.is_none()
@@ -598,7 +739,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         return Some(closure_prerequisite_decision(
             status,
             NextActionKind::WaitForTaskReviewResult,
-            "task_review_result_pending",
+            crate::execution::phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
             Some(task_number),
             None,
         ));
@@ -839,22 +980,20 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         return Some(late_stage_decision(
             status,
             NextActionKind::AdvanceLateStage,
-            "branch_closure_recording_required_for_release_readiness",
+            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
             plan_path,
         ));
     }
     if task_scope_pivot_override_active(status, review_state_status.as_str()) {
-        let recommended_command = (status.blocking_task.is_some()
+        let recommended_public_command = (status.blocking_task.is_some()
             || status.active_task.is_some()
             || status.resume_task.is_some()
             || !status.reason_codes.is_empty())
-        .then_some(format!(
-            "featureforge plan execution repair-review-state --plan {plan_path}"
-        ));
+        .then(|| repair_review_state_public_command(plan_path));
         return Some(NextActionDecision {
             kind: NextActionKind::PlanningReentry,
-            phase: String::from("pivot_required"),
-            phase_detail: String::from("planning_reentry_required"),
+            phase: String::from(crate::execution::phase::PHASE_PIVOT_REQUIRED),
+            phase_detail: String::from(crate::execution::phase::DETAIL_PLANNING_REENTRY_REQUIRED),
             review_state_status,
             task_number: status
                 .blocking_task
@@ -869,11 +1008,11 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 .or(status.resume_task)
                 .or(status.active_task),
             blocking_reason_codes: status.reason_codes.clone(),
-            recommended_command,
+            recommended_public_command,
         });
     }
     if review_state_status == "missing_current_closure" {
-        if status.phase_detail == "branch_closure_recording_required_for_release_readiness"
+        if status.phase_detail == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
             || status.harness_phase == HarnessPhase::DocumentReleasePending
         {
             if status.current_branch_closure_id.is_none() {
@@ -898,12 +1037,12 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
             return Some(late_stage_decision(
                 status,
                 NextActionKind::AdvanceLateStage,
-                "branch_closure_recording_required_for_release_readiness",
+                crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
                 plan_path,
             ));
         }
         if status.current_branch_closure_id.is_none()
-            && status.phase_detail == "execution_reentry_required"
+            && status.phase_detail == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         {
             if let Some(assessment) = authority_inputs.branch_rerecording_assessment {
                 return Some(late_stage_missing_current_closure_decision_from_assessment(
@@ -979,11 +1118,12 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
     match status.harness_phase {
         HarnessPhase::DocumentReleasePending => {
             let phase_detail = document_release_pending_phase_detail(status);
-            let kind = if phase_detail == "final_review_dispatch_required" {
-                NextActionKind::RequestFinalReview
-            } else {
-                NextActionKind::AdvanceLateStage
-            };
+            let kind =
+                if phase_detail == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED {
+                    NextActionKind::RequestFinalReview
+                } else {
+                    NextActionKind::AdvanceLateStage
+                };
             return Some(late_stage_decision(status, kind, phase_detail, plan_path));
         }
         HarnessPhase::FinalReviewPending => {
@@ -991,16 +1131,16 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 return Some(late_stage_decision(
                     status,
                     NextActionKind::AdvanceLateStage,
-                    "branch_closure_recording_required_for_release_readiness",
+                    crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
                     plan_path,
                 ));
             }
             if status.current_release_readiness_state.as_deref() != Some("ready") {
                 let phase_detail =
                     if status.current_release_readiness_state.as_deref() == Some("blocked") {
-                        "release_blocker_resolution_required"
+                        crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED
                     } else {
-                        "release_readiness_recording_ready"
+                        crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
                     };
                 return Some(late_stage_decision(
                     status,
@@ -1011,7 +1151,8 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
             }
             let dispatch_lineage_present =
                 final_review_dispatch_lineage_present || final_review_dispatch_id.is_some();
-            let phase_requires_dispatch = status.phase_detail == "final_review_dispatch_required"
+            let phase_requires_dispatch = status.phase_detail
+                == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
                 && (!dispatch_lineage_present || status.current_final_review_result.is_some());
             let refresh_requires_dispatch = final_review_dispatch_requires_refresh(status);
             if phase_requires_dispatch
@@ -1021,11 +1162,11 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 return Some(late_stage_decision(
                     status,
                     NextActionKind::RequestFinalReview,
-                    "final_review_dispatch_required",
+                    crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED,
                     plan_path,
                 ));
             }
-            if status.phase_detail == "final_review_recording_ready"
+            if status.phase_detail == crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY
                 || status.current_final_review_result.is_some()
                     && status.current_final_review_branch_closure_id.as_deref()
                         == status.current_branch_closure_id.as_deref()
@@ -1033,7 +1174,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 return Some(late_stage_decision(
                     status,
                     NextActionKind::AdvanceLateStage,
-                    "final_review_recording_ready",
+                    crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY,
                     plan_path,
                 ));
             }
@@ -1041,14 +1182,14 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 return Some(late_stage_decision(
                     status,
                     NextActionKind::AdvanceLateStage,
-                    "final_review_recording_ready",
+                    crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY,
                     plan_path,
                 ));
             }
             return Some(late_stage_decision(
                 status,
                 NextActionKind::WaitForFinalReviewResult,
-                "final_review_outcome_pending",
+                crate::execution::phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING,
                 plan_path,
             ));
         }
@@ -1062,14 +1203,14 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 return Some(late_stage_decision(
                     status,
                     NextActionKind::RefreshTestPlan,
-                    "test_plan_refresh_required",
+                    crate::execution::phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED,
                     plan_path,
                 ));
             }
             return Some(late_stage_decision(
                 status,
                 NextActionKind::RunQa,
-                "qa_recording_required",
+                crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED,
                 plan_path,
             ));
         }
@@ -1080,9 +1221,9 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 .zip(status.current_branch_closure_id.as_deref())
                 .is_some_and(|(checkpoint, current)| checkpoint == current)
             {
-                "finish_completion_gate_ready"
+                crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY
             } else {
-                "finish_review_gate_ready"
+                crate::execution::phase::DETAIL_FINISH_REVIEW_GATE_READY
             };
             return Some(late_stage_decision(
                 status,
@@ -1095,7 +1236,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
             return Some(late_stage_decision(
                 status,
                 NextActionKind::Handoff,
-                "handoff_recording_required",
+                crate::execution::phase::DETAIL_HANDOFF_RECORDING_REQUIRED,
                 plan_path,
             ));
         }
@@ -1163,31 +1304,31 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 task_number,
             ));
         }
-        let begin_command = (!marker_free_evidence_projection).then(|| {
-            let execution_mode_arg = if status.execution_mode == "none" {
-                " --execution-mode featureforge:executing-plans"
-            } else {
-                ""
-            };
-            format!(
-                "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_number}{execution_mode_arg} --expect-execution-fingerprint {}",
-                status.execution_fingerprint
+        let recommended_public_command = (!marker_free_evidence_projection).then(|| {
+            let execution_mode =
+                (status.execution_mode == "none").then_some("featureforge:executing-plans");
+            begin_public_command(
+                plan_path,
+                task_number,
+                step_number,
+                execution_mode,
+                &status.execution_fingerprint,
             )
         });
         let (phase, phase_detail) = if marker_free_preflight_projection {
             (
-                String::from("execution_preflight"),
-                String::from("execution_in_progress"),
+                String::from(crate::execution::phase::PHASE_EXECUTION_PREFLIGHT),
+                String::from(crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS),
             )
         } else if status.execution_started == "yes" {
             (
-                String::from("executing"),
-                String::from("execution_reentry_required"),
+                String::from(crate::execution::phase::PHASE_EXECUTING),
+                String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
             )
         } else {
             (
-                String::from("execution_preflight"),
-                String::from("execution_preflight_required"),
+                String::from(crate::execution::phase::PHASE_EXECUTION_PREFLIGHT),
+                String::from(crate::execution::phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED),
             )
         };
         return Some(NextActionDecision {
@@ -1201,14 +1342,14 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 || !status.current_task_closures.is_empty())
             .then_some(task_number),
             blocking_reason_codes: status.reason_codes.clone(),
-            recommended_command: begin_command,
+            recommended_public_command,
         });
     }
 
     Some(late_stage_decision(
         status,
         NextActionKind::PlanningReentry,
-        "planning_reentry_required",
+        crate::execution::phase::DETAIL_PLANNING_REENTRY_REQUIRED,
         plan_path,
     ))
 }
@@ -1228,7 +1369,11 @@ fn execution_repair_decision(
             target.task,
         );
     }
-    if missing_execution_reentry_target_requires_reconcile(status, review_state_status) {
+    if missing_execution_reentry_target_requires_reconcile(
+        status,
+        review_state_status,
+        authority_inputs,
+    ) {
         return missing_execution_reentry_target_decision(status, review_state_status);
     }
     let mut blocking_reason_codes = status.reason_codes.clone();
@@ -1240,24 +1385,27 @@ fn execution_repair_decision(
     }
     NextActionDecision {
         kind: NextActionKind::RepairReviewState,
-        phase: String::from("executing"),
-        phase_detail: String::from("execution_reentry_required"),
+        phase: String::from(crate::execution::phase::PHASE_EXECUTING),
+        phase_detail: String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
         review_state_status: review_state_status.to_owned(),
         task_number: None,
         step_number: None,
         blocking_task: None,
         blocking_reason_codes,
-        recommended_command: Some(format!(
-            "featureforge plan execution repair-review-state --plan {plan_path}"
-        )),
+        recommended_public_command: Some(repair_review_state_public_command(plan_path)),
     }
 }
 
 fn missing_execution_reentry_target_requires_reconcile(
     status: &PlanExecutionStatus,
     review_state_status: &str,
+    authority_inputs: NextActionAuthorityInputs<'_>,
 ) -> bool {
-    TargetlessStaleReconcile::missing_reentry_target_requires_reconcile(status, review_state_status)
+    !authority_inputs.has_authoritative_stale_target
+        && TargetlessStaleReconcile::missing_reentry_target_requires_reconcile(
+            status,
+            review_state_status,
+        )
 }
 
 fn missing_execution_reentry_target_decision(
@@ -1268,14 +1416,14 @@ fn missing_execution_reentry_target_decision(
     TargetlessStaleReconcile::ensure_reason_codes(&mut blocking_reason_codes);
     NextActionDecision {
         kind: NextActionKind::RepairReviewState,
-        phase: String::from("executing"),
+        phase: String::from(crate::execution::phase::PHASE_EXECUTING),
         phase_detail: String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL),
         review_state_status: review_state_status.to_owned(),
         task_number: None,
         step_number: None,
         blocking_task: None,
         blocking_reason_codes,
-        recommended_command: None,
+        recommended_public_command: None,
     }
 }
 
@@ -1287,8 +1435,8 @@ fn execution_repair_decision_for_task(
 ) -> NextActionDecision {
     NextActionDecision {
         kind: NextActionKind::RepairReviewState,
-        phase: String::from("executing"),
-        phase_detail: String::from("execution_reentry_required"),
+        phase: String::from(crate::execution::phase::PHASE_EXECUTING),
+        phase_detail: String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
         review_state_status: review_state_status.to_owned(),
         task_number: Some(task_number),
         step_number: status
@@ -1297,9 +1445,7 @@ fn execution_repair_decision_for_task(
             .or(status.active_step),
         blocking_task: Some(task_number),
         blocking_reason_codes: status.reason_codes.clone(),
-        recommended_command: Some(format!(
-            "featureforge plan execution repair-review-state --plan {plan_path}"
-        )),
+        recommended_public_command: Some(repair_review_state_public_command(plan_path)),
     }
 }
 
@@ -1310,22 +1456,22 @@ fn closure_prerequisite_decision(
     task_number: Option<u32>,
     step_number: Option<u32>,
 ) -> NextActionDecision {
-    let recommended_command = match kind {
+    let recommended_public_command = match kind {
         NextActionKind::WaitForTaskReviewResult
         | NextActionKind::RequestFinalReview
         | NextActionKind::WaitForFinalReviewResult => None,
-        _ => status.recommended_command.clone(),
+        _ => status.recommended_public_command.clone(),
     };
     NextActionDecision {
         kind,
-        phase: String::from("task_closure_pending"),
+        phase: String::from(crate::execution::phase::PHASE_TASK_CLOSURE_PENDING),
         phase_detail: String::from(phase_detail),
         review_state_status: canonical_review_state_status(status),
         task_number,
         step_number,
         blocking_task: task_number.or(status.blocking_task),
         blocking_reason_codes: status.reason_codes.clone(),
-        recommended_command,
+        recommended_public_command,
     }
 }
 
@@ -1343,22 +1489,20 @@ fn task_closure_recording_ready_decision(
         return late_stage_decision(
             status,
             NextActionKind::AdvanceLateStage,
-            "branch_closure_recording_required_for_release_readiness",
+            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
             plan_path,
         );
     }
     NextActionDecision {
         kind: NextActionKind::CloseCurrentTask,
-        phase: String::from("task_closure_pending"),
-        phase_detail: String::from("task_closure_recording_ready"),
+        phase: String::from(crate::execution::phase::PHASE_TASK_CLOSURE_PENDING),
+        phase_detail: String::from(crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         review_state_status: String::from("clean"),
         task_number: Some(task_number),
         step_number: None,
         blocking_task: Some(task_number),
         blocking_reason_codes: public_task_boundary_decision(status).public_reason_codes,
-        recommended_command: Some(format!(
-            "featureforge plan execution close-current-task --plan {plan_path} --task {task_number} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-        )),
+        recommended_public_command: Some(close_current_task_public_command(plan_path, task_number)),
     }
 }
 
@@ -1368,22 +1512,30 @@ fn late_stage_decision(
     phase_detail: &str,
     plan_path: &str,
 ) -> NextActionDecision {
-    let recommended_command = match phase_detail {
-        "branch_closure_recording_required_for_release_readiness"
-        | "release_readiness_recording_ready"
-        | "release_blocker_resolution_required"
-        | "final_review_recording_ready" => Some(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_path}"
-        )),
-        "qa_recording_required" => Some(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_path} --result pass|fail --summary-file <path>"
-        )),
-        "final_review_dispatch_required"
-        | "final_review_outcome_pending"
-        | "test_plan_refresh_required"
-        | "finish_review_gate_ready"
-        | "finish_completion_gate_ready" => None,
-        "handoff_recording_required" => {
+    let recommended_public_command = match phase_detail {
+        crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
+        | crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
+        | crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => Some(
+            advance_late_stage_public_command(plan_path, PublicAdvanceLateStageMode::Basic),
+        ),
+        crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY => {
+            Some(advance_late_stage_public_command(
+                plan_path,
+                PublicAdvanceLateStageMode::FinalReviewResultTemplate,
+            ))
+        }
+        crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED => {
+            Some(advance_late_stage_public_command(
+                plan_path,
+                PublicAdvanceLateStageMode::QaResultTemplate,
+            ))
+        }
+        crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+        | crate::execution::phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
+        | crate::execution::phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED
+        | crate::execution::phase::DETAIL_FINISH_REVIEW_GATE_READY
+        | crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY => None,
+        crate::execution::phase::DETAIL_HANDOFF_RECORDING_REQUIRED => {
             let scope = shared_handoff_decision_scope(
                 status.active_task,
                 status.blocking_task,
@@ -1392,34 +1544,32 @@ fn late_stage_decision(
                 Some(status.harness_phase),
             )
             .unwrap_or("branch");
-            Some(format!(
-                "featureforge plan execution transfer --plan {plan_path} --scope {scope} --to <owner> --reason <reason>"
-            ))
+            Some(transfer_handoff_public_command(plan_path, scope))
         }
-        _ => status.recommended_command.clone(),
+        _ => status.recommended_public_command.clone(),
     };
     NextActionDecision {
         kind,
         phase: match phase_detail {
-            "task_review_result_pending" | "task_closure_recording_ready" => {
-                String::from("task_closure_pending")
+            crate::execution::phase::DETAIL_TASK_REVIEW_RESULT_PENDING | crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY => {
+                String::from(crate::execution::phase::PHASE_TASK_CLOSURE_PENDING)
             }
-            "branch_closure_recording_required_for_release_readiness"
-            | "release_readiness_recording_ready"
-            | "release_blocker_resolution_required" => String::from("document_release_pending"),
-            "final_review_dispatch_required"
+            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
+            | crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
+            | crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => String::from(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING),
+            crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
                 if status.harness_phase == HarnessPhase::DocumentReleasePending =>
             {
-                String::from("document_release_pending")
+                String::from(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING)
             }
-            "final_review_dispatch_required"
-            | "final_review_outcome_pending"
-            | "final_review_recording_ready" => String::from("final_review_pending"),
-            "qa_recording_required" | "test_plan_refresh_required" => String::from("qa_pending"),
-            "finish_review_gate_ready" | "finish_completion_gate_ready" => {
-                String::from("ready_for_branch_completion")
+            crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+            | crate::execution::phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
+            | crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY => String::from(crate::execution::phase::PHASE_FINAL_REVIEW_PENDING),
+            crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED | crate::execution::phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED => String::from(crate::execution::phase::PHASE_QA_PENDING),
+            crate::execution::phase::DETAIL_FINISH_REVIEW_GATE_READY | crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY => {
+                String::from(crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION)
             }
-            "handoff_recording_required" => String::from("handoff_required"),
+            crate::execution::phase::DETAIL_HANDOFF_RECORDING_REQUIRED => String::from(crate::execution::phase::PHASE_HANDOFF_REQUIRED),
             _ => status.harness_phase.as_str().to_owned(),
         },
         phase_detail: String::from(phase_detail),
@@ -1434,7 +1584,7 @@ fn late_stage_decision(
             .or(status.active_step),
         blocking_task: status.blocking_task,
         blocking_reason_codes: status.reason_codes.clone(),
-        recommended_command,
+        recommended_public_command,
     }
 }
 
@@ -1459,8 +1609,10 @@ fn stale_late_stage_repair_decision(
     }
     let target = execution_reentry_target(context, status, plan_path, authority_inputs);
     if let Some(target) = target.as_ref()
-        && status.resume_task.is_none()
-        && status.active_task.is_none()
+        && status
+            .resume_task
+            .or(status.active_task)
+            .is_none_or(|open_task| target.task < open_task)
         && status.blocking_step.is_none()
     {
         let task_number = target.task;
@@ -1504,17 +1656,31 @@ fn stale_late_stage_repair_decision(
         }
         return repair_decision;
     }
-    TargetlessStaleReconcile::ensure_reason_codes(&mut blocking_reason_codes);
-    NextActionDecision {
-        kind: NextActionKind::RepairReviewState,
-        phase: String::from("executing"),
-        phase_detail: String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL),
-        review_state_status: String::from("stale_unreviewed"),
-        task_number: None,
-        step_number: None,
-        blocking_task: None,
-        blocking_reason_codes,
-        recommended_command: None,
+    if authority_inputs.has_authoritative_stale_target {
+        NextActionDecision {
+            kind: NextActionKind::RepairReviewState,
+            phase: String::from(crate::execution::phase::PHASE_EXECUTING),
+            phase_detail: String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
+            review_state_status: String::from("stale_unreviewed"),
+            task_number: None,
+            step_number: None,
+            blocking_task: None,
+            blocking_reason_codes,
+            recommended_public_command: Some(repair_review_state_public_command(plan_path)),
+        }
+    } else {
+        TargetlessStaleReconcile::ensure_reason_codes(&mut blocking_reason_codes);
+        NextActionDecision {
+            kind: NextActionKind::RepairReviewState,
+            phase: String::from(crate::execution::phase::PHASE_EXECUTING),
+            phase_detail: String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL),
+            review_state_status: String::from("stale_unreviewed"),
+            task_number: None,
+            step_number: None,
+            blocking_task: None,
+            blocking_reason_codes,
+            recommended_public_command: None,
+        }
     }
 }
 
@@ -1524,8 +1690,8 @@ fn late_stage_planning_reentry_decision(
 ) -> NextActionDecision {
     NextActionDecision {
         kind: NextActionKind::PlanningReentry,
-        phase: String::from("pivot_required"),
-        phase_detail: String::from("planning_reentry_required"),
+        phase: String::from(crate::execution::phase::PHASE_PIVOT_REQUIRED),
+        phase_detail: String::from(crate::execution::phase::DETAIL_PLANNING_REENTRY_REQUIRED),
         review_state_status: review_state_status.to_owned(),
         task_number: status
             .blocking_task
@@ -1540,7 +1706,7 @@ fn late_stage_planning_reentry_decision(
             .or(status.resume_task)
             .or(status.active_task),
         blocking_reason_codes: status.reason_codes.clone(),
-        recommended_command: None,
+        recommended_public_command: None,
     }
 }
 
@@ -1631,7 +1797,7 @@ fn late_stage_missing_current_closure_decision_from_assessment(
         return late_stage_decision(
             status,
             NextActionKind::AdvanceLateStage,
-            "branch_closure_recording_required_for_release_readiness",
+            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
             plan_path,
         );
     }
@@ -1644,7 +1810,7 @@ fn late_stage_missing_current_closure_decision_from_assessment(
                 return late_stage_decision(
                     status,
                     NextActionKind::AdvanceLateStage,
-                    "branch_closure_recording_required_for_release_readiness",
+                    crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
                     plan_path,
                 );
             }
@@ -1775,7 +1941,7 @@ fn execution_reentry_blocking_task(
         return None;
     }
     boundary_blocking_task.or_else(|| {
-        (status.phase_detail == "execution_reentry_required"
+        (status.phase_detail == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
             && status.harness_phase == HarnessPhase::Executing
             && status.blocking_step.is_none()
             && status.active_task.is_none()
@@ -1864,27 +2030,35 @@ fn execution_reentry_decision_for_task(
         && let Some(exact_command) = resolve_exact_execution_command(status, plan_path)
         && exact_command.task_number == task_number
         && let Some(mut exact_decision) =
-            decision_from_exact_execution_command(status, Some(exact_command))
+            decision_from_exact_execution_command(status, plan_path, Some(exact_command))
     {
         exact_decision.blocking_task = exact_decision.blocking_task.or(Some(task_number));
-        if exact_decision.phase_detail != "execution_in_progress" {
-            exact_decision.phase_detail = String::from("execution_reentry_required");
+        if exact_decision.phase_detail != crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS {
+            exact_decision.phase_detail =
+                String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED);
         }
         return exact_decision;
     }
     if let Some(reopen_command) =
         reopen_exact_execution_command_for_task(context, status, plan_path, task_number)
+        && let Some(step_id) = reopen_command.step_id
     {
         return NextActionDecision {
             kind: NextActionKind::Reopen,
-            phase: String::from("executing"),
-            phase_detail: String::from("execution_reentry_required"),
+            phase: String::from(crate::execution::phase::PHASE_EXECUTING),
+            phase_detail: String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
             review_state_status: review_state_status.to_owned(),
             task_number: Some(task_number),
-            step_number: reopen_command.step_id,
+            step_number: Some(step_id),
             blocking_task: Some(task_number),
             blocking_reason_codes: status.reason_codes.clone(),
-            recommended_command: Some(reopen_command.recommended_command),
+            recommended_public_command: Some(reopen_public_command(
+                plan_path,
+                task_number,
+                step_id,
+                recommended_execution_source(status.execution_mode.as_str()),
+                &status.execution_fingerprint,
+            )),
         };
     }
     let mut repair_decision =
@@ -1904,6 +2078,7 @@ fn execution_reentry_decision_for_task(
 
 fn decision_from_exact_execution_command(
     status: &PlanExecutionStatus,
+    plan_path: &str,
     exact_command: Option<ExactExecutionCommand>,
 ) -> Option<NextActionDecision> {
     let exact_command = exact_command?;
@@ -1922,27 +2097,27 @@ fn decision_from_exact_execution_command(
         _ => return None,
     };
     let phase_detail = match exact_command.command_kind {
-        "complete" => String::from("execution_in_progress"),
+        "complete" => String::from(crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS),
         "begin"
             if status.resume_task == Some(exact_command.task_number)
                 && status.resume_step == exact_command.step_id
                 && status.harness_phase == HarnessPhase::Executing
                 && execution_reentry_requires_review_state_repair(None, status) =>
         {
-            String::from("execution_in_progress")
+            String::from(crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS)
         }
         "begin"
             if status.blocking_step.is_some()
                 && !execution_reentry_requires_review_state_repair(None, status) =>
         {
-            String::from("execution_in_progress")
+            String::from(crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS)
         }
-        _ => String::from("execution_reentry_required"),
+        _ => String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
     };
-    let phase = if phase_detail == "execution_in_progress" {
-        String::from("handoff_required")
+    let phase = if phase_detail == crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS {
+        String::from(crate::execution::phase::PHASE_HANDOFF_REQUIRED)
     } else {
-        String::from("executing")
+        String::from(crate::execution::phase::PHASE_EXECUTING)
     };
     Some(NextActionDecision {
         kind,
@@ -1957,7 +2132,11 @@ fn decision_from_exact_execution_command(
             status.blocking_task
         },
         blocking_reason_codes: status.reason_codes.clone(),
-        recommended_command: Some(exact_command.recommended_command),
+        recommended_public_command: public_command_from_exact_execution_command(
+            status,
+            plan_path,
+            &exact_command,
+        ),
     })
 }
 
@@ -2017,7 +2196,19 @@ pub(crate) fn execution_reentry_target(
         ));
     }
 
-    if let Some(target) = authority_inputs.authoritative_stale_target {
+    if let Some(target) = task_closure_baseline_reentry_target(context, status, authority_inputs)
+        && task_closure_baseline_candidate_can_preempt_stale_target(
+            status,
+            target.task,
+            authority_inputs.earliest_stale_task(),
+        )
+        && authority_inputs.stale_target_allows_task_closure_bridge_for_task(target.task)
+    {
+        return Some(target);
+    }
+    if let Some(target) = authority_inputs.authoritative_stale_target
+        && !authoritative_stale_target_is_current_task_closure(status, target)
+    {
         return Some(target.into_execution_reentry_target());
     }
     if let Some(command) = exact_command
@@ -2033,24 +2224,6 @@ pub(crate) fn execution_reentry_target(
             command.step_id,
             ExecutionReentryTargetSource::ExactRouteCommand,
             "exact_route_command",
-        ));
-    }
-    if let Some(task) = closure_baseline_candidate_task(context)
-        && task_closure_baseline_repair_candidate_with_stale_target(
-            context,
-            status,
-            task,
-            authority_inputs.earliest_stale_task(),
-        )
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        return Some(ExecutionReentryTarget::new(
-            task,
-            None,
-            ExecutionReentryTargetSource::TaskClosureBaselineRepairCandidate,
-            "task_closure_baseline_repair_candidate",
         ));
     }
     if status
@@ -2082,6 +2255,58 @@ pub(crate) fn execution_reentry_target(
     None
 }
 
+fn task_closure_baseline_reentry_target(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    authority_inputs: NextActionAuthorityInputs<'_>,
+) -> Option<ExecutionReentryTarget> {
+    let task = closure_baseline_candidate_task(context)?;
+    task_closure_baseline_repair_candidate_with_stale_target(
+        context,
+        status,
+        task,
+        authority_inputs.earliest_stale_task(),
+    )
+    .ok()
+    .flatten()?;
+    Some(ExecutionReentryTarget::new(
+        task,
+        None,
+        ExecutionReentryTargetSource::TaskClosureBaselineRepairCandidate,
+        "task_closure_baseline_repair_candidate",
+    ))
+}
+
+pub(crate) fn authoritative_stale_target_is_current_task_closure(
+    status: &PlanExecutionStatus,
+    target: AuthoritativeStaleReentryTarget<'_>,
+) -> bool {
+    let Some(source_record_id) = target.source_record_id else {
+        return false;
+    };
+    status
+        .current_task_closures
+        .iter()
+        .any(|closure| closure.task == target.task && closure.closure_record_id == source_record_id)
+}
+
+pub(crate) fn select_authoritative_stale_reentry_target<'a>(
+    status: &PlanExecutionStatus,
+    stale_targets: impl IntoIterator<Item = &'a AuthoritativeStaleTarget>,
+) -> Option<AuthoritativeStaleReentryTarget<'a>> {
+    stale_targets
+        .into_iter()
+        .filter(|target| target.is_actionable_task_reentry_target(status))
+        .filter_map(AuthoritativeStaleReentryTarget::from_stale_target)
+        .min_by(|left, right| {
+            left.task
+                .cmp(&right.task)
+                .then_with(|| left.step.cmp(&right.step))
+                .then_with(|| left.source_record_id.cmp(&right.source_record_id))
+                .then_with(|| left.reason_code.cmp(right.reason_code))
+        })
+}
+
 fn latest_checked_task(context: &ExecutionContext) -> Option<u32> {
     context
         .steps
@@ -2102,19 +2327,7 @@ fn late_stage_execution_reentry_decision(
         .reason_codes
         .iter()
         .any(|reason_code| reason_code == "stale_provenance");
-    let negative_result_reroute = status.harness_phase == HarnessPhase::Executing
-        && review_state_status == "clean"
-        && status.current_branch_closure_id.is_some()
-        && status.blocking_step.is_none()
-        && negative_result_requires_execution_reentry(
-            false,
-            "executing",
-            status.current_branch_closure_id.as_deref(),
-            status.current_final_review_branch_closure_id.as_deref(),
-            status.current_final_review_result.as_deref(),
-            status.current_qa_branch_closure_id.as_deref(),
-            status.current_qa_result.as_deref(),
-        );
+    let negative_result_reroute = late_stage_negative_result_reroute(status, review_state_status);
     let stale_provenance_reroute = matches!(
         status.harness_phase,
         HarnessPhase::Executing | HarnessPhase::FinalReviewPending
@@ -2125,7 +2338,8 @@ fn late_stage_execution_reentry_decision(
     if !(negative_result_reroute || stale_provenance_reroute) {
         return None;
     }
-    let reentry_target = execution_reentry_target(context, status, plan_path, authority_inputs);
+    let reentry_target = execution_reentry_target(context, status, plan_path, authority_inputs)
+        .or_else(|| negative_result_execution_reentry_target(context, negative_result_reroute));
     Some(
         reentry_target
             .map(|target| {
@@ -2135,13 +2349,50 @@ fn late_stage_execution_reentry_decision(
                     plan_path,
                     review_state_status,
                     target.task,
-                    false,
+                    negative_result_reroute,
                 )
             })
             .unwrap_or_else(|| {
                 missing_execution_reentry_target_decision(status, review_state_status)
             }),
     )
+}
+
+fn late_stage_negative_result_reroute(
+    status: &PlanExecutionStatus,
+    review_state_status: &str,
+) -> bool {
+    review_state_status == "clean"
+        && status.current_branch_closure_id.is_some()
+        && status.blocking_step.is_none()
+        && (status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code == "negative_result_requires_execution_reentry")
+            || negative_result_requires_execution_reentry(
+                false,
+                crate::execution::phase::PHASE_EXECUTING,
+                status.current_branch_closure_id.as_deref(),
+                status.current_final_review_branch_closure_id.as_deref(),
+                status.current_final_review_result.as_deref(),
+                status.current_qa_branch_closure_id.as_deref(),
+                status.current_qa_result.as_deref(),
+            ))
+}
+
+fn negative_result_execution_reentry_target(
+    context: &ExecutionContext,
+    negative_result_reroute: bool,
+) -> Option<ExecutionReentryTarget> {
+    negative_result_reroute.then(|| {
+        let task = latest_checked_task(context)?;
+        Some(ExecutionReentryTarget::new(
+            task,
+            latest_attempted_step_for_task(context, task),
+            ExecutionReentryTargetSource::NegativeReviewOrVerificationResult,
+            "negative_result_requires_execution_reentry",
+        ))
+    })?
 }
 
 fn stale_unreviewed_bridge_ready_for_task(
@@ -2159,7 +2410,8 @@ fn stale_unreviewed_bridge_ready_for_task(
     )
     .unwrap_or(false);
     if review_state_status == "stale_unreviewed" {
-        return reducer_bridge_ready && authority_inputs.stale_target_allows_task_closure_bridge();
+        return reducer_bridge_ready
+            && authority_inputs.stale_target_allows_task_closure_bridge_for_task(task_number);
     }
     let Some(candidate) = task_closure_baseline_repair_candidate_with_stale_target(
         context,
@@ -2409,11 +2661,11 @@ fn task_scope_handoff_decision(
     NextActionDecision {
         kind: NextActionKind::Handoff,
         phase: if task_scoped_handoff {
-            String::from("executing")
+            String::from(crate::execution::phase::PHASE_EXECUTING)
         } else {
-            String::from("handoff_required")
+            String::from(crate::execution::phase::PHASE_HANDOFF_REQUIRED)
         },
-        phase_detail: String::from("handoff_recording_required"),
+        phase_detail: String::from(crate::execution::phase::DETAIL_HANDOFF_RECORDING_REQUIRED),
         review_state_status: review_state_status.to_owned(),
         task_number: status
             .blocking_task
@@ -2428,9 +2680,7 @@ fn task_scope_handoff_decision(
             .or(status.resume_task)
             .or(status.active_task),
         blocking_reason_codes: status.reason_codes.clone(),
-        recommended_command: Some(format!(
-            "featureforge plan execution transfer --plan {plan_path} --scope {handoff_scope} --to <owner> --reason <reason>"
-        )),
+        recommended_public_command: Some(transfer_handoff_public_command(plan_path, handoff_scope)),
     }
 }
 
@@ -2439,7 +2689,7 @@ fn canonical_review_state_status(status: &PlanExecutionStatus) -> String {
         return status.review_state_status.clone();
     }
     if prerelease_branch_closure_refresh_required(status)
-        || status.phase_detail == "branch_closure_recording_required_for_release_readiness"
+        || status.phase_detail == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
     {
         return String::from("missing_current_closure");
     }
@@ -2477,25 +2727,8 @@ pub(crate) fn exact_execution_command_from_decision(
     {
         return None;
     }
-    let recommended_command = decision
-        .recommended_command
-        .clone()
-        .or_else(|| {
-            let exact = resolve_exact_execution_command(status, plan_path)?;
-            (exact.command_kind == command_kind
-                && exact.task_number == task_number
-                && exact.step_id == step_id)
-                .then_some(exact.recommended_command)
-        })
-        .or_else(|| {
-            synthesized_exact_execution_command(
-                status,
-                plan_path,
-                command_kind,
-                task_number,
-                step_id,
-            )
-        })?;
+    let recommended_command =
+        exact_public_command_from_decision(status, decision, plan_path)?.to_display_command();
     Some(ExactExecutionCommand {
         command_kind,
         task_number,
@@ -2504,39 +2737,127 @@ pub(crate) fn exact_execution_command_from_decision(
     })
 }
 
-fn synthesized_exact_execution_command(
+pub(crate) fn exact_public_command_from_decision(
+    status: &PlanExecutionStatus,
+    decision: &NextActionDecision,
+    plan_path: &str,
+) -> Option<PublicCommand> {
+    let command_kind = match decision.kind {
+        NextActionKind::Begin | NextActionKind::Resume => "begin",
+        NextActionKind::Reopen => "reopen",
+        NextActionKind::CloseCurrentTask => "complete",
+        _ => return None,
+    };
+    let task_number = decision.task_number?;
+    let step_id = decision.step_number;
+    decision
+        .recommended_public_command
+        .as_ref()
+        .filter(|command| public_command_matches_exact(command, command_kind, task_number, step_id))
+        .cloned()
+        .or_else(|| {
+            synthesized_exact_execution_public_command(
+                status,
+                plan_path,
+                command_kind,
+                task_number,
+                step_id,
+            )
+        })
+}
+
+fn public_command_matches_exact(
+    command: &PublicCommand,
+    command_kind: &str,
+    task_number: u32,
+    step_id: Option<u32>,
+) -> bool {
+    match command {
+        PublicCommand::Begin { task, step, .. } => {
+            command_kind == "begin" && *task == task_number && Some(*step) == step_id
+        }
+        PublicCommand::Complete { task, step, .. } => {
+            command_kind == "complete" && *task == task_number && Some(*step) == step_id
+        }
+        PublicCommand::Reopen { task, step, .. } => {
+            command_kind == "reopen" && *task == task_number && Some(*step) == step_id
+        }
+        _ => false,
+    }
+}
+
+fn public_command_from_exact_execution_command(
+    status: &PlanExecutionStatus,
+    plan_path: &str,
+    exact_command: &ExactExecutionCommand,
+) -> Option<PublicCommand> {
+    let step_id = exact_command.step_id?;
+    let execution_source = recommended_execution_source(status.execution_mode.as_str());
+    match exact_command.command_kind {
+        "begin" => Some(begin_public_command(
+            plan_path,
+            exact_command.task_number,
+            step_id,
+            None,
+            &status.execution_fingerprint,
+        )),
+        "complete" => Some(complete_public_command(
+            plan_path,
+            exact_command.task_number,
+            step_id,
+            execution_source,
+            &status.execution_fingerprint,
+        )),
+        "reopen" => Some(reopen_public_command(
+            plan_path,
+            exact_command.task_number,
+            step_id,
+            execution_source,
+            &status.execution_fingerprint,
+        )),
+        _ => None,
+    }
+}
+
+fn synthesized_exact_execution_public_command(
     status: &PlanExecutionStatus,
     plan_path: &str,
     command_kind: &'static str,
     task_number: u32,
     step_id: Option<u32>,
-) -> Option<String> {
+) -> Option<PublicCommand> {
     let execution_source = recommended_execution_source(status.execution_mode.as_str());
     match command_kind {
         "begin" => {
             let step_id = step_id?;
-            let execution_mode_arg = if status.execution_mode == "none" {
-                " --execution-mode featureforge:executing-plans"
-            } else {
-                ""
-            };
-            Some(format!(
-                "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_id}{execution_mode_arg} --expect-execution-fingerprint {}",
-                status.execution_fingerprint
+            let execution_mode =
+                (status.execution_mode == "none").then_some("featureforge:executing-plans");
+            Some(begin_public_command(
+                plan_path,
+                task_number,
+                step_id,
+                execution_mode,
+                &status.execution_fingerprint,
             ))
         }
         "reopen" => {
             let step_id = step_id?;
-            Some(format!(
-                "featureforge plan execution reopen --plan {plan_path} --task {task_number} --step {step_id} --source {execution_source} --reason <reason> --expect-execution-fingerprint {}",
-                status.execution_fingerprint
+            Some(reopen_public_command(
+                plan_path,
+                task_number,
+                step_id,
+                execution_source,
+                &status.execution_fingerprint,
             ))
         }
         "complete" => {
             let step_id = status.active_step?;
-            Some(format!(
-                "featureforge plan execution complete --plan {plan_path} --task {task_number} --step {step_id} --source {execution_source} --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint {}",
-                status.execution_fingerprint
+            Some(complete_public_command(
+                plan_path,
+                task_number,
+                step_id,
+                execution_source,
+                &status.execution_fingerprint,
             ))
         }
         _ => None,

@@ -3060,6 +3060,105 @@ fn analyze_plan_accepts_matching_pass_plan_fidelity_review_artifact_for_draft_pl
 }
 
 #[test]
+fn analyze_plan_reports_missing_plan_fidelity_review_artifact_for_engineering_approved_plan() {
+    let repo_root = unique_temp_dir("contract-analyze-approved-missing-plan-fidelity-review");
+    let state_dir = unique_temp_dir("contract-analyze-approved-missing-plan-fidelity-review-state");
+    install_valid_artifacts(&repo_root);
+
+    let report = parse_success_json(
+        &run_rust(
+            &repo_root,
+            &state_dir,
+            &[
+                "analyze-plan",
+                "--spec",
+                SPEC_REL,
+                "--plan",
+                PLAN_REL,
+                "--format",
+                "json",
+            ],
+            "rust analyze Engineering Approved plan without plan-fidelity review artifact",
+        ),
+        "rust analyze Engineering Approved plan without plan-fidelity review artifact",
+    );
+
+    assert_eq!(report["contract_state"], "valid");
+    assert_eq!(report["plan_fidelity_review"]["state"], "missing");
+    assert!(
+        report["plan_fidelity_review"]["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be present")
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|code| code == "missing_plan_fidelity_review_artifact")
+    );
+}
+
+#[test]
+fn analyze_plan_accepts_matching_pass_plan_fidelity_review_artifact_for_engineering_approved_plan()
+{
+    let repo_root = unique_temp_dir("contract-analyze-approved-pass-plan-fidelity-review");
+    let state_dir = unique_temp_dir("contract-analyze-approved-pass-plan-fidelity-review-state");
+    install_valid_artifacts(&repo_root);
+    write_plan_fidelity_review_artifact(
+        &repo_root,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-approved-pass.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "independent-reviewer-approved",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
+    );
+
+    let report = parse_success_json(
+        &run_rust(
+            &repo_root,
+            &state_dir,
+            &[
+                "analyze-plan",
+                "--spec",
+                SPEC_REL,
+                "--plan",
+                PLAN_REL,
+                "--format",
+                "json",
+            ],
+            "rust analyze Engineering Approved plan with pass plan-fidelity review artifact",
+        ),
+        "rust analyze Engineering Approved plan with pass plan-fidelity review artifact",
+    );
+
+    assert_eq!(report["contract_state"], "valid");
+    assert_eq!(report["plan_fidelity_review"]["state"], "pass");
+    assert_eq!(
+        report["plan_fidelity_review"]["verified_requirement_index"],
+        true
+    );
+    assert_eq!(
+        report["plan_fidelity_review"]["verified_execution_topology"],
+        true
+    );
+    assert_eq!(
+        report["plan_fidelity_review"]["verified_task_contract"],
+        true
+    );
+    assert_eq!(
+        report["plan_fidelity_review"]["verified_task_determinism"],
+        true
+    );
+    assert_eq!(
+        report["plan_fidelity_review"]["verified_spec_reference_fidelity"],
+        true
+    );
+}
+
+#[test]
 fn analyze_plan_reports_stale_or_non_independent_plan_fidelity_review_artifacts() {
     let repo_root = unique_temp_dir("contract-analyze-invalid-plan-fidelity-review");
     let state_dir = unique_temp_dir("contract-analyze-invalid-plan-fidelity-review-state");

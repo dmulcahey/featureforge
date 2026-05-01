@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::event_log::load_reduced_authoritative_state_for_state_path;
+use crate::execution::fields::FIELD_HANDOFF_REQUIRED;
 use crate::git::sha256_hex;
 use crate::paths::harness_state_path;
 
@@ -247,7 +248,7 @@ fn authoritative_handoff_checkpoint(
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
     let handoff_required = root
-        .get("handoff_required")
+        .get(FIELD_HANDOFF_REQUIRED)
         .and_then(Value::as_bool)
         .unwrap_or(false);
     Some(HandoffCheckpoint {
@@ -457,6 +458,7 @@ mod tests {
             serde_json::json!({
                 "last_handoff_path": authoritative,
                 "last_handoff_fingerprint": authoritative_fingerprint,
+                // Payload field key, not the public handoff_required phase value.
                 "handoff_required": false,
             })
             .to_string(),
@@ -473,7 +475,7 @@ mod tests {
     fn current_workflow_transfer_record_exists_requires_matching_decision_reason_codes() {
         let state_dir = TempDir::new().expect("state dir should create");
         let decision_reason_codes = vec![
-            String::from("handoff_required"),
+            String::from(crate::execution::phase::PHASE_HANDOFF_REQUIRED),
             String::from("evaluator_blocked"),
         ];
         let identity = WorkflowTransferRecordIdentity {
@@ -507,6 +509,7 @@ mod tests {
             serde_json::json!({
                 "last_handoff_path": authoritative.display().to_string(),
                 "last_handoff_fingerprint": authoritative_fingerprint,
+                // Payload field key, not the public handoff_required phase value.
                 "handoff_required": false
             })
             .to_string(),
@@ -519,7 +522,7 @@ mod tests {
         );
 
         let mismatched_reason_codes = vec![
-            String::from("handoff_required"),
+            String::from(crate::execution::phase::PHASE_HANDOFF_REQUIRED),
             String::from("manual_transfer_required"),
         ];
         let mismatched_identity = WorkflowTransferRecordIdentity {
@@ -566,6 +569,7 @@ mod tests {
             serde_json::json!({
                 "last_handoff_path": authoritative.display().to_string(),
                 "last_handoff_fingerprint": authoritative_fingerprint,
+                // Payload field key, not the public handoff_required phase value.
                 "handoff_required": false
             })
             .to_string(),

@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde::Serialize;
 
 use crate::diagnostics::JsonFailure;
@@ -13,6 +15,7 @@ use crate::execution::current_truth::{
     stale_reason_codes_for_late_stage_projection,
 };
 use crate::execution::leases::StatusAuthoritativeOverlay;
+use crate::execution::reentry_reconcile::TargetlessStaleReconcile;
 use crate::execution::semantic_identity::{SemanticWorkspaceSnapshot, semantic_workspace_snapshot};
 use crate::execution::state::{
     ExecutionContext, ExecutionDerivedTruth, ExecutionReadScope, FinalReviewDispatchAuthority,
@@ -62,6 +65,15 @@ pub(crate) struct RuntimeGateSnapshot {
 }
 
 impl RuntimeGateSnapshot {
+    pub(crate) fn has_authoritative_stale_binding(&self, status: &PlanExecutionStatus) -> bool {
+        self.stale_targets
+            .iter()
+            .any(|target| target.is_bound_stale_target(status))
+            || !status.stale_unreviewed_closures.is_empty()
+            || self.branch_closure_tracked_drift
+            || self.missing_current_closure_stale_provenance
+    }
+
     pub(crate) fn earliest_task_stale_target(&self) -> Option<u32> {
         self.earliest_task_stale_target_details()
             .and_then(|target| target.task)
@@ -84,7 +96,7 @@ impl RuntimeGateSnapshot {
         let mut record_ids = self
             .stale_targets
             .iter()
-            .filter(|target| target.source != AuthoritativeStaleTargetSource::BaselineBridge)
+            .filter(|target| stale_closure_record_target(target))
             .filter_map(|target| target.record_id.clone())
             .collect::<Vec<_>>();
         record_ids.sort();
@@ -97,7 +109,7 @@ impl RuntimeGateSnapshot {
             .stale_targets
             .iter()
             .filter(|target| target.scope == AuthoritativeStaleTargetScope::Task)
-            .filter(|target| target.source != AuthoritativeStaleTargetSource::BaselineBridge)
+            .filter(|target| stale_closure_record_target(target))
             .filter_map(|target| target.record_id.clone())
             .collect::<Vec<_>>();
         record_ids.sort();
@@ -118,6 +130,88 @@ impl RuntimeGateSnapshot {
     }
 }
 
+impl AuthoritativeStaleTarget {
+    pub(crate) fn is_actionable_task_reentry_target(&self, status: &PlanExecutionStatus) -> bool {
+        self.scope == AuthoritativeStaleTargetScope::Task
+            && self.source != AuthoritativeStaleTargetSource::BaselineBridge
+            && self.task.is_some()
+            && self.is_bound_stale_target(status)
+    }
+
+    pub(crate) fn is_bound_stale_target(&self, status: &PlanExecutionStatus) -> bool {
+        match self.scope {
+            AuthoritativeStaleTargetScope::Task => {
+                self.task.is_some()
+                    && !self.is_current_task_closure_for_status(status)
+                    && !self.is_open_execution_step_for_status(status)
+            }
+            AuthoritativeStaleTargetScope::Branch | AuthoritativeStaleTargetScope::Milestone => {
+                true
+            }
+        }
+    }
+
+    fn is_current_task_closure_for_status(&self, status: &PlanExecutionStatus) -> bool {
+        self.scope == AuthoritativeStaleTargetScope::Task
+            && self.record_id.as_deref().is_some_and(|record_id| {
+                status
+                    .current_task_closures
+                    .iter()
+                    .any(|closure| closure.closure_record_id == record_id)
+            })
+    }
+
+    fn is_open_execution_step_for_status(&self, status: &PlanExecutionStatus) -> bool {
+        let Some(task) = self.task else {
+            return false;
+        };
+        let open_step = if status.resume_task == Some(task) {
+            status.resume_step
+        } else if status.active_task == Some(task) {
+            status.active_step
+        } else {
+            return false;
+        };
+        self.step
+            .is_none_or(|target_step| open_step == Some(target_step))
+    }
+}
+
+fn current_task_closure_ids(status: &PlanExecutionStatus) -> BTreeSet<&str> {
+    status
+        .current_task_closures
+        .iter()
+        .map(|closure| closure.closure_record_id.as_str())
+        .collect()
+}
+
+fn target_is_current_task_closure(
+    target: &AuthoritativeStaleTarget,
+    current_closure_ids: &BTreeSet<&str>,
+) -> bool {
+    target.scope == AuthoritativeStaleTargetScope::Task
+        && target
+            .record_id
+            .as_deref()
+            .is_some_and(|record_id| current_closure_ids.contains(record_id))
+}
+
+fn remove_current_task_closure_stale_targets(
+    stale_targets: &mut Vec<AuthoritativeStaleTarget>,
+    status: &PlanExecutionStatus,
+) {
+    let current_closure_ids = current_task_closure_ids(status);
+    stale_targets.retain(|target| !target_is_current_task_closure(target, &current_closure_ids));
+}
+
+fn stale_closure_record_target(target: &AuthoritativeStaleTarget) -> bool {
+    !matches!(
+        target.source,
+        AuthoritativeStaleTargetSource::BaselineBridge
+            | AuthoritativeStaleTargetSource::NegativeResult
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct AuthoritativeStaleTarget {
     pub(crate) scope: AuthoritativeStaleTargetScope,
@@ -126,6 +220,8 @@ pub(crate) struct AuthoritativeStaleTarget {
     pub(crate) record_id: Option<String>,
     pub(crate) source: AuthoritativeStaleTargetSource,
     pub(crate) reason_code: String,
+    #[serde(skip)]
+    pub(crate) task_closure_bridge_allowed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -436,7 +532,7 @@ fn build_gate_snapshot(
             stale_reason_codes.clone(),
         ),
     );
-    let mut stale_targets = stale_targets_from_closure_graph(&closure_graph);
+    let mut stale_targets = stale_targets_from_closure_graph(&closure_graph, event_authority_state);
     append_current_task_stale_targets(&mut stale_targets, context)?;
     append_task_closure_baseline_stale_target(&mut stale_targets, context, status)?;
     append_gate_stale_targets(
@@ -455,6 +551,7 @@ fn build_gate_snapshot(
         AuthoritativeStaleTargetSource::GateFinish,
     );
     append_negative_result_stale_target(&mut stale_targets, status, overlay, event_authority_state);
+    remove_current_task_closure_stale_targets(&mut stale_targets, status);
     Ok(RuntimeGateSnapshot {
         preflight,
         gate_review,
@@ -469,6 +566,7 @@ fn build_gate_snapshot(
 
 fn stale_targets_from_closure_graph(
     closure_graph: &AuthoritativeClosureGraph,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
 ) -> Vec<AuthoritativeStaleTarget> {
     let mut targets = closure_graph
         .stale_unreviewed_evaluations()
@@ -479,14 +577,23 @@ fn stale_targets_from_closure_graph(
             } else {
                 evaluation.stale_reason_codes
             };
+            let task = evaluation.identity.task_number;
+            let record_id = evaluation.identity.record_id.clone();
             reason_codes
                 .into_iter()
                 .map(move |reason_code| AuthoritativeStaleTarget {
                     scope: stale_target_scope_from_closure_scope(evaluation.identity.scope),
-                    task: evaluation.identity.task_number,
+                    task,
                     step: None,
-                    record_id: Some(evaluation.identity.record_id.clone()),
+                    record_id: Some(record_id.clone()),
                     source: AuthoritativeStaleTargetSource::ClosureGraph,
+                    task_closure_bridge_allowed:
+                        closure_graph_stale_target_allows_task_closure_bridge(
+                            authoritative_state,
+                            task,
+                            &record_id,
+                            &reason_code,
+                        ),
                     reason_code,
                 })
         })
@@ -499,9 +606,24 @@ fn stale_targets_from_closure_graph(
             record_id: Some(record_id),
             source: AuthoritativeStaleTargetSource::ProjectionOnly,
             reason_code: String::from("projection_only_stale_target"),
+            task_closure_bridge_allowed: false,
         });
     }
     targets
+}
+
+fn closure_graph_stale_target_allows_task_closure_bridge(
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+    task: Option<u32>,
+    record_id: &str,
+    reason_code: &str,
+) -> bool {
+    reason_code != "prior_task_current_closure_stale"
+        && task.is_some_and(|task| {
+            authoritative_state.is_some_and(|state| {
+                state.task_closure_history_lineage_present(task, Some(record_id))
+            })
+        })
 }
 
 fn append_current_task_stale_targets(
@@ -523,6 +645,7 @@ fn append_current_task_stale_targets(
             record_id: Some(record.closure_record_id),
             source: AuthoritativeStaleTargetSource::ClosureGraph,
             reason_code: String::from("prior_task_current_closure_stale"),
+            task_closure_bridge_allowed: false,
         });
     }
     Ok(())
@@ -537,7 +660,7 @@ fn append_task_closure_baseline_stale_target(
         || status
             .reason_codes
             .iter()
-            .any(|reason_code| reason_code == "handoff_required")
+            .any(|reason_code| reason_code == crate::execution::phase::PHASE_HANDOFF_REQUIRED)
     {
         return Ok(());
     }
@@ -603,6 +726,7 @@ fn append_task_closure_baseline_stale_target(
         record_id: None,
         source: AuthoritativeStaleTargetSource::BaselineBridge,
         reason_code,
+        task_closure_bridge_allowed: true,
     });
     Ok(())
 }
@@ -635,28 +759,18 @@ fn project_gate_snapshot_stale_closures(
     } else {
         gate_snapshot.task_stale_record_ids()
     };
-    if status.review_state_status != "stale_unreviewed"
-        && status.review_state_status != "missing_current_closure"
-    {
-        let current_closure_ids = status
-            .current_task_closures
-            .iter()
-            .map(|closure| closure.closure_record_id.as_str())
-            .collect::<Vec<_>>();
-        stale_record_ids.retain(|record_id| {
-            current_closure_ids
-                .iter()
-                .any(|current_id| record_id == current_id)
-        });
-    }
+    stale_record_ids.sort();
+    stale_record_ids.dedup();
     status.stale_unreviewed_closures = stale_record_ids;
-    if !status.stale_unreviewed_closures.is_empty() {
-        status
-            .reason_codes
-            .retain(|code| code != "stale_unreviewed_target_missing");
-        status
-            .blocking_reason_codes
-            .retain(|code| code != "stale_unreviewed_target_missing");
+
+    let has_authoritative_stale_target = gate_snapshot.has_authoritative_stale_binding(status);
+    if TargetlessStaleReconcile::status_needs_marker_with_authority(
+        status,
+        has_authoritative_stale_target,
+    ) {
+        TargetlessStaleReconcile::ensure_status_diagnostic(status);
+    } else {
+        TargetlessStaleReconcile::clear_status_diagnostic(status);
     }
 }
 
@@ -682,6 +796,7 @@ fn append_gate_stale_targets(
                 .or_else(|| gate.finish_review_gate_pass_branch_closure_id.clone()),
             source,
             reason_code: reason_code.clone(),
+            task_closure_bridge_allowed: false,
         });
     }
 }
@@ -696,6 +811,11 @@ fn append_negative_result_stale_target(
     else {
         return;
     };
+    let stricter_task_stale_target_present = stale_targets.iter().any(|target| {
+        target.scope == AuthoritativeStaleTargetScope::Task
+            && target.task == Some(task)
+            && !target.task_closure_bridge_allowed
+    });
     stale_targets.push(AuthoritativeStaleTarget {
         scope: AuthoritativeStaleTargetScope::Task,
         task: Some(task),
@@ -703,6 +823,7 @@ fn append_negative_result_stale_target(
         record_id: Some(format!("task-{task}")),
         source: AuthoritativeStaleTargetSource::NegativeResult,
         reason_code: String::from("negative_result_requires_execution_reentry"),
+        task_closure_bridge_allowed: !stricter_task_stale_target_present,
     });
 }
 

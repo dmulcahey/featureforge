@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- harden the public runtime cutover so `Engineering Approved` plans require a
+  current passing plan-fidelity gate before implementation routing, public
+  replay tests use only compiled CLI helpers, reviewer-mode runtime recursion
+  fails closed, and normal route recommendations come from typed public command
+  decisions
+- split the execution runtime into clearer command, guard, event, reducer,
+  read-model, invariant, router, and workflow-presentation boundaries, with
+  boundary/liveness tests preventing duplicate routing truth, projection writes
+  outside materialization, and phase-detail literal drift
+- add runtime architecture and validation documentation for the public-surface
+  hardening matrix, replay acceptance checks, generated-doc freshness checks,
+  strict clippy, and full no-fail-fast nextest branch gate
+
 ## v1.10.0 - 2026-04-25
 
 Breaking churn-prevention cutover that makes the execution event log the sole runtime authority and converges public routing on one reducer/router decision.

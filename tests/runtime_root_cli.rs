@@ -1,20 +1,22 @@
 #[path = "support/executable.rs"]
 mod executable_support;
-#[path = "support/featureforge.rs"]
-mod featureforge_support;
 #[path = "support/json.rs"]
 mod json_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 
 use serde_json::Value;
 use std::fs;
 use tempfile::TempDir;
 
 use executable_support::make_executable;
-use featureforge_support::{run_featureforge_real_cli, run_featureforge_with_env_control_real_cli};
 use json_support::parse_json;
 use process_support::repo_root;
+use public_featureforge_cli::{
+    run_featureforge_real_cli, run_featureforge_with_env_control_real_cli,
+};
 
 fn parse_failure_json(output: &std::process::Output, context: &str) -> Value {
     assert!(

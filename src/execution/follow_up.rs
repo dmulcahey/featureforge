@@ -188,6 +188,7 @@ impl FollowUpKind {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn command_template(self) -> Option<&'static str> {
         match self {
             Self::RepairReviewState => {
@@ -335,26 +336,39 @@ pub(crate) fn follow_up_from_phase_detail<'a>(
     phase_detail: &str,
     blocking_reason_codes: impl IntoIterator<Item = &'a str>,
 ) -> Option<FollowUpKind> {
-    if phase_detail == "branch_closure_recording_required_for_release_readiness" {
+    if phase_detail
+        == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
+    {
         return Some(FollowUpKind::AdvanceLateStage);
     }
     match phase_detail {
-        "final_review_dispatch_required" => Some(FollowUpKind::RequestExternalReview),
-        "task_review_result_pending" => {
+        crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED => {
+            Some(FollowUpKind::RequestExternalReview)
+        }
+        crate::execution::phase::DETAIL_TASK_REVIEW_RESULT_PENDING => {
             if task_review_result_requires_verification(blocking_reason_codes) {
                 Some(FollowUpKind::RunVerification)
             } else {
                 Some(FollowUpKind::WaitForExternalReviewResult)
             }
         }
-        "final_review_outcome_pending" => Some(FollowUpKind::WaitForExternalReviewResult),
-        "release_blocker_resolution_required" => Some(FollowUpKind::ResolveReleaseBlocker),
-        "execution_reentry_required" => Some(FollowUpKind::ExecutionReentry),
-        "handoff_recording_required" => Some(FollowUpKind::RecordHandoff),
+        crate::execution::phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING => {
+            Some(FollowUpKind::WaitForExternalReviewResult)
+        }
+        crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => {
+            Some(FollowUpKind::ResolveReleaseBlocker)
+        }
+        crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED => {
+            Some(FollowUpKind::ExecutionReentry)
+        }
+        crate::execution::phase::DETAIL_HANDOFF_RECORDING_REQUIRED => {
+            Some(FollowUpKind::RecordHandoff)
+        }
         _ => None,
     }
 }
 
+#[cfg(test)]
 pub(crate) fn follow_up_command_template(follow_up: Option<&str>) -> Option<String> {
     normalize_follow_up_alias(follow_up, FollowUpAliasContext::PublicRouting)
         .and_then(FollowUpKind::command_template)
@@ -538,17 +552,23 @@ mod tests {
     fn phase_detail_follow_up_resolution_is_shared() {
         assert_eq!(
             follow_up_from_phase_detail(
-                "task_review_result_pending",
+                crate::execution::phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
                 ["prior_task_verification_missing"]
             ),
             Some(FollowUpKind::RunVerification)
         );
         assert_eq!(
-            follow_up_from_phase_detail("task_review_result_pending", ["task_review_pending"]),
+            follow_up_from_phase_detail(
+                crate::execution::phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
+                ["task_review_pending"]
+            ),
             Some(FollowUpKind::WaitForExternalReviewResult)
         );
         assert_eq!(
-            follow_up_from_phase_detail("execution_reentry_required", std::iter::empty()),
+            follow_up_from_phase_detail(
+                crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
+                std::iter::empty()
+            ),
             Some(FollowUpKind::ExecutionReentry)
         );
     }

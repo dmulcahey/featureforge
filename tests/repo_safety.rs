@@ -1,7 +1,5 @@
 #[path = "support/failure_json.rs"]
 mod failure_json_support;
-#[path = "support/featureforge.rs"]
-mod featureforge_support;
 #[path = "support/files.rs"]
 mod files_support;
 #[path = "support/git.rs"]
@@ -10,6 +8,8 @@ mod git_support;
 mod json_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 
 use assert_cmd::cargo::CommandCargoExt;
 use featureforge::git::derive_repo_slug;
@@ -26,7 +26,7 @@ use json_support::parse_json;
 use process_support::{run, run_checked};
 
 fn repo_slug(repo: &Path) -> String {
-    let output = featureforge_support::run_featureforge_real_cli(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         None,
         None,
@@ -130,7 +130,7 @@ fn run_featureforge_real_cli(
     args: &[&str],
     context: &str,
 ) -> Output {
-    featureforge_support::run_featureforge_real_cli(
+    public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
         None,

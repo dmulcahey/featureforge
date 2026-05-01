@@ -12,6 +12,7 @@ use crate::contracts::harness::{
     read_execution_contract, read_execution_handoff,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::context::load_execution_context_without_authority_overlay;
 use crate::execution::dependency_index::{
     DEPENDENCY_INDEX_VERSION, DependencyIndex, DependencyIndexHealth, DependencyIndexState,
     DependencyNode, DependencyNodeId, IndexedArtifactKind,
@@ -36,10 +37,7 @@ use crate::execution::leases::{process_is_running, validate_worktree_lease};
 use crate::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters,
 };
-use crate::execution::state::{
-    ExecutionContext, ExecutionRuntime, GateResult, GateState,
-    load_execution_context_without_authority_overlay,
-};
+use crate::execution::state::{ExecutionContext, ExecutionRuntime, GateResult, GateState};
 use crate::git::sha256_hex;
 use crate::paths::{
     harness_authoritative_artifact_path, harness_authoritative_artifacts_dir, harness_branch_root,
@@ -378,13 +376,15 @@ fn ensure_preflight_authoritative_bootstrap_without_acquiring_lock(
     state.normalize_defaults();
     if matches!(
         state.harness_phase.as_deref(),
-        None | Some("implementation_handoff")
+        None | Some(crate::execution::phase::PHASE_IMPLEMENTATION_HANDOFF)
     ) {
-        state.harness_phase = Some(String::from("execution_preflight"));
+        state.harness_phase = Some(String::from(
+            crate::execution::phase::PHASE_EXECUTION_PREFLIGHT,
+        ));
     }
     let preserve_existing_post_preflight_identity = matches!(
         state.harness_phase.as_deref(),
-        Some(phase) if !matches!(phase, "implementation_handoff" | "execution_preflight")
+        Some(phase) if !matches!(phase, crate::execution::phase::PHASE_IMPLEMENTATION_HANDOFF | crate::execution::phase::PHASE_EXECUTION_PREFLIGHT)
     ) && state
         .run_identity
         .as_ref()
@@ -464,7 +464,9 @@ impl MutableHarnessState {
             self.schema_version = 1;
         }
         if self.harness_phase.is_none() {
-            self.harness_phase = Some(String::from("implementation_handoff"));
+            self.harness_phase = Some(String::from(
+                crate::execution::phase::PHASE_IMPLEMENTATION_HANDOFF,
+            ));
         }
         if self.aggregate_evaluation_state.is_none() {
             self.aggregate_evaluation_state = Some(String::from("pending"));
@@ -659,7 +661,7 @@ fn record_authoritative_handoff(
             )
         },
         move |state| {
-            state.harness_phase = Some(String::from("executing"));
+            state.harness_phase = Some(String::from(crate::execution::phase::PHASE_EXECUTING));
             state.handoff_required = false;
             state.open_failed_criteria = open_criteria.clone();
         },
@@ -688,7 +690,7 @@ fn revalidate_evaluation_locked_state(
 ) {
     if !matches!(
         state.harness_phase.as_deref(),
-        Some("executing" | "evaluating" | "repairing")
+        Some(crate::execution::phase::PHASE_EXECUTING | "evaluating" | "repairing")
     ) {
         gate.fail(
             FailureClass::IllegalHarnessPhase,
@@ -735,7 +737,10 @@ fn revalidate_handoff_locked_state(
     handoff: &ExecutionHandoff,
     gate: &mut GateState,
 ) {
-    if !matches!(state.harness_phase.as_deref(), Some("handoff_required")) {
+    if !matches!(
+        state.harness_phase.as_deref(),
+        Some(crate::execution::phase::PHASE_HANDOFF_REQUIRED)
+    ) {
         gate.fail(
             FailureClass::IllegalHarnessPhase,
             "handoff_illegal_phase",
@@ -1897,7 +1902,10 @@ fn bootstrap_verdict_buckets_from_legacy_state(
     }
 
     if state.handoff_required
-        || matches!(state.harness_phase.as_deref(), Some("handoff_required"))
+        || matches!(
+            state.harness_phase.as_deref(),
+            Some(crate::execution::phase::PHASE_HANDOFF_REQUIRED)
+        )
         || matches!(state.aggregate_evaluation_state.as_deref(), Some("blocked"))
     {
         for evaluator_kind in &legacy_non_passing {
@@ -2063,7 +2071,9 @@ fn recompute_authoritative_evaluator_state(state: &mut MutableHarnessState) {
     state.non_passing_evaluator_kinds = recomputed_non_passing;
 
     if !state.blocked_evaluator_kinds.is_empty() {
-        state.harness_phase = Some(String::from("handoff_required"));
+        state.harness_phase = Some(String::from(
+            crate::execution::phase::PHASE_HANDOFF_REQUIRED,
+        ));
         state.handoff_required = true;
         state.aggregate_evaluation_state = Some(String::from("blocked"));
         return;
@@ -2073,7 +2083,7 @@ fn recompute_authoritative_evaluator_state(state: &mut MutableHarnessState) {
         if state.current_chunk_pivot_threshold > 0
             && state.current_chunk_retry_count >= state.current_chunk_pivot_threshold
         {
-            state.harness_phase = Some(String::from("pivot_required"));
+            state.harness_phase = Some(String::from(crate::execution::phase::PHASE_PIVOT_REQUIRED));
         } else {
             state.harness_phase = Some(String::from("repairing"));
         }
@@ -2083,7 +2093,7 @@ fn recompute_authoritative_evaluator_state(state: &mut MutableHarnessState) {
     }
 
     state.handoff_required = false;
-    state.harness_phase = Some(String::from("executing"));
+    state.harness_phase = Some(String::from(crate::execution::phase::PHASE_EXECUTING));
     if state.pending_evaluator_kinds.is_empty() {
         state.aggregate_evaluation_state = Some(String::from("pass"));
         state.open_failed_criteria.clear();

@@ -1,3 +1,6 @@
+#[path = "support/rust_source_scan.rs"]
+mod rust_source_scan;
+
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,6 +18,63 @@ fn read_repo_file(rel: &str) -> String {
 
 fn hidden_literal(parts: &[&str]) -> String {
     parts.concat()
+}
+
+#[test]
+fn typed_public_commands_are_route_authority_before_display_rendering() {
+    let next_action = read_repo_file("src/execution/next_action.rs");
+    assert!(
+        !next_action.contains("recommended_command: Option<String>"),
+        "next-action routing decisions must not carry string recommendations as authority"
+    );
+    assert!(
+        next_action.contains("recommended_public_command: Option<PublicCommand>"),
+        "next-action routing decisions should carry typed public command authority"
+    );
+
+    let router = read_repo_file("src/execution/router.rs");
+    for forbidden in [
+        "PublicCommand::parse_display_command",
+        "public_mutation_request_from_command",
+        "public_command_and_display",
+        "public_command_from_recommended_command",
+    ] {
+        assert!(
+            !router.contains(forbidden),
+            "router must not reparse rendered public command strings via `{forbidden}`"
+        );
+    }
+
+    let review_state = read_repo_file("src/execution/review_state.rs");
+    for forbidden in [
+        "public_mutation_request_from_command",
+        "route_decision.recommended_command",
+        "routing.recommended_command",
+        "final_routing.recommended_command",
+    ] {
+        assert!(
+            !review_state.contains(forbidden),
+            "repair-state routing must not recover authority from rendered strings via `{forbidden}`"
+        );
+    }
+
+    let eligibility = read_repo_file("src/execution/command_eligibility.rs");
+    let route_guard_start = eligibility
+        .find("fn route_exposes_public_mutation_request")
+        .expect("typed route mutation guard should exist");
+    let route_guard = &eligibility[route_guard_start
+        ..eligibility[route_guard_start..]
+            .find("\nfn public_repair_target_matches_request")
+            .map(|offset| route_guard_start + offset)
+            .expect("typed route mutation guard should have a stable following helper")];
+    assert!(
+        route_guard.contains("recommended_public_command"),
+        "mutation guards should compare against the typed public route command"
+    );
+    assert!(
+        !route_guard.contains("next_public_action"),
+        "mutation guards must not fall back to parsing rendered next_public_action strings"
+    );
 }
 
 fn concat_source_expr(parts: &[&str]) -> String {
@@ -42,11 +102,47 @@ fn internal_plan_execution_helpers_are_explicitly_quarantined() {
         source.contains("pub fn internal_only_"),
         "plan_execution_direct.rs should keep internal helpers visibly prefixed"
     );
+
+    let source = read_repo_file("tests/support/internal_runtime_direct.rs");
+    assert!(
+        source.starts_with(INTERNAL_RUNTIME_HELPER_HEADER),
+        "internal_runtime_direct.rs must start with the internal-only quarantine contract"
+    );
+    assert!(
+        !source.contains("pub fn run_featureforge_real_cli")
+            && !source.contains("pub fn run_public_featureforge_cli_json")
+            && !source.contains("pub fn run_featureforge_with_env_control_real_cli"),
+        "internal_runtime_direct.rs must not expose public compiled-CLI helpers"
+    );
+    assert!(
+        source.contains("pub fn internal_only_"),
+        "internal_runtime_direct.rs should keep direct-runtime helpers visibly prefixed"
+    );
 }
 
 #[test]
 fn public_cli_json_helper_uses_the_compiled_binary_only() {
-    let source = read_repo_file("tests/support/featureforge.rs");
+    let source = read_repo_file("tests/support/public_featureforge_cli.rs");
+    assert!(
+        !source.starts_with(INTERNAL_RUNTIME_HELPER_HEADER),
+        "public_featureforge_cli.rs must not use the internal helper quarantine header"
+    );
+    for forbidden in [
+        "support/featureforge.rs",
+        "support/plan_execution_direct.rs",
+        "support/workflow_direct.rs",
+        "support/internal_runtime_direct.rs",
+        "featureforge::execution",
+        "featureforge::workflow",
+        "ExecutionRuntime::discover",
+        "execution::mutate",
+        "workflow::operator",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "public CLI helper file must not import or call internal runtime surface `{forbidden}`"
+        );
+    }
     let helper_start = source
         .find("pub fn run_public_featureforge_cli_json")
         .expect("public CLI JSON helper should exist");
@@ -86,6 +182,42 @@ fn public_test_files_do_not_use_internal_helpers_or_hidden_commands() {
 }
 
 #[test]
+fn public_replay_command_budget_gates_are_explicit() {
+    let replay = read_repo_file("tests/public_replay_churn.rs");
+    for needle in [
+        "fn public_replay_begin_owns_allowed_preflight_without_hidden_command()",
+        r#"cli.delta_since(&checkpoint, "begin")"#,
+        "bridge should need one public begin after route discovery",
+        "fn public_replay_cycle_break_clears_on_current_closure_refresh_without_loop()",
+        r#"cli.delta_since(&checkpoint, "close-current-task")"#,
+        r#"cli.delta_since(&checkpoint, "reopen")"#,
+        "cycle-break recovery must not loop through reopen",
+        "fn public_replay_engineering_approved_plan_without_fidelity_cannot_bypass_to_implementation()",
+        "approved plan fidelity gate",
+        "receipt",
+    ] {
+        assert!(
+            replay.contains(needle),
+            "public_replay_churn.rs must keep the public replay budget/fidelity gate assertion `{needle}`"
+        );
+    }
+
+    let shell = read_repo_file("tests/workflow_shell_smoke.rs");
+    for needle in [
+        "fn fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers()",
+        "FS11-REBASE-RESUME-BUDGET",
+        "runtime_management_commands, 3",
+        "fn task_close_happy_path_runtime_management_budget_is_capped()",
+        "TASK-CLOSE-BUDGET",
+    ] {
+        assert!(
+            shell.contains(needle),
+            "workflow_shell_smoke.rs must keep the runtime-management budget assertion `{needle}`"
+        );
+    }
+}
+
+#[test]
 fn scanner_rejects_public_internal_helper_and_hidden_command_fixtures() {
     let helper = hidden_literal(&[
         "internal_only_try_run_",
@@ -106,7 +238,7 @@ fn scanner_rejects_public_internal_helper_and_hidden_command_fixtures() {
     let concat_hidden_command = concat_source_expr(&["record", "-review-dispatch"]);
     let concat_hidden_flag = concat_source_expr(&["--dispatch", "-id"]);
     let fixture = format!(
-        "use crate::support::plan_execution_direct::{helper_name} as aliased_direct_helper;\nuse crate::support::plan_execution_direct::{{\n    {helper_name} as multiline_aliased_direct_helper,\n}};\nconst HIDDEN_COMMANDS: &[&str] = &[\n    \"{hidden_command}\",\n    {concat_hidden_command},\n];\nconst CMD_ALIAS: &str = {concat_hidden_command};\nconst MULTILINE_CMD_ALIAS: &str =\n    {concat_hidden_command};\nlet hidden_flags = [\"{hidden_flag}\", {concat_hidden_flag}];\n\nfn public_wrapper(repo: &Path, state: &Path, plan: &str, context: &str) {{\n    {wrapper_helper}\n}}\n\npub fn\npublic_split_signature_wrapper(repo: &Path, state: &Path, plan: &str, context: &str) {{\n    {wrapper_helper}\n}}\n\nfn public_split_wrapper(repo: &Path, state: &Path, plan: &str, context: &str) {{\n    {split_wrapper_helper}\n        (repo, state, plan, context);\n}}\n\n#[test]\nfn public_fixture() {{\n    {helper}\n    {root_helper}(repo, state, args, context);\n    let direct_helper_alias = {helper_name};\n    let split_direct_helper_alias =\n        {helper_name};\n    aliased_direct_helper(repo, state, args, context);\n    multiline_aliased_direct_helper(repo, state, args, context);\n    direct_helper_alias(repo, state, args, context);\n    split_direct_helper_alias(repo, state, args, context);\n    let plain_hidden_literal = [\"{hidden_command}\"];\n    let dispatch_flag = {concat_hidden_flag};\n    let args_alias = [CMD_ALIAS, dispatch_flag];\n    let multiline_args_alias = [\n        MULTILINE_CMD_ALIAS,\n        {concat_hidden_flag},\n    ];\n    let split_args_alias =\n        [\n            CMD_ALIAS,\n            {concat_hidden_flag},\n        ];\n    let mut pushed_args = Vec::new();\n    pushed_args.push(CMD_ALIAS);\n    pushed_args.extend([{concat_hidden_command}]);\n    pushed_args.extend_from_slice(&multiline_args_alias);\n    let _ = plain_hidden_literal;\n    let _ = run_featureforge(repo, state, &[\n        \"{hidden_command}\",\n        \"{hidden_flag}\",\n    ], context);\n    let _ = run_featureforge(repo, state, &[\n        {concat_hidden_command},\n        {concat_hidden_flag},\n    ], context);\n    let _ = run_featureforge(repo, state, &args_alias, context);\n    let _ = run_featureforge(repo, state, &multiline_args_alias, context);\n    let _ = run_featureforge(repo, state, &split_args_alias, context);\n    let _ = run_featureforge(repo, state, &pushed_args, context);\n    let _child = Command::new(\"featureforge\").arg(CMD_ALIAS).arg(dispatch_flag);\n    let _ = {internal_fixture_call}(repo, state, &[\n        \"{hidden_command}\",\n    ], context);\n}}\n"
+        "use crate::support::plan_execution_direct::{helper_name} as aliased_direct_helper;\nuse crate::support::plan_execution_direct::{{\n    {helper_name} as multiline_aliased_direct_helper,\n}};\nconst HIDDEN_COMMANDS: &[&str] = &[\n    \"{hidden_command}\",\n    {concat_hidden_command},\n];\nconst HIDDEN_FLAGS: &[&str] = &[\"{hidden_flag}\", {concat_hidden_flag}];\nconst CMD_ALIAS: &str = {concat_hidden_command};\nconst MULTILINE_CMD_ALIAS: &str =\n    {concat_hidden_command};\n\nfn public_wrapper(repo: &Path, state: &Path, plan: &str, context: &str) {{\n    {wrapper_helper}\n}}\n\npub fn\npublic_split_signature_wrapper(repo: &Path, state: &Path, plan: &str, context: &str) {{\n    {wrapper_helper}\n}}\n\nfn public_split_wrapper(repo: &Path, state: &Path, plan: &str, context: &str) {{\n    {split_wrapper_helper}\n        (repo, state, plan, context);\n}}\n\n#[test]\nfn public_fixture() {{\n    {helper}\n    {root_helper}(repo, state, args, context);\n    let direct_helper_alias = {helper_name};\n    let split_direct_helper_alias =\n        {helper_name};\n    aliased_direct_helper(repo, state, args, context);\n    multiline_aliased_direct_helper(repo, state, args, context);\n    direct_helper_alias(repo, state, args, context);\n    split_direct_helper_alias(repo, state, args, context);\n    let plain_hidden_literal = [\"{hidden_command}\"];\n    let dispatch_flag = {concat_hidden_flag};\n    let args_alias = [CMD_ALIAS, dispatch_flag];\n    let multiline_args_alias = [\n        MULTILINE_CMD_ALIAS,\n        {concat_hidden_flag},\n    ];\n    let split_args_alias =\n        [\n            CMD_ALIAS,\n            {concat_hidden_flag},\n        ];\n    let mut pushed_args = Vec::new();\n    pushed_args.push(CMD_ALIAS);\n    pushed_args.extend([{concat_hidden_command}]);\n    pushed_args.extend_from_slice(&multiline_args_alias);\n    let _ = plain_hidden_literal;\n    let _ = HIDDEN_FLAGS;\n    let _ = run_featureforge(repo, state, &[\n        \"{hidden_command}\",\n        \"{hidden_flag}\",\n    ], context);\n    let _ = run_featureforge(repo, state, &[\n        {concat_hidden_command},\n        {concat_hidden_flag},\n    ], context);\n    let _ = run_featureforge(repo, state, &args_alias, context);\n    let _ = run_featureforge(repo, state, &multiline_args_alias, context);\n    let _ = run_featureforge(repo, state, &split_args_alias, context);\n    let _ = run_featureforge(repo, state, &pushed_args, context);\n    let _child = Command::new(\"featureforge\").arg(CMD_ALIAS).arg(dispatch_flag);\n    let _ = {internal_fixture_call}(repo, state, &[\n        \"{hidden_command}\",\n    ], context);\n}}\n"
     );
     let violations = scan_source_for_public_flow_violations("tests/public_fixture.rs", &fixture);
 
@@ -236,6 +368,15 @@ fn workflow_gate_review_json(runtime: &ExecutionRuntime, args: &StatusArgs) {{
 fn workflow_gate_finish_json(runtime: &ExecutionRuntime, args: &StatusArgs) {{
     runtime{finish_gate_marker}args);
 }}
+
+fn status_alias_value(rt: &ExecutionRuntime, args: &StatusArgs) {{
+    rt{status_marker}args);
+}}
+
+fn review_gate_local_alias_value(runtime: &ExecutionRuntime, args: &StatusArgs) {{
+    let direct = runtime;
+    direct{review_gate_marker}args);
+}}
 "
     );
     let violations =
@@ -247,6 +388,8 @@ fn workflow_gate_finish_json(runtime: &ExecutionRuntime, args: &StatusArgs) {{
         "workflow_operator_json",
         "workflow_gate_review_json",
         "workflow_gate_finish_json",
+        "status_alias_value",
+        "review_gate_local_alias_value",
     ] {
         assert!(
             violations
@@ -276,6 +419,226 @@ fn scanner_rejects_public_flow_header_bypass_fixture() {
             .any(|violation| violation
                 .contains("must not use the internal helper quarantine header")),
         "scanner should reject quarantine headers on protected public-flow files, got {violations:?}"
+    );
+}
+
+#[test]
+fn scanner_rejects_public_flow_internal_support_imports() {
+    let fixture = r#"
+#[path = "support/featureforge.rs"]
+mod featureforge_support;
+#[path = "support/internal_runtime_direct.rs"]
+mod internal_runtime_direct;
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
+#[path = "support/workflow_direct.rs"]
+mod workflow_direct_support;
+
+#[test]
+fn public_replay_fixture() {}
+"#;
+    let violations =
+        scan_source_for_public_flow_violations("tests/public_replay_churn.rs", fixture);
+
+    for forbidden in [
+        "support/featureforge.rs",
+        "support/internal_runtime_direct.rs",
+        "support/plan_execution_direct.rs",
+        "support/workflow_direct.rs",
+    ] {
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(forbidden)),
+            "scanner should reject public-flow import `{forbidden}`, got {violations:?}"
+        );
+    }
+}
+
+#[test]
+fn scanner_rejects_any_internal_only_helper_call_not_just_hardcoded_list() {
+    let omitted_helper = "internal_only_unit_record_contract_json";
+    let fixture = format!(
+        r#"
+use crate::support::internal_runtime_direct::{omitted_helper} as omitted_record_contract;
+
+fn public_wrapper(repo: &Path, state: &Path, args: &RecordContractArgs) {{
+    {omitted_helper}(repo, state, args);
+}}
+
+#[test]
+fn public_replay_fixture() {{
+    omitted_record_contract(repo, state, args);
+    let direct_record_contract = {omitted_helper};
+    direct_record_contract(repo, state, args);
+    public_wrapper(repo, state, args);
+}}
+"#
+    );
+    let violations = scan_source_for_public_flow_violations("tests/public_fixture.rs", &fixture);
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("internal_only_unit_record_contract_json(")),
+        "scanner should reject any internal_only_* helper call, got {violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("omitted_record_contract")),
+        "scanner should reject aliases to any internal_only_* helper, got {violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("direct_record_contract")),
+        "scanner should reject function-pointer aliases to any internal_only_* helper, got {violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("public_wrapper")),
+        "scanner should reject wrappers around any internal_only_* helper, got {violations:?}"
+    );
+}
+
+#[test]
+fn internal_quarantine_bridge_imports_are_explicitly_reasoned() {
+    for rel in [
+        "tests/contracts_execution_runtime_boundaries.rs",
+        "tests/execution_harness_state.rs",
+        "tests/execution_query.rs",
+        "tests/plan_execution.rs",
+        "tests/plan_execution_topology.rs",
+        "tests/workflow_runtime.rs",
+        "tests/workflow_runtime_final_review.rs",
+        "tests/workflow_shell_smoke.rs",
+    ] {
+        let reason = protected_internal_quarantine_import_exception_reason(rel)
+            .expect("mixed internal-helper quarantine bridge import exception should be listed");
+        assert!(
+            reason.len() > 40 && reason.contains("internal"),
+            "{rel} internal-helper quarantine bridge import exception should have a specific reason"
+        );
+    }
+}
+
+#[test]
+fn internal_helper_bridge_is_quarantined() {
+    let source = read_repo_file("tests/support/internal_only_direct_helpers.rs");
+    assert!(
+        source.starts_with(INTERNAL_RUNTIME_HELPER_HEADER),
+        "internal_only_direct_helpers.rs must start with the internal-only quarantine contract"
+    );
+    assert!(
+        source.contains("internal_runtime_direct.rs"),
+        "internal helper bridge should route direct helper access through the quarantined internal runtime helper"
+    );
+    for duplicate_prone_import in ["plan_execution_direct.rs", "workflow_direct.rs"] {
+        assert!(
+            !source.contains(duplicate_prone_import),
+            "internal helper bridge must not duplicate nested imports for `{duplicate_prone_import}`"
+        );
+    }
+}
+
+#[test]
+fn explicit_internal_helper_scope_exceptions_are_reasoned() {
+    for (rel, function_name) in [
+        (
+            "tests/plan_execution.rs",
+            "assert_begin_blocks_cross_task_without_prior_task_closure",
+        ),
+        (
+            "tests/workflow_shell_smoke.rs",
+            "setup_qa_pending_case_slow",
+        ),
+        (
+            "tests/workflow_shell_smoke.rs",
+            "setup_ready_for_finish_case_slow",
+        ),
+        (
+            "tests/workflow_shell_smoke.rs",
+            "setup_ready_for_finish_case_with_qa_requirement_slow",
+        ),
+    ] {
+        let reason = explicit_internal_helper_scope_exception_reason(rel, function_name)
+            .expect("explicit internal-helper scope exception should be listed");
+        assert!(
+            reason.len() > 50 && reason.contains("fixture"),
+            "{rel}:{function_name} exception should explain the fixture-only boundary"
+        );
+    }
+}
+
+#[test]
+fn scanner_allows_reasoned_fixture_setup_exception_without_tainting_public_caller() {
+    let fixture = r#"
+fn setup_qa_pending_case_slow(repo: &Path, state: &Path, args: &RecordContractArgs) {
+    internal_only_unit_record_contract_json(repo, state, args);
+}
+
+fn setup_qa_pending_case(repo: &Path, state: &Path, args: &RecordContractArgs) {
+    setup_qa_pending_case_slow(repo, state, args);
+}
+
+#[test]
+fn public_fixture() {
+    setup_qa_pending_case(repo, state, args);
+}
+"#;
+
+    assert!(
+        scan_source_for_public_flow_violations("tests/workflow_shell_smoke.rs", fixture).is_empty(),
+        "reasoned fixture setup exceptions should not taint public callers"
+    );
+}
+
+#[test]
+fn scanner_rejects_direct_internal_support_imports_even_in_mixed_protected_files() {
+    let fixture = r#"
+#[path = "support/internal_runtime_direct.rs"]
+mod internal_runtime_direct;
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
+
+#[test]
+fn internal_only_compatibility_fixture() {}
+"#;
+    let violations =
+        scan_source_for_public_flow_violations("tests/workflow_shell_smoke.rs", fixture);
+
+    for forbidden in [
+        "support/internal_runtime_direct.rs",
+        "support/plan_execution_direct.rs",
+    ] {
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(forbidden)),
+            "scanner should reject direct internal support import `{forbidden}` even in mixed protected files, got {violations:?}"
+        );
+    }
+}
+
+#[test]
+fn scanner_rejects_internal_quarantine_bridge_imports_in_public_replay_files() {
+    let fixture = r#"
+#[path = "support/internal_only_direct_helpers.rs"]
+mod internal_only_direct_helpers;
+
+#[test]
+fn public_replay_fixture() {}
+"#;
+    let violations =
+        scan_source_for_public_flow_violations("tests/public_replay_churn.rs", fixture);
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("internal_only_direct_helpers.rs")),
+        "scanner should reject internal quarantine bridge imports from public replay files, got {violations:?}"
     );
 }
 
@@ -328,44 +691,50 @@ fn scan_source_for_public_flow_violations(rel: &str, source: &str) -> Vec<String
             return Vec::new();
         }
     }
+    if is_protected_public_flow_file(rel) {
+        for forbidden in forbidden_internal_support_imports(source) {
+            violations.push(format!(
+                "{rel} imports internal support module `{forbidden}` from a protected public-flow test surface"
+            ));
+        }
+        if source.contains("internal_only_direct_helpers.rs")
+            && protected_internal_quarantine_import_exception_reason(rel).is_none()
+        {
+            violations.push(format!(
+                "{rel} imports internal-only quarantine bridge `internal_only_direct_helpers.rs` from a protected public-flow test surface"
+            ));
+        }
+    }
 
     let denied_helper_calls = denied_helper_calls();
-    let mut denied_helper_names = denied_helper_names(&denied_helper_calls);
-    denied_helper_names.extend(helper_alias_names(source, &denied_helper_names));
-    denied_helper_names.sort();
-    denied_helper_names.dedup();
+    let denied_helper_names = denied_helper_names(source, &denied_helper_calls);
     let denied_hidden_literals = denied_hidden_literals();
     let mut concat_collector = ConcatLiteralCollector::default();
     let mut hidden_string_bindings = HashSet::new();
     let mut hidden_arg_bindings = HashSet::new();
     let mut pending_assignment = None::<PendingAssignment>;
-    let mut current_fn = None::<String>;
-    let mut current_fn_brace_depth = 0usize;
-    let mut current_fn_body_started = false;
     let mut inside_command_invocation = false;
     let mut inside_command_args_array = false;
-    let tainted_functions = tainted_runtime_helper_wrappers(source, &denied_helper_names);
+    let function_spans = rust_source_scan::function_spans(rel, source);
+    let call_hits = rust_source_scan::normalized_call_path_hits(rel, source, &[]);
+    let tainted_functions = tainted_runtime_helper_wrappers(rel, source, &denied_helper_names);
     for (line, function_name) in
-        public_tainted_runtime_helper_wrappers(source, &denied_helper_names)
+        public_tainted_runtime_helper_wrappers(rel, source, &denied_helper_names)
     {
         violations.push(format!(
             "{rel}:{line} defines public wrapper `{function_name}` around an internal runtime helper outside an internal-only quarantine or test"
         ));
     }
-    for (line, function_name, marker) in public_direct_runtime_surface_wrappers(source) {
+    for (line, function_name, marker) in public_direct_runtime_surface_wrappers(rel, source) {
         violations.push(format!(
             "{rel}:{line} defines public direct runtime surface wrapper `{function_name}` using `{marker}` outside an internal-only quarantine or test"
         ));
     }
     for (index, line) in source.lines().enumerate() {
+        let line_number = index + 1;
         let trimmed = line.trim();
-        if let Some(name) = rust_fn_name(trimmed) {
-            current_fn = Some(name);
-            current_fn_brace_depth = 0;
-            current_fn_body_started = false;
-        }
-        let saw_body_open = update_fn_brace_depth(&mut current_fn_brace_depth, line);
-        current_fn_body_started |= saw_body_open;
+        let current_fn = function_name_for_line(&function_spans, line_number);
+        let current_scope = current_fn.unwrap_or("<module>");
         if starts_command_invocation(trimmed) {
             inside_command_invocation = true;
             inside_command_args_array =
@@ -373,14 +742,7 @@ fn scan_source_for_public_flow_violations(rel: &str, source: &str) -> Vec<String
         } else if inside_command_invocation && starts_command_args_array(trimmed) {
             inside_command_args_array = true;
         }
-        if current_fn
-            .as_deref()
-            .is_some_and(|name| name.starts_with("internal_only_"))
-        {
-            if current_fn_body_started && current_fn_brace_depth == 0 {
-                current_fn = None;
-                current_fn_body_started = false;
-            }
+        if current_fn.is_some_and(|name| function_scope_allows_internal_helpers(rel, name)) {
             continue;
         }
         let candidate_literals = candidate_string_literals(trimmed, &mut concat_collector);
@@ -414,7 +776,7 @@ fn scan_source_for_public_flow_violations(rel: &str, source: &str) -> Vec<String
         if let Some(assignment) = assignment_to_finalize {
             finalize_assignment(
                 rel,
-                current_fn.as_deref().unwrap_or("<module>"),
+                current_scope,
                 &assignment,
                 &mut hidden_string_bindings,
                 &mut hidden_arg_bindings,
@@ -429,27 +791,30 @@ fn scan_source_for_public_flow_violations(rel: &str, source: &str) -> Vec<String
             hidden_arg_bindings.insert(binding.clone());
             violations.push(format!(
                 "{rel}:{} mutates hidden command or flag data into arg collection `{binding}` outside an internal-only quarantine or test in `{}`",
-                index + 1,
-                current_fn.as_deref().unwrap_or("<module>")
+                line_number,
+                current_scope
             ));
         }
-        for forbidden in &denied_helper_names {
-            if calls_named_function(trimmed, forbidden) {
+        for call in call_hits.iter().filter(|call| call.line == line_number) {
+            if denied_helper_names
+                .iter()
+                .any(|forbidden| call_matches_name(call, forbidden))
+            {
+                let displayed = call_display_name(call);
                 violations.push(format!(
-                    "{rel}:{} uses internal helper `{forbidden}(` outside an internal-only quarantine or test in `{}`",
-                    index + 1,
-                    current_fn.as_deref().unwrap_or("<module>")
+                    "{rel}:{} uses internal helper `{displayed}(` outside an internal-only quarantine or test in `{}`",
+                    line_number,
+                    current_scope
                 ));
             }
-        }
-        for helper_name in &tainted_functions {
-            if current_fn.as_ref() != Some(helper_name)
-                && calls_named_function(trimmed, helper_name)
-            {
+            if tainted_functions.iter().any(|helper_name| {
+                current_fn != Some(helper_name.as_str()) && call_matches_name(call, helper_name)
+            }) {
+                let displayed = call_display_name(call);
                 violations.push(format!(
-                    "{rel}:{} calls tainted internal runtime helper wrapper `{helper_name}` outside an internal-only quarantine or test in `{}`",
-                    index + 1,
-                    current_fn.as_deref().unwrap_or("<module>")
+                    "{rel}:{} calls tainted internal runtime helper wrapper `{displayed}` outside an internal-only quarantine or test in `{}`",
+                    line_number,
+                    current_scope
                 ));
             }
         }
@@ -459,9 +824,9 @@ fn scan_source_for_public_flow_violations(rel: &str, source: &str) -> Vec<String
             if hit.always_hidden || hidden_literals_are_executable_args {
                 violations.push(format!(
                     "{rel}:{} exposes hidden command or flag literal `{}` outside an internal-only quarantine or test in `{}`",
-                    index + 1,
+                    line_number,
                     hit.literal,
-                    current_fn.as_deref().unwrap_or("<module>")
+                    current_scope
                 ));
             }
         }
@@ -469,15 +834,15 @@ fn scan_source_for_public_flow_violations(rel: &str, source: &str) -> Vec<String
             for identifier in hidden_identifiers {
                 violations.push(format!(
                     "{rel}:{} passes hidden command or flag alias `{identifier}` to an executable command outside an internal-only quarantine or test in `{}`",
-                    index + 1,
-                    current_fn.as_deref().unwrap_or("<module>")
+                    line_number,
+                    current_scope
                 ));
             }
             for identifier in hidden_arg_identifiers {
                 violations.push(format!(
                     "{rel}:{} passes hidden command arg collection `{identifier}` to an executable command outside an internal-only quarantine or test in `{}`",
-                    index + 1,
-                    current_fn.as_deref().unwrap_or("<module>")
+                    line_number,
+                    current_scope
                 ));
             }
         }
@@ -487,10 +852,6 @@ fn scan_source_for_public_flow_violations(rel: &str, source: &str) -> Vec<String
         if inside_command_invocation && trimmed.ends_with(");") {
             inside_command_invocation = false;
             inside_command_args_array = false;
-        }
-        if current_fn_body_started && current_fn_brace_depth == 0 {
-            current_fn = None;
-            current_fn_body_started = false;
         }
     }
     violations
@@ -532,8 +893,106 @@ fn is_protected_public_flow_file(rel: &str) -> bool {
     )
 }
 
-fn rust_fn_name(trimmed: &str) -> Option<String> {
-    rust_fn_name_from_signature(trimmed)
+fn protected_internal_quarantine_import_exception_reason(rel: &str) -> Option<&'static str> {
+    match rel {
+        "tests/contracts_execution_runtime_boundaries.rs" => Some(
+            "mixed boundary contract file keeps internal-only compatibility probes in internal_only_* tests",
+        ),
+        "tests/execution_harness_state.rs" => Some(
+            "execution harness state coverage intentionally exercises direct runtime helpers in internal_only_* tests",
+        ),
+        "tests/execution_query.rs" => Some(
+            "execution query boundary coverage intentionally compares direct internal probes with public surfaces",
+        ),
+        "tests/plan_execution.rs" => Some(
+            "plan execution compatibility matrix intentionally exercises direct internal helpers in internal_only_* tests",
+        ),
+        "tests/plan_execution_topology.rs" => Some(
+            "topology compatibility coverage intentionally exercises direct internal recommendation helpers",
+        ),
+        "tests/workflow_runtime.rs" => Some(
+            "workflow runtime compatibility matrix intentionally exercises direct internal helpers in internal_only_* tests",
+        ),
+        "tests/workflow_runtime_final_review.rs" => Some(
+            "final-review runtime compatibility matrix intentionally exercises direct internal helpers in internal_only_* tests",
+        ),
+        "tests/workflow_shell_smoke.rs" => Some(
+            "workflow shell smoke compatibility matrix intentionally exercises direct internal helpers in internal_only_* tests",
+        ),
+        _ => None,
+    }
+}
+
+fn explicit_internal_helper_scope_exception_reason(
+    rel: &str,
+    function_name: &str,
+) -> Option<&'static str> {
+    match (rel, function_name) {
+        (
+            "tests/plan_execution.rs",
+            "assert_begin_blocks_cross_task_without_prior_task_closure",
+        ) => Some(
+            "public begin-boundary assertion uses internal preflight acceptance strictly as fixture setup",
+        ),
+        ("tests/workflow_shell_smoke.rs", "setup_qa_pending_case_slow") => Some(
+            "late-stage fixture setup seeds dispatched branch review artifact before public routing assertions",
+        ),
+        ("tests/workflow_shell_smoke.rs", "setup_ready_for_finish_case_slow") => Some(
+            "late-stage fixture setup seeds dispatched branch review artifact before public finish-routing assertions",
+        ),
+        (
+            "tests/workflow_shell_smoke.rs",
+            "setup_ready_for_finish_case_with_qa_requirement_slow",
+        ) => Some(
+            "late-stage fixture setup seeds dispatched branch review artifact before public QA-routing assertions",
+        ),
+        _ => None,
+    }
+}
+
+fn function_scope_allows_internal_helpers(rel: &str, function_name: &str) -> bool {
+    function_name.starts_with("internal_only_")
+        || explicit_internal_helper_scope_exception_reason(rel, function_name).is_some()
+}
+
+fn forbidden_internal_support_imports(source: &str) -> Vec<&'static str> {
+    [
+        "support/featureforge.rs",
+        "support/plan_execution_direct.rs",
+        "support/workflow_direct.rs",
+        "support/internal_runtime_direct.rs",
+    ]
+    .into_iter()
+    .filter(|forbidden| source.contains(forbidden))
+    .collect()
+}
+
+fn function_name_for_line(
+    spans: &[rust_source_scan::RustFunctionSpan],
+    line: usize,
+) -> Option<&str> {
+    spans
+        .iter()
+        .rev()
+        .find(|span| line >= span.start_line && line <= span.end_line)
+        .map(|span| span.name.as_str())
+}
+
+fn call_matches_name(call: &rust_source_scan::RustCallPath, function_name: &str) -> bool {
+    let normalized_leaf = call.path.rsplit("::").next().unwrap_or(call.path.as_str());
+    let raw_leaf = call
+        .raw_path
+        .rsplit("::")
+        .next()
+        .unwrap_or(call.raw_path.as_str());
+    normalized_leaf == function_name || raw_leaf == function_name
+}
+
+fn call_display_name(call: &rust_source_scan::RustCallPath) -> &str {
+    call.raw_path
+        .rsplit("::")
+        .next()
+        .unwrap_or(call.raw_path.as_str())
 }
 
 #[derive(Debug)]
@@ -544,18 +1003,16 @@ struct RustFunctionBody<'a> {
 }
 
 fn tainted_runtime_helper_wrappers(
+    rel: &str,
     source: &str,
     denied_helper_names: &[String],
 ) -> HashSet<String> {
     let functions = rust_function_bodies(source);
+    let call_hits = rust_source_scan::normalized_call_path_hits(rel, source, &[]);
     let mut tainted = functions
         .iter()
-        .filter(|function| {
-            let body = function.lines.join("\n");
-            denied_helper_names
-                .iter()
-                .any(|helper_name| calls_named_function_in_source(&body, helper_name))
-        })
+        .filter(|function| !function_scope_allows_internal_helpers(rel, &function.name))
+        .filter(|function| function_calls_any(&call_hits, function, denied_helper_names))
         .map(|function| function.name.clone())
         .collect::<HashSet<_>>();
 
@@ -566,11 +1023,11 @@ fn tainted_runtime_helper_wrappers(
             if tainted.contains(&function.name) {
                 continue;
             }
-            let body = function.lines.join("\n");
-            if tainted
-                .iter()
-                .any(|tainted_function| calls_named_function_in_source(&body, tainted_function))
-            {
+            if function_scope_allows_internal_helpers(rel, &function.name) {
+                continue;
+            }
+            let tainted_names = tainted.iter().cloned().collect::<Vec<_>>();
+            if function_calls_any(&call_hits, function, &tainted_names) {
                 changed |= tainted.insert(function.name.clone());
             }
         }
@@ -580,177 +1037,86 @@ fn tainted_runtime_helper_wrappers(
 }
 
 fn public_tainted_runtime_helper_wrappers(
+    rel: &str,
     source: &str,
     denied_helper_names: &[String],
 ) -> Vec<(usize, String)> {
+    let call_hits = rust_source_scan::normalized_call_path_hits(rel, source, &[]);
     rust_function_bodies(source)
         .into_iter()
-        .filter(|function| !function.name.starts_with("internal_only_"))
-        .filter(|function| {
-            let body = function.lines.join("\n");
-            denied_helper_names
-                .iter()
-                .any(|helper_name| calls_named_function_in_source(&body, helper_name))
-        })
+        .filter(|function| !function_scope_allows_internal_helpers(rel, &function.name))
+        .filter(|function| function_calls_any(&call_hits, function, denied_helper_names))
         .map(|function| (function.start_line, function.name))
         .collect()
 }
 
-fn public_direct_runtime_surface_wrappers(source: &str) -> Vec<(usize, String, String)> {
+fn public_direct_runtime_surface_wrappers(rel: &str, source: &str) -> Vec<(usize, String, String)> {
+    let call_hits = rust_source_scan::normalized_call_path_hits(rel, source, &[]);
     rust_function_bodies(source)
         .into_iter()
-        .filter(|function| !function.name.starts_with("internal_only_"))
+        .filter(|function| !function_scope_allows_internal_helpers(rel, &function.name))
         .filter_map(|function| {
-            let body = line_without_string_literals(&function.lines.join("\n"));
-            direct_runtime_surface_markers()
-                .into_iter()
-                .find(|marker| body.contains(marker.as_str()))
+            call_hits
+                .iter()
+                .filter(|call| {
+                    call.line >= function.start_line
+                        && call.line < function.start_line + function.lines.len()
+                })
+                .find_map(direct_runtime_surface_marker)
                 .map(|marker| (function.start_line, function.name, marker))
         })
         .collect()
 }
 
-fn direct_runtime_surface_markers() -> Vec<String> {
-    vec![
-        "operator_for_runtime(".to_owned(),
-        ".status(".to_owned(),
-        ".review_gate(".to_owned(),
-        ".finish_gate(".to_owned(),
-    ]
+fn function_calls_any(
+    call_hits: &[rust_source_scan::RustCallPath],
+    function: &RustFunctionBody<'_>,
+    names: &[String],
+) -> bool {
+    names
+        .iter()
+        .any(|name| function_calls_name(call_hits, function, name))
 }
 
-fn helper_alias_names(source: &str, denied_helper_names: &[String]) -> Vec<String> {
-    let mut aliases = Vec::new();
-    for statement in use_statements(source) {
-        let code = line_without_string_literals(&statement);
-        for helper_name in denied_helper_names {
-            aliases.extend(use_alias_names(&code, helper_name));
-        }
-    }
-    for (_, statement) in assignment_statements(source) {
-        let code = line_without_string_literals(&statement);
-        for helper_name in denied_helper_names {
-            if let Some(alias) = function_pointer_alias_name(&code, helper_name) {
-                aliases.push(alias);
-            }
-        }
-    }
-    aliases
-}
-
-fn use_statements(source: &str) -> Vec<String> {
-    collect_multiline_statements(source, |trimmed| trimmed.starts_with("use "))
-        .into_iter()
-        .map(|(_, statement)| statement)
-        .collect()
-}
-
-fn assignment_statements(source: &str) -> Vec<(usize, String)> {
-    collect_multiline_statements(source, |trimmed| {
-        assignment_binding_name(trimmed).is_some()
-            || matches!(
-                trimmed.split_whitespace().next(),
-                Some("let" | "const" | "static")
-            )
+fn function_calls_name(
+    call_hits: &[rust_source_scan::RustCallPath],
+    function: &RustFunctionBody<'_>,
+    name: &str,
+) -> bool {
+    call_hits.iter().any(|call| {
+        call.line >= function.start_line
+            && call.line < function.start_line + function.lines.len()
+            && call_matches_name(call, name)
     })
 }
 
-fn collect_multiline_statements(
-    source: &str,
-    starts_statement: impl Fn(&str) -> bool,
-) -> Vec<(usize, String)> {
-    let mut statements = Vec::new();
-    let mut pending = None::<(usize, String)>;
-    for (index, line) in source.lines().enumerate() {
-        let trimmed = line.trim();
-        if pending.is_none() && starts_statement(trimmed) {
-            pending = Some((index + 1, String::new()));
-        }
-        if let Some((start_line, statement)) = pending.as_mut() {
-            statement.push_str(line);
-            statement.push('\n');
-            if trimmed.ends_with(';') {
-                statements.push((*start_line, std::mem::take(statement)));
-                pending = None;
-            }
-        }
+fn direct_runtime_surface_marker(call: &rust_source_scan::RustCallPath) -> Option<String> {
+    if call_matches_name(call, "operator_for_runtime") {
+        return Some("operator_for_runtime".to_owned());
     }
-    statements
+    call.receiver_runtime_path.as_ref()?;
+    ["status", "review_gate", "finish_gate"]
+        .into_iter()
+        .find(|marker| call_matches_name(call, marker))
+        .map(str::to_owned)
 }
 
-fn use_alias_names(code: &str, helper_name: &str) -> Vec<String> {
-    let trimmed = code.trim();
-    if !trimmed.starts_with("use ") || !contains_identifier(trimmed, helper_name) {
-        return Vec::new();
-    }
-    let mut aliases = Vec::new();
-    let mut offset = 0usize;
-    while let Some(relative_start) = trimmed[offset..].find(helper_name) {
-        let start = offset + relative_start;
-        let end = start + helper_name.len();
-        if !identifier_at(trimmed, start, helper_name) {
-            offset = end;
-            continue;
-        }
-        let rest = &trimmed[end..];
-        let statement_segment_end = rest.find([',', ';', '}']).unwrap_or(rest.len());
-        let statement_segment = &rest[..statement_segment_end];
-        if let Some((_, alias)) = statement_segment.split_once(" as ")
-            && let Some(alias) = first_identifier(alias)
-        {
-            aliases.push(alias.to_owned());
-        }
-        offset = end;
-    }
-    aliases
-}
-
-fn function_pointer_alias_name(code: &str, helper_name: &str) -> Option<String> {
-    let trimmed = code.trim();
-    let (left, right) = trimmed.split_once('=')?;
-    if !contains_identifier(right, helper_name)
-        || calls_named_function_in_source(right, helper_name)
-    {
-        return None;
-    }
-    assignment_binding_name(left.trim()).or_else(|| assignment_binding_name(trimmed))
-}
-
-fn contains_identifier(source: &str, identifier: &str) -> bool {
-    let mut offset = 0usize;
-    while let Some(relative_start) = source[offset..].find(identifier) {
-        let start = offset + relative_start;
-        let end = start + identifier.len();
-        if identifier_at(source, start, identifier) {
-            return true;
-        }
-        offset = end;
-    }
-    false
-}
-
-fn identifier_at(source: &str, start: usize, identifier: &str) -> bool {
-    let end = start + identifier.len();
-    let previous_is_identifier = start > 0
-        && source[..start]
-            .chars()
-            .next_back()
-            .is_some_and(is_rust_identifier_character);
-    let next_is_identifier = source[end..]
-        .chars()
-        .next()
-        .is_some_and(is_rust_identifier_character);
-    !previous_is_identifier && !next_is_identifier
-}
-
-fn first_identifier(source: &str) -> Option<&str> {
-    identifier_tokens(source).next()
-}
-
-fn denied_helper_names(denied_helper_calls: &[String]) -> Vec<String> {
-    denied_helper_calls
+fn denied_helper_names(source: &str, denied_helper_calls: &[String]) -> Vec<String> {
+    let mut names = denied_helper_calls
         .iter()
         .map(|call| call.trim_end_matches('(').to_owned())
+        .chain(quarantine_prefixed_helper_names(source))
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn quarantine_prefixed_helper_names(source: &str) -> Vec<String> {
+    let code = line_without_string_literals(source);
+    identifier_tokens(&code)
+        .filter(|identifier| identifier.starts_with("internal_only_"))
+        .map(str::to_owned)
         .collect()
 }
 
@@ -808,147 +1174,15 @@ fn assignment_ends(trimmed: &str) -> bool {
 }
 
 fn rust_function_bodies(source: &str) -> Vec<RustFunctionBody<'_>> {
-    let mut functions = Vec::new();
-    let mut current_name = None::<String>;
-    let mut current_start_line = 0usize;
-    let mut current_lines = Vec::new();
-    let mut brace_depth = 0usize;
-    let mut body_started = false;
-    let mut pending_signature = None::<PendingFunctionSignature>;
-
-    for (index, line) in source.lines().enumerate() {
-        if current_name.is_none() {
-            let code = line_without_string_literals(line);
-            if pending_signature.is_none() && contains_fn_keyword(&code) {
-                pending_signature = Some(PendingFunctionSignature {
-                    start_line: index + 1,
-                    lines: Vec::new(),
-                });
-            }
-            if let Some(signature) = pending_signature.as_mut() {
-                signature.lines.push(line);
-                let signature_source = signature.lines.join("\n");
-                if signature_source.contains(';') && !signature_source.contains('{') {
-                    pending_signature = None;
-                    continue;
-                }
-                if signature_source.contains('{')
-                    && let Some(name) = rust_fn_name_from_signature(&signature_source)
-                {
-                    current_name = Some(name);
-                    current_start_line = signature.start_line;
-                    current_lines = std::mem::take(&mut signature.lines);
-                    pending_signature = None;
-                    brace_depth = 0;
-                    body_started = false;
-                    for function_line in &current_lines {
-                        body_started |= update_fn_brace_depth(&mut brace_depth, function_line);
-                    }
-                }
-            }
-        }
-
-        if current_name.is_some() {
-            if pending_signature.is_none()
-                && current_lines
-                    .last()
-                    .is_none_or(|last_line| !std::ptr::eq(*last_line, line))
-            {
-                current_lines.push(line);
-                body_started |= update_fn_brace_depth(&mut brace_depth, line);
-            }
-            if body_started && brace_depth == 0 {
-                functions.push(RustFunctionBody {
-                    name: current_name
-                        .take()
-                        .expect("current function should be present"),
-                    start_line: current_start_line,
-                    lines: std::mem::take(&mut current_lines),
-                });
-                body_started = false;
-            }
-        }
-    }
-
-    functions
-}
-
-#[derive(Debug)]
-struct PendingFunctionSignature<'a> {
-    start_line: usize,
-    lines: Vec<&'a str>,
-}
-
-fn contains_fn_keyword(source: &str) -> bool {
-    identifier_tokens(source).any(|token| token == "fn")
-}
-
-fn rust_fn_name_from_signature(signature: &str) -> Option<String> {
-    let code = line_without_string_literals(signature);
-    let bytes = code.as_bytes();
-    let mut cursor = 0usize;
-    while cursor < bytes.len() {
-        let relative_start = code[cursor..].find("fn")?;
-        let start = cursor + relative_start;
-        let end = start + "fn".len();
-        let previous_is_identifier = start > 0
-            && code[..start]
-                .chars()
-                .next_back()
-                .is_some_and(is_rust_identifier_character);
-        let next_is_identifier = code[end..]
-            .chars()
-            .next()
-            .is_some_and(is_rust_identifier_character);
-        if previous_is_identifier || next_is_identifier {
-            cursor = end;
-            continue;
-        }
-
-        let mut name_start = end;
-        while code[name_start..]
-            .chars()
-            .next()
-            .is_some_and(char::is_whitespace)
-        {
-            name_start += code[name_start..]
-                .chars()
-                .next()
-                .expect("checked next char should exist")
-                .len_utf8();
-        }
-        let first = code[name_start..].chars().next()?;
-        if !(first == '_' || first.is_ascii_alphabetic()) {
-            cursor = end;
-            continue;
-        }
-        let mut name_end = name_start + first.len_utf8();
-        while code[name_end..]
-            .chars()
-            .next()
-            .is_some_and(is_rust_identifier_character)
-        {
-            name_end += code[name_end..]
-                .chars()
-                .next()
-                .expect("checked next char should exist")
-                .len_utf8();
-        }
-        let name = &code[name_start..name_end];
-        let after_name = code[name_end..].trim_start();
-        if after_name.starts_with('(') || after_name.starts_with('<') {
-            return Some(name.to_owned());
-        }
-        cursor = name_end;
-    }
-    None
-}
-
-fn update_fn_brace_depth(depth: &mut usize, line: &str) -> bool {
-    let opens = line.chars().filter(|character| *character == '{').count();
-    let closes = line.chars().filter(|character| *character == '}').count();
-    *depth = depth.saturating_add(opens).saturating_sub(closes);
-    opens > 0
+    let lines = source.lines().collect::<Vec<_>>();
+    rust_source_scan::function_spans("public-flow-scanner.rs", source)
+        .into_iter()
+        .map(|span| RustFunctionBody {
+            name: span.name,
+            start_line: span.start_line,
+            lines: lines[(span.start_line - 1)..span.end_line].to_vec(),
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -1184,45 +1418,6 @@ impl ConcatLiteralCollector {
     }
 }
 
-fn calls_named_function(trimmed: &str, function_name: &str) -> bool {
-    if trimmed.starts_with("fn ") || trimmed.starts_with("mod ") || trimmed.contains("concat!(") {
-        return false;
-    }
-    calls_named_function_in_source(trimmed, function_name)
-}
-
-fn calls_named_function_in_source(source: &str, function_name: &str) -> bool {
-    let code = line_without_string_literals(source);
-    let mut offset = 0usize;
-    while let Some(relative_start) = code[offset..].find(function_name) {
-        let start = offset + relative_start;
-        if start > 0 {
-            let previous = code[..start]
-                .chars()
-                .next_back()
-                .expect("start > 0 should have previous char");
-            if previous.is_ascii_alphanumeric() || previous == '_' {
-                offset = start + function_name.len();
-                continue;
-            }
-        }
-        let rest = &code[start + function_name.len()..];
-        if rest
-            .chars()
-            .next()
-            .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
-        {
-            offset = start + function_name.len();
-            continue;
-        }
-        if rest.trim_start().starts_with('(') {
-            return true;
-        }
-        offset = start + function_name.len();
-    }
-    false
-}
-
 fn starts_command_invocation(trimmed: &str) -> bool {
     !trimmed.starts_with("fn ")
         && [
@@ -1236,6 +1431,7 @@ fn starts_command_invocation(trimmed: &str) -> bool {
             "run_plan_execution_json_real_cli(",
             concat!("internal_only_", "plan_execution_fixture_json("),
             "run_public_featureforge_cli_json(",
+            "run_public_featureforge_cli_failure_json(",
             "run_public_cli(",
             "run_shell(",
             "run_shell_json(",

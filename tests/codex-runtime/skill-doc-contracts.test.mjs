@@ -97,6 +97,56 @@ function assertForbidsDirectHelperCommandMutation(content, command, label) {
   );
 }
 
+const REVIEWER_FORBIDDEN_RUNTIME_INVOCATIONS = [
+  'featureforge workflow',
+  'featureforge plan execution',
+  'featureforge:using-featureforge',
+  'featureforge:executing-plans',
+];
+
+function assertNoPositiveReviewerRuntimeInvocation(content, label) {
+  const lines = content.split('\n');
+  const negativeInstruction =
+    /\b(do not|don't|must not|may not|never|forbid|forbids|forbidden|prohibit|prohibits|prohibited|prohibition|disallow|disallowed|blocked review)\b/i;
+  const positiveInstruction = /\b(run|invoke|use|call|execute|dispatch|load)\b/i;
+
+  for (const forbiddenInvocation of REVIEWER_FORBIDDEN_RUNTIME_INVOCATIONS) {
+    const forbiddenLower = forbiddenInvocation.toLowerCase();
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!lines[i].toLowerCase().includes(forbiddenLower)) continue;
+      const start = Math.max(0, i - 2);
+      const end = Math.min(lines.length - 1, i + 2);
+      const window = lines.slice(start, end + 1).join(' ');
+      if (negativeInstruction.test(window)) continue;
+      assert.doesNotMatch(
+        window,
+        positiveInstruction,
+        `${label} must not positively instruct reviewer agents to use ${forbiddenInvocation}`,
+      );
+    }
+  }
+}
+
+function assertReviewerSurfaceForbidsRuntimeCommands(content, label) {
+  assert.match(
+    content,
+    /FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED(?:\s*=\s*"no"|=no)/,
+    `${label} should state the reviewer runtime command guard env value`,
+  );
+  assert.match(content, /do not invoke FeatureForge skills/i, `${label} should forbid FeatureForge skill invocation`);
+  assert.match(
+    content,
+    /do not run `featureforge workflow` or `featureforge plan execution` commands/i,
+    `${label} should forbid FeatureForge runtime commands`,
+  );
+  assert.match(
+    content,
+    /If required runtime context is missing, report a blocked review/i,
+    `${label} should tell reviewers to report blocked reviews instead of repairing runtime state`,
+  );
+  assertNoPositiveReviewerRuntimeInvocation(content, label);
+}
+
 function assertSeparatesCandidateArtifactsFromAuthoritativeMutations(content, label) {
   const hasCandidateSurface = /(candidate|task packet|task-packet|packet context|handoff|coverage matrix)/i.test(content);
   const hasAuthoritativeSurface = /(authoritative|helper-owned|coordinator-owned|execution state|execution evidence|review gate|finish-gate|gate-review)/i.test(content);
@@ -289,16 +339,29 @@ function stripInlineCode(value) {
   return value.replace(/^`|`$/g, '');
 }
 
+function extractRustStringConstMap(source) {
+  const values = new Map();
+  for (const match of source.matchAll(/pub const ([A-Z0-9_]+): &str\s*=\s*"([^"]+)"\s*;/g)) {
+    values.set(match[1], match[2]);
+  }
+  return values;
+}
+
 function parseRuntimeLateStageRows(source) {
-  const rowPattern = /LateStageRow\s*\{\s*release:\s*GateState::(Blocked|Ready),\s*review:\s*GateState::(Blocked|Ready),\s*qa:\s*GateState::(Blocked|Ready),\s*phase:\s*"([^"]+)",\s*reason_family:\s*"([^"]+)",\s*\}/gms;
+  const phaseValues = extractRustStringConstMap(
+    readUtf8(path.join(REPO_ROOT, 'src/execution/phase.rs')),
+  );
+  const rowPattern = /LateStageRow\s*\{\s*release:\s*GateState::(Blocked|Ready),\s*review:\s*GateState::(Blocked|Ready),\s*qa:\s*GateState::(Blocked|Ready),\s*phase:\s*(?:"([^"]+)"|(?:crate::execution::phase::)?([A-Z0-9_]+)),\s*reason_family:\s*"([^"]+)",\s*\}/gms;
   const rows = [];
   for (const match of source.matchAll(rowPattern)) {
+    const phase = match[4] ?? phaseValues.get(match[5]);
+    assert.ok(phase, `runtime late-stage phase constant should resolve: ${match[5]}`);
     rows.push({
       release: match[1].toLowerCase(),
       review: match[2].toLowerCase(),
       qa: match[3].toLowerCase(),
-      phase: match[4],
-      reasonFamily: match[5],
+      phase,
+      reasonFamily: match[6],
     });
   }
   return rows;
@@ -345,6 +408,13 @@ const LATE_STAGE_PHASE_TO_SKILL = new Map([
   ['final_review_pending', 'featureforge:requesting-code-review'],
   ['qa_pending', 'featureforge:qa-only'],
   ['ready_for_branch_completion', 'featureforge:finishing-a-development-branch'],
+]);
+
+const LATE_STAGE_PHASE_TO_RUST_EXPR = new Map([
+  ['document_release_pending', 'phase::PHASE_DOCUMENT_RELEASE_PENDING'],
+  ['final_review_pending', 'phase::PHASE_FINAL_REVIEW_PENDING'],
+  ['qa_pending', 'phase::PHASE_QA_PENDING'],
+  ['ready_for_branch_completion', 'phase::PHASE_READY_FOR_BRANCH_COMPLETION'],
 ]);
 
 test('templates declare exactly one base or review preamble placeholder', () => {
@@ -1315,17 +1385,40 @@ test('reuse hard-fail law is critical, scoped, and example-backed across reviewe
   }
 });
 
-test('generated codex reviewer agent carries launcher-enforced runtime command contract', () => {
-  const generatedCodexAgent = readUtf8(path.join(REPO_ROOT, '.codex/agents/code-reviewer.toml'));
+test('generated reviewer agent surfaces carry launcher-enforced runtime command contract', () => {
+  const reviewerSurfaces = [
+    ['reviewer agent instructions', path.join(REPO_ROOT, 'agents/code-reviewer.instructions.md')],
+    ['generated reviewer markdown', path.join(REPO_ROOT, 'agents/code-reviewer.md')],
+    ['generated codex reviewer TOML', path.join(REPO_ROOT, '.codex/agents/code-reviewer.toml')],
+  ];
 
+  for (const [label, file] of reviewerSurfaces) {
+    assertReviewerSurfaceForbidsRuntimeCommands(readUtf8(file), label);
+  }
+
+  const generatedCodexAgent = readUtf8(path.join(REPO_ROOT, '.codex/agents/code-reviewer.toml'));
   assert.match(generatedCodexAgent, /^# REVIEWER_RUNTIME_ENV_CONTRACT$/m);
   assert.match(
     generatedCodexAgent,
     /^# Launcher must set FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED = "no" before starting this reviewer\.$/m,
   );
-  assert.match(generatedCodexAgent, /FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED=no/);
-  assert.match(generatedCodexAgent, /If required runtime context is missing, report a blocked review/);
-  assert.match(generatedCodexAgent, /do not run `featureforge workflow` or `featureforge plan execution` commands/i);
+});
+
+test('subagent reviewer prompts forbid recursive FeatureForge runtime and skill invocation', () => {
+  const reviewerPrompts = [
+    [
+      'spec reviewer prompt',
+      path.join(REPO_ROOT, 'skills/subagent-driven-development/spec-reviewer-prompt.md'),
+    ],
+    [
+      'code quality reviewer prompt',
+      path.join(REPO_ROOT, 'skills/subagent-driven-development/code-quality-reviewer-prompt.md'),
+    ],
+  ];
+
+  for (const [label, file] of reviewerPrompts) {
+    assertReviewerSurfaceForbidsRuntimeCommands(readUtf8(file), label);
+  }
 });
 
 test('review prompts use deterministic repair-packet findings tied to obligations', () => {
@@ -2325,14 +2418,19 @@ test('late-stage precedence reference rows stay in row-level parity with runtime
       expectedSkill,
       `late-stage reference recommended skill should match runtime mapping for phase ${row.phase}`,
     );
-  assert.match(
-    workflowOperator,
+    const expectedPhaseExpr = LATE_STAGE_PHASE_TO_RUST_EXPR.get(row.phase);
+    assert.ok(expectedPhaseExpr, `phase ${row.phase} should have a Rust phase expression mapping`);
+    assert.match(
+      workflowOperator,
       /fn next_action_for_context\(context: &OperatorContext\) -> &str \{\s*&context\.operator_next_action\s*\}/s,
       'workflow/operator should surface query-derived next_action directly',
     );
     assert.match(
       workflowOperator,
-      new RegExp(`"${escapeRegex(row.phase)}"\\s*=>\\s*\\(\\s*String::from\\("${escapeRegex(expectedSkill)}"\\)`, 's'),
+      new RegExp(
+        `${escapeRegex(expectedPhaseExpr)}\\s*=>\\s*(?:\\(\\s*String::from\\("${escapeRegex(expectedSkill)}"\\)|\\{\\s*\\(\\s*String::from\\("${escapeRegex(expectedSkill)}"\\))`,
+        's',
+      ),
       `operator recommended-skill routing should keep ${row.phase} -> ${expectedSkill}`,
     );
   }

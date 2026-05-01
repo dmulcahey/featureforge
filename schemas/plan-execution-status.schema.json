@@ -153,6 +153,7 @@
         "blocked_runtime_bug",
         "branch_closure_recording_required_for_release_readiness",
         "execution_in_progress",
+        "execution_preflight_required",
         "execution_reentry_required",
         "final_review_dispatch_required",
         "final_review_outcome_pending",
@@ -309,6 +310,21 @@
         "effective_reviewed_surface_paths"
       ],
       "type": "object"
+    },
+    "PublicStatusPhaseSchema": {
+      "enum": [
+        "blocked",
+        "document_release_pending",
+        "executing",
+        "execution_preflight",
+        "final_review_pending",
+        "handoff_required",
+        "pivot_required",
+        "qa_pending",
+        "ready_for_branch_completion",
+        "task_closure_pending"
+      ],
+      "type": "string"
     },
     "QaRequirementSchema": {
       "enum": [
@@ -875,6 +891,16 @@
         "$ref": "#/$defs/EvaluatorKind"
       },
       "type": "array"
+    },
+    "phase": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublicStatusPhaseSchema"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "phase_detail": {
       "$ref": "#/$defs/PhaseDetailSchema"

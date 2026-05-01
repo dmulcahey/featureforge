@@ -321,6 +321,44 @@ fn parse_runtime_quoted_field(block: &str, field: &str) -> String {
     rest[..end].to_owned()
 }
 
+fn parse_runtime_phase_field(block: &str) -> String {
+    let needle = "phase:";
+    let start = block
+        .find(needle)
+        .unwrap_or_else(|| panic!("runtime precedence row should contain {needle:?}: {block}"));
+    let rest = block[start + needle.len()..].trim_start();
+    if let Some(stripped) = rest.strip_prefix('"') {
+        let end = stripped.find('"').unwrap_or_else(|| {
+            panic!("runtime precedence row should close quoted phase field: {block}")
+        });
+        return stripped[..end].to_owned();
+    }
+
+    for (source_token, phase) in [
+        (
+            "crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING",
+            "document_release_pending",
+        ),
+        (
+            "crate::execution::phase::PHASE_FINAL_REVIEW_PENDING",
+            "final_review_pending",
+        ),
+        ("crate::execution::phase::PHASE_QA_PENDING", "qa_pending"),
+        (
+            "crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION",
+            "ready_for_branch_completion",
+        ),
+    ] {
+        if rest.starts_with(source_token) {
+            return phase.to_owned();
+        }
+    }
+
+    panic!(
+        "runtime precedence row should use a known phase literal or shared phase constant: {block}"
+    );
+}
+
 fn parse_runtime_late_stage_rows(source: &str) -> Vec<LateStageRuntimeRow> {
     let table_start = source
         .find("const PRECEDENCE_ROWS")
@@ -338,7 +376,7 @@ fn parse_runtime_late_stage_rows(source: &str) -> Vec<LateStageRuntimeRow> {
             release: parse_runtime_gate_state(block, "release"),
             review: parse_runtime_gate_state(block, "review"),
             qa: parse_runtime_gate_state(block, "qa"),
-            phase: parse_runtime_quoted_field(block, "phase"),
+            phase: parse_runtime_phase_field(block),
             reason_family: parse_runtime_quoted_field(block, "reason_family"),
         })
         .collect()
@@ -395,6 +433,16 @@ fn expected_phase_action_and_skill(phase: &str) -> (&'static str, &'static str) 
             "derived from phase_detail: finish branch",
             "featureforge:finishing-a-development-branch",
         ),
+        _ => panic!("unexpected late-stage phase in precedence row: {phase}"),
+    }
+}
+
+fn expected_phase_source_token(phase: &str) -> &'static str {
+    match phase {
+        "document_release_pending" => "phase::PHASE_DOCUMENT_RELEASE_PENDING",
+        "final_review_pending" => "phase::PHASE_FINAL_REVIEW_PENDING",
+        "qa_pending" => "phase::PHASE_QA_PENDING",
+        "ready_for_branch_completion" => "phase::PHASE_READY_FOR_BRANCH_COMPLETION",
         _ => panic!("unexpected late-stage phase in precedence row: {phase}"),
     }
 }
@@ -2784,11 +2832,13 @@ fn late_stage_precedence_reference_rows_match_runtime_rows_and_operator_phase_ma
                 .contains("fnnext_action_for_context(context:&OperatorContext)->&str{&context.operator_next_action}"),
             "workflow/operator should surface query-derived next_action directly",
         );
+        let expected_phase_token = expected_phase_source_token(reference_row.phase.as_str());
+        let direct_mapping = format!("{expected_phase_token}=>(String::from(\"{expected_skill}\")");
+        let block_mapping =
+            format!("{expected_phase_token}=>{{(String::from(\"{expected_skill}\")");
         assert!(
-            normalized_operator.contains(&format!(
-                "\"{}\"=>(String::from(\"{}\")",
-                reference_row.phase, expected_skill
-            )),
+            normalized_operator.contains(&direct_mapping)
+                || normalized_operator.contains(&block_mapping),
             "operator recommended-skill mapping should include {} -> {}",
             reference_row.phase,
             expected_skill

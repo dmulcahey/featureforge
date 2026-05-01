@@ -13,6 +13,7 @@ Run these commands from the repo root for the core contract surface:
 node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
+node --test tests/evals/*.eval.mjs
 npm --prefix tests/brainstorm-server test
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-targets --all-features --no-fail-fast
@@ -25,6 +26,45 @@ commands only while iterating on a known failure, then return to
 `cargo nextest run --all-targets --all-features --no-fail-fast` before claiming
 the task or branch is green. The `--no-fail-fast` flag is required so the run
 captures the full failure set instead of stopping at the first failed binary.
+
+## Runtime Boundary Matrix
+
+When validating runtime public-surface hardening, generated docs, boundary
+tests, and replay churn fixes, include this focused matrix before the full
+no-fail-fast nextest gate:
+
+```bash
+node scripts/gen-skill-docs.mjs --check
+node scripts/gen-agent-docs.mjs --check
+node --test tests/codex-runtime/*.test.mjs
+node --test tests/evals/*.eval.mjs
+cargo test --test public_cli_flow_contracts -- --nocapture
+cargo test --test public_replay_churn -- --nocapture
+cargo test --test runtime_behavior_golden -- --nocapture
+cargo test --test runtime_module_boundaries -- --nocapture
+cargo test --test liveness_model_checker -- --nocapture
+cargo test --test packet_and_schema -- --nocapture
+cargo test --test workflow_shell_smoke -- --nocapture
+cargo test --test plan_execution -- --nocapture
+cargo test --test plan_execution_final_review -- --nocapture
+cargo test --test workflow_runtime -- --nocapture
+cargo test --test workflow_runtime_final_review -- --nocapture
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+Use that matrix to prove the intended surfaces directly. It does not replace
+the branch gate: after focused validation passes, still run
+`cargo nextest run --all-targets --all-features --no-fail-fast`.
+
+For final runtime cutover checks that touched execution query or workflow-entry
+coverage, extend the matrix with:
+
+```bash
+cargo test --test workflow_entry_shell_smoke -- --nocapture
+cargo test --test execution_harness_state -- --nocapture
+cargo test --test execution_query -- --nocapture
+```
+
 ## Performance Budget
 
 `cargo test` with no extra args is the canonical full-suite latency budget for this repository. Treat roughly 3 to 4 minutes on a warm local build as the target. If a warm local run regresses past about 240 seconds, stop and profile before merging instead of normalizing the slowdown away.

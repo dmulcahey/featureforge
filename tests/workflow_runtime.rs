@@ -4,13 +4,12 @@ mod bin_support;
 mod dir_tree_support;
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/internal_only_direct_helpers.rs"]
+mod internal_only_direct_helpers;
 #[path = "support/json.rs"]
 mod json_support;
 #[path = "../src/workflow/markdown_scan.rs"]
 mod markdown_scan_support;
-#[allow(dead_code)]
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/projection.rs"]
@@ -29,7 +28,7 @@ use featureforge::cli::plan_execution::StatusArgs as PlanExecutionStatusArgs;
 use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
 use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::command_eligibility::{
-    PublicMutationKind, PublicMutationRequest, decide_public_mutation,
+    PublicCommand, PublicMutationKind, PublicMutationRequest, decide_public_mutation,
 };
 use featureforge::execution::final_review::resolve_release_base_branch;
 use featureforge::execution::follow_up::execution_step_repair_target_id;
@@ -63,6 +62,7 @@ use featureforge::workflow::manifest::{
 use featureforge::workflow::operator;
 use featureforge::workflow::status::WorkflowRuntime;
 use files_support::write_file;
+use internal_only_direct_helpers::internal_runtime_direct as plan_execution_direct_support;
 use json_support::parse_json;
 use process_support::{repo_root, run, run_checked};
 use runtime_json_support::{discover_execution_runtime, plan_execution_status_json};
@@ -512,6 +512,30 @@ fn write_plan_fidelity_review_artifact(repo: &Path, input: PlanFidelityReviewArt
     .expect("plan-fidelity review artifact should write");
 }
 
+fn write_current_pass_plan_fidelity_review_artifact_for_plan(repo: &Path, plan_path: &str) {
+    let plan = parse_plan_file(repo.join(plan_path)).expect("plan fixture should parse");
+    let spec_path = plan.source_spec_path.clone();
+    let plan_stem = Path::new(plan_path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("plan");
+    let artifact_rel = format!(".featureforge/reviews/{plan_stem}-plan-fidelity.md");
+    write_plan_fidelity_review_artifact(
+        repo,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: &artifact_rel,
+            plan_path,
+            plan_revision: plan.plan_revision,
+            spec_path: &spec_path,
+            spec_revision: plan.source_spec_revision,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "fixture-plan-fidelity-reviewer",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
+    );
+}
+
 fn write_minimal_plan_fidelity_spec(repo: &Path, spec_path: &str) {
     write_file(
         &repo.join(spec_path),
@@ -527,10 +551,30 @@ fn write_minimal_plan_fidelity_plan(
     last_reviewed_by: &str,
     task_title: &str,
 ) {
+    write_minimal_plan_fidelity_plan_with_state(
+        repo,
+        plan_path,
+        spec_path,
+        plan_revision,
+        "Draft",
+        last_reviewed_by,
+        task_title,
+    );
+}
+
+fn write_minimal_plan_fidelity_plan_with_state(
+    repo: &Path,
+    plan_path: &str,
+    spec_path: &str,
+    plan_revision: u32,
+    workflow_state: &str,
+    last_reviewed_by: &str,
+    task_title: &str,
+) {
     write_file(
         &repo.join(plan_path),
         &format!(
-            "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** {plan_revision}\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** {last_reviewed_by}\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: {task_title}\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n"
+            "# Draft Plan\n\n**Workflow State:** {workflow_state}\n**Plan Revision:** {plan_revision}\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** {last_reviewed_by}\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: {task_title}\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n"
         ),
     );
 }
@@ -806,6 +850,7 @@ fn install_full_contract_ready_artifacts(repo: &Path) {
         fs::create_dir_all(parent).expect("plan fixture parent should be creatable");
     }
     fs::write(&plan_path, &template.plan).expect("plan fixture should write");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 }
 
 #[test]
@@ -1006,6 +1051,7 @@ fn internal_only_compatibility_public_mutation_oracle_rejects_invariant_blocked_
                 .as_ref()
                 .and_then(|context| context.step_id)
                 .or(Some(1)),
+            expect_execution_fingerprint: None,
             transfer_mode: None,
             transfer_scope: None,
             command_name: "begin",
@@ -1074,19 +1120,26 @@ fn internal_only_compatibility_replay_fixture_current_stale_closure_overlap_bloc
         ),
         "Task 9.1 replay fixture current closure also stale operator",
     );
+    let explain_json = internal_only_run_plan_execution_json_direct_or_cli(
+        repo,
+        state,
+        &[concat!("explain", "-review-state"), "--plan", plan_rel],
+        "Task 9.1 replay fixture current closure also stale explain-review-state",
+    );
+    let repair_json = run_plan_execution_json(
+        repo,
+        state,
+        &["repair-review-state", "--plan", plan_rel],
+        "Task 9.1 replay fixture current closure also stale repair-review-state",
+    );
 
-    for (surface, json) in [("status", &status_json), ("operator", &operator_json)] {
-        assert!(
-            json["state_kind"] == "blocked_runtime_bug"
-                || json["state_kind"] == "runtime_reconcile_required",
-            "{surface} should fail closed with a runtime diagnostic, not a reopen route: {json}"
-        );
-        assert!(
-            json["phase_detail"] == "blocked_runtime_bug"
-                || json["phase_detail"] == "runtime_reconcile_required",
-            "{surface} should expose a terminal runtime diagnostic detail: {json}"
-        );
-        if surface == "status" {
+    for (surface, json) in [
+        ("status", &status_json),
+        ("operator", &operator_json),
+        ("explain-review-state", &explain_json),
+        ("repair-review-state", &repair_json),
+    ] {
+        if json["current_task_closures"].is_array() {
             assert!(
                 json["current_task_closures"]
                     .as_array()
@@ -1100,8 +1153,8 @@ fn internal_only_compatibility_replay_fixture_current_stale_closure_overlap_bloc
                     .as_array()
                     .is_some_and(|closures| closures
                         .iter()
-                        .any(|closure| closure.as_str() == Some(closure_id.as_str()))),
-                "{surface} should preserve the contradictory stale closure id for diagnosis: {json}"
+                        .all(|closure| closure.as_str() != Some(closure_id.as_str()))),
+                "{surface} must not project the current closure id as stale: {json}"
             );
         }
         assert!(
@@ -1115,21 +1168,21 @@ fn internal_only_compatibility_replay_fixture_current_stale_closure_overlap_bloc
                         .into_iter()
                         .flatten(),
                 )
-                .any(|code| code.as_str() == Some("current_stale_closure_overlap")),
-            "{surface} should include the current/stale overlap diagnostic: {json}"
+                .all(|code| code.as_str() != Some("current_stale_closure_overlap")),
+            "{surface} should not need the current/stale overlap invariant after reducer filtering: {json}"
         );
         let recommended_command = json["recommended_command"].as_str().unwrap_or_default();
         assert!(
-            !recommended_command.contains("reopen"),
-            "{surface} must not recommend reopening a task after current closure exists: {json}"
+            !recommended_command.contains("--task 1") || !recommended_command.contains("reopen"),
+            "{surface} must not recommend reopening the task whose closure is already current: {json}"
         );
         assert!(
             json["public_repair_targets"]
                 .as_array()
-                .is_none_or(|targets| targets
-                    .iter()
-                    .all(|target| { target["command_kind"].as_str() != Some("reopen") })),
-            "{surface} must not retain a reopen repair target after current closure exists: {json}"
+                .is_none_or(|targets| targets.iter().all(|target| {
+                    target["command_kind"].as_str() != Some("reopen") || target["task"] != json!(1)
+                })),
+            "{surface} must not retain a reopen repair target for the current task closure: {json}"
         );
         for hidden in [
             concat!("record", "-review-dispatch"),
@@ -1190,6 +1243,13 @@ fn internal_only_compatibility_read_surface_invariant_blocks_hidden_and_eligibil
             external_review_result_ready: false,
         })
         .expect("fixture status should reload");
+    rejected.recommended_public_command = Some(PublicCommand::Begin {
+        plan: plan_rel.to_owned(),
+        task: 99,
+        step: 1,
+        execution_mode: Some(String::from("featureforge:executing-plans")),
+        fingerprint: Some(String::from("wrong-target")),
+    });
     rejected.recommended_command = Some(format!(
         "featureforge plan execution begin --plan {plan_rel} --task 99 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint wrong-target"
     ));
@@ -1505,6 +1565,23 @@ fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context
         .args(["plan", "execution"])
         .args(args);
     parse_json(&run(command, context), context)
+}
+
+fn materialize_state_dir_projections(
+    repo: &Path,
+    state_dir: &Path,
+    plan: &str,
+    context: &str,
+) -> Value {
+    let materialized = run_plan_execution_json(
+        repo,
+        state_dir,
+        &["materialize-projections", "--plan", plan],
+        context,
+    );
+    assert_eq!(materialized["action"], Value::from("materialized"));
+    assert_eq!(materialized["runtime_truth_changed"], Value::Bool(false));
+    materialized
 }
 
 fn internal_only_run_plan_execution_json_direct_or_cli(
@@ -2322,6 +2399,7 @@ fn complete_workflow_fixture_execution_with_qa_requirement_slow(
         "plan execution complete for workflow routing fixture",
     );
     seed_current_branch_closure_truth(repo, state, plan_rel, 1);
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 }
 
 fn update_authoritative_harness_state(
@@ -2334,54 +2412,58 @@ fn update_authoritative_harness_state(
 ) {
     let repo_slug = repo_slug(repo);
     let authoritative_state_path = harness_state_path(state, &repo_slug, branch);
-    let mut payload: Value = match fs::read_to_string(&authoritative_state_path) {
-        Ok(source) => serde_json::from_str(&source)
+    let mut payload: Value =
+        match reduced_authoritative_harness_state_for_path(&authoritative_state_path) {
+            Some(payload) => payload,
+            None if authoritative_state_path.is_file() => serde_json::from_str(
+                &fs::read_to_string(&authoritative_state_path)
+                    .expect("authoritative harness state should stay readable"),
+            )
             .expect("authoritative harness state should stay valid json"),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let status_json = run_plan_execution_json(
-                repo,
-                state,
-                &["status", "--plan", plan_rel],
-                "status for synthesized authoritative harness state",
-            );
-            let execution_run_id = status_json["execution_run_id"]
-                .as_str()
-                .expect("status should expose execution_run_id for synthesized authoritative state")
-                .to_string();
-            let chunk_id = status_json["chunk_id"].as_str().map(str::to_owned);
-            let mut object = serde_json::Map::new();
-            object.insert("schema_version".to_string(), Value::from(1));
-            object.insert(
-                "run_identity".to_string(),
-                Value::Object(serde_json::Map::from_iter([
-                    (
-                        "execution_run_id".to_string(),
-                        Value::from(execution_run_id),
-                    ),
-                    ("source_plan_path".to_string(), Value::from(plan_rel)),
-                    (
-                        "source_plan_revision".to_string(),
-                        Value::from(plan_revision),
-                    ),
-                ])),
-            );
-            if let Some(chunk_id) = chunk_id {
-                object.insert("chunk_id".to_string(), Value::from(chunk_id));
+            None => {
+                let status_json = run_plan_execution_json(
+                    repo,
+                    state,
+                    &["status", "--plan", plan_rel],
+                    "status for synthesized authoritative harness state",
+                );
+                let execution_run_id = status_json["execution_run_id"]
+                    .as_str()
+                    .expect(
+                        "status should expose execution_run_id for synthesized authoritative state",
+                    )
+                    .to_string();
+                let chunk_id = status_json["chunk_id"].as_str().map(str::to_owned);
+                let mut object = serde_json::Map::new();
+                object.insert("schema_version".to_string(), Value::from(1));
+                object.insert(
+                    "run_identity".to_string(),
+                    Value::Object(serde_json::Map::from_iter([
+                        (
+                            "execution_run_id".to_string(),
+                            Value::from(execution_run_id),
+                        ),
+                        ("source_plan_path".to_string(), Value::from(plan_rel)),
+                        (
+                            "source_plan_revision".to_string(),
+                            Value::from(plan_revision),
+                        ),
+                    ])),
+                );
+                if let Some(chunk_id) = chunk_id {
+                    object.insert("chunk_id".to_string(), Value::from(chunk_id));
+                }
+                object.insert(
+                    "active_worktree_lease_fingerprints".to_string(),
+                    Value::Array(Vec::new()),
+                );
+                object.insert(
+                    "active_worktree_lease_bindings".to_string(),
+                    Value::Array(Vec::new()),
+                );
+                Value::Object(object)
             }
-            object.insert(
-                "active_worktree_lease_fingerprints".to_string(),
-                Value::Array(Vec::new()),
-            );
-            object.insert(
-                "active_worktree_lease_bindings".to_string(),
-                Value::Array(Vec::new()),
-            );
-            Value::Object(object)
-        }
-        Err(error) => {
-            panic!("authoritative harness state should be readable for fixture mutation: {error}")
-        }
-    };
+        };
     let object = payload
         .as_object_mut()
         .expect("authoritative harness state should remain a json object");
@@ -2409,6 +2491,17 @@ fn update_authoritative_harness_state(
         &payload,
     )
     .expect("authoritative workflow-runtime fixture update should sync typed event authority");
+}
+
+fn reduced_authoritative_harness_state_for_path(state_path: &Path) -> Option<Value> {
+    featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(state_path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "event-authoritative workflow-runtime harness state should be reducible for {}: {}",
+                state_path.display(),
+                error.message
+            )
+        })
 }
 
 fn bind_explicit_reopen_repair_target(
@@ -2460,10 +2553,14 @@ fn update_current_history_record_field(
     let branch = current_branch_name(repo);
     let repo_slug = repo_slug(repo);
     let state_path = harness_state_path(state, &repo_slug, &branch);
-    let source =
-        fs::read_to_string(&state_path).expect("authoritative harness state should be readable");
-    let mut payload: Value =
-        serde_json::from_str(&source).expect("authoritative harness state should be valid json");
+    let mut payload =
+        reduced_authoritative_harness_state_for_path(&state_path).unwrap_or_else(|| {
+            serde_json::from_str(
+                &fs::read_to_string(&state_path)
+                    .expect("authoritative harness state should be readable"),
+            )
+            .expect("authoritative harness state should be valid json")
+        });
     let root = payload
         .as_object_mut()
         .expect("authoritative harness state should remain an object");
@@ -2491,8 +2588,11 @@ fn update_current_history_record_field(
 fn current_release_readiness_record_id(repo: &Path, state: &Path) -> Option<String> {
     let branch = current_branch_name(repo);
     let state_path = harness_state_path(state, &repo_slug(repo), &branch);
-    let source = fs::read_to_string(&state_path).ok()?;
-    let payload: Value = serde_json::from_str(&source).ok()?;
+    let payload = reduced_authoritative_harness_state_for_path(&state_path).or_else(|| {
+        fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|source| serde_json::from_str(&source).ok())
+    })?;
     payload
         .get("current_release_readiness_record_id")
         .and_then(Value::as_str)
@@ -2504,8 +2604,11 @@ fn current_release_readiness_record_id(repo: &Path, state: &Path) -> Option<Stri
 fn current_final_review_record_id(repo: &Path, state: &Path) -> Option<String> {
     let branch = current_branch_name(repo);
     let state_path = harness_state_path(state, &repo_slug(repo), &branch);
-    let source = fs::read_to_string(&state_path).ok()?;
-    let payload: Value = serde_json::from_str(&source).ok()?;
+    let payload = reduced_authoritative_harness_state_for_path(&state_path).or_else(|| {
+        fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|source| serde_json::from_str(&source).ok())
+    })?;
     payload
         .get("current_final_review_record_id")
         .and_then(Value::as_str)
@@ -2704,6 +2807,7 @@ Task 1 -> Task 2 -> Task 6
 "#
     );
     write_file(&repo.join(plan_rel), &source);
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 }
 
 fn write_runtime_remediation_fs11_plan(repo: &Path, plan_rel: &str, spec_rel: &str) {
@@ -2777,6 +2881,7 @@ Task 2 -> Task 3
 "#
     );
     write_file(&repo.join(plan_rel), &source);
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 }
 
 fn write_runtime_fs14_fs16_task_boundary_plan(repo: &Path, plan_rel: &str, spec_rel: &str) {
@@ -2848,6 +2953,7 @@ Task 1 -> Task 2
 "#
     );
     write_file(&repo.join(plan_rel), &source);
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 }
 
 fn internal_only_setup_runtime_fs14_fs16_task_boundary_fixture(
@@ -4137,6 +4243,339 @@ fn workflow_status_routes_current_pass_fidelity_artifact_back_to_engineering_app
 }
 
 #[test]
+fn workflow_status_blocks_engineering_approved_plan_without_fidelity_artifact() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-approved-plan-missing-fidelity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
+
+    fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
+    write_minimal_plan_fidelity_spec(repo, spec_path);
+    write_minimal_plan_fidelity_plan_with_state(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "Engineering Approved",
+        "plan-eng-review",
+        "Prepare the approved plan for implementation",
+    );
+
+    let status_json = workflow_status_refresh_json(repo, state);
+
+    assert_eq!(status_json["status"], "plan_review_required");
+    assert_ne!(status_json["status"], "implementation_ready");
+    assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
+    assert_eq!(
+        status_json["reason_codes"][0],
+        "engineering_approval_missing_plan_fidelity_review"
+    );
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "missing");
+    let status_text =
+        serde_json::to_string(&status_json).expect("status json should serialize cleanly");
+    assert!(
+        !status_text.contains("receipt"),
+        "approved-plan fidelity gate must not expose receipt language: {status_text}"
+    );
+}
+
+#[test]
+fn execution_query_blocks_engineering_approved_plan_without_fidelity_artifact() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-approved-plan-query-fidelity-gate");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
+
+    fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
+    write_minimal_plan_fidelity_spec(repo, spec_path);
+    write_minimal_plan_fidelity_plan_with_state(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "Engineering Approved",
+        "plan-eng-review",
+        "Prepare the approved plan for implementation",
+    );
+
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "approved plan query should respect plan-fidelity implementation gate",
+    );
+    let routing =
+        query_workflow_routing_state_for_runtime(&runtime, Some(Path::new(plan_path)), false)
+            .expect("routing query should return a public review route");
+
+    assert_eq!(routing.route.status, "plan_review_required");
+    assert_eq!(routing.route.next_skill, "featureforge:plan-eng-review");
+    assert!(
+        routing.execution_status.is_none(),
+        "explicit plan queries must not project runtime status when fidelity blocks implementation: {routing:?}"
+    );
+    assert!(
+        routing
+            .route
+            .reason_codes
+            .iter()
+            .any(|code| code == "engineering_approval_missing_plan_fidelity_review"),
+        "explicit plan query should preserve the engineering-approval fidelity reason: {routing:?}"
+    );
+    assert_eq!(
+        routing
+            .route
+            .plan_fidelity_review
+            .as_ref()
+            .expect("blocked approved route should expose fidelity gate")
+            .state,
+        "missing"
+    );
+}
+
+#[test]
+fn execution_query_blocks_engineering_approved_plan_without_fidelity_after_execution_started() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-approved-plan-active-fidelity-gate");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    install_full_contract_ready_artifacts(repo);
+    prepare_preflight_acceptance_workspace(repo, "workflow-runtime-active-fidelity-gate");
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "active approved fidelity gate status before begin",
+    );
+    run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_json["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present before begin"),
+        ],
+        "active approved fidelity gate begin",
+    );
+    fs::remove_file(
+        repo.join(
+            ".featureforge/reviews/2026-03-22-runtime-integration-hardening-plan-fidelity.md",
+        ),
+    )
+    .expect("fixture fidelity artifact should be removable after execution starts");
+
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "active approved plan query should respect plan-fidelity implementation gate",
+    );
+    let routing =
+        query_workflow_routing_state_for_runtime(&runtime, Some(Path::new(plan_rel)), false)
+            .expect("routing query should return a public review route");
+
+    assert_eq!(routing.route.status, "plan_review_required");
+    assert_eq!(routing.route.next_skill, "featureforge:plan-eng-review");
+    assert!(
+        routing.execution_status.is_some(),
+        "existing runtime state should remain visible while preserving the fidelity-blocked route: {routing:?}"
+    );
+    assert_eq!(
+        routing.phase_detail, "execution_in_progress",
+        "active runtime projection should keep execution routing while the embedded workflow route remains fidelity-blocked: {routing:?}"
+    );
+    assert!(
+        routing
+            .route
+            .reason_codes
+            .iter()
+            .any(|code| code == "engineering_approval_missing_plan_fidelity_review"),
+        "active explicit plan query should preserve the engineering-approval fidelity reason: {routing:?}"
+    );
+}
+
+#[test]
+fn workflow_status_blocks_engineering_approved_plan_with_stale_fidelity_artifact() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-approved-plan-stale-fidelity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
+
+    fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
+    write_minimal_plan_fidelity_spec(repo, spec_path);
+    write_minimal_plan_fidelity_plan_with_state(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "Engineering Approved",
+        "plan-eng-review",
+        "Prepare the approved plan for implementation",
+    );
+    write_plan_fidelity_review_artifact(
+        repo,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-approved-stale.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-approved-stale",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
+    );
+    write_minimal_plan_fidelity_plan_with_state(
+        repo,
+        plan_path,
+        spec_path,
+        2,
+        "Engineering Approved",
+        "plan-eng-review",
+        "Prepare the changed approved plan for implementation",
+    );
+
+    let status_json = workflow_status_refresh_json(repo, state);
+
+    assert_eq!(status_json["status"], "plan_review_required");
+    assert_ne!(status_json["status"], "implementation_ready");
+    assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
+    assert!(
+        status_json["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "engineering_approval_stale_plan_fidelity_review"),
+        "stale approved-plan fidelity gate should be explicit: {status_json}"
+    );
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "stale");
+}
+
+#[test]
+fn workflow_status_blocks_engineering_approved_plan_with_incomplete_fidelity_surfaces() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-approved-plan-incomplete-fidelity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
+
+    fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
+    write_minimal_plan_fidelity_spec(repo, spec_path);
+    write_minimal_plan_fidelity_plan_with_state(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "Engineering Approved",
+        "plan-eng-review",
+        "Prepare the approved plan for implementation",
+    );
+    write_plan_fidelity_review_artifact(
+        repo,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-approved-incomplete.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-approved-incomplete",
+            verified_surfaces: &[],
+        },
+    );
+
+    let status_json = workflow_status_refresh_json(repo, state);
+
+    assert_eq!(status_json["status"], "plan_review_required");
+    assert_ne!(status_json["status"], "implementation_ready");
+    assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
+    assert!(
+        status_json["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "engineering_approval_incomplete_plan_fidelity_surfaces"),
+        "incomplete approved-plan fidelity surfaces should be explicit: {status_json}"
+    );
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "invalid");
+}
+
+#[test]
+fn workflow_status_allows_engineering_approved_plan_with_current_pass_fidelity_artifact() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-approved-plan-pass-fidelity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
+
+    fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
+    write_minimal_plan_fidelity_spec(repo, spec_path);
+    write_minimal_plan_fidelity_plan_with_state(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "Engineering Approved",
+        "plan-eng-review",
+        "Prepare the approved plan for implementation",
+    );
+    write_plan_fidelity_review_artifact(
+        repo,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-approved-pass.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-approved-pass",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
+    );
+
+    let status_json = workflow_status_refresh_json(repo, state);
+
+    assert_eq!(status_json["status"], "implementation_ready");
+    assert_eq!(status_json["next_skill"], "");
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "pass");
+    assert_eq!(
+        status_json["plan_fidelity_review"]["verified_requirement_index"],
+        true
+    );
+    assert_eq!(
+        status_json["plan_fidelity_review"]["verified_execution_topology"],
+        true
+    );
+    assert_eq!(
+        status_json["plan_fidelity_review"]["verified_task_contract"],
+        true
+    );
+    assert_eq!(
+        status_json["plan_fidelity_review"]["verified_task_determinism"],
+        true
+    );
+    assert_eq!(
+        status_json["plan_fidelity_review"]["verified_spec_reference_fidelity"],
+        true
+    );
+}
+
+#[test]
 fn workflow_status_rejects_stale_review_artifact_fingerprints() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-stale-artifact");
     let repo = repo_dir.path();
@@ -5221,6 +5660,20 @@ fn canonical_workflow_operator_plan_override_resolves_override_source_spec_inste
         &format!(
             "# Override Approved Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{override_spec_path}`\n**Source Spec Revision:** 2\n**Last Reviewed By:** plan-eng-review\n"
         ),
+    );
+    write_plan_fidelity_review_artifact(
+        repo,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-override-pass.md",
+            plan_path: override_plan_path,
+            plan_revision: 1,
+            spec_path: override_spec_path,
+            spec_revision: 2,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-override-pass",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
     );
 
     let identity = discover_repo_identity(repo).expect("repo identity should resolve");
@@ -6977,11 +7430,14 @@ fn internal_only_compatibility_plan_execution_repair_and_reconcile_share_started
     );
 
     let authoritative_state_path = harness_state_path(state, &repo_slug(repo_a), &branch);
-    let reconciled_state: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should be readable after reconcile"),
-    )
-    .expect("authoritative state should remain valid json after reconcile");
+    let reconciled_state = reduced_authoritative_harness_state_for_path(&authoritative_state_path)
+        .unwrap_or_else(|| {
+            serde_json::from_str(
+                &fs::read_to_string(&authoritative_state_path)
+                    .expect("authoritative state should be readable after reconcile"),
+            )
+            .expect("authoritative state should remain valid json after reconcile")
+        });
     assert!(
         reconciled_state["current_branch_closure_reviewed_state_id"]
             .as_str()
@@ -7030,11 +7486,14 @@ fn internal_only_compatibility_plan_execution_repair_and_reconcile_share_started
     let action = repair_b["action"]
         .as_str()
         .expect("repair-review-state should expose action");
-    let repaired_state: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("authoritative state should be readable after repair"),
-    )
-    .expect("authoritative state should remain valid json after repair");
+    let repaired_state = reduced_authoritative_harness_state_for_path(&authoritative_state_path)
+        .unwrap_or_else(|| {
+            serde_json::from_str(
+                &fs::read_to_string(&authoritative_state_path)
+                    .expect("authoritative state should be readable after repair"),
+            )
+            .expect("authoritative state should remain valid json after repair")
+        });
     if action == "blocked" {
         let required_follow_up = repair_b["required_follow_up"]
             .as_str()
@@ -7867,6 +8326,7 @@ Task 1 -> Task 2
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 
     enable_session_decision(state, session_key);
     prepare_preflight_acceptance_workspace(repo, "workflow-phase-task-boundary-blocked");
@@ -8186,6 +8646,7 @@ Task 1 -> Task 2
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 
     enable_session_decision(state, session_key);
     prepare_preflight_acceptance_workspace(repo, "workflow-phase-task-boundary-dispatch-blocked");
@@ -9399,6 +9860,15 @@ fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
         .expect("status should expose a tracked evidence projection export path");
     let state_dir_evidence_path =
         projection_support::state_dir_projection_path(&execution_status, evidence_rel);
+    materialize_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        concat!(
+            "materialize state-dir execution evidence before deletion for gate",
+            "-review diagnostic fixture"
+        ),
+    );
     fs::remove_file(&state_dir_evidence_path).unwrap_or_else(|error| {
         panic!(
             "state-dir evidence projection {} should be removable for tracked diagnostic fixture: {error}",
@@ -12809,6 +13279,12 @@ fn internal_only_compatibility_fs20_runtime_owned_plan_and_execution_evidence_ch
     let evidence_rel = baseline_status["evidence_path"]
         .as_str()
         .expect("FS-20 baseline status should expose evidence_path");
+    materialize_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        "FS-20 materialize state-dir projections before runtime-owned churn",
+    );
     let plan_path = repo.join(plan_rel);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     write_file(
@@ -12871,6 +13347,12 @@ fn internal_only_compatibility_fs20_runtime_owned_plan_and_execution_evidence_ch
     let evidence_rel = baseline_status["evidence_path"]
         .as_str()
         .expect("FS-20 baseline status should expose evidence_path");
+    materialize_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        "FS-20 materialize state-dir projections before branch runtime-owned churn",
+    );
     let plan_path = repo.join(plan_rel);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     write_file(
@@ -12933,6 +13415,12 @@ fn internal_only_compatibility_fs20_branch_closure_remains_current_when_only_run
     let evidence_rel = baseline_status["evidence_path"]
         .as_str()
         .expect("FS-20 baseline status should expose evidence path");
+    materialize_state_dir_projections(
+        repo,
+        state,
+        plan_rel,
+        "FS-20 materialize state-dir projections before branch-current runtime-owned churn",
+    );
     let plan_path = repo.join(plan_rel);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     write_file(

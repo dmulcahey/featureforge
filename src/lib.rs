@@ -75,30 +75,38 @@ pub fn run() -> std::process::ExitCode {
                             emit_json(runtime.status(&args))
                         }
                         cli::plan_execution::PlanExecutionCommand::RepairReviewState(args) => {
-                            emit_json(execution::review_state::repair_review_state_command(
+                            emit_json(execution::commands::repair_review_state::repair_review_state(
                                 &runtime, &args,
                             ))
                         }
                         cli::plan_execution::PlanExecutionCommand::CloseCurrentTask(args) => {
-                            emit_json(execution::mutate::close_current_task(&runtime, &args))
+                            emit_json(execution::commands::close_current_task::close_current_task(
+                                &runtime, &args,
+                            ))
                         }
                         cli::plan_execution::PlanExecutionCommand::AdvanceLateStage(args) => {
-                            emit_json(execution::mutate::advance_late_stage(&runtime, &args))
+                            emit_json(execution::commands::advance_late_stage::advance_late_stage(
+                                &runtime, &args,
+                            ))
                         }
                         cli::plan_execution::PlanExecutionCommand::Begin(args) => {
-                            emit_json(execution::mutate::begin(&runtime, &args))
+                            emit_json(execution::commands::begin::begin(&runtime, &args))
                         }
                         cli::plan_execution::PlanExecutionCommand::Complete(args) => {
-                            emit_json(execution::mutate::complete(&runtime, &args))
+                            emit_json(execution::commands::complete::complete(&runtime, &args))
                         }
                         cli::plan_execution::PlanExecutionCommand::Reopen(args) => {
-                            emit_json(execution::mutate::reopen(&runtime, &args))
+                            emit_json(execution::commands::reopen::reopen(&runtime, &args))
                         }
                         cli::plan_execution::PlanExecutionCommand::Transfer(args) => {
-                            emit_json(execution::mutate::transfer(&runtime, &args))
+                            emit_json(execution::commands::transfer::transfer(&runtime, &args))
                         }
                         cli::plan_execution::PlanExecutionCommand::MaterializeProjections(args) => {
-                            emit_json(execution::mutate::materialize_projections(&runtime, &args))
+                            emit_json(
+                                execution::commands::materialize_projections::materialize_projections(
+                                    &runtime, &args,
+                                ),
+                            )
                         }
                     },
                     Err(error) => emit_json::<Value, _>(Err(error)),

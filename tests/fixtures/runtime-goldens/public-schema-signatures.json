@@ -1,0 +1,1869 @@
+{
+  "schema_version": 1,
+  "schemas": {
+    "plan-contract-analyze": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": [
+        "contract_state",
+        "coverage_complete",
+        "dependency_diagram_present",
+        "diagnostics",
+        "execution_strategy_present",
+        "execution_topology_valid",
+        "files_blocks_valid",
+        "overlapping_write_scopes",
+        "packet_buildable_tasks",
+        "parallel_lane_ownership_valid",
+        "parallel_workspace_isolation_valid",
+        "parallel_worktree_groups",
+        "parallel_worktree_requirements",
+        "plan_fidelity_review",
+        "plan_fingerprint",
+        "plan_path",
+        "plan_revision",
+        "reason_codes",
+        "serial_hazards_resolved",
+        "spec_fingerprint",
+        "spec_path",
+        "spec_revision",
+        "task_constraints_valid",
+        "task_context_sufficient",
+        "task_contract_valid",
+        "task_count",
+        "task_done_when_deterministic",
+        "task_goal_valid",
+        "task_structure_valid",
+        "tasks_self_contained"
+      ],
+      "required": [
+        "contract_state",
+        "coverage_complete",
+        "dependency_diagram_present",
+        "diagnostics",
+        "execution_strategy_present",
+        "execution_topology_valid",
+        "files_blocks_valid",
+        "overlapping_write_scopes",
+        "packet_buildable_tasks",
+        "parallel_lane_ownership_valid",
+        "parallel_workspace_isolation_valid",
+        "parallel_worktree_groups",
+        "parallel_worktree_requirements",
+        "plan_fidelity_review",
+        "plan_fingerprint",
+        "plan_path",
+        "plan_revision",
+        "reason_codes",
+        "serial_hazards_resolved",
+        "spec_fingerprint",
+        "spec_path",
+        "spec_revision",
+        "task_constraints_valid",
+        "task_context_sufficient",
+        "task_contract_valid",
+        "task_count",
+        "task_done_when_deterministic",
+        "task_goal_valid",
+        "task_structure_valid",
+        "tasks_self_contained"
+      ],
+      "semantic_fields": {
+        "contract_state": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "diagnostics": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {
+              "code": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              },
+              "message": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "types": [
+              "object"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "execution_topology_valid": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "boolean"
+          ]
+        },
+        "parallel_lane_ownership_valid": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "boolean"
+          ]
+        },
+        "plan_fidelity_review": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {
+            "diagnostics": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {
+                  "code": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "message": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "types": [
+                  "object"
+                ]
+              },
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "array"
+              ]
+            },
+            "provenance_source": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "reason_codes": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              },
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "array"
+              ]
+            },
+            "review_artifact_path": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "reviewer_stage": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "state": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "verified_execution_topology": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "boolean"
+              ]
+            },
+            "verified_requirement_index": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "boolean"
+              ]
+            },
+            "verified_spec_reference_fidelity": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "boolean"
+              ]
+            },
+            "verified_task_contract": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "boolean"
+              ]
+            },
+            "verified_task_determinism": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "boolean"
+              ]
+            }
+          },
+          "required": [
+            "diagnostics",
+            "provenance_source",
+            "reason_codes",
+            "review_artifact_path",
+            "reviewer_stage",
+            "state",
+            "verified_execution_topology",
+            "verified_requirement_index",
+            "verified_spec_reference_fidelity",
+            "verified_task_contract",
+            "verified_task_determinism"
+          ],
+          "types": [
+            "object"
+          ]
+        },
+        "reason_codes": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {},
+            "required": [],
+            "types": [
+              "string"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "task_context_sufficient": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "boolean"
+          ]
+        },
+        "task_contract_valid": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "boolean"
+          ]
+        },
+        "task_done_when_deterministic": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "boolean"
+          ]
+        }
+      },
+      "title": "AnalyzePlanReport"
+    },
+    "plan-contract-packet": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": [
+        "constraint_obligations",
+        "constraints",
+        "context",
+        "done_when",
+        "done_when_obligations",
+        "file_entries",
+        "file_scope",
+        "generated_at",
+        "goal",
+        "markdown",
+        "packet_contract_version",
+        "packet_fingerprint",
+        "plan_fingerprint",
+        "plan_path",
+        "plan_revision",
+        "requirement_ids",
+        "source_spec_fingerprint",
+        "source_spec_path",
+        "source_spec_revision",
+        "task_number",
+        "task_title"
+      ],
+      "required": [
+        "constraint_obligations",
+        "constraints",
+        "context",
+        "done_when",
+        "done_when_obligations",
+        "file_entries",
+        "file_scope",
+        "generated_at",
+        "goal",
+        "markdown",
+        "packet_contract_version",
+        "packet_fingerprint",
+        "plan_fingerprint",
+        "plan_path",
+        "plan_revision",
+        "requirement_ids",
+        "source_spec_fingerprint",
+        "source_spec_path",
+        "source_spec_revision",
+        "task_number",
+        "task_title"
+      ],
+      "semantic_fields": {
+        "constraints": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {},
+            "required": [],
+            "types": [
+              "string"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "done_when": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {},
+            "required": [],
+            "types": [
+              "string"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "file_entries": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {
+              "action": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              },
+              "normalized_path": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              },
+              "path": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              }
+            },
+            "required": [
+              "action",
+              "normalized_path",
+              "path"
+            ],
+            "types": [
+              "object"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "file_scope": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {},
+            "required": [],
+            "types": [
+              "string"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "packet_fingerprint": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "plan_fingerprint": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "requirement_ids": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {},
+            "required": [],
+            "types": [
+              "string"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "source_spec_fingerprint": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "task_number": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "integer"
+          ]
+        },
+        "task_title": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "title": "TaskPacket"
+    },
+    "plan-execution-status": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": [
+        "active_contract_fingerprint",
+        "active_contract_path",
+        "active_step",
+        "active_task",
+        "aggregate_evaluation_state",
+        "blockers",
+        "blocking_reason_codes",
+        "blocking_records",
+        "blocking_scope",
+        "blocking_step",
+        "blocking_task",
+        "browser_qa_state",
+        "chunk_id",
+        "chunking_strategy",
+        "completed_evaluator_kinds",
+        "current_branch_closure_id",
+        "current_branch_reviewed_state_id",
+        "current_chunk_pivot_threshold",
+        "current_chunk_retry_budget",
+        "current_chunk_retry_count",
+        "current_final_review_branch_closure_id",
+        "current_final_review_result",
+        "current_final_review_state",
+        "current_qa_branch_closure_id",
+        "current_qa_result",
+        "current_qa_state",
+        "current_release_readiness_state",
+        "current_task_closures",
+        "dependency_index_state",
+        "evaluator_policy",
+        "evidence_path",
+        "execution_command_context",
+        "execution_fingerprint",
+        "execution_mode",
+        "execution_reentry_target_source",
+        "execution_run_id",
+        "execution_started",
+        "external_wait_state",
+        "final_review_state",
+        "finish_review_gate_pass_branch_closure_id",
+        "handoff_required",
+        "harness_phase",
+        "last_browser_qa_artifact_fingerprint",
+        "last_evaluation_evaluator_kind",
+        "last_evaluation_report_fingerprint",
+        "last_evaluation_report_path",
+        "last_evaluation_verdict",
+        "last_final_review_artifact_fingerprint",
+        "last_release_docs_artifact_fingerprint",
+        "last_strategy_checkpoint_fingerprint",
+        "latest_authoritative_sequence",
+        "next_action",
+        "next_public_action",
+        "non_passing_evaluator_kinds",
+        "open_failed_criteria",
+        "pending_evaluator_kinds",
+        "phase",
+        "phase_detail",
+        "plan_revision",
+        "projection_diagnostics",
+        "projection_mode",
+        "public_repair_targets",
+        "qa_requirement",
+        "raw_workspace_tree_id",
+        "reason_codes",
+        "recommended_command",
+        "recording_context",
+        "release_docs_state",
+        "repo_state_baseline_head_sha",
+        "repo_state_baseline_worktree_fingerprint",
+        "repo_state_drift_state",
+        "required_evaluator_kinds",
+        "reset_policy",
+        "resume_step",
+        "resume_task",
+        "review_stack",
+        "review_state_status",
+        "schema_version",
+        "semantic_workspace_tree_id",
+        "stale_unreviewed_closures",
+        "state_dir_projection_paths",
+        "state_kind",
+        "strategy_checkpoint_kind",
+        "strategy_reset_required",
+        "strategy_state",
+        "superseded_closures_summary",
+        "tracked_projection_paths",
+        "tracked_projections_current",
+        "warning_codes",
+        "write_authority_holder",
+        "write_authority_state",
+        "write_authority_worktree"
+      ],
+      "required": [
+        "aggregate_evaluation_state",
+        "blocking_records",
+        "browser_qa_state",
+        "chunk_id",
+        "completed_evaluator_kinds",
+        "current_chunk_pivot_threshold",
+        "current_chunk_retry_budget",
+        "current_chunk_retry_count",
+        "current_final_review_state",
+        "current_qa_state",
+        "current_task_closures",
+        "dependency_index_state",
+        "evidence_path",
+        "execution_fingerprint",
+        "execution_mode",
+        "execution_started",
+        "final_review_state",
+        "handoff_required",
+        "harness_phase",
+        "latest_authoritative_sequence",
+        "next_action",
+        "non_passing_evaluator_kinds",
+        "open_failed_criteria",
+        "pending_evaluator_kinds",
+        "phase_detail",
+        "plan_revision",
+        "projection_mode",
+        "reason_codes",
+        "release_docs_state",
+        "repo_state_drift_state",
+        "required_evaluator_kinds",
+        "review_state_status",
+        "schema_version",
+        "semantic_workspace_tree_id",
+        "stale_unreviewed_closures",
+        "state_dir_projection_paths",
+        "state_kind",
+        "strategy_checkpoint_kind",
+        "strategy_reset_required",
+        "strategy_state",
+        "superseded_closures_summary",
+        "tracked_projection_paths",
+        "tracked_projections_current",
+        "warning_codes",
+        "write_authority_state"
+      ],
+      "semantic_fields": {
+        "blocking_reason_codes": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {},
+            "required": [],
+            "types": [
+              "string"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "execution_command_context": {
+          "additional_properties": false,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {
+            "command_kind": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [
+                "begin",
+                "complete",
+                "reopen"
+              ],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "step_id": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "integer"
+              ]
+            },
+            "task_number": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "integer"
+              ]
+            }
+          },
+          "required": [
+            "command_kind",
+            "step_id",
+            "task_number"
+          ],
+          "types": [
+            "object"
+          ]
+        },
+        "next_action": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [
+            "advance late stage",
+            "close current task",
+            "continue execution",
+            "execution reentry required",
+            "finish branch",
+            "hand off",
+            "pivot / return to planning",
+            "refresh test plan",
+            "repair review state / reenter execution",
+            "request final review",
+            "resolve release blocker",
+            "run QA",
+            "run verification",
+            "wait for external review result"
+          ],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "next_public_action": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {
+            "args_template": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "null",
+                "string"
+              ]
+            },
+            "command": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "types": [
+            "null",
+            "object"
+          ]
+        },
+        "phase": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [
+            "blocked",
+            "document_release_pending",
+            "executing",
+            "execution_preflight",
+            "final_review_pending",
+            "handoff_required",
+            "pivot_required",
+            "qa_pending",
+            "ready_for_branch_completion",
+            "task_closure_pending"
+          ],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "null",
+            "string"
+          ]
+        },
+        "phase_detail": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [
+            "blocked_runtime_bug",
+            "branch_closure_recording_required_for_release_readiness",
+            "execution_in_progress",
+            "execution_preflight_required",
+            "execution_reentry_required",
+            "final_review_dispatch_required",
+            "final_review_outcome_pending",
+            "final_review_recording_ready",
+            "finish_completion_gate_ready",
+            "finish_review_gate_ready",
+            "handoff_recording_required",
+            "planning_reentry_required",
+            "qa_recording_required",
+            "release_blocker_resolution_required",
+            "release_readiness_recording_ready",
+            "runtime_reconcile_required",
+            "task_closure_recording_ready",
+            "task_review_result_pending",
+            "test_plan_refresh_required"
+          ],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "reason_codes": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {},
+            "required": [],
+            "types": [
+              "string"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "recommended_command": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "recording_context": {
+          "additional_properties": false,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": 1,
+          "properties": {
+            "branch_closure_id": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "dispatch_id": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "task_number": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "integer"
+              ]
+            }
+          },
+          "required": [
+            "branch_closure_id",
+            "task_number"
+          ],
+          "types": [
+            "object"
+          ]
+        },
+        "review_state_status": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [
+            "clean",
+            "missing_current_closure",
+            "stale_unreviewed"
+          ],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "title": "PlanExecutionStatus"
+    },
+    "workflow-operator": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": [
+        "base_branch",
+        "blockers",
+        "blocking_reason_codes",
+        "blocking_scope",
+        "blocking_task",
+        "execution_command_context",
+        "external_wait_state",
+        "finish_review_gate_pass_branch_closure_id",
+        "next_action",
+        "next_public_action",
+        "phase",
+        "phase_detail",
+        "plan_path",
+        "projection_mode",
+        "qa_requirement",
+        "raw_workspace_tree_id",
+        "recommended_command",
+        "recording_context",
+        "review_state_status",
+        "schema_version",
+        "semantic_workspace_tree_id",
+        "spec_path",
+        "state_dir_projection_paths",
+        "state_kind",
+        "tracked_projection_paths",
+        "tracked_projections_current"
+      ],
+      "required": [
+        "blocking_reason_codes",
+        "next_action",
+        "phase",
+        "phase_detail",
+        "plan_path",
+        "projection_mode",
+        "review_state_status",
+        "schema_version",
+        "semantic_workspace_tree_id",
+        "spec_path",
+        "state_dir_projection_paths",
+        "state_kind",
+        "tracked_projection_paths",
+        "tracked_projections_current"
+      ],
+      "semantic_fields": {
+        "blocking_reason_codes": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {},
+            "required": [],
+            "types": [
+              "string"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "execution_command_context": {
+          "additional_properties": false,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {
+            "command_kind": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [
+                "begin",
+                "complete",
+                "reopen"
+              ],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "step_id": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "integer"
+              ]
+            },
+            "task_number": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "integer"
+              ]
+            }
+          },
+          "required": [
+            "command_kind",
+            "step_id",
+            "task_number"
+          ],
+          "types": [
+            "object"
+          ]
+        },
+        "next_action": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [
+            "advance late stage",
+            "close current task",
+            "continue execution",
+            "execution reentry required",
+            "finish branch",
+            "hand off",
+            "pivot / return to planning",
+            "refresh test plan",
+            "repair review state / reenter execution",
+            "request final review",
+            "resolve release blocker",
+            "run QA",
+            "run verification",
+            "wait for external review result"
+          ],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "next_public_action": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {
+            "args_template": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "null",
+                "string"
+              ]
+            },
+            "command": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "types": [
+            "null",
+            "object"
+          ]
+        },
+        "phase": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [
+            "blocked",
+            "document_release_pending",
+            "executing",
+            "execution_preflight",
+            "final_review_pending",
+            "handoff_required",
+            "pivot_required",
+            "qa_pending",
+            "ready_for_branch_completion",
+            "task_closure_pending"
+          ],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "phase_detail": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [
+            "blocked_runtime_bug",
+            "branch_closure_recording_required_for_release_readiness",
+            "execution_in_progress",
+            "execution_preflight_required",
+            "execution_reentry_required",
+            "final_review_dispatch_required",
+            "final_review_outcome_pending",
+            "final_review_recording_ready",
+            "finish_completion_gate_ready",
+            "finish_review_gate_ready",
+            "handoff_recording_required",
+            "planning_reentry_required",
+            "qa_recording_required",
+            "release_blocker_resolution_required",
+            "release_readiness_recording_ready",
+            "runtime_reconcile_required",
+            "task_closure_recording_ready",
+            "task_review_result_pending",
+            "test_plan_refresh_required"
+          ],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "recommended_command": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "recording_context": {
+          "additional_properties": false,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": 1,
+          "properties": {
+            "branch_closure_id": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "dispatch_id": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "task_number": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "integer"
+              ]
+            }
+          },
+          "required": [
+            "branch_closure_id",
+            "task_number"
+          ],
+          "types": [
+            "object"
+          ]
+        },
+        "review_state_status": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [
+            "clean",
+            "missing_current_closure",
+            "stale_unreviewed"
+          ],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "title": "WorkflowOperator"
+    },
+    "workflow-status": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": [
+        "contract_state",
+        "diagnostics",
+        "manifest_path",
+        "next_skill",
+        "note",
+        "plan_candidate_count",
+        "plan_fidelity_review",
+        "plan_path",
+        "reason",
+        "reason_codes",
+        "root",
+        "scan_truncated",
+        "schema_version",
+        "spec_candidate_count",
+        "spec_path",
+        "status"
+      ],
+      "required": [
+        "contract_state",
+        "diagnostics",
+        "manifest_path",
+        "next_skill",
+        "note",
+        "plan_candidate_count",
+        "plan_path",
+        "reason",
+        "reason_codes",
+        "root",
+        "scan_truncated",
+        "schema_version",
+        "spec_candidate_count",
+        "spec_path",
+        "status"
+      ],
+      "semantic_fields": {
+        "diagnostics": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {
+              "artifact": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              },
+              "code": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              },
+              "message": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              },
+              "remediation": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              },
+              "severity": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              }
+            },
+            "required": [
+              "artifact",
+              "code",
+              "message",
+              "remediation",
+              "severity"
+            ],
+            "types": [
+              "object"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "next_skill": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        },
+        "plan_fidelity_review": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {
+            "diagnostics": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {
+                  "code": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "message": {
+                    "additional_properties": null,
+                    "const": null,
+                    "enum": [],
+                    "items": null,
+                    "min_properties": null,
+                    "properties": {},
+                    "required": [],
+                    "types": [
+                      "string"
+                    ]
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "types": [
+                  "object"
+                ]
+              },
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "array"
+              ]
+            },
+            "provenance_source": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "reason_codes": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": {
+                "additional_properties": null,
+                "const": null,
+                "enum": [],
+                "items": null,
+                "min_properties": null,
+                "properties": {},
+                "required": [],
+                "types": [
+                  "string"
+                ]
+              },
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "array"
+              ]
+            },
+            "review_artifact_path": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "reviewer_stage": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "state": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "string"
+              ]
+            },
+            "verified_execution_topology": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "boolean"
+              ]
+            },
+            "verified_requirement_index": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "boolean"
+              ]
+            },
+            "verified_spec_reference_fidelity": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "boolean"
+              ]
+            },
+            "verified_task_contract": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "boolean"
+              ]
+            },
+            "verified_task_determinism": {
+              "additional_properties": null,
+              "const": null,
+              "enum": [],
+              "items": null,
+              "min_properties": null,
+              "properties": {},
+              "required": [],
+              "types": [
+                "boolean"
+              ]
+            }
+          },
+          "required": [
+            "diagnostics",
+            "provenance_source",
+            "reason_codes",
+            "review_artifact_path",
+            "reviewer_stage",
+            "state",
+            "verified_execution_topology",
+            "verified_requirement_index",
+            "verified_spec_reference_fidelity",
+            "verified_task_contract",
+            "verified_task_determinism"
+          ],
+          "types": [
+            "null",
+            "object"
+          ]
+        },
+        "reason_codes": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": {
+            "additional_properties": null,
+            "const": null,
+            "enum": [],
+            "items": null,
+            "min_properties": null,
+            "properties": {},
+            "required": [],
+            "types": [
+              "string"
+            ]
+          },
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "array"
+          ]
+        },
+        "status": {
+          "additional_properties": null,
+          "const": null,
+          "enum": [],
+          "items": null,
+          "min_properties": null,
+          "properties": {},
+          "required": [],
+          "types": [
+            "string"
+          ]
+        }
+      },
+      "title": "WorkflowRoute"
+    }
+  }
+}

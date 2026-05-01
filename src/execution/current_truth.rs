@@ -58,17 +58,6 @@ pub(crate) struct CurrentLateStageBranchBindings {
     pub current_qa_result: Option<String>,
 }
 
-pub(crate) const RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS: &[&str] = &[
-    "task_review_result_pending",
-    "execution_in_progress",
-    "runtime_reconcile_required",
-    "finish_review_gate_ready",
-    "finish_completion_gate_ready",
-    "final_review_dispatch_required",
-    "final_review_outcome_pending",
-    "test_plan_refresh_required",
-];
-
 const PUBLIC_TASK_BOUNDARY_REASON_CODES: &[&str] = &[
     "prior_task_current_closure_missing",
     "prior_task_current_closure_stale",
@@ -78,7 +67,7 @@ const PUBLIC_TASK_BOUNDARY_REASON_CODES: &[&str] = &[
     "current_task_closure_overlay_restore_required",
     "prior_task_review_not_green",
     "task_closure_baseline_repair_candidate",
-    "task_closure_recording_ready",
+    crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY,
 ];
 
 const TASK_BOUNDARY_PROJECTION_DIAGNOSTIC_REASON_CODES: &[&str] = &[
@@ -125,7 +114,7 @@ pub(crate) fn public_task_boundary_decision(
 ) -> PublicTaskBoundaryDecision {
     let task_scope = status.blocking_step.is_none()
         && (status.blocking_task.is_some()
-            || status.phase_detail == "task_closure_recording_ready"
+            || status.phase_detail == crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY
             || status.reason_codes.iter().any(|reason_code| {
                 public_task_boundary_reason_code(reason_code)
                     || task_boundary_projection_diagnostic_reason_code(reason_code)
@@ -178,11 +167,12 @@ pub(crate) fn public_task_boundary_decision(
         .any(|reason_code| reason_code == "prior_task_current_closure_missing")
     {
         PublicTaskBoundaryState::CurrentClosureMissing
-    } else if status.phase_detail == "task_closure_recording_ready"
+    } else if status.phase_detail == crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY
         || public_reason_codes.iter().any(|reason_code| {
             matches!(
                 reason_code.as_str(),
-                "task_closure_baseline_repair_candidate" | "task_closure_recording_ready"
+                "task_closure_baseline_repair_candidate"
+                    | crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY
             )
         })
     {
@@ -2034,7 +2024,8 @@ pub(crate) struct FollowUpOverrideInputs<'a> {
 
 #[cfg(test)]
 pub(crate) fn resolve_follow_up_override(inputs: FollowUpOverrideInputs<'_>) -> String {
-    let mut raw_pivot_required = inputs.workflow_phase == Some("pivot_required")
+    let mut raw_pivot_required = inputs.workflow_phase
+        == Some(crate::execution::phase::PHASE_PIVOT_REQUIRED)
         || inputs.harness_phase == Some(HarnessPhase::PivotRequired)
         || inputs.reason_codes.iter().any(|code| {
             matches!(
@@ -2042,7 +2033,8 @@ pub(crate) fn resolve_follow_up_override(inputs: FollowUpOverrideInputs<'_>) -> 
                 "blocked_on_plan_revision" | "qa_requirement_missing_or_invalid"
             )
         });
-    let mut raw_handoff_required = inputs.workflow_phase == Some("handoff_required")
+    let mut raw_handoff_required = inputs.workflow_phase
+        == Some(crate::execution::phase::PHASE_HANDOFF_REQUIRED)
         || inputs.harness_phase == Some(HarnessPhase::HandoffRequired)
         || inputs.handoff_required;
 
@@ -2221,7 +2213,11 @@ pub(crate) fn negative_result_requires_execution_reentry(
         return true;
     }
 
-    if matches!(workflow_phase, "handoff_required" | "pivot_required") {
+    if matches!(
+        workflow_phase,
+        crate::execution::phase::PHASE_HANDOFF_REQUIRED
+            | crate::execution::phase::PHASE_PIVOT_REQUIRED
+    ) {
         return false;
     }
 

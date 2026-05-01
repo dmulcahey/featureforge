@@ -37,56 +37,56 @@ const PRECEDENCE_ROWS: [LateStageRow; 8] = [
         release: GateState::Blocked,
         review: GateState::Blocked,
         qa: GateState::Blocked,
-        phase: "document_release_pending",
+        phase: crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING,
         reason_family: "release_readiness",
     },
     LateStageRow {
         release: GateState::Blocked,
         review: GateState::Blocked,
         qa: GateState::Ready,
-        phase: "document_release_pending",
+        phase: crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING,
         reason_family: "release_readiness",
     },
     LateStageRow {
         release: GateState::Blocked,
         review: GateState::Ready,
         qa: GateState::Blocked,
-        phase: "document_release_pending",
+        phase: crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING,
         reason_family: "release_readiness",
     },
     LateStageRow {
         release: GateState::Blocked,
         review: GateState::Ready,
         qa: GateState::Ready,
-        phase: "document_release_pending",
+        phase: crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING,
         reason_family: "release_readiness",
     },
     LateStageRow {
         release: GateState::Ready,
         review: GateState::Blocked,
         qa: GateState::Blocked,
-        phase: "final_review_pending",
+        phase: crate::execution::phase::PHASE_FINAL_REVIEW_PENDING,
         reason_family: "final_review_freshness",
     },
     LateStageRow {
         release: GateState::Ready,
         review: GateState::Blocked,
         qa: GateState::Ready,
-        phase: "final_review_pending",
+        phase: crate::execution::phase::PHASE_FINAL_REVIEW_PENDING,
         reason_family: "final_review_freshness",
     },
     LateStageRow {
         release: GateState::Ready,
         review: GateState::Ready,
         qa: GateState::Blocked,
-        phase: "qa_pending",
+        phase: crate::execution::phase::PHASE_QA_PENDING,
         reason_family: "qa_freshness",
     },
     LateStageRow {
         release: GateState::Ready,
         review: GateState::Ready,
         qa: GateState::Ready,
-        phase: "ready_for_branch_completion",
+        phase: crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION,
         reason_family: "all_fresh",
     },
 ];
@@ -102,7 +102,7 @@ pub fn resolve(signals: LateStageSignals) -> LateStageDecision {
             reason_family: row.reason_family,
         })
         .unwrap_or(LateStageDecision {
-            phase: "final_review_pending",
+            phase: crate::execution::phase::PHASE_FINAL_REVIEW_PENDING,
             reason_family: "fallback_fail_closed",
         })
 }

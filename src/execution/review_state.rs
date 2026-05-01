@@ -8,12 +8,13 @@ use serde::Serialize;
 use crate::cli::plan_execution::StatusArgs;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::command_eligibility::{
-    PublicMutationKind, PublicMutationRequest, public_mutation_request_from_command,
+    PublicAdvanceLateStageMode, PublicCommand, PublicMutationKind, PublicMutationRequest,
     require_public_mutation,
 };
 use crate::execution::current_truth::{
     BranchRerecordingUnsupportedReason, branch_closure_rerecording_assessment,
     missing_derived_branch_scope_overlays, missing_derived_task_scope_overlays,
+    resolve_actionable_repair_follow_up_for_status,
 };
 use crate::execution::follow_up::{
     FollowUpAliasContext, RepairFollowUpKind, RepairFollowUpRecord, RepairTargetScope,
@@ -36,8 +37,9 @@ use crate::execution::recording::{
     clear_open_step_state as clear_open_step_state_recording,
     clear_task_review_dispatch_lineage_for_execution_reentry as clear_task_dispatch_lineage,
     clear_task_review_dispatch_lineage_for_structural_repair as clear_task_dispatch_lineage_for_structural_repair_recording,
-    persist_review_state_repair_follow_up, restore_review_state_projection_overlays,
-    review_state_repair_follow_up_would_mutate,
+    persist_review_state_repair_follow_up,
+    resolve_current_task_closure_postconditions_for_current_workspace_and_persist,
+    restore_review_state_projection_overlays, review_state_repair_follow_up_would_mutate,
 };
 use crate::execution::reentry_reconcile::{
     TARGETLESS_STALE_RECONCILE_DETAIL, TARGETLESS_STALE_RECONCILE_PHASE_DETAIL,
@@ -57,6 +59,7 @@ use crate::execution::state::{
     execution_reentry_current_task_closure_targets_from_stale_tasks,
     latest_attempted_step_for_task, load_execution_read_scope,
     task_closure_baseline_bridge_ready_for_stale_target,
+    task_closure_baseline_candidate_can_preempt_stale_target,
     task_closure_baseline_repair_candidate_with_stale_target,
     task_scope_structural_review_state_reason,
 };
@@ -187,7 +190,52 @@ struct RepairRouteAction {
     step_number: Option<u32>,
     blocking_task: Option<u32>,
     blocking_reason_codes: Vec<String>,
-    recommended_command: Option<String>,
+    recommended_public_command: Option<PublicCommand>,
+}
+
+impl RepairRouteAction {
+    fn recommended_command(&self) -> Option<String> {
+        self.recommended_public_command
+            .as_ref()
+            .map(PublicCommand::to_display_command)
+    }
+}
+
+fn route_decision_recommended_command(route_decision: &RouteDecision) -> Option<String> {
+    route_decision
+        .recommended_public_command
+        .as_ref()
+        .map(PublicCommand::to_display_command)
+}
+
+fn routing_recommended_command(routing: &ExecutionRoutingState) -> Option<String> {
+    routing
+        .recommended_public_command
+        .as_ref()
+        .map(PublicCommand::to_display_command)
+}
+
+fn public_command_is_repair_review_state(command: Option<&PublicCommand>) -> bool {
+    matches!(command, Some(PublicCommand::RepairReviewState { .. }))
+}
+
+fn public_command_is_execution_reentry(command: Option<&PublicCommand>) -> bool {
+    matches!(
+        command,
+        Some(
+            PublicCommand::Begin { .. }
+                | PublicCommand::Complete { .. }
+                | PublicCommand::Reopen { .. }
+        )
+    )
+}
+
+fn advance_late_stage_display_command(plan: String) -> String {
+    PublicCommand::AdvanceLateStage {
+        plan,
+        mode: PublicAdvanceLateStageMode::Basic,
+    }
+    .to_display_command()
 }
 
 struct RepairPhaseBundle {
@@ -238,17 +286,13 @@ fn repair_route_action_from_route_decision(
         .or(status.blocking_task)
         .or(status.resume_task)
         .or(status.active_task);
-    let kind = if route_decision.phase_detail == "task_closure_recording_ready"
+    let kind = if route_decision.phase_detail
+        == crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY
         || route_decision.next_action == "close current task"
     {
         RepairRouteActionKind::CloseCurrentTask
     } else if route_decision.required_follow_up.as_deref() == Some("repair_review_state")
-        || route_decision
-            .recommended_command
-            .as_deref()
-            .is_some_and(|command| {
-                command.starts_with("featureforge plan execution repair-review-state --plan ")
-            })
+        || public_command_is_repair_review_state(route_decision.recommended_public_command.as_ref())
     {
         RepairRouteActionKind::RepairReviewState
     } else {
@@ -262,7 +306,7 @@ fn repair_route_action_from_route_decision(
         step_number: execution_step.or(status.blocking_step),
         blocking_task,
         blocking_reason_codes: status.reason_codes.clone(),
-        recommended_command: route_decision.recommended_command.clone(),
+        recommended_public_command: route_decision.recommended_public_command.clone(),
     }
 }
 
@@ -288,8 +332,10 @@ fn targetless_stale_reconcile_output(
             trace_summary: String::from(
                 "Repair review state found a concrete stale branch or milestone target but no task reopen target; repair must continue without fabricating a current task closure target.",
             ) + blocker_metadata.as_str(),
-            phase: Some(String::from("executing")),
-            phase_detail: Some(String::from("execution_reentry_required")),
+            phase: Some(String::from(crate::execution::phase::PHASE_EXECUTING)),
+            phase_detail: Some(String::from(
+                crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
+            )),
             blocking_task: None,
             blocking_step: None,
             blocking_reason_codes,
@@ -309,7 +355,7 @@ fn targetless_stale_reconcile_output(
         required_follow_up: None,
         recommended_command: None,
         trace_summary: String::from(TARGETLESS_STALE_RECONCILE_DETAIL) + blocker_metadata.as_str(),
-        phase: Some(String::from("executing")),
+        phase: Some(String::from(crate::execution::phase::PHASE_EXECUTING)),
         phase_detail: Some(String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL)),
         blocking_task: None,
         blocking_step: None,
@@ -376,7 +422,7 @@ pub fn reconcile_review_state(
     let read_scope = load_execution_read_scope(runtime, &args.plan, true)?;
     let context = read_scope.context;
     let status = runtime.status(args)?;
-    if status.state_kind == "blocked_runtime_bug" {
+    if status.state_kind == crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG {
         return Ok(ReconcileReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -495,7 +541,7 @@ pub fn reconcile_review_state(
             .is_some_and(|routing| late_stage_branch_closure_recording_required(routing, args))
         {
             let recommend_branch_closure = routing.as_ref().is_some_and(|routing| {
-                routing.phase_detail == "branch_closure_recording_required_for_release_readiness"
+                routing.phase_detail == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
             });
             return Ok(ReconcileReviewStateOutput {
                 action: String::from("blocked"),
@@ -595,7 +641,7 @@ pub fn reconcile_review_state(
             .is_some_and(|routing| late_stage_branch_closure_recording_required(routing, args))
         {
             if refreshed_routing.as_ref().is_some_and(|routing| {
-                routing.phase_detail == "branch_closure_recording_required_for_release_readiness"
+                routing.phase_detail == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
             }) && branch_rerecording_supported
             {
                 recommended_branch_closure_command(args)
@@ -630,7 +676,7 @@ pub fn reconcile_review_state(
         .is_some_and(|routing| late_stage_branch_closure_recording_required(routing, args))
     {
         let recommend_branch_closure = refreshed_routing.as_ref().is_some_and(|routing| {
-            routing.phase_detail == "branch_closure_recording_required_for_release_readiness"
+            routing.phase_detail == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
         });
         return Ok(ReconcileReviewStateOutput {
             action: String::from("blocked"),
@@ -771,6 +817,7 @@ fn task_closure_baseline_bridge_target_task(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
     earliest_stale_task: Option<u32>,
+    earliest_stale_task_bridge_allowed: bool,
 ) -> Result<Option<u32>, JsonFailure> {
     if status.review_state_status != "stale_unreviewed"
         && status.stale_unreviewed_closures.is_empty()
@@ -778,14 +825,28 @@ fn task_closure_baseline_bridge_target_task(
     {
         return Ok(None);
     }
-    let Some(stale_task) = earliest_stale_task
-        .or(status.blocking_task)
-        .or(status.resume_task)
-        .or(status.active_task)
-        .or_else(|| closure_baseline_candidate_task(context))
-    else {
+    let baseline_candidate_task = closure_baseline_candidate_task(context);
+    let Some(stale_task) = (match (earliest_stale_task, baseline_candidate_task) {
+        (Some(_), Some(candidate_task))
+            if task_closure_baseline_candidate_can_preempt_stale_target(
+                status,
+                candidate_task,
+                earliest_stale_task,
+            ) =>
+        {
+            Some(candidate_task)
+        }
+        _ => earliest_stale_task
+            .or(status.blocking_task)
+            .or(status.resume_task)
+            .or(status.active_task)
+            .or(baseline_candidate_task),
+    }) else {
         return Ok(None);
     };
+    if earliest_stale_task == Some(stale_task) && !earliest_stale_task_bridge_allowed {
+        return Ok(None);
+    }
     if !task_closure_baseline_bridge_ready_for_stale_target(
         context,
         status,
@@ -813,15 +874,24 @@ fn analyze_repair_phase_bundle(
         .steps
         .iter()
         .all(|step| step.checked);
-    let reducer_stale_target = phase_bundle
-        .read_scope
-        .runtime_state
-        .as_ref()
-        .and_then(|runtime_state| runtime_state.gate_snapshot.earliest_task_stale_target());
+    let reducer_stale_target_details =
+        phase_bundle
+            .read_scope
+            .runtime_state
+            .as_ref()
+            .and_then(|runtime_state| {
+                runtime_state
+                    .gate_snapshot
+                    .earliest_task_stale_target_details()
+            });
+    let reducer_stale_target = reducer_stale_target_details.and_then(|target| target.task);
+    let reducer_stale_target_bridge_allowed =
+        reducer_stale_target_details.is_none_or(|target| target.task_closure_bridge_allowed);
     let task_closure_baseline_bridge_target = task_closure_baseline_bridge_target_task(
         &phase_bundle.read_scope.context,
         &phase_bundle.status,
         reducer_stale_target,
+        reducer_stale_target_bridge_allowed,
     )?;
     let closure_graph_stale_target = reducer_stale_target;
     let branch_stale_source_task = branch_stale_source_task_from_snapshot(phase_bundle);
@@ -893,12 +963,57 @@ fn require_repair_review_state_mutation(status: &PlanExecutionStatus) -> Result<
             kind: PublicMutationKind::RepairReviewState,
             task: None,
             step: None,
+            expect_execution_fingerprint: None,
             transfer_mode: None,
             transfer_scope: None,
             command_name: "repair-review-state",
         },
         FailureClass::ExecutionStateNotReady,
     )
+}
+
+fn clear_resolved_task_cycle_break_for_repair_review_state(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    actions_performed: &mut Vec<String>,
+) -> Result<bool, JsonFailure> {
+    let cycle_break_active = status
+        .reason_codes
+        .iter()
+        .chain(status.blocking_reason_codes.iter())
+        .any(|reason_code| reason_code == "task_cycle_break_active");
+    if !cycle_break_active {
+        return Ok(false);
+    }
+    let task_number = status
+        .blocking_task
+        .or(status.active_task)
+        .or(status.resume_task)
+        .or_else(|| {
+            status
+                .execution_command_context
+                .as_ref()
+                .and_then(|context| context.task_number)
+        });
+    let Some(task_number) = task_number else {
+        return Ok(false);
+    };
+    require_repair_review_state_mutation(status)?;
+    let Some(closure_record_id) =
+        resolve_current_task_closure_postconditions_for_current_workspace_and_persist(
+            runtime,
+            context,
+            task_number,
+            None,
+        )?
+    else {
+        return Ok(false);
+    };
+    actions_performed.push(format!(
+        "cleared_resolved_task_cycle_break_task_{task_number}_{closure_record_id}"
+    ));
+    Ok(true)
 }
 
 fn review_state_follow_up_persist_would_mutate(
@@ -953,10 +1068,29 @@ pub fn repair_review_state(
     let status_args = args.clone();
     let mut actions_performed = Vec::new();
     let mut phase_bundle = load_repair_phase_bundle(runtime, &status_args)?;
+    if clear_resolved_task_cycle_break_for_repair_review_state(
+        runtime,
+        &phase_bundle.read_scope.context,
+        &phase_bundle.status,
+        &mut actions_performed,
+    )? {
+        phase_bundle = load_repair_phase_bundle(runtime, &status_args)?;
+    }
     let mut analysis = analyze_repair_phase_bundle(&phase_bundle, &status_args)?;
     let original_repair_plan = analysis.repair_plan.clone();
     let original_branch_rerecording_unsupported_reason =
         analysis.branch_rerecording_unsupported_reason;
+    let original_empty_lineage_branch_reroute_repairable =
+        repair_can_establish_empty_lineage_branch_reroute(
+            &phase_bundle,
+            original_branch_rerecording_unsupported_reason,
+        );
+    let original_branch_closure_target_id = phase_bundle
+        .snapshot
+        .current_branch_closure
+        .as_ref()
+        .map(|closure| closure.branch_closure_id.clone())
+        .or_else(|| phase_bundle.status.current_branch_closure_id.clone());
     if !analysis.repair_plan.actions_to_perform.is_empty() {
         require_repair_review_state_mutation(&phase_bundle.status)?;
         execute_repair_actions(
@@ -967,6 +1101,14 @@ pub fn repair_review_state(
             &mut actions_performed,
         )?;
         phase_bundle = load_repair_phase_bundle(runtime, &status_args)?;
+        if clear_resolved_task_cycle_break_for_repair_review_state(
+            runtime,
+            &phase_bundle.read_scope.context,
+            &phase_bundle.status,
+            &mut actions_performed,
+        )? {
+            phase_bundle = load_repair_phase_bundle(runtime, &status_args)?;
+        }
         analysis = analyze_repair_phase_bundle(&phase_bundle, &status_args)?;
     }
     let repair_plan = analysis.repair_plan;
@@ -986,10 +1128,70 @@ pub fn repair_review_state(
         branch_rerecording_unsupported_reason.or(original_branch_rerecording_unsupported_reason);
     let route_decision = repair_plan.post_repair_route_decision.clone();
     let route_action = repair_plan.post_repair_route_action.clone();
+    let performed_current_task_closure_cleanup = actions_performed.iter().any(|action| {
+        action.starts_with("cleared_current_task_closure_scope_")
+            || action.starts_with("cleared_current_task_closure_task_")
+    });
+    let cleared_current_branch_closure = actions_performed
+        .iter()
+        .any(|action| action == "cleared_current_branch_closure");
+    let routed_task_closure_repair_target_task = repair_plan
+        .target_task
+        .or(stale_reentry_repair_plan.target_task)
+        .or(route_action.blocking_task)
+        .or(route_action.task_number);
+    let persisted_close_task_follow_up_target = resolve_actionable_repair_follow_up_for_status(
+        &phase_bundle.read_scope.context,
+        &phase_bundle.status,
+        phase_bundle.read_scope.authoritative_state.as_ref(),
+    )
+    .filter(|record| record.kind == RepairFollowUpKind::CloseTask)
+    .and_then(|record| record.target_task)
+    .or_else(|| {
+        // A CloseTask follow-up intentionally clears the current closure row before
+        // the next repair-review-state rerun, so the generic exact-binding resolver
+        // can reject the just-written record. This fallback is limited to that
+        // runtime-owned record and the empty post-repair closure checks below.
+        phase_bundle
+            .read_scope
+            .authoritative_state
+            .as_ref()
+            .and_then(|state| state.review_state_repair_follow_up_record())
+            .filter(|record| record.kind == RepairFollowUpKind::CloseTask)
+            .and_then(|record| record.target_task)
+    });
+    let task_closure_repair_target_task =
+        routed_task_closure_repair_target_task.or(persisted_close_task_follow_up_target);
+    let task_closure_cleanup_promotes_recording = performed_current_task_closure_cleanup
+        && !cleared_current_branch_closure
+        && snapshot.current_task_closures.is_empty()
+        && snapshot.stale_unreviewed_closures.is_empty()
+        && task_scope_structural_reason.is_none()
+        && branch_scope_structural_reason.is_none()
+        && task_closure_repair_target_task.is_some()
+        && phase_bundle.status.current_task_closures.is_empty();
+    let persisted_close_task_follow_up_promotes_recording = persisted_close_task_follow_up_target
+        .is_some()
+        && !cleared_current_branch_closure
+        && snapshot.current_task_closures.is_empty()
+        && snapshot.stale_unreviewed_closures.is_empty()
+        && task_scope_structural_reason.is_none()
+        && branch_scope_structural_reason.is_none()
+        && phase_bundle.status.current_task_closures.is_empty();
+    let task_closure_repair_ready_for_recording = task_closure_cleanup_promotes_recording
+        || persisted_close_task_follow_up_promotes_recording;
     let mut required_follow_up = repair_plan
         .required_follow_up
         .clone()
         .or_else(|| required_follow_up_from_route_decision(&route_decision));
+    if required_follow_up.is_none()
+        && stale_reentry_repair_plan.blocker_kind == Some(RepairBlockerKind::StaleUnreviewed)
+        && stale_reentry_repair_plan.required_follow_up.as_deref() == Some("execution_reentry")
+        && !task_closure_cleanup_promotes_recording
+        && !persisted_close_task_follow_up_promotes_recording
+    {
+        required_follow_up = Some(String::from("execution_reentry"));
+    }
     if required_follow_up.as_deref() == Some("repair_review_state")
         && matches!(
             repair_plan.blocker_kind,
@@ -1000,14 +1202,7 @@ pub fn repair_review_state(
                     | RepairBlockerKind::StaleUnreviewed
             )
         )
-        && route_action
-            .recommended_command
-            .as_deref()
-            .is_some_and(|command| {
-                command.starts_with("featureforge plan execution begin --plan ")
-                    || command.starts_with("featureforge plan execution reopen --plan ")
-                    || command.starts_with("featureforge plan execution complete --plan ")
-            })
+        && public_command_is_execution_reentry(route_action.recommended_public_command.as_ref())
     {
         required_follow_up = Some(String::from("execution_reentry"));
     }
@@ -1027,48 +1222,44 @@ pub fn repair_review_state(
     };
     let recommended_command = if let Some(required_follow_up_lane) = required_follow_up.as_deref() {
         if required_follow_up_lane == "request_external_review"
-            && route_decision.phase_detail == "final_review_dispatch_required"
+            && route_decision.phase_detail
+                == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
         {
             None
         } else if required_follow_up_lane == "execution_reentry"
-            && route_decision
-                .recommended_command
-                .as_deref()
-                .is_some_and(|command| {
-                    command.starts_with("featureforge plan execution repair-review-state --plan ")
-                })
+            && public_command_is_repair_review_state(
+                route_decision.recommended_public_command.as_ref(),
+            )
         {
-            route_action.recommended_command.clone()
-        } else if route_decision.recommended_command.is_some() {
-            route_decision.recommended_command.clone()
+            route_action.recommended_command()
+        } else if route_decision.recommended_public_command.is_some() {
+            route_decision_recommended_command(&route_decision)
         } else {
             None
         }
     } else {
-        route_decision.recommended_command.clone()
+        route_decision_recommended_command(&route_decision)
     };
     let empty_lineage_branch_reroute_repairable = repair_can_establish_empty_lineage_branch_reroute(
         &phase_bundle,
         branch_rerecording_unsupported_reason,
     );
-    let cleared_current_branch_closure = actions_performed
-        .iter()
-        .any(|action| action == "cleared_current_branch_closure");
     let persist_branch_reroute_follow_up = ((!snapshot.stale_unreviewed_closures.is_empty()
         && branch_rerecording_unsupported_reason.is_none()
         && !cleared_current_branch_closure)
-        || empty_lineage_branch_reroute_repairable)
+        || empty_lineage_branch_reroute_repairable
+        || original_empty_lineage_branch_reroute_repairable)
         && task_scope_structural_reason.is_none()
         && branch_scope_structural_reason.is_none()
         && snapshot.missing_derived_overlays.is_empty();
-    let task_closure_recording_follow_up_ready = required_follow_up.as_deref()
-        == Some("execution_reentry")
-        && task_scope_structural_reason.is_none()
-        && branch_scope_structural_reason.is_none()
-        && route_action
-            .blocking_reason_codes
-            .iter()
-            .any(|code| code == "prior_task_current_closure_missing");
+    let task_closure_recording_follow_up_ready = task_closure_cleanup_promotes_recording
+        || (required_follow_up.as_deref() == Some("execution_reentry")
+            && task_scope_structural_reason.is_none()
+            && branch_scope_structural_reason.is_none()
+            && route_action
+                .blocking_reason_codes
+                .iter()
+                .any(|code| code == "prior_task_current_closure_missing"));
     let branch_rerecording_follow_up_ready = required_follow_up.as_deref()
         == Some("advance_late_stage")
         && branch_rerecording_unsupported_reason.is_none()
@@ -1076,7 +1267,8 @@ pub fn repair_review_state(
         && branch_scope_structural_reason.is_none()
         && !cleared_current_branch_closure;
     let current_route_requires_no_repair_follow_up = route_decision.state_kind == "terminal"
-        && route_decision.phase_detail == "finish_completion_gate_ready"
+        && route_decision.phase_detail
+            == crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY
         && route_decision.review_state_status == "clean";
     let persisted_required_follow_up = if current_route_requires_no_repair_follow_up {
         None
@@ -1085,7 +1277,8 @@ pub fn repair_review_state(
             Some("record_branch_closure")
         } else if task_closure_recording_follow_up_ready {
             Some("record_task_closure")
-        } else if route_decision.phase_detail == "execution_reentry_required"
+        } else if route_decision.phase_detail
+            == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
             && stale_reentry_repair_plan
                 .target_task
                 .or(repair_plan.target_task)
@@ -1106,7 +1299,7 @@ pub fn repair_review_state(
             stale_reentry_repair_plan,
             &repair_plan,
         );
-    let persisted_follow_up_record = persisted_required_follow_up.and_then(|follow_up| {
+    let mut persisted_follow_up_record = persisted_required_follow_up.and_then(|follow_up| {
         target_bound_repair_follow_up_record(
             follow_up,
             &phase_bundle,
@@ -1117,6 +1310,15 @@ pub fn repair_review_state(
             repair_follow_up_target_step,
         )
     });
+    if original_empty_lineage_branch_reroute_repairable
+        && let Some(record) = persisted_follow_up_record.as_mut()
+        && record.kind == RepairFollowUpKind::RecordBranchClosure
+        && record.target_record_id.is_none()
+    {
+        record
+            .target_record_id
+            .clone_from(&original_branch_closure_target_id);
+    }
     if review_state_follow_up_persist_would_mutate(
         &phase_bundle.read_scope.context,
         persisted_follow_up_record.as_ref(),
@@ -1130,12 +1332,11 @@ pub fn repair_review_state(
         )?;
     }
     let final_routing = route_for_plan(runtime, &status_args)?;
-    if performed_task_scope_structural_cleanup
+    if task_closure_repair_ready_for_recording
         && task_scope_structural_reason.is_none()
         && branch_scope_structural_reason.is_none()
         && snapshot.current_task_closures.is_empty()
-        && public_required_follow_up.as_deref() != Some("execution_reentry")
-        && let Some(task_number) = repair_plan.target_task.or(final_routing.blocking_task)
+        && let Some(task_number) = task_closure_repair_target_task.or(final_routing.blocking_task)
     {
         let close_command = close_current_task_repair_command(&status_args, task_number);
         return Ok(RepairReviewStateOutput {
@@ -1151,8 +1352,12 @@ pub fn repair_review_state(
             trace_summary: String::from(
                 "Repair review state reconciled stale task-boundary state and refreshed routing; task closure is ready to record or refresh.",
             ) + repair_blocker_metadata_suffix(&repair_plan).as_str(),
-            phase: Some(String::from("task_closure_pending")),
-            phase_detail: Some(String::from("task_closure_recording_ready")),
+            phase: Some(String::from(
+                crate::execution::phase::PHASE_TASK_CLOSURE_PENDING,
+            )),
+            phase_detail: Some(String::from(
+                crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY,
+            )),
             blocking_task: Some(task_number),
             blocking_step: None,
             blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
@@ -1172,7 +1377,44 @@ pub fn repair_review_state(
             routed_follow_up
         }
     };
-    if final_routing.phase_detail == "task_closure_recording_ready" {
+    if (empty_lineage_branch_reroute_repairable || original_empty_lineage_branch_reroute_repairable)
+        && cleared_current_branch_closure
+        && task_scope_structural_reason.is_none()
+        && branch_scope_structural_reason.is_none()
+        && final_routing.phase_detail
+            == crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+    {
+        let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
+        let recommended_command = format!(
+            "featureforge plan execution advance-late-stage --plan {}",
+            status_args.plan.display()
+        );
+        return Ok(RepairReviewStateOutput {
+            action: String::from("blocked"),
+            current_task_closures: snapshot.current_task_closures,
+            current_branch_closure: snapshot.current_branch_closure,
+            superseded_closures: snapshot.superseded_closures,
+            stale_unreviewed_closures: stale_unreviewed_closures.clone(),
+            missing_derived_overlays: snapshot.missing_derived_overlays,
+            actions_performed,
+            required_follow_up: Some(String::from("advance_late_stage")),
+            recommended_command: Some(recommended_command.clone()),
+            trace_summary: String::from(
+                "Repair review state reconciled projections and refreshed routing; branch closure must be re-recorded before late-stage progression can continue.",
+            ) + blocker_metadata.as_str(),
+            phase: Some(String::from(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING)),
+            phase_detail: Some(String::from(
+                crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
+            )),
+            blocking_task: None,
+            blocking_step: None,
+            blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
+            authoritative_next_action: Some(recommended_command),
+        });
+    }
+    if final_routing.phase_detail == crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+        && public_required_follow_up.as_deref() != Some("execution_reentry")
+    {
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
@@ -1183,7 +1425,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: None,
-            recommended_command: final_routing.recommended_command.clone(),
+            recommended_command: routing_recommended_command(&final_routing),
             trace_summary: String::from(
                 "Repair review state reconciled stale task-boundary state and refreshed routing; task closure is ready to record or refresh.",
             ) + blocker_metadata.as_str(),
@@ -1192,7 +1434,7 @@ pub fn repair_review_state(
             blocking_task: final_routing.blocking_task,
             blocking_step: None,
             blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
-            authoritative_next_action: final_routing.recommended_command.clone(),
+            authoritative_next_action: routing_recommended_command(&final_routing),
         });
     }
     if repair_plan.blocker_kind == Some(RepairBlockerKind::TaskClosureBaselineBridge)
@@ -1213,8 +1455,12 @@ pub fn repair_review_state(
             trace_summary: String::from(
                 "Repair review state reconciled stale task-boundary state and refreshed routing; task closure is ready to record or refresh.",
             ) + blocker_metadata.as_str(),
-            phase: Some(String::from("task_closure_pending")),
-            phase_detail: Some(String::from("task_closure_recording_ready")),
+            phase: Some(String::from(
+                crate::execution::phase::PHASE_TASK_CLOSURE_PENDING,
+            )),
+            phase_detail: Some(String::from(
+                crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY,
+            )),
             blocking_task: Some(task_number),
             blocking_step: None,
             blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
@@ -1222,7 +1468,7 @@ pub fn repair_review_state(
         });
     }
     let final_route_requires_branch_rerecording = final_routing.phase_detail
-        == "branch_closure_recording_required_for_release_readiness"
+        == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
         && final_routing
             .execution_status
             .as_ref()
@@ -1263,21 +1509,13 @@ pub fn repair_review_state(
                 blocking_task: final_routing.blocking_task,
                 blocking_step: None,
                 blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
-                authoritative_next_action: final_routing.recommended_command.clone(),
+                authoritative_next_action: routing_recommended_command(&final_routing),
             });
         }
-        let recommended_command = final_routing
-            .recommended_command
-            .clone()
-            .filter(|command| {
-                command.contains("featureforge plan execution advance-late-stage --plan")
-            })
-            .unwrap_or_else(|| {
-                format!(
-                    "featureforge plan execution advance-late-stage --plan {}",
-                    status_args.plan.display()
-                )
-            });
+        let recommended_command = match final_routing.recommended_public_command.as_ref() {
+            Some(command @ PublicCommand::AdvanceLateStage { .. }) => command.to_display_command(),
+            _ => advance_late_stage_display_command(status_args.plan.display().to_string()),
+        };
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -1314,7 +1552,7 @@ pub fn repair_review_state(
                 actions_performed,
                 final_routing.blocking_reason_codes.clone(),
                 blocker_metadata,
-                final_routing.recommended_command.clone(),
+                routing_recommended_command(&final_routing),
             ));
         };
         let final_routing = bind_execution_reentry_repair_target_and_refresh_routing(
@@ -1348,8 +1586,10 @@ pub fn repair_review_state(
                 task_scope_structural_reason.as_deref(),
                 branch_scope_structural_reason.as_deref(),
             ) + blocker_metadata.as_str(),
-            phase: Some(String::from("executing")),
-            phase_detail: Some(String::from("execution_reentry_required")),
+            phase: Some(String::from(crate::execution::phase::PHASE_EXECUTING)),
+            phase_detail: Some(String::from(
+                crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
+            )),
             blocking_task: Some(task_number),
             blocking_step: Some(step_number),
             blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
@@ -1359,19 +1599,21 @@ pub fn repair_review_state(
     if let Some(required_follow_up) = final_required_follow_up.as_deref() {
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
         let recommended_command = if required_follow_up == "request_external_review"
-            && final_routing.phase_detail == "final_review_dispatch_required"
+            && final_routing.phase_detail
+                == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
         {
             None
         } else if required_follow_up_from_routing(&final_routing).as_deref()
             == Some(required_follow_up)
         {
-            final_routing.recommended_command.clone()
+            routing_recommended_command(&final_routing)
         } else {
             recommended_command.clone()
         };
         if required_follow_up == "execution_reentry"
             && task_scope_structural_reason.is_none()
             && branch_scope_structural_reason.is_none()
+            && repair_plan.blocker_kind != Some(RepairBlockerKind::StaleUnreviewed)
             && final_routing
                 .blocking_reason_codes
                 .iter()
@@ -1392,8 +1634,12 @@ pub fn repair_review_state(
                 trace_summary: String::from(
                     "Repair review state reconciled stale task-boundary state and refreshed routing; task closure is ready to record or refresh.",
                 ) + blocker_metadata.as_str(),
-                phase: Some(String::from("task_closure_pending")),
-                phase_detail: Some(String::from("task_closure_recording_ready")),
+                phase: Some(String::from(
+                    crate::execution::phase::PHASE_TASK_CLOSURE_PENDING,
+                )),
+                phase_detail: Some(String::from(
+                    crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY,
+                )),
                 blocking_task: Some(task_number),
                 blocking_step: None,
                 blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
@@ -1413,7 +1659,7 @@ pub fn repair_review_state(
                     actions_performed,
                     final_routing.blocking_reason_codes.clone(),
                     blocker_metadata,
-                    final_routing.recommended_command.clone(),
+                    routing_recommended_command(&final_routing),
                 ));
             };
             let final_routing = bind_execution_reentry_repair_target_and_refresh_routing(
@@ -1446,21 +1692,16 @@ pub fn repair_review_state(
                     task_scope_structural_reason.as_deref(),
                     branch_scope_structural_reason.as_deref(),
                 ) + blocker_metadata.as_str(),
-                phase: Some(String::from("executing")),
-                phase_detail: Some(String::from("execution_reentry_required")),
+                phase: Some(String::from(crate::execution::phase::PHASE_EXECUTING)),
+                phase_detail: Some(String::from(
+                    crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
+                )),
                 blocking_task: Some(task_number),
                 blocking_step: Some(step_number),
                 blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
                 authoritative_next_action: Some(reopen_command),
             });
         }
-        let output_required_follow_up = if required_follow_up == "execution_reentry"
-            && final_routing.phase_detail == "task_closure_recording_ready"
-        {
-            None
-        } else {
-            Some(required_follow_up.to_owned())
-        };
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -1469,7 +1710,7 @@ pub fn repair_review_state(
             stale_unreviewed_closures: stale_unreviewed_closures.clone(),
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
-            required_follow_up: output_required_follow_up,
+            required_follow_up: Some(required_follow_up.to_owned()),
             recommended_command,
             trace_summary: repair_follow_up_trace_summary(
                 required_follow_up,
@@ -1482,11 +1723,12 @@ pub fn repair_review_state(
             blocking_task: final_routing.blocking_task,
             blocking_step: None,
             blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
-            authoritative_next_action: final_routing.recommended_command.clone(),
+            authoritative_next_action: routing_recommended_command(&final_routing),
         });
     }
     if route_action.kind == RepairRouteActionKind::CloseCurrentTask
-        && route_action.phase_detail == "task_closure_recording_ready"
+        && route_action.phase_detail == crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+        && public_required_follow_up.as_deref() != Some("execution_reentry")
     {
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
         return Ok(RepairReviewStateOutput {
@@ -1507,18 +1749,11 @@ pub fn repair_review_state(
             blocking_task: route_action.blocking_task.or(route_action.task_number),
             blocking_step: route_action.step_number,
             blocking_reason_codes: route_action.blocking_reason_codes.clone(),
-            authoritative_next_action: route_action.recommended_command.clone(),
+            authoritative_next_action: route_action.recommended_command(),
         });
     }
     if let Some(required_follow_up) = public_required_follow_up {
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
-        let output_required_follow_up = if required_follow_up == "execution_reentry"
-            && route_decision.phase_detail == "task_closure_recording_ready"
-        {
-            None
-        } else {
-            Some(required_follow_up.clone())
-        };
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -1527,7 +1762,7 @@ pub fn repair_review_state(
             stale_unreviewed_closures: stale_unreviewed_closures.clone(),
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
-            required_follow_up: output_required_follow_up,
+            required_follow_up: Some(required_follow_up.clone()),
             recommended_command,
             trace_summary: repair_follow_up_trace_summary(
                 required_follow_up.as_str(),
@@ -1540,7 +1775,7 @@ pub fn repair_review_state(
             blocking_task: route_action.blocking_task.or(route_action.task_number),
             blocking_step: route_action.step_number,
             blocking_reason_codes: route_action.blocking_reason_codes.clone(),
-            authoritative_next_action: route_action.recommended_command.clone(),
+            authoritative_next_action: route_action.recommended_command(),
         });
     }
     if route_action.kind == RepairRouteActionKind::RepairReviewState {
@@ -1554,7 +1789,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: None,
-            recommended_command: route_action.recommended_command.clone(),
+            recommended_command: route_action.recommended_command(),
             trace_summary: String::from(
                 "Repair review state reconciled available overlays but unresolved authoritative blockers still require repair-review-state reconciliation.",
             ) + blocker_metadata.as_str(),
@@ -1563,7 +1798,7 @@ pub fn repair_review_state(
             blocking_task: route_action.blocking_task.or(route_action.task_number),
             blocking_step: route_action.step_number,
             blocking_reason_codes: route_action.blocking_reason_codes.clone(),
-            authoritative_next_action: route_action.recommended_command.clone(),
+            authoritative_next_action: route_action.recommended_command(),
         });
     }
     if !stale_unreviewed_closures.is_empty()
@@ -1579,7 +1814,7 @@ pub fn repair_review_state(
                 actions_performed,
                 route_action.blocking_reason_codes.clone(),
                 blocker_metadata,
-                route_action.recommended_command.clone(),
+                route_action.recommended_command(),
             ));
         };
         let final_routing = bind_execution_reentry_repair_target_and_refresh_routing(
@@ -1613,8 +1848,10 @@ pub fn repair_review_state(
                 task_scope_structural_reason.as_deref(),
                 branch_scope_structural_reason.as_deref(),
             ) + blocker_metadata.as_str(),
-            phase: Some(String::from("executing")),
-            phase_detail: Some(String::from("execution_reentry_required")),
+            phase: Some(String::from(crate::execution::phase::PHASE_EXECUTING)),
+            phase_detail: Some(String::from(
+                crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
+            )),
             blocking_task: Some(task_number),
             blocking_step: Some(step_number),
             blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
@@ -1664,7 +1901,7 @@ pub fn repair_review_state(
         blocking_task: None,
         blocking_step: None,
         blocking_reason_codes,
-        authoritative_next_action: route_action.recommended_command.clone(),
+        authoritative_next_action: route_action.recommended_command(),
     })
 }
 
@@ -1916,7 +2153,8 @@ fn clear_branch_scope_state_for_execution_reentry(
 fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
     let shared_stale_unreviewed_execution_reentry =
         inputs.post_repair_route_action.review_state_status == "stale_unreviewed"
-            && inputs.post_repair_route_action.phase_detail == "execution_reentry_required";
+            && inputs.post_repair_route_action.phase_detail
+                == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED;
     let stale_unreviewed_execution_reentry_required = shared_stale_unreviewed_execution_reentry
         || !(inputs.snapshot.stale_unreviewed_closures.is_empty()
             || inputs.snapshot.branch_drift_confined_to_late_stage_surface
@@ -1957,9 +2195,11 @@ fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
         .closure_graph_stale_target
         .is_some_and(|stale_task| shared_target_task == Some(stale_task))
         && shared_target_step.is_some()
-        && inputs.post_repair_route_decision.phase_detail == "execution_reentry_required";
+        && inputs.post_repair_route_decision.phase_detail
+            == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED;
     let reducer_stale_reentry_target = inputs.closure_graph_stale_target.is_some()
-        && inputs.post_repair_route_decision.phase_detail == "execution_reentry_required";
+        && inputs.post_repair_route_decision.phase_detail
+            == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED;
     let stale_boundary_preempts_structural = stale_unreviewed_execution_reentry_required
         && structural_task_scope_detected
         && stale_target_task.is_some_and(|stale_task| {
@@ -2009,7 +2249,7 @@ fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
     let shared_required_follow_up =
         required_follow_up_from_route_decision(inputs.post_repair_route_decision);
     let stale_dispatch_lineage_blocking_task = (inputs.post_repair_route_decision.phase_detail
-        == "execution_reentry_required"
+        == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         && inputs
             .post_repair_route_action
             .blocking_reason_codes
@@ -2042,7 +2282,7 @@ fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
     let stale_dispatch_lineage_cleanup_for_shared_target = stale_dispatch_lineage_blocking_task
         .is_some_and(|task_number| target_task == Some(task_number));
     let exact_execution_reentry_already_routed = inputs.post_repair_route_decision.phase_detail
-        == "execution_reentry_required"
+        == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         && inputs
             .post_repair_route_decision
             .execution_command_context
@@ -2232,12 +2472,13 @@ fn bridge_task_closure_baseline_next_action(
         return post_repair_route_action;
     };
     post_repair_route_action.kind = RepairRouteActionKind::CloseCurrentTask;
-    post_repair_route_action.phase_detail = String::from("task_closure_recording_ready");
+    post_repair_route_action.phase_detail =
+        String::from(crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY);
     post_repair_route_action.review_state_status = String::from("stale_unreviewed");
     post_repair_route_action.task_number = Some(task_number);
     post_repair_route_action.step_number = None;
     post_repair_route_action.blocking_task = Some(task_number);
-    post_repair_route_action.recommended_command = None;
+    post_repair_route_action.recommended_public_command = None;
     if !post_repair_route_action
         .blocking_reason_codes
         .iter()
@@ -2275,10 +2516,10 @@ fn reopen_execution_reentry_repair_command(
     task_number: u32,
     step_number: u32,
 ) -> String {
-    if let Some(command) =
-        routing.and_then(routed_reopen_command_for_target(task_number, step_number))
+    if let Some(command) = routing
+        .and_then(|routing| routed_reopen_command_for_target(routing, task_number, step_number))
     {
-        return command.to_owned();
+        return command;
     }
     let fingerprint = routing
         .and_then(|routing| routing.execution_status.as_ref())
@@ -2291,23 +2532,20 @@ fn reopen_execution_reentry_repair_command(
 }
 
 fn routed_reopen_command_for_target(
+    routing: &ExecutionRoutingState,
     task_number: u32,
     step_number: u32,
-) -> impl FnOnce(&ExecutionRoutingState) -> Option<&str> {
-    move |routing| {
-        routing
-            .recommended_command
-            .as_deref()
-            .filter(|command| reopen_command_matches_target(command, task_number, step_number))
+) -> Option<String> {
+    let command = routing.recommended_public_command.as_ref()?;
+    let request = command.to_mutation_request()?;
+    if request.kind == PublicMutationKind::Reopen
+        && request.task == Some(task_number)
+        && request.step == Some(step_number)
+    {
+        Some(command.to_display_command())
+    } else {
+        None
     }
-}
-
-fn reopen_command_matches_target(command: &str, task_number: u32, step_number: u32) -> bool {
-    public_mutation_request_from_command(command).is_some_and(|request| {
-        request.kind == PublicMutationKind::Reopen
-            && request.task == Some(task_number)
-            && request.step == Some(step_number)
-    })
 }
 
 fn repair_follow_up_target_binding(
@@ -2633,13 +2871,13 @@ fn late_stage_branch_closure_recording_required(
     _args: &StatusArgs,
 ) -> bool {
     routing.review_state_status == "missing_current_closure"
-        && (routing.phase_detail == "branch_closure_recording_required_for_release_readiness"
+        && (routing.phase_detail == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
             || routing_projects_review_state_execution_reentry(routing))
 }
 
 fn routing_projects_review_state_execution_reentry(routing: &ExecutionRoutingState) -> bool {
-    routing.phase == "executing"
-        && routing.phase_detail == "execution_reentry_required"
+    routing.phase == crate::execution::phase::PHASE_EXECUTING
+        && routing.phase_detail == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         && required_follow_up_from_routing(routing).as_deref() == Some("repair_review_state")
 }
 
@@ -2683,7 +2921,7 @@ fn reconcile_recommended_command(
             args.plan.display()
         ));
     };
-    if route_decision.phase_detail == "task_closure_recording_ready" {
+    if route_decision.phase_detail == crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY {
         return Ok(format!(
             "featureforge plan execution repair-review-state --plan {}",
             args.plan.display()
@@ -2764,8 +3002,7 @@ fn repair_blocker_metadata_suffix(plan: &RepairPlan) -> String {
     if let Some(step) = plan.target_step {
         metadata.push_str(format!(", target_step={step}").as_str());
     }
-    if let Some(next_action_command) = plan.post_repair_route_action.recommended_command.as_deref()
-    {
+    if let Some(next_action_command) = plan.post_repair_route_action.recommended_command() {
         metadata.push_str(format!(", authoritative_next_action={next_action_command}").as_str());
     }
     metadata.push(']');

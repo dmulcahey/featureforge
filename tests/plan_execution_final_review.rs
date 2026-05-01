@@ -38,7 +38,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 use tempfile::TempDir;
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-17-example-execution-plan.md";
@@ -522,6 +522,29 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
     let legacy_backup_path = path.with_file_name("state.legacy.json");
     let _ = fs::remove_file(events_path);
     let _ = fs::remove_file(legacy_backup_path);
+}
+
+fn read_authoritative_harness_state(repo: &Path, state: &Path) -> Value {
+    let path = harness_state_path(state, &repo_slug(repo), &branch_name(repo));
+    if let Some(payload) =
+        featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(&path)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "event-authoritative final-review harness state should reduce for {}: {}",
+                    path.display(),
+                    error.message
+                )
+            })
+    {
+        return payload;
+    }
+    serde_json::from_str(&fs::read_to_string(&path).expect("harness state should be readable"))
+        .expect("harness state should remain valid json")
+}
+
+fn authoritative_harness_state_digest(repo: &Path, state: &Path) -> String {
+    let payload = read_authoritative_harness_state(repo, state);
+    sha256_hex(&serde_json::to_vec(&payload).expect("harness state json should serialize"))
 }
 
 fn merge_harness_state_payload(repo: &Path, state: &Path, patch: &Value) {
@@ -2082,19 +2105,83 @@ fn latest_branch_artifact_path_prefers_timestamp_over_username_prefix() {
     );
 }
 
-fn run_plan_execution_json_real_cli(
-    repo: &Path,
-    state: &Path,
-    args: &[&str],
-    context: &str,
-) -> Value {
+fn run_plan_execution_real_cli(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state)
         .args(["plan", "execution"])
         .args(args);
-    parse_json(&run(command, context), context)
+    run(command, context)
+}
+
+fn run_plan_execution_json_real_cli(
+    repo: &Path,
+    state: &Path,
+    args: &[&str],
+    context: &str,
+) -> Value {
+    parse_json(
+        &run_plan_execution_real_cli(repo, state, args, context),
+        context,
+    )
+}
+
+fn parse_failure_json(output: &Output, context: &str) -> Value {
+    assert!(
+        !output.status.success(),
+        "{context} should fail closed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload = if output.stdout.is_empty() {
+        &output.stderr
+    } else {
+        &output.stdout
+    };
+    serde_json::from_slice(payload)
+        .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
+}
+
+fn materialize_all_state_dir_projections(repo: &Path, state: &Path, context: &str) -> Value {
+    let materialized = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "materialize-projections",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "all",
+        ],
+        context,
+    );
+    assert_eq!(materialized["action"], Value::from("materialized"));
+    assert_eq!(materialized["runtime_truth_changed"], Value::Bool(false));
+    materialized
+}
+
+fn materialize_all_state_dir_projections_failure_json(
+    repo: &Path,
+    state: &Path,
+    context: &str,
+) -> Value {
+    parse_failure_json(
+        &run_plan_execution_real_cli(
+            repo,
+            state,
+            &[
+                "materialize-projections",
+                "--plan",
+                PLAN_REL,
+                "--scope",
+                "all",
+            ],
+            context,
+        ),
+        context,
+    )
 }
 
 fn internal_only_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
@@ -2124,55 +2211,6 @@ fn internal_only_runtime_finish_gate_json(
         },
     )
     .expect(concat!("internal gate", "-finish helper should succeed"))
-}
-
-fn internal_rebuild_evidence_args(
-    plan_rel: &str,
-) -> featureforge::execution::internal_args::RebuildEvidenceArgs {
-    featureforge::execution::internal_args::RebuildEvidenceArgs {
-        plan: PathBuf::from(plan_rel),
-        all: false,
-        tasks: Vec::new(),
-        steps: Vec::new(),
-        include_open: false,
-        skip_manual_fallback: false,
-        continue_on_error: false,
-        dry_run: false,
-        max_jobs: 1,
-        no_output: false,
-        json: true,
-    }
-}
-
-fn internal_only_unit_rebuild_evidence_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
-    plan_execution_direct_support::internal_only_unit_rebuild_evidence_json(
-        repo,
-        state,
-        &internal_rebuild_evidence_args(plan_rel),
-    )
-    .expect(concat!(
-        "internal rebuild",
-        "-evidence helper should succeed"
-    ))
-}
-
-fn internal_only_unit_rebuild_evidence_failure_json(
-    repo: &Path,
-    state: &Path,
-    plan_rel: &str,
-) -> Value {
-    serde_json::from_str(
-        &plan_execution_direct_support::internal_only_unit_rebuild_evidence_json(
-            repo,
-            state,
-            &internal_rebuild_evidence_args(plan_rel),
-        )
-        .expect_err(concat!("internal rebuild", "-evidence helper should fail")),
-    )
-    .expect(concat!(
-        "internal rebuild",
-        "-evidence failure should serialize"
-    ))
 }
 
 #[test]
@@ -2230,7 +2268,7 @@ fn internal_only_compatibility_gate_finish_requires_final_review_artifact() {
 }
 
 #[test]
-fn internal_only_compatibility_rebuild_evidence_rejects_tampered_authoritative_final_review_projection_content()
+fn internal_only_compatibility_materialize_projections_rejects_tampered_authoritative_final_review_projection_content()
  {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-projection-tampered-authoritative-content");
@@ -2260,14 +2298,7 @@ fn internal_only_compatibility_rebuild_evidence_rejects_tampered_authoritative_f
         .join(format!(
             "final-review-{authoritative_review_fingerprint}.md"
         ));
-    let harness_state_path = harness_state_path(state, &repo_slug, &branch);
-    let harness_before: Value = serde_json::from_str(
-        &fs::read_to_string(&harness_state_path).expect("harness state should be readable"),
-    )
-    .expect("harness state should remain valid json");
-    let state_digest_before = sha256_hex(
-        &serde_json::to_vec(&harness_before).expect("harness state json should serialize"),
-    );
+    let state_digest_before = authoritative_harness_state_digest(repo, state);
     let project_artifacts = project_artifact_dir(repo, state);
     let deleted_projection_path =
         latest_branch_artifact_path(&project_artifacts, &branch, "code-review")
@@ -2279,7 +2310,11 @@ fn internal_only_compatibility_rebuild_evidence_rejects_tampered_authoritative_f
         "# Code Review Result\n**tampered:** true\n",
     );
 
-    let failure = internal_only_unit_rebuild_evidence_failure_json(repo, state, PLAN_REL);
+    let failure = materialize_all_state_dir_projections_failure_json(
+        repo,
+        state,
+        "materialize-projections tampered authoritative final review projection",
+    );
     assert_eq!(failure["error_class"], "StaleProvenance", "json: {failure}");
     assert!(
         failure["message"].as_str().is_some_and(|message| message.contains(
@@ -2292,14 +2327,8 @@ fn internal_only_compatibility_rebuild_evidence_rejects_tampered_authoritative_f
     );
     assert_eq!(
         sha256_hex(
-            &serde_json::to_vec(
-                &serde_json::from_str::<Value>(
-                    &fs::read_to_string(&harness_state_path)
-                        .expect("harness state should remain readable after failed rebuild"),
-                )
-                .expect("harness state should remain valid json after failed rebuild"),
-            )
-            .expect("harness state json should serialize after failed rebuild"),
+            &serde_json::to_vec(&read_authoritative_harness_state(repo, state))
+                .expect("harness state json should serialize after failed rebuild"),
         ),
         state_digest_before,
         "tampered authoritative final-review projection regeneration must not mutate authoritative truth"
@@ -2311,7 +2340,7 @@ fn internal_only_compatibility_rebuild_evidence_rejects_tampered_authoritative_f
 }
 
 #[test]
-fn internal_only_compatibility_rebuild_evidence_regenerates_missing_authoritative_final_review_projection_from_machine_state()
+fn internal_only_compatibility_materialize_projections_regenerates_missing_authoritative_final_review_projection_from_machine_state()
  {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-projection-missing-authoritative-content");
@@ -2341,14 +2370,8 @@ fn internal_only_compatibility_rebuild_evidence_regenerates_missing_authoritativ
         .join(format!(
             "final-review-{authoritative_review_fingerprint}.md"
         ));
-    let harness_state_path = harness_state_path(state, &repo_slug, &branch);
-    let harness_before: Value = serde_json::from_str(
-        &fs::read_to_string(&harness_state_path).expect("harness state should be readable"),
-    )
-    .expect("harness state should remain valid json");
-    let state_digest_before = sha256_hex(
-        &serde_json::to_vec(&harness_before).expect("harness state json should serialize"),
-    );
+    let harness_before = read_authoritative_harness_state(repo, state);
+    let state_digest_before = authoritative_harness_state_digest(repo, state);
     let final_review_record_id = harness_before["current_final_review_record_id"]
         .as_str()
         .expect("missing authoritative fixture should expose current final-review record id")
@@ -2364,39 +2387,34 @@ fn internal_only_compatibility_rebuild_evidence_regenerates_missing_authoritativ
     fs::remove_file(&authoritative_review_path)
         .expect("missing authoritative fixture should allow deleting the authoritative final-review projection");
 
-    let gate_before_rebuild = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate_before_materialize =
+        internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
     assert_eq!(
-        gate_before_rebuild["allowed"],
+        gate_before_materialize["allowed"],
         Value::Bool(true),
-        "json: {gate_before_rebuild}"
+        "json: {gate_before_materialize}"
     );
 
-    let rebuild = internal_only_unit_rebuild_evidence_json(repo, state, PLAN_REL);
-    assert_eq!(
-        rebuild["counts"]["rebuilt"],
-        Value::from(0),
-        "json: {rebuild}"
+    let materialized = materialize_all_state_dir_projections(
+        repo,
+        state,
+        "materialize-projections missing authoritative final review projection",
     );
     assert!(
         latest_branch_artifact_path(&project_artifacts, &branch, "code-review").is_some(),
-        "missing authoritative fixture should restore a readable code-review projection artifact"
+        "missing authoritative fixture should restore a readable code-review projection artifact, got {materialized}"
     );
 
-    let gate_after_rebuild = internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
+    let gate_after_materialize =
+        internal_only_runtime_finish_gate_json(repo, state, PLAN_REL, false);
     assert_eq!(
-        gate_after_rebuild["allowed"],
+        gate_after_materialize["allowed"],
         Value::Bool(true),
-        "json: {gate_after_rebuild}"
+        "json: {gate_after_materialize}"
     );
 
-    let harness_after: Value =
-        serde_json::from_str(&fs::read_to_string(&harness_state_path).expect(
-            "harness state should remain readable after missing-authoritative regeneration",
-        ))
-        .expect("harness state should remain valid json after missing-authoritative regeneration");
-    let state_digest_after = sha256_hex(
-        &serde_json::to_vec(&harness_after).expect("harness state json should serialize"),
-    );
+    let harness_after = read_authoritative_harness_state(repo, state);
+    let state_digest_after = authoritative_harness_state_digest(repo, state);
     assert_eq!(
         harness_after["current_final_review_record_id"],
         Value::from(final_review_record_id)
@@ -2408,7 +2426,7 @@ fn internal_only_compatibility_rebuild_evidence_regenerates_missing_authoritativ
 }
 
 #[test]
-fn internal_only_compatibility_rebuild_evidence_fails_closed_when_projection_refresh_hits_live_write_authority_conflict()
+fn internal_only_compatibility_materialize_projections_fails_closed_when_projection_refresh_hits_live_write_authority_conflict()
  {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-projection-write-authority-conflict");
@@ -2459,7 +2477,11 @@ fn internal_only_compatibility_rebuild_evidence_fails_closed_when_projection_ref
         .expect("live write-authority fixture process should spawn");
     write_file(&lock_path, &format!("pid={}\n", holder.id()));
 
-    let failure = internal_only_unit_rebuild_evidence_failure_json(repo, state, PLAN_REL);
+    let failure = materialize_all_state_dir_projections_failure_json(
+        repo,
+        state,
+        "materialize-projections live write-authority conflict",
+    );
     let _ = holder.kill();
     let _ = holder.wait();
 
@@ -2942,14 +2964,17 @@ fn internal_only_compatibility_missing_final_review_projection_regenerates_witho
     write_release_readiness_artifact(repo, state, &base_branch);
     write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
     let _ = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
-    let harness_state_path = harness_state_path(state, &repo_slug(repo), &branch_name(repo));
-    let harness_before: Value = serde_json::from_str(
-        &fs::read_to_string(&harness_state_path).expect("harness state should be readable"),
-    )
-    .expect("harness state should remain valid json");
-    let state_digest_before = sha256_hex(
-        &serde_json::to_vec(&harness_before).expect("harness state json should serialize"),
+    let baseline_materialized = materialize_all_state_dir_projections(
+        repo,
+        state,
+        "materialize-projections baseline before missing final review projection deletion",
     );
+    assert_eq!(
+        baseline_materialized["runtime_truth_changed"],
+        Value::Bool(false)
+    );
+    let harness_before = read_authoritative_harness_state(repo, state);
+    let state_digest_before = authoritative_harness_state_digest(repo, state);
     let final_review_record_id = harness_before["current_final_review_record_id"]
         .as_str()
         .expect("projection-regeneration fixture should expose current final-review record id")
@@ -2966,26 +2991,19 @@ fn internal_only_compatibility_missing_final_review_projection_regenerates_witho
     fs::remove_file(&deleted_projection_path)
         .expect("projection-regeneration fixture should allow deleting the derived project projection artifact");
 
-    let rebuild = internal_only_unit_rebuild_evidence_json(repo, state, PLAN_REL);
-    assert_eq!(
-        rebuild["counts"]["rebuilt"],
-        Value::from(0),
-        "json: {rebuild}"
+    let materialized = materialize_all_state_dir_projections(
+        repo,
+        state,
+        "materialize-projections missing final review projection",
     );
     assert!(
         latest_branch_artifact_path(&project_artifacts, &branch_name(repo), "code-review")
             .is_some(),
-        "projection regeneration should restore a readable code-review projection artifact"
+        "projection regeneration should restore a readable code-review projection artifact, got {materialized}"
     );
 
-    let harness_after: Value = serde_json::from_str(
-        &fs::read_to_string(&harness_state_path)
-            .expect("harness state should remain readable after projection regeneration"),
-    )
-    .expect("harness state should remain valid json after projection regeneration");
-    let state_digest_after = sha256_hex(
-        &serde_json::to_vec(&harness_after).expect("harness state json should serialize"),
-    );
+    let harness_after = read_authoritative_harness_state(repo, state);
+    let state_digest_after = authoritative_harness_state_digest(repo, state);
     assert_eq!(
         harness_after["current_final_review_record_id"],
         Value::from(final_review_record_id)

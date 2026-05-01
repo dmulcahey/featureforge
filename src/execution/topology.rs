@@ -514,7 +514,8 @@ fn authoritative_preflight_acceptance_seed(
     };
     if matches!(
         harness_phase.as_str(),
-        "implementation_handoff" | "execution_preflight"
+        crate::execution::phase::PHASE_IMPLEMENTATION_HANDOFF
+            | crate::execution::phase::PHASE_EXECUTION_PREFLIGHT
     ) {
         return Ok(None);
     }

@@ -107,6 +107,7 @@
       "enum": [
         "blocked_runtime_bug",
         "execution_in_progress",
+        "execution_preflight_required",
         "execution_reentry_required",
         "task_review_result_pending",
         "task_closure_recording_ready",
@@ -130,6 +131,7 @@
       "enum": [
         "blocked",
         "executing",
+        "execution_preflight",
         "task_closure_pending",
         "document_release_pending",
         "final_review_pending",

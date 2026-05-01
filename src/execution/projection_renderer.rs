@@ -296,6 +296,7 @@ struct FinalReviewRenderOverrides<'a> {
 }
 
 pub(crate) struct RenderedFinalReviewArtifacts {
+    #[cfg(test)]
     pub(crate) reviewer_artifact_path: PathBuf,
     pub(crate) reviewer_source_text: String,
     pub(crate) final_review_source: String,
@@ -504,6 +505,7 @@ fn render_final_review_artifacts_with_generated_at(
         inputs.summary
     );
     Ok(RenderedFinalReviewArtifacts {
+        #[cfg(test)]
         reviewer_artifact_path,
         reviewer_source_text,
         final_review_source,
@@ -800,19 +802,6 @@ fn render_evidence_projection_source(input: EvidenceProjectionInput<'_>) -> Stri
     }
 
     format!("{}\n", output.join("\n"))
-}
-
-pub(crate) fn regenerate_projection_artifacts_from_authoritative_state(
-    runtime: &ExecutionRuntime,
-    context: &ExecutionContext,
-    authoritative_state: &AuthoritativeTransitionState,
-) -> Result<Vec<String>, JsonFailure> {
-    materialize_late_stage_projection_artifacts(
-        runtime,
-        context,
-        authoritative_state,
-        ProjectionWriteMode::StateDirOnly,
-    )
 }
 
 pub(crate) fn materialize_late_stage_projection_artifacts(

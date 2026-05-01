@@ -14,7 +14,7 @@ use crate::execution::harness::{ChunkId, EvaluatorKind, ExecutionRunId, HarnessP
 pub const REASON_CODE_WAITING_ON_REQUIRED_EVALUATOR: &str = "waiting_on_required_evaluator";
 pub const REASON_CODE_REQUIRED_EVALUATOR_FAILED: &str = "required_evaluator_failed";
 pub const REASON_CODE_REQUIRED_EVALUATOR_BLOCKED: &str = "required_evaluator_blocked";
-pub const REASON_CODE_HANDOFF_REQUIRED: &str = "handoff_required";
+pub const REASON_CODE_HANDOFF_REQUIRED: &str = crate::execution::phase::PHASE_HANDOFF_REQUIRED;
 pub const REASON_CODE_REPAIR_WITHIN_BUDGET: &str = "repair_within_budget";
 pub const REASON_CODE_PIVOT_THRESHOLD_EXCEEDED: &str = "pivot_threshold_exceeded";
 pub const REASON_CODE_BLOCKED_ON_PLAN_REVISION: &str = "blocked_on_plan_revision";

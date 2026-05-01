@@ -1,10 +1,9 @@
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/internal_only_direct_helpers.rs"]
+mod internal_only_direct_helpers;
 #[path = "support/json.rs"]
 mod json_support;
-#[allow(dead_code)]
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/repo_template.rs"]
@@ -16,6 +15,7 @@ use featureforge::execution::harness::{LearnedTopologyGuidance, TopologySelectio
 use featureforge::execution::internal_args::ExecutionTopologyArg;
 use featureforge::execution::topology::recommend_topology;
 use files_support::write_file;
+use internal_only_direct_helpers::internal_runtime_direct as plan_execution_direct_support;
 use json_support::parse_json;
 use process_support::{run, run_checked};
 use repo_template_support::populate_repo_from_template;

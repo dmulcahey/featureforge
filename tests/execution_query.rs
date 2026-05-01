@@ -1,7 +1,9 @@
-#[path = "support/featureforge.rs"]
-mod featureforge_support;
+#[path = "support/internal_only_direct_helpers.rs"]
+mod internal_only_direct_helpers;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/workflow.rs"]
@@ -18,10 +20,15 @@ use featureforge::execution::query::{
     ExecutionRoutingState, query_review_state, query_workflow_execution_state,
     query_workflow_routing_state_for_runtime,
 };
+use internal_only_direct_helpers::internal_runtime_direct;
 use runtime_support::execution_runtime;
 use serde_json::Value;
-use workflow_support::{init_repo, install_full_contract_ready_artifacts};
+use workflow_support::{
+    init_repo, install_full_contract_ready_artifacts,
+    write_current_pass_plan_fidelity_review_artifact,
+};
 
+const SPEC_REL: &str = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 const TASK_BOUNDARY_BLOCKED_PLAN_SOURCE: &str = r#"# Runtime Integration Hardening Implementation Plan
 
@@ -92,7 +99,7 @@ Task 1 -> Task 2
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     let mut command_args = vec!["plan", "execution"];
     command_args.extend_from_slice(args);
-    let output = featureforge_support::run_featureforge_real_cli(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -123,7 +130,7 @@ fn run_workflow_operator_json(
         command_args.push("--external-review-result-ready");
     }
     command_args.push("--json");
-    let output = featureforge_support::run_featureforge_real_cli(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -270,6 +277,12 @@ fn setup_execution_in_progress(repo: &Path, state: &Path) {
     prepare_preflight_acceptance_workspace(repo, "execution-query-active-context");
     fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_BLOCKED_PLAN_SOURCE)
         .expect("execution-query active-context plan should be writable");
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        ".featureforge/reviews/execution-query-active-plan-fidelity.md",
+        PLAN_REL,
+        SPEC_REL,
+    );
     let status_before_begin = run_plan_execution_json(
         repo,
         state,
@@ -302,6 +315,12 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
     install_full_contract_ready_artifacts(repo);
     fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_BLOCKED_PLAN_SOURCE)
         .expect("task-boundary blocked plan fixture should write");
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        ".featureforge/reviews/execution-query-boundary-plan-fidelity.md",
+        PLAN_REL,
+        SPEC_REL,
+    );
     prepare_preflight_acceptance_workspace(repo, "execution-query-task-boundary");
 
     let status_before_begin = run_plan_execution_json(
@@ -537,7 +556,7 @@ fn internal_only_compatibility_routing_snapshot_matches_workflow_operator_record
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state);
-    let dispatch = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
+    let dispatch = internal_runtime_direct::internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
         &RecordReviewDispatchArgs {

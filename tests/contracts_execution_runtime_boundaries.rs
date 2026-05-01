@@ -1,11 +1,15 @@
-#[path = "support/featureforge.rs"]
-mod featureforge_support;
+#[path = "support/internal_only_direct_helpers.rs"]
+mod internal_only_direct_helpers;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/projection.rs"]
 mod projection_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 #[path = "support/runtime.rs"]
 mod runtime_support;
+#[path = "support/rust_source_scan.rs"]
+mod rust_source_scan;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
@@ -25,6 +29,7 @@ use featureforge::execution::semantic_identity::{
 use featureforge::execution::state::load_execution_context;
 use featureforge::git::{discover_repository, discover_slug_identity};
 use featureforge::paths::harness_state_path;
+use internal_only_direct_helpers::internal_runtime_direct;
 use runtime_support::execution_runtime;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -239,7 +244,7 @@ Task 1 -> Task 2 -> Task 3 -> Task 4 -> Task 5 -> Task 6
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     let mut command_args = vec!["plan", "execution"];
     command_args.extend_from_slice(args);
-    let output = featureforge_support::run_featureforge_real_cli(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -258,6 +263,23 @@ fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &s
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
+fn materialize_state_dir_projections(
+    repo: &Path,
+    state: &Path,
+    plan: &str,
+    context: &str,
+) -> Value {
+    let materialized = run_plan_execution_json(
+        repo,
+        state,
+        &["materialize-projections", "--plan", plan],
+        context,
+    );
+    assert_eq!(materialized["action"], Value::from("materialized"));
+    assert_eq!(materialized["runtime_truth_changed"], Value::Bool(false));
+    materialized
+}
+
 fn run_workflow_operator_json(
     repo: &Path,
     state: &Path,
@@ -270,7 +292,7 @@ fn run_workflow_operator_json(
         command_args.push("--external-review-result-ready");
     }
     command_args.push("--json");
-    let output = featureforge_support::run_featureforge_real_cli(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -296,7 +318,7 @@ fn run_featureforge_output(
     _real_cli: bool,
     context: &str,
 ) -> Output {
-    featureforge_support::run_featureforge_real_cli(
+    public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -487,12 +509,27 @@ fn authoritative_harness_state_path(repo: &Path, state: &Path) -> PathBuf {
     harness_state_path(state, &runtime.repo_slug, &runtime.branch_name)
 }
 
+fn authoritative_harness_state(repo: &Path, state: &Path) -> Value {
+    let state_path = authoritative_harness_state_path(repo, state);
+    featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(&state_path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "event-authoritative boundary harness state should reduce for {}: {}",
+                state_path.display(),
+                error.message
+            )
+        })
+        .unwrap_or_else(|| {
+            let source = fs::read_to_string(&state_path)
+                .expect("authoritative harness state should be readable");
+            serde_json::from_str(&source)
+                .expect("authoritative harness state should remain valid json")
+        })
+}
+
 fn update_authoritative_harness_state(repo: &Path, state: &Path, updates: &[(&str, Value)]) {
     let state_path = authoritative_harness_state_path(repo, state);
-    let source = fs::read_to_string(&state_path)
-        .expect("authoritative harness state should be readable for fixture mutation");
-    let mut payload: Value = serde_json::from_str(&source)
-        .expect("authoritative harness state should remain valid json");
+    let mut payload = authoritative_harness_state(repo, state);
     let object = payload
         .as_object_mut()
         .expect("authoritative harness state should remain a json object");
@@ -504,9 +541,8 @@ fn update_authoritative_harness_state(repo: &Path, state: &Path, updates: &[(&st
         serde_json::to_string(&payload).expect("authoritative harness state should serialize"),
     )
     .expect("authoritative harness state should remain writable");
-    let _ = fs::remove_file(state_path.with_file_name("events.jsonl"));
-    let _ = fs::remove_file(state_path.with_file_name("events.lock"));
-    let _ = fs::remove_file(state_path.with_file_name("state.legacy.json"));
+    featureforge::execution::event_log::sync_fixture_event_log_for_tests(&state_path, &payload)
+        .expect("boundary harness state fixture should sync typed event authority");
 }
 
 fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
@@ -947,6 +983,89 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+fn execution_command_source_files() -> Vec<(String, String)> {
+    fn collect_rust_source_files(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir)
+            .unwrap_or_else(|error| panic!("{} should be readable: {error}", dir.display()))
+        {
+            let entry = entry.expect("execution command entry should be readable");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rust_source_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut paths = Vec::new();
+    collect_rust_source_files(&repo_root().join("src/execution/commands"), &mut paths);
+    paths.sort();
+
+    paths
+        .into_iter()
+        .filter(|path| {
+            path.strip_prefix(repo_root())
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/")
+                != "src/execution/commands/common/unit_tests.rs"
+        })
+        .map(|path| {
+            let rel = path
+                .strip_prefix(repo_root())
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let source =
+                fs::read_to_string(&path).expect("execution command source should be readable");
+            (rel, source)
+        })
+        .collect()
+}
+
+fn execution_command_dependency_paths() -> Vec<String> {
+    let mut paths = execution_command_source_files()
+        .into_iter()
+        .flat_map(|(rel, source)| rust_source_scan::normalized_dependency_paths(&rel, &source))
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn execution_command_call_paths() -> Vec<String> {
+    let mut paths = execution_command_source_files()
+        .into_iter()
+        .flat_map(|(rel, source)| rust_source_scan::normalized_call_paths(&rel, &source, &[]))
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn execution_command_function_names() -> Vec<String> {
+    let mut names = execution_command_source_files()
+        .into_iter()
+        .flat_map(|(rel, source)| rust_source_scan::function_names(&rel, &source))
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn paths_contain_dependency(paths: &[String], dependency: &str) -> bool {
+    paths
+        .iter()
+        .any(|path| path == dependency || path.starts_with(&format!("{dependency}::")))
+}
+
+fn paths_contain_leaf(paths: &[String], leaf: &str) -> bool {
+    paths
+        .iter()
+        .any(|path| path.rsplit("::").next() == Some(leaf))
+}
+
 fn state_tree_digest(root: &Path) -> String {
     fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) {
         let Ok(entries) = fs::read_dir(dir) else {
@@ -1268,7 +1387,7 @@ fn internal_only_compatibility_execution_query_recording_ready_states_surface_re
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state);
-    let dispatch = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
+    let dispatch = internal_runtime_direct::internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
         &featureforge::execution::internal_args::RecordReviewDispatchArgs {
@@ -1312,19 +1431,19 @@ fn internal_only_compatibility_execution_query_recording_ready_states_surface_re
         .expect("execution router source should be readable");
 
     assert!(
-        router_source.contains("\"task_closure_recording_ready\"")
+        router_source.contains("phase::DETAIL_TASK_CLOSURE_RECORDING_READY")
             && router_source.contains("task_number: Some(task_number)")
             && router_source.contains("dispatch_id: task_review_dispatch_id.clone()"),
         "task_closure_recording_ready should expose task_number and may surface dispatch_id in recording_context",
     );
     assert!(
-        router_source.contains("\"release_readiness_recording_ready\"")
-            && router_source.contains("\"release_blocker_resolution_required\"")
+        router_source.contains("phase::DETAIL_RELEASE_READINESS_RECORDING_READY")
+            && router_source.contains("phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED")
             && router_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
         "release-readiness recording-ready states should expose branch_closure_id recording_context ids",
     );
     assert!(
-        router_source.contains("\"final_review_recording_ready\"")
+        router_source.contains("phase::DETAIL_FINAL_REVIEW_RECORDING_READY")
             && router_source.contains("dispatch_id: final_review_dispatch_id.clone()")
             && router_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
         "final_review_recording_ready should expose branch_closure_id and may surface dispatch_id in the routing constructor",
@@ -1448,63 +1567,200 @@ fn workflow_status_legacy_summary_flag_failure_stays_aligned_with_real_cli() {
 }
 
 #[test]
-fn mutate_and_review_state_use_recording_boundary_for_transition_writes() {
+fn mutation_commands_and_review_state_use_recording_boundary_for_transition_writes() {
     let mutate_source = fs::read_to_string(repo_root().join("src/execution/mutate.rs"))
         .expect("execution mutate source should be readable");
+    let command_dependency_paths = execution_command_dependency_paths();
+    let command_call_paths = execution_command_call_paths();
+    let command_function_names = execution_command_function_names();
     let review_state_source = fs::read_to_string(repo_root().join("src/execution/review_state.rs"))
         .expect("execution review_state source should be readable");
+    let review_state_dependency_paths = rust_source_scan::normalized_dependency_paths(
+        "src/execution/review_state.rs",
+        &review_state_source,
+    );
+    let review_state_call_paths = rust_source_scan::normalized_call_paths(
+        "src/execution/review_state.rs",
+        &review_state_source,
+        &[],
+    );
 
     assert!(
-        mutate_source.contains("crate::execution::recording::"),
-        "mutate.rs should consume the recording boundary for closure writes",
+        mutate_source.contains("crate::execution::commands::"),
+        "mutate.rs should remain a compatibility facade over execution command modules",
     );
     assert!(
-        mutate_source.contains("crate::execution::command_eligibility::"),
-        "mutate.rs should consume shared command eligibility helpers instead of re-deriving follow-up routing",
+        !mutate_source.contains("pub fn "),
+        "mutate.rs should not regain public command implementation bodies after command extraction",
     );
     assert!(
-        mutate_source.contains("query_workflow_routing_state"),
-        "mutate.rs should consume the execution-owned routing boundary",
+        paths_contain_dependency(&command_dependency_paths, "crate::execution::recording"),
+        "execution commands should consume the recording boundary for closure writes",
     );
     assert!(
-        !mutate_source.contains("crate::workflow::operator"),
-        "mutate.rs should not import or call workflow/operator directly",
+        paths_contain_dependency(
+            &command_dependency_paths,
+            "crate::execution::command_eligibility"
+        ),
+        "execution commands should consume shared command eligibility helpers instead of re-deriving follow-up routing",
+    );
+    assert!(
+        paths_contain_leaf(
+            &command_call_paths,
+            "project_runtime_routing_state_with_reduced_state"
+        ),
+        "execution commands should consume the execution-owned routing projection boundary",
+    );
+    assert!(
+        !paths_contain_dependency(&command_dependency_paths, "crate::workflow::operator"),
+        "execution commands should not import or call workflow/operator directly",
     );
     for forbidden in [
-        "fn blocked_follow_up_for_operator(",
-        "fn close_current_task_required_follow_up(",
-        "fn late_stage_required_follow_up(",
-        "record_task_closure_result(",
-        "record_task_closure_negative_result(",
-        "remove_current_task_closure_results(",
-        "append_superseded_task_closure_ids(",
-        "append_superseded_branch_closure_ids(",
-        "set_current_branch_closure_id(",
-        "record_final_review_result(",
-        "record_release_readiness_result(",
-        "record_browser_qa_result(",
+        "blocked_follow_up_for_operator",
+        "close_current_task_required_follow_up",
+        "late_stage_required_follow_up",
     ] {
         assert!(
-            !mutate_source.contains(forbidden),
-            "mutate.rs should not call transition write primitive `{forbidden}` directly",
+            !command_function_names.iter().any(|name| name == forbidden),
+            "execution commands should not redefine shared command eligibility helper `{forbidden}` directly",
+        );
+    }
+    for forbidden in [
+        "record_task_closure_result",
+        "record_task_closure_negative_result",
+        "remove_current_task_closure_results",
+        "append_superseded_task_closure_ids",
+        "append_superseded_branch_closure_ids",
+        "set_current_branch_closure_id",
+        "record_final_review_result",
+        "record_release_readiness_result",
+        "record_browser_qa_result",
+    ] {
+        assert!(
+            !paths_contain_leaf(&command_call_paths, forbidden),
+            "execution commands should not call transition write primitive `{forbidden}` directly",
         );
     }
 
     assert!(
-        review_state_source.contains("crate::execution::recording::"),
+        paths_contain_dependency(
+            &review_state_dependency_paths,
+            "crate::execution::recording"
+        ),
         "review_state.rs should consume the recording boundary for overlay restoration",
     );
     assert!(
-        !review_state_source.contains("load_authoritative_transition_state("),
+        !paths_contain_leaf(
+            &review_state_call_paths,
+            "load_authoritative_transition_state"
+        ),
         "review_state.rs should not load transition state directly for overlay restoration",
     );
     assert!(
-        !review_state_source.contains("set_current_branch_closure_id("),
+        !paths_contain_leaf(&review_state_call_paths, "set_current_branch_closure_id"),
         "review_state.rs should not call transition write primitives directly",
     );
     assert!(
-        !review_state_source.contains("parse_artifact_document("),
+        !paths_contain_leaf(&review_state_call_paths, "parse_artifact_document"),
         "review_state.rs should not parse rendered artifacts directly when reconciling authoritative state",
+    );
+}
+
+#[test]
+fn normal_command_modules_do_not_write_projection_read_models_or_persist_transition_state_directly()
+{
+    let command_dir = repo_root().join("src/execution/commands");
+    let allowed_projection_writers = ["materialize_projections.rs"];
+    let allowed_direct_persist = [
+        "common.rs", // shared authoritative persist/event-append boundary
+    ];
+
+    for entry in fs::read_dir(&command_dir).expect("execution command directory should be readable")
+    {
+        let path = entry
+            .expect("execution command entry should be readable")
+            .path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+            continue;
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|file_name| file_name.to_str())
+            .expect("execution command module should have a utf-8 file name");
+        let source =
+            fs::read_to_string(&path).expect("execution command source should be readable");
+        if !allowed_projection_writers.contains(&file_name) {
+            let projection_write_violations = rust_source_scan::forbidden_call_violations(
+                &format!("src/execution/commands/{file_name}"),
+                &source,
+                &[
+                    "materialize_late_stage_projection_artifacts",
+                    "materialize_authoritative_transition_state_projection",
+                    "regenerate_projection_artifacts_from_authoritative_state",
+                    "write_execution_projection_read_models",
+                    "write_authoritative_unit_review_receipt_artifact",
+                    "write_project_artifact",
+                    "write_project_artifact_at_path",
+                ],
+                &[],
+            );
+            assert!(
+                projection_write_violations.is_empty(),
+                "{file_name} must not write projection read models directly; projection writes belong only to explicit materialization command behavior:\n{}",
+                projection_write_violations.join("\n")
+            );
+        }
+        if !allowed_direct_persist.contains(&file_name) {
+            let persist_violations = rust_source_scan::forbidden_call_violations(
+                &format!("src/execution/commands/{file_name}"),
+                &source,
+                &["persist_if_dirty_with_failpoint"],
+                &[],
+            );
+            assert!(
+                persist_violations.is_empty(),
+                "{file_name} must append authoritative transition state through commands/common.rs helpers:\n{}",
+                persist_violations.join("\n")
+            );
+        }
+    }
+    let common_source = fs::read_to_string(command_dir.join("common.rs"))
+        .expect("execution command common source should be readable");
+    let common_production_source = common_source
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or(common_source.as_str());
+    for forbidden in [
+        "transfer_repair_step",
+        "record_workflow_transfer",
+        "record_runtime_handoff_checkpoint",
+        "unit-review-",
+        "task-verification-",
+    ] {
+        if forbidden.contains('-') {
+            assert!(
+                !common_production_source.contains(forbidden),
+                "command-specific flow and projection materialization should not live in commands/common.rs: found `{forbidden}`"
+            );
+        } else {
+            let common_violations = rust_source_scan::forbidden_call_violations(
+                "src/execution/commands/common.rs",
+                common_production_source,
+                &[forbidden],
+                &[],
+            );
+            assert!(
+                common_violations.is_empty(),
+                "command-specific flow and projection materialization should not live in commands/common.rs: found `{forbidden}`:\n{}",
+                common_violations.join("\n")
+            );
+        }
+    }
+    let transitions_source = fs::read_to_string(repo_root().join("src/execution/transitions.rs"))
+        .expect("execution transition source should be readable");
+    assert!(
+        !transitions_source.contains("write_atomic_file(&self.state_path"),
+        "authoritative transition persistence must append events only; state.json projection writes belong to explicit materialize-projections behavior"
     );
 }
 
@@ -1522,24 +1778,28 @@ fn reconcile_review_state_threads_external_review_ready_through_routing_requerie
 
 #[test]
 fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
-    let state_source = fs::read_to_string(repo_root().join("src/execution/state.rs"))
-        .expect("execution state source should be readable");
-    let dispatch_start = state_source
+    let runtime_methods_source =
+        fs::read_to_string(repo_root().join("src/execution/state/runtime_methods.rs"))
+            .expect("execution runtime methods source should be readable");
+    let review_gate_source =
+        fs::read_to_string(repo_root().join("src/execution/state/review_gate.rs"))
+            .expect("execution review gate source should be readable");
+    let dispatch_start = runtime_methods_source
         .find("fn record_review_dispatch_strategy_checkpoint(")
-        .expect("state.rs should keep record_review_dispatch_strategy_checkpoint");
-    let dispatch_end = state_source[dispatch_start..]
+        .expect("runtime_methods.rs should keep record_review_dispatch_strategy_checkpoint");
+    let dispatch_end = runtime_methods_source[dispatch_start..]
         .find("fn ensure_review_dispatch_authoritative_bootstrap(")
         .map(|offset| dispatch_start + offset)
-        .expect("state.rs should keep ensure_review_dispatch_authoritative_bootstrap");
-    let checkpoint_start = state_source
+        .expect("runtime_methods.rs should keep ensure_review_dispatch_authoritative_bootstrap");
+    let checkpoint_start = review_gate_source
         .find("fn persist_finish_review_gate_pass_checkpoint(")
-        .expect("state.rs should keep persist_finish_review_gate_pass_checkpoint");
-    let checkpoint_end = state_source[checkpoint_start..]
+        .expect("review_gate.rs should keep persist_finish_review_gate_pass_checkpoint");
+    let checkpoint_end = review_gate_source[checkpoint_start..]
         .find("fn gate_review_from_context_internal(")
         .map(|offset| checkpoint_start + offset)
-        .expect("state.rs should keep gate_review_from_context_internal");
-    let dispatch_source = &state_source[dispatch_start..dispatch_end];
-    let checkpoint_source = &state_source[checkpoint_start..checkpoint_end];
+        .expect("review_gate.rs should keep gate_review_from_context_internal");
+    let dispatch_source = &runtime_methods_source[dispatch_start..dispatch_end];
+    let checkpoint_source = &review_gate_source[checkpoint_start..checkpoint_end];
 
     assert!(
         dispatch_source.contains("load_authoritative_transition_state("),
@@ -1560,31 +1820,6 @@ fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
         !checkpoint_source.contains("load_authoritative_transition_state_relaxed("),
         "{} checkpoint mutation must not bypass active-contract validation with the relaxed transition-state loader",
         concat!("gate", "-review"),
-    );
-}
-
-#[test]
-fn rebuild_evidence_refresh_claims_write_authority_before_loading_authoritative_state() {
-    let mutate_source = fs::read_to_string(repo_root().join("src/execution/mutate.rs"))
-        .expect("execution mutate source should be readable");
-    let refresh_start = mutate_source
-        .find("fn refresh_rebuild_downstream_truth(")
-        .expect("mutate.rs should keep refresh_rebuild_downstream_truth");
-    let refresh_end = mutate_source[refresh_start..]
-        .find("fn ensure_task_dispatch_id_matches(")
-        .map(|offset| refresh_start + offset)
-        .expect("mutate.rs should keep ensure_task_dispatch_id_matches after rebuild refresh");
-    let refresh_source = &mutate_source[refresh_start..refresh_end];
-    let claim_index = refresh_source
-        .find("claim_step_write_authority(runtime)")
-        .expect("rebuild refresh should claim write authority");
-    let load_index = refresh_source
-        .find("load_authoritative_transition_state(&context)")
-        .expect("rebuild refresh should load authoritative transition state");
-    assert!(
-        claim_index < load_index,
-        "{} downstream projection refresh must claim write authority before loading authoritative state used for regeneration",
-        concat!("rebuild", "-evidence"),
     );
 }
 
@@ -1696,16 +1931,17 @@ fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
         "required-follow-up taxonomy, aliasing, and phase-detail mapping must stay centralized in execution::follow_up"
     );
 
-    let state_source = fs::read_to_string(repo_root().join("src/execution/state.rs"))
-        .expect("execution state source should be readable");
-    let explicit_start = state_source
+    let runtime_methods_source =
+        fs::read_to_string(repo_root().join("src/execution/state/runtime_methods.rs"))
+            .expect("execution runtime methods source should be readable");
+    let explicit_start = runtime_methods_source
         .find("fn specific_gate_reason_is_explicit_direct_follow_up(")
-        .expect("state.rs should keep specific_gate_reason_is_explicit_direct_follow_up");
-    let explicit_end = state_source[explicit_start..]
+        .expect("runtime_methods.rs should keep specific_gate_reason_is_explicit_direct_follow_up");
+    let explicit_end = runtime_methods_source[explicit_start..]
         .find("fn specific_gate_reason_is_direct_follow_up(")
         .map(|offset| explicit_start + offset)
-        .expect("state.rs should keep specific_gate_reason_is_direct_follow_up");
-    let explicit_source = &state_source[explicit_start..explicit_end];
+        .expect("runtime_methods.rs should keep specific_gate_reason_is_direct_follow_up");
+    let explicit_source = &runtime_methods_source[explicit_start..explicit_end];
     assert!(
         !explicit_source.contains("reason_code_indicates_stale_unreviewed"),
         "gate follow-up compatibility fallback must not re-derive branch-closure routing from stale_unreviewed reason-code heuristics",
@@ -1779,7 +2015,7 @@ fn internal_only_compatibility_runtime_remediation_fs03_internal_dispatch_target
     setup_task_boundary_blocked_case(repo, state);
 
     let baseline = state_tree_digest(state);
-    let accepted = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
+    let accepted = internal_runtime_direct::internal_only_runtime_review_dispatch_authority_json(
         repo,
         state,
         &featureforge::execution::internal_args::RecordReviewDispatchArgs {
@@ -1801,7 +2037,7 @@ fn internal_only_compatibility_runtime_remediation_fs03_internal_dispatch_target
     );
 
     let rejected_json: Value = serde_json::from_str(
-        &featureforge_support::internal_only_runtime_review_dispatch_authority_json(
+        &internal_runtime_direct::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state,
             &featureforge::execution::internal_args::RecordReviewDispatchArgs {
@@ -1835,7 +2071,7 @@ fn internal_only_compatibility_runtime_remediation_fs05_internal_unsupported_fie
 
     let baseline = state_tree_digest(state);
     let failure: Value = serde_json::from_str(
-        &featureforge_support::internal_only_runtime_review_dispatch_authority_json(
+        &internal_runtime_direct::internal_only_runtime_review_dispatch_authority_json(
             repo,
             state,
             &featureforge::execution::internal_args::RecordReviewDispatchArgs {
@@ -2212,7 +2448,7 @@ fn internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefe
         .expect("FS-15 stale-boundary fixture plan should be writable");
     prepare_preflight_acceptance_workspace(repo, "boundary-runtime-remediation-fs15");
 
-    let preflight = featureforge_support::internal_only_runtime_preflight_gate_json(
+    let preflight = internal_runtime_direct::internal_only_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -2502,7 +2738,7 @@ fn internal_only_compatibility_fs19_compiled_cli_ignores_superseded_stale_histor
         .expect("FS-19 stale-history fixture plan should be writable");
     prepare_preflight_acceptance_workspace(repo, "boundary-runtime-remediation-fs19");
 
-    let preflight = featureforge_support::internal_only_runtime_preflight_gate_json(
+    let preflight = internal_runtime_direct::internal_only_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -2703,6 +2939,12 @@ fn internal_only_compatibility_fs20_runtime_owned_control_plane_churn_does_not_f
     let evidence_rel = baseline_status["evidence_path"]
         .as_str()
         .expect("FS-20 baseline status should expose evidence_path");
+    materialize_state_dir_projections(
+        repo,
+        state,
+        PLAN_REL,
+        "FS-20 materialize state-dir projections before runtime-owned control-plane churn",
+    );
     let plan_path = repo.join(PLAN_REL);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     fs::write(
@@ -2798,12 +3040,7 @@ fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_
     let state = state_dir.path();
     setup_execution_in_progress(repo, state);
 
-    let authoritative_state_path = authoritative_harness_state_path(repo, state);
-    let authoritative_state: Value = serde_json::from_str(
-        &fs::read_to_string(&authoritative_state_path)
-            .expect("FS-13 authoritative harness state should be readable"),
-    )
-    .expect("FS-13 authoritative harness state should remain valid json");
+    let authoritative_state = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state["current_open_step_state"]["task"],
         Value::from(1_u64)

@@ -13,6 +13,9 @@ function hasRepoMarkers(candidate) {
 
 export function discoverRepoRoot(startDir = __dirname) {
   let current = path.resolve(startDir);
+  if (fs.existsSync(current) && !fs.statSync(current).isDirectory()) {
+    current = path.dirname(current);
+  }
   while (true) {
     if (hasRepoMarkers(current)) {
       return current;
@@ -30,24 +33,28 @@ export function discoverRepoRoot(startDir = __dirname) {
 export const REPO_ROOT = discoverRepoRoot(__dirname);
 export const SKILLS_DIR = path.join(REPO_ROOT, 'skills');
 
-export function listSkillDirs() {
+export function listSkillDirs(skillsDir = SKILLS_DIR) {
   return fs
-    .readdirSync(SKILLS_DIR, { withFileTypes: true })
+    .readdirSync(skillsDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
 }
 
-export function listGeneratedSkills() {
-  return listSkillDirs().filter((dir) => {
-    const tmplPath = path.join(SKILLS_DIR, dir, 'SKILL.md.tmpl');
-    return fs.existsSync(tmplPath);
+export function listGeneratedSkills(skillsDir = SKILLS_DIR) {
+  return listSkillDirs(skillsDir).filter((dir) => {
+    const skillDir = path.join(skillsDir, dir);
+    return fs.existsSync(path.join(skillDir, 'SKILL.md.tmpl')) && fs.existsSync(path.join(skillDir, 'SKILL.md'));
   });
 }
 
 export function readUtf8(filePath) {
   const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(REPO_ROOT, filePath);
-  return fs.readFileSync(resolvedPath, 'utf8');
+  try {
+    return fs.readFileSync(resolvedPath, 'utf8');
+  } catch (error) {
+    throw new Error(`Failed to read UTF-8 file at ${resolvedPath}: ${error.message}`);
+  }
 }
 
 export function parseFrontmatter(content) {
@@ -71,7 +78,7 @@ export function parseFrontmatter(content) {
   };
 }
 
-export function getGeneratedHeader(contentOrKind) {
+export function getGeneratedHeader(contentOrKind = 'skill') {
   if (contentOrKind === 'skill') {
     return '<!-- AUTO-GENERATED from SKILL.md.tmpl — do not edit directly -->\n<!-- Regenerate: node scripts/gen-skill-docs.mjs -->';
   }
@@ -120,7 +127,7 @@ export function extractSection(content, headingText) {
 export function extractBashBlockUnderHeading(content, headingText) {
   const section = extractSection(content, headingText);
   if (!section) return '';
-  const match = section.match(/```(?:bash|sh)\n([\s\S]*?)\n```/);
+  const match = section.match(/```(?:bash|sh)?[ \t]*\n([\s\S]*?)\n```/);
   return match ? match[1] : '';
 }
 

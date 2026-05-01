@@ -9,13 +9,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::context::load_execution_context_without_authority_overlay;
+use crate::execution::fields::FIELD_HANDOFF_REQUIRED;
 use crate::execution::follow_up::RepairFollowUpRecord;
 use crate::execution::reducer::{
     EventAuthoritySnapshot, reduce_event_authority_for_migration_parity,
 };
 use crate::execution::router::route_runtime_state;
 use crate::execution::semantic_identity::semantic_workspace_snapshot;
-use crate::execution::state::{ExecutionRuntime, load_execution_context_without_authority_overlay};
+use crate::execution::state::ExecutionRuntime;
 use crate::execution::transitions::AuthoritativeTransitionState;
 use crate::git::sha256_hex;
 use crate::paths::write_atomic as write_atomic_file;
@@ -92,7 +94,7 @@ const RUN_METADATA_FIELDS: &[&str] = &[
     "current_chunk_retry_count",
     "current_chunk_retry_budget",
     "current_chunk_pivot_threshold",
-    "handoff_required",
+    FIELD_HANDOFF_REQUIRED,
     "open_failed_criteria",
     "write_authority_state",
     "write_authority_holder",
@@ -110,7 +112,7 @@ const RUN_METADATA_FIELDS: &[&str] = &[
     "dependency_index_state",
 ];
 const HANDOFF_FIELDS: &[&str] = &[
-    "handoff_required",
+    FIELD_HANDOFF_REQUIRED,
     "last_handoff_path",
     "last_handoff_fingerprint",
     "harness_phase",
@@ -122,7 +124,7 @@ const STEP_EVENT_FIELDS: &[&str] = &[
     "execution_evidence_projection_fingerprint",
     "execution_evidence_attempts",
     "harness_phase",
-    "handoff_required",
+    FIELD_HANDOFF_REQUIRED,
     "aggregate_evaluation_state",
     "review_state_repair_follow_up_record",
     "review_state_repair_follow_up",
@@ -151,7 +153,7 @@ const TRANSFER_EVENT_FIELDS: &[&str] = &[
     "current_transfer_to",
     "current_open_step_state",
     "harness_phase",
-    "handoff_required",
+    FIELD_HANDOFF_REQUIRED,
     "last_handoff_path",
     "last_handoff_fingerprint",
 ];
@@ -213,6 +215,8 @@ const BRANCH_CLOSURE_EVENT_FIELDS: &[&str] = &[
     "current_release_readiness_record_id",
     "current_release_readiness_result",
     "current_release_readiness_summary_hash",
+    "release_docs_state",
+    "last_release_docs_artifact_fingerprint",
     "final_review_record_history",
     "current_final_review_branch_closure_id",
     "current_final_review_dispatch_id",
@@ -221,11 +225,15 @@ const BRANCH_CLOSURE_EVENT_FIELDS: &[&str] = &[
     "current_final_review_result",
     "current_final_review_summary_hash",
     "current_final_review_record_id",
+    "final_review_state",
+    "last_final_review_artifact_fingerprint",
     "browser_qa_record_history",
     "current_qa_branch_closure_id",
     "current_qa_result",
     "current_qa_summary_hash",
     "current_qa_record_id",
+    "browser_qa_state",
+    "last_browser_qa_artifact_fingerprint",
     "finish_review_gate_pass_branch_closure_id",
     "harness_phase",
 ];
@@ -235,6 +243,8 @@ const RELEASE_READINESS_EVENT_FIELDS: &[&str] = &[
     "current_release_readiness_record_id",
     "current_release_readiness_result",
     "current_release_readiness_summary_hash",
+    "release_docs_state",
+    "last_release_docs_artifact_fingerprint",
     "current_final_review_branch_closure_id",
     "current_final_review_dispatch_id",
     "current_final_review_reviewer_source",
@@ -242,10 +252,14 @@ const RELEASE_READINESS_EVENT_FIELDS: &[&str] = &[
     "current_final_review_result",
     "current_final_review_summary_hash",
     "current_final_review_record_id",
+    "final_review_state",
+    "last_final_review_artifact_fingerprint",
     "current_qa_branch_closure_id",
     "current_qa_result",
     "current_qa_summary_hash",
     "current_qa_record_id",
+    "browser_qa_state",
+    "last_browser_qa_artifact_fingerprint",
     "final_review_dispatch_lineage",
     "final_review_dispatch_lineage_history",
     "finish_review_gate_pass_branch_closure_id",
@@ -261,10 +275,14 @@ const FINAL_REVIEW_EVENT_FIELDS: &[&str] = &[
     "current_final_review_result",
     "current_final_review_summary_hash",
     "current_final_review_record_id",
+    "final_review_state",
+    "last_final_review_artifact_fingerprint",
     "current_qa_branch_closure_id",
     "current_qa_result",
     "current_qa_summary_hash",
     "current_qa_record_id",
+    "browser_qa_state",
+    "last_browser_qa_artifact_fingerprint",
     "finish_review_gate_pass_branch_closure_id",
     "harness_phase",
 ];
@@ -275,6 +293,8 @@ const QA_EVENT_FIELDS: &[&str] = &[
     "current_qa_result",
     "current_qa_summary_hash",
     "current_qa_record_id",
+    "browser_qa_state",
+    "last_browser_qa_artifact_fingerprint",
     "finish_review_gate_pass_branch_closure_id",
     "harness_phase",
 ];
@@ -295,6 +315,8 @@ const REPAIR_EVENT_FIELDS: &[&str] = &[
     "current_release_readiness_result",
     "current_release_readiness_summary_hash",
     "release_readiness_record_history",
+    "release_docs_state",
+    "last_release_docs_artifact_fingerprint",
     "current_final_review_branch_closure_id",
     "current_final_review_dispatch_id",
     "current_final_review_reviewer_source",
@@ -303,11 +325,15 @@ const REPAIR_EVENT_FIELDS: &[&str] = &[
     "current_final_review_summary_hash",
     "current_final_review_record_id",
     "final_review_record_history",
+    "final_review_state",
+    "last_final_review_artifact_fingerprint",
     "current_qa_branch_closure_id",
     "current_qa_result",
     "current_qa_summary_hash",
     "current_qa_record_id",
     "browser_qa_record_history",
+    "browser_qa_state",
+    "last_browser_qa_artifact_fingerprint",
     "review_state_repair_follow_up_record",
     "review_state_repair_follow_up",
     "review_state_repair_follow_up_task",
@@ -379,7 +405,7 @@ const AUTHORITATIVE_EVENT_FIELDS: &[&str] = &[
     "current_chunk_retry_count",
     "current_chunk_retry_budget",
     "current_chunk_pivot_threshold",
-    "handoff_required",
+    FIELD_HANDOFF_REQUIRED,
     "open_failed_criteria",
     "write_authority_state",
     "write_authority_holder",
@@ -406,6 +432,8 @@ const AUTHORITATIVE_EVENT_FIELDS: &[&str] = &[
     "current_release_readiness_record_id",
     "current_release_readiness_result",
     "current_release_readiness_summary_hash",
+    "release_docs_state",
+    "last_release_docs_artifact_fingerprint",
     "final_review_record_history",
     "current_final_review_branch_closure_id",
     "current_final_review_dispatch_id",
@@ -414,11 +442,15 @@ const AUTHORITATIVE_EVENT_FIELDS: &[&str] = &[
     "current_final_review_result",
     "current_final_review_summary_hash",
     "current_final_review_record_id",
+    "final_review_state",
+    "last_final_review_artifact_fingerprint",
     "browser_qa_record_history",
     "current_qa_branch_closure_id",
     "current_qa_result",
     "current_qa_summary_hash",
     "current_qa_record_id",
+    "browser_qa_state",
+    "last_browser_qa_artifact_fingerprint",
     "review_state_repair_follow_up_record",
     "review_state_repair_follow_up",
     "review_state_repair_follow_up_task",
@@ -463,7 +495,7 @@ const RECORD_MAP_DELTA_FIELDS: &[&str] = &[
 ];
 
 macro_rules! authoritative_fact_fields {
-    ($($field_ident:ident => $field:literal),+ $(,)?) => {
+    ($($field_ident:ident => $field:expr),+ $(,)?) => {
         #[derive(Debug, Clone, Default, PartialEq)]
         pub(crate) struct AuthoritativeFactBuilder {
             $(
@@ -474,20 +506,22 @@ macro_rules! authoritative_fact_fields {
         impl AuthoritativeFactBuilder {
             #[cfg(test)]
             fn get(&self, field: &str) -> Option<&Value> {
-                match field {
-                    $($field => self.$field_ident.as_ref(),)+
-                    _ => None,
-                }
+                $(
+                    if field == $field {
+                        return self.$field_ident.as_ref();
+                    }
+                )+
+                None
             }
 
             fn set_field_value(&mut self, field: &str, value: Value) -> bool {
-                match field {
-                    $($field => {
+                $(
+                    if field == $field {
                         self.$field_ident = Some(value);
-                        true
-                    },)+
-                    _ => false,
-                }
+                        return true;
+                    }
+                )+
+                false
             }
 
             #[cfg(test)]
@@ -557,7 +591,7 @@ authoritative_fact_fields! {
     current_chunk_retry_count => "current_chunk_retry_count",
     current_chunk_retry_budget => "current_chunk_retry_budget",
     current_chunk_pivot_threshold => "current_chunk_pivot_threshold",
-    handoff_required => "handoff_required",
+    handoff_required => FIELD_HANDOFF_REQUIRED,
     open_failed_criteria => "open_failed_criteria",
     write_authority_state => "write_authority_state",
     write_authority_holder => "write_authority_holder",
@@ -631,14 +665,13 @@ trait EventFactPayload {
 }
 
 macro_rules! event_fact_payload {
-    ($name:ident { $($field_ident:ident => $field:literal),+ $(,)? }) => {
+    ($name:ident { $($field_ident:ident => $field:expr),+ $(,)? }) => {
         #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
         #[serde(deny_unknown_fields)]
         pub(crate) struct $name {
             $(
                 #[serde(
                     default,
-                    rename = $field,
                     deserialize_with = "deserialize_optional_fact_value",
                     skip_serializing_if = "Option::is_none"
                 )]
@@ -656,10 +689,12 @@ macro_rules! event_fact_payload {
 
         impl EventFactPayload for $name {
             fn get(&self, field: &str) -> Option<&Value> {
-                match field {
-                    $($field => self.$field_ident.as_ref(),)+
-                    _ => None,
-                }
+                $(
+                    if field == $field {
+                        return self.$field_ident.as_ref();
+                    }
+                )+
+                None
             }
 
             fn populated_field_names(&self) -> Vec<&'static str> {
@@ -681,7 +716,7 @@ event_fact_payload! { StepEventFacts {
     execution_evidence_projection_fingerprint => "execution_evidence_projection_fingerprint",
     execution_evidence_attempts => "execution_evidence_attempts",
     harness_phase => "harness_phase",
-    handoff_required => "handoff_required",
+    handoff_required => FIELD_HANDOFF_REQUIRED,
     aggregate_evaluation_state => "aggregate_evaluation_state",
     review_state_repair_follow_up_record => "review_state_repair_follow_up_record",
     review_state_repair_follow_up => "review_state_repair_follow_up",
@@ -710,7 +745,7 @@ event_fact_payload! { TransferEventFacts {
     current_transfer_to => "current_transfer_to",
     current_open_step_state => "current_open_step_state",
     harness_phase => "harness_phase",
-    handoff_required => "handoff_required",
+    handoff_required => FIELD_HANDOFF_REQUIRED,
     last_handoff_path => "last_handoff_path",
     last_handoff_fingerprint => "last_handoff_fingerprint",
 } }
@@ -938,7 +973,7 @@ event_fact_payload! { RunMetadataEventFacts {
     current_chunk_retry_count => "current_chunk_retry_count",
     current_chunk_retry_budget => "current_chunk_retry_budget",
     current_chunk_pivot_threshold => "current_chunk_pivot_threshold",
-    handoff_required => "handoff_required",
+    handoff_required => FIELD_HANDOFF_REQUIRED,
     open_failed_criteria => "open_failed_criteria",
     write_authority_state => "write_authority_state",
     write_authority_holder => "write_authority_holder",
@@ -957,7 +992,7 @@ event_fact_payload! { RunMetadataEventFacts {
 } }
 
 event_fact_payload! { HandoffEventFacts {
-    handoff_required => "handoff_required",
+    handoff_required => FIELD_HANDOFF_REQUIRED,
     last_handoff_path => "last_handoff_path",
     last_handoff_fingerprint => "last_handoff_fingerprint",
     harness_phase => "harness_phase",
@@ -1173,6 +1208,13 @@ pub(crate) fn load_reduced_authoritative_state_for_state_path(
     let events = load_event_log(&events_path)?;
     validate_event_log(&events)?;
     Ok(reduce_events_to_state(&events))
+}
+
+#[doc(hidden)]
+pub fn load_reduced_authoritative_state_for_tests(
+    state_path: &Path,
+) -> Result<Option<Value>, JsonFailure> {
+    load_reduced_authoritative_state_for_state_path(state_path)
 }
 
 pub(crate) fn append_typed_state_event_for_state_path(
@@ -2006,7 +2048,7 @@ fn migration_replay_events_from_legacy_state(state: &Value) -> Vec<ExecutionEven
 
     if json_string(state, "last_handoff_path").is_some()
         || json_string(state, "last_handoff_fingerprint").is_some()
-        || state.get("handoff_required").is_some()
+        || state.get(FIELD_HANDOFF_REQUIRED).is_some()
     {
         ordered.push((
             0,
@@ -2209,6 +2251,8 @@ fn migration_release_readiness_entry_fields(
                 "current_release_readiness_record_id",
                 "current_release_readiness_result",
                 "current_release_readiness_summary_hash",
+                "release_docs_state",
+                "last_release_docs_artifact_fingerprint",
             ],
         );
     }
@@ -2237,6 +2281,8 @@ fn migration_final_review_entry_fields(
                 "current_final_review_result",
                 "current_final_review_summary_hash",
                 "current_final_review_record_id",
+                "final_review_state",
+                "last_final_review_artifact_fingerprint",
             ],
         );
     }
@@ -2262,6 +2308,8 @@ fn migration_qa_entry_fields(
                 "current_qa_result",
                 "current_qa_summary_hash",
                 "current_qa_record_id",
+                "browser_qa_state",
+                "last_browser_qa_artifact_fingerprint",
             ],
         );
     }
@@ -2343,6 +2391,8 @@ fn migration_release_readiness_current_fields(state: &Value) -> AuthoritativeFac
             "current_release_readiness_record_id",
             "current_release_readiness_result",
             "current_release_readiness_summary_hash",
+            "release_docs_state",
+            "last_release_docs_artifact_fingerprint",
             "harness_phase",
         ],
     )
@@ -2359,6 +2409,8 @@ fn migration_final_review_current_fields(state: &Value) -> AuthoritativeFactBuil
             "current_final_review_result",
             "current_final_review_summary_hash",
             "current_final_review_record_id",
+            "final_review_state",
+            "last_final_review_artifact_fingerprint",
             "harness_phase",
         ],
     )
@@ -2372,6 +2424,8 @@ fn migration_qa_current_fields(state: &Value) -> AuthoritativeFactBuilder {
             "current_qa_result",
             "current_qa_summary_hash",
             "current_qa_record_id",
+            "browser_qa_state",
+            "last_browser_qa_artifact_fingerprint",
             "harness_phase",
         ],
     )
@@ -2420,6 +2474,29 @@ fn migration_repair_state_fields(state: &Value) -> AuthoritativeFactBuilder {
             "current_branch_closure_contract_identity",
             "branch_closure_records",
             "superseded_branch_closure_ids",
+            "release_readiness_record_history",
+            "current_release_readiness_record_id",
+            "current_release_readiness_result",
+            "current_release_readiness_summary_hash",
+            "release_docs_state",
+            "last_release_docs_artifact_fingerprint",
+            "final_review_record_history",
+            "current_final_review_branch_closure_id",
+            "current_final_review_dispatch_id",
+            "current_final_review_reviewer_source",
+            "current_final_review_reviewer_id",
+            "current_final_review_result",
+            "current_final_review_summary_hash",
+            "current_final_review_record_id",
+            "final_review_state",
+            "last_final_review_artifact_fingerprint",
+            "browser_qa_record_history",
+            "current_qa_branch_closure_id",
+            "current_qa_result",
+            "current_qa_summary_hash",
+            "current_qa_record_id",
+            "browser_qa_state",
+            "last_browser_qa_artifact_fingerprint",
         ],
     )
 }
@@ -3297,7 +3374,7 @@ fn migration_projection_default_value(field: &str) -> Value {
         | "superseded_branch_closure_ids"
         | "strategy_checkpoints"
         | "execution_evidence_attempts" => Value::Array(Vec::new()),
-        "handoff_required" | "strategy_reset_required" => Value::Bool(false),
+        FIELD_HANDOFF_REQUIRED | "strategy_reset_required" => Value::Bool(false),
         _ => Value::Null,
     }
 }
@@ -3430,13 +3507,25 @@ fn migration_route_parity_projection_from_router(
 
 fn legacy_route_phase_from_authority(state: &Value) -> String {
     match json_string(state, "harness_phase").as_deref() {
-        Some("ready_for_branch_completion") => String::from("ready_for_branch_completion"),
-        Some("document_release_pending") => String::from("document_release_pending"),
-        Some("final_review_pending") => String::from("final_review_pending"),
-        Some("qa_pending") => String::from("qa_pending"),
-        Some("executing") | Some("repairing") => String::from("executing"),
-        Some("execution_preflight") => String::from("execution_preflight"),
-        _ => String::from("implementation_handoff"),
+        Some(crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION) => {
+            String::from(crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION)
+        }
+        Some(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING) => {
+            String::from(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING)
+        }
+        Some(crate::execution::phase::PHASE_FINAL_REVIEW_PENDING) => {
+            String::from(crate::execution::phase::PHASE_FINAL_REVIEW_PENDING)
+        }
+        Some(crate::execution::phase::PHASE_QA_PENDING) => {
+            String::from(crate::execution::phase::PHASE_QA_PENDING)
+        }
+        Some(crate::execution::phase::PHASE_EXECUTING) | Some("repairing") => {
+            String::from(crate::execution::phase::PHASE_EXECUTING)
+        }
+        Some(crate::execution::phase::PHASE_EXECUTION_PREFLIGHT) => {
+            String::from(crate::execution::phase::PHASE_EXECUTION_PREFLIGHT)
+        }
+        _ => String::from(crate::execution::phase::PHASE_IMPLEMENTATION_HANDOFF),
     }
 }
 
@@ -3445,20 +3534,34 @@ fn legacy_route_phase_detail_from_authority(state: &Value) -> String {
         .get("current_open_step_state")
         .is_some_and(|value| !value.is_null())
     {
-        return String::from("execution_in_progress");
+        return String::from(crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS);
     }
     if newest_current_task_from_state(state).is_some()
         && json_string(state, "current_branch_closure_id").is_none()
     {
-        return String::from("branch_closure_recording_required_for_release_readiness");
+        return String::from(
+            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
+        );
     }
     match json_string(state, "harness_phase").as_deref() {
-        Some("ready_for_branch_completion") => String::from("finish_completion_gate_ready"),
-        Some("document_release_pending") => String::from("release_readiness_recording_ready"),
-        Some("final_review_pending") => String::from("final_review_dispatch_required"),
-        Some("qa_pending") => String::from("qa_recording_required"),
-        Some("execution_preflight") => String::from("execution_preflight_required"),
-        Some("executing") | Some("repairing") => String::from("execution_in_progress"),
+        Some(crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION) => {
+            String::from(crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY)
+        }
+        Some(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING) => {
+            String::from(crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY)
+        }
+        Some(crate::execution::phase::PHASE_FINAL_REVIEW_PENDING) => {
+            String::from(crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED)
+        }
+        Some(crate::execution::phase::PHASE_QA_PENDING) => {
+            String::from(crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED)
+        }
+        Some(crate::execution::phase::PHASE_EXECUTION_PREFLIGHT) => {
+            String::from(crate::execution::phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED)
+        }
+        Some(crate::execution::phase::PHASE_EXECUTING) | Some("repairing") => {
+            String::from(crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS)
+        }
         _ => String::from("implementation_handoff_required"),
     }
 }
@@ -3466,15 +3569,15 @@ fn legacy_route_phase_detail_from_authority(state: &Value) -> String {
 fn legacy_route_next_action_shape_from_authority(state: &Value) -> String {
     command_shape(
         match legacy_route_phase_detail_from_authority(state).as_str() {
-            "branch_closure_recording_required_for_release_readiness"
-            | "release_readiness_recording_ready"
-            | "final_review_recording_ready"
-            | "qa_recording_required"
-            | "finish_completion_gate_ready" => {
+            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
+            | crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
+            | crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY
+            | crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED
+            | crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY => {
                 Some("featureforge plan execution advance-late-stage")
             }
-            "execution_in_progress" => Some("featureforge plan execution complete"),
-            "execution_preflight_required" => Some("featureforge plan execution begin"),
+            crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS => Some("featureforge plan execution complete"),
+            crate::execution::phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED => Some("featureforge plan execution begin"),
             _ => None,
         },
     )
@@ -3980,7 +4083,7 @@ mod tests {
     fn minimal_legacy_state() -> Value {
         json!({
             "schema_version": 1,
-            "harness_phase": "executing",
+            "harness_phase": crate::execution::phase::PHASE_EXECUTING,
             "source_plan_path": "docs/featureforge/plans/example.md",
             "source_plan_revision": 1,
             "execution_run_id": "run-1",
@@ -4064,7 +4167,7 @@ mod tests {
         let state_path = tempdir.path().join("state.json");
         let legacy_state = json!({
             "schema_version": 1,
-            "harness_phase": "final_review_pending",
+            "harness_phase": crate::execution::phase::PHASE_FINAL_REVIEW_PENDING,
             "source_plan_path": "docs/featureforge/plans/example.md",
             "source_plan_revision": 1,
             "execution_run_id": "run-1",
@@ -4184,7 +4287,7 @@ mod tests {
         let legacy_state = minimal_legacy_state();
         let mismatched_state = json!({
             "schema_version": 1,
-            "harness_phase": "ready_for_branch_completion"
+            "harness_phase": crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION
         });
         let branch_context = BranchContext {
             repo_slug: String::from("repo"),
@@ -4243,7 +4346,9 @@ mod tests {
             "parity mismatch should classify as BlockedRuntimeBug"
         );
         assert!(
-            error.message.contains("blocked_runtime_bug"),
+            error
+                .message
+                .contains(crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG),
             "parity mismatch should explicitly surface blocked_runtime_bug, got {}",
             error.message
         );
@@ -4264,7 +4369,7 @@ mod tests {
 
         let mismatched_state = json!({
             "schema_version": 1,
-            "harness_phase": "ready_for_branch_completion"
+            "harness_phase": crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION
         });
         let branch_context = BranchContext {
             repo_slug: String::from("repo"),
@@ -4335,10 +4440,13 @@ mod tests {
         let legacy_root = legacy_state
             .as_object_mut()
             .expect("legacy fixture should be an object");
-        legacy_root.insert(String::from("phase"), Value::from("executing"));
+        legacy_root.insert(
+            String::from("phase"),
+            Value::from(crate::execution::phase::PHASE_EXECUTING),
+        );
         legacy_root.insert(
             String::from("phase_detail"),
-            Value::from("execution_in_progress"),
+            Value::from(crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS),
         );
         legacy_root.insert(
             String::from("next_action"),
@@ -4402,10 +4510,10 @@ mod tests {
     #[test]
     fn event_log_field_allowlist_excludes_public_routing_read_model_fields() {
         let state = json!({
-            "harness_phase": "executing",
+            "harness_phase": crate::execution::phase::PHASE_EXECUTING,
             "dependency_index_state": "healthy",
-            "phase": "executing",
-            "phase_detail": "execution_in_progress",
+            "phase": crate::execution::phase::PHASE_EXECUTING,
+            "phase_detail": crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS,
             "next_action": "continue execution",
             "recommended_command": "featureforge workflow operator --plan docs/featureforge/plans/example.md",
             "state_kind": "actionable_public_command",
@@ -4428,7 +4536,7 @@ mod tests {
 
         assert_eq!(
             refreshed.get("harness_phase"),
-            Some(&Value::from("executing"))
+            Some(&Value::from(crate::execution::phase::PHASE_EXECUTING))
         );
         assert_eq!(
             refreshed.get("dependency_index_state"),
@@ -4578,7 +4686,7 @@ mod tests {
         let state_path = tempdir.path().join("state.json");
         let legacy_state = json!({
             "schema_version": 1,
-            "harness_phase": "executing",
+            "harness_phase": crate::execution::phase::PHASE_EXECUTING,
             "source_plan_path": "docs/featureforge/plans/example.md",
             "source_plan_revision": 1,
             "execution_run_id": "run-1",

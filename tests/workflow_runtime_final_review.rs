@@ -4,11 +4,10 @@ mod bin_support;
 mod dir_tree_support;
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/internal_only_direct_helpers.rs"]
+mod internal_only_direct_helpers;
 #[path = "support/json.rs"]
 mod json_support;
-#[allow(dead_code)]
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/repo_template.rs"]
@@ -20,7 +19,8 @@ mod runtime_phase_handoff_support;
 
 use bin_support::compiled_featureforge_path;
 use dir_tree_support::copy_dir_recursive;
-use featureforge::contracts::plan::parse_plan_file;
+use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
+use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::final_review::{
     parse_final_review_receipt, resolve_release_base_branch,
 };
@@ -35,6 +35,7 @@ use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
 };
 use files_support::write_file;
+use internal_only_direct_helpers::internal_runtime_direct as plan_execution_direct_support;
 use json_support::parse_json;
 use process_support::{run, run_checked};
 use repo_template_support::populate_repo_from_template;
@@ -156,6 +157,7 @@ Task 1
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn write_two_task_single_step_plan(repo: &Path, execution_mode: &str) {
@@ -227,18 +229,54 @@ Task 1 -> Task 2
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn mark_all_plan_steps_checked(repo: &Path) {
     let path = repo.join(PLAN_REL);
     let source = fs::read_to_string(&path).expect("plan should be readable");
     fs::write(path, source.replace("- [ ]", "- [x]")).expect("plan should be writable");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn sha256_hex(contents: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(contents);
     format!("{:x}", hasher.finalize())
+}
+
+fn write_current_pass_plan_fidelity_review_artifact_for_plan(repo: &Path, plan_rel: &str) {
+    let plan = parse_plan_file(repo.join(plan_rel)).expect("plan fixture should parse");
+    let spec_rel = plan.source_spec_path.clone();
+    let spec = parse_spec_file(repo.join(&spec_rel)).expect("spec fixture should parse");
+    let plan_fingerprint = sha256_hex(&fs::read(repo.join(plan_rel)).expect("plan should read"));
+    let spec_fingerprint = sha256_hex(&fs::read(repo.join(&spec_rel)).expect("spec should read"));
+    let verified_requirement_ids = spec
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+    let plan_stem = Path::new(plan_rel)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("plan");
+    let artifact_path = repo
+        .join(".featureforge")
+        .join("reviews")
+        .join(format!("{plan_stem}-plan-fidelity.md"));
+    if let Some(parent) = artifact_path.parent() {
+        fs::create_dir_all(parent).expect("plan-fidelity artifact parent should be creatable");
+    }
+    write_file(
+        &artifact_path,
+        &format!(
+            "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** pass\n**Reviewed Plan:** `{plan_rel}`\n**Reviewed Plan Revision:** {}\n**Reviewed Plan Fingerprint:** {plan_fingerprint}\n**Reviewed Spec:** `{spec_rel}`\n**Reviewed Spec Revision:** {}\n**Reviewed Spec Fingerprint:** {spec_fingerprint}\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** fixture-plan-fidelity-reviewer\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** {}\n**Verified Requirement IDs:** {}\n",
+            plan.plan_revision,
+            spec.spec_revision,
+            PLAN_FIDELITY_REQUIRED_SURFACES.join(", "),
+            verified_requirement_ids.join(", "),
+        ),
+    );
 }
 
 fn current_head_sha(repo: &Path) -> String {
@@ -497,11 +535,28 @@ fn write_release_readiness_artifact(repo: &Path, state: &Path, base_branch: &str
 fn update_authoritative_harness_state(repo: &Path, state: &Path, updates: &[(&str, Value)]) {
     let branch = branch_name(repo);
     let state_path = harness_state_path(state, &repo_slug(repo), &branch);
-    let mut payload: Value = match fs::read_to_string(&state_path) {
-        Ok(source) => serde_json::from_str(&source).expect("harness state should be valid json"),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
-        Err(error) => panic!("harness state should be readable for fixture mutation: {error}"),
-    };
+    let mut payload: Value =
+        match featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(
+            &state_path,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "event-authoritative final-review runtime state should reduce for {}: {}",
+                state_path.display(),
+                error.message
+            )
+        }) {
+            Some(payload) => payload,
+            None => match fs::read_to_string(&state_path) {
+                Ok(source) => {
+                    serde_json::from_str(&source).expect("harness state should be valid json")
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+                Err(error) => {
+                    panic!("harness state should be readable for fixture mutation: {error}")
+                }
+            },
+        };
     let object = payload
         .as_object_mut()
         .expect("harness state payload should remain a json object");
@@ -911,10 +966,19 @@ fn internal_only_write_task_boundary_strategy_checkpoint_state(
 ) -> String {
     let branch = branch_name(repo);
     let state_path = harness_state_path(state, &repo_slug(repo), &branch);
-    let mut payload: Value = match fs::read_to_string(&state_path) {
-        Ok(source) => serde_json::from_str(&source).expect("harness state should be valid json"),
-        Err(_) => json!({}),
-    };
+    let mut payload =
+        featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(&state_path)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "event-authoritative task-boundary strategy checkpoint state should reduce for {}: {}",
+                    state_path.display(),
+                    error.message
+                )
+            })
+            .unwrap_or_else(|| match fs::read_to_string(&state_path) {
+                Ok(source) => serde_json::from_str(&source).expect("harness state should be valid json"),
+                Err(_) => json!({}),
+            });
     payload["schema_version"] = json!(1);
     payload["run_identity"] = json!({
         "execution_run_id": execution_run_id,

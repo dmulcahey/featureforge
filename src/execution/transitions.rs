@@ -18,8 +18,8 @@ use crate::execution::event_log::{
     append_typed_state_event_for_state_path,
     append_typed_state_event_for_state_path_with_step_hint,
     ensure_event_log_migrated_from_legacy_state, load_reduced_authoritative_state,
-    load_reduced_authoritative_state_for_state_path,
 };
+use crate::execution::fields::FIELD_HANDOFF_REQUIRED;
 use crate::execution::follow_up::RepairFollowUpRecord;
 use crate::execution::gates::{
     ActiveContractState, GateAuthorityState, require_active_contract_state,
@@ -468,6 +468,21 @@ pub(crate) struct BranchClosureRecord {
     pub(crate) branch_closure_fingerprint: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BranchClosureStatusRead {
+    Current,
+    CurrentOrHistorical,
+}
+
+impl BranchClosureStatusRead {
+    fn allows(self, closure_status: &str) -> bool {
+        match self {
+            Self::Current => closure_status == "current",
+            Self::CurrentOrHistorical => matches!(closure_status, "current" | "historical"),
+        }
+    }
+}
+
 pub(crate) struct CurrentBranchClosureIdentity {
     pub(crate) branch_closure_id: String,
     pub(crate) reviewed_state_id: String,
@@ -837,9 +852,9 @@ impl AuthoritativeTransitionState {
         let pivot_threshold = json_u64(&self.state_payload, "current_chunk_pivot_threshold");
         let retry_count = json_u64(&self.state_payload, "current_chunk_retry_count");
         let next_phase = if pivot_threshold > 0 && retry_count >= pivot_threshold {
-            "pivot_required"
+            crate::execution::phase::PHASE_PIVOT_REQUIRED
         } else {
-            "handoff_required"
+            crate::execution::phase::PHASE_HANDOFF_REQUIRED
         };
 
         let root = self.root_object_mut()?;
@@ -847,7 +862,7 @@ impl AuthoritativeTransitionState {
             String::from("harness_phase"),
             Value::String(next_phase.to_owned()),
         );
-        root.insert(String::from("handoff_required"), Value::Bool(true));
+        root.insert(String::from(FIELD_HANDOFF_REQUIRED), Value::Bool(true));
         root.insert(
             String::from("aggregate_evaluation_state"),
             Value::String(String::from("blocked")),
@@ -899,9 +914,9 @@ impl AuthoritativeTransitionState {
         let root = self.root_object_mut()?;
         root.insert(
             String::from("harness_phase"),
-            Value::String(String::from("executing")),
+            Value::String(String::from(crate::execution::phase::PHASE_EXECUTING)),
         );
-        root.insert(String::from("handoff_required"), Value::Bool(false));
+        root.insert(String::from(FIELD_HANDOFF_REQUIRED), Value::Bool(false));
         root.insert(
             String::from("last_handoff_path"),
             Value::String(record_path.to_owned()),
@@ -910,7 +925,7 @@ impl AuthoritativeTransitionState {
             String::from("last_handoff_fingerprint"),
             Value::String(record_fingerprint.to_owned()),
         );
-        self.phase = Some(String::from("executing"));
+        self.phase = Some(String::from(crate::execution::phase::PHASE_EXECUTING));
         self.dirty = true;
         Ok(())
     }
@@ -919,9 +934,9 @@ impl AuthoritativeTransitionState {
         let root = self.root_object_mut()?;
         root.insert(
             String::from("harness_phase"),
-            Value::String(String::from("executing")),
+            Value::String(String::from(crate::execution::phase::PHASE_EXECUTING)),
         );
-        self.phase = Some(String::from("executing"));
+        self.phase = Some(String::from(crate::execution::phase::PHASE_EXECUTING));
         self.dirty = true;
         Ok(())
     }
@@ -2794,7 +2809,9 @@ impl AuthoritativeTransitionState {
         records.insert(record.branch_closure_id.to_owned(), payload);
         self.root_object_mut()?.insert(
             String::from("harness_phase"),
-            Value::String(String::from("document_release_pending")),
+            Value::String(String::from(
+                crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING,
+            )),
         );
         self.dirty = true;
         Ok(())
@@ -2897,9 +2914,9 @@ impl AuthoritativeTransitionState {
         root.insert(
             String::from("harness_phase"),
             Value::String(if record.result == "ready" {
-                String::from("final_review_pending")
+                String::from(crate::execution::phase::PHASE_FINAL_REVIEW_PENDING)
             } else {
-                String::from("document_release_pending")
+                String::from(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING)
             }),
         );
         match record.release_docs_fingerprint {
@@ -3082,9 +3099,9 @@ impl AuthoritativeTransitionState {
             root.insert(
                 String::from("harness_phase"),
                 Value::String(if record.browser_qa_required == Some(true) {
-                    String::from("qa_pending")
+                    String::from(crate::execution::phase::PHASE_QA_PENDING)
                 } else {
-                    String::from("ready_for_branch_completion")
+                    String::from(crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION)
                 }),
             );
         }
@@ -3215,7 +3232,9 @@ impl AuthoritativeTransitionState {
         if record.result == "pass" {
             root.insert(
                 String::from("harness_phase"),
-                Value::String(String::from("ready_for_branch_completion")),
+                Value::String(String::from(
+                    crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION,
+                )),
             );
         }
         match record.browser_qa_fingerprint {
@@ -3762,6 +3781,46 @@ impl AuthoritativeTransitionState {
             })
     }
 
+    pub(crate) fn task_closure_history_lineage_present(
+        &self,
+        task: u32,
+        record_id: Option<&str>,
+    ) -> bool {
+        self.state_payload
+            .get("task_closure_record_history")
+            .and_then(Value::as_object)
+            .is_some_and(|history| {
+                history.iter().any(|(history_key, payload)| {
+                    let Some(payload) = payload.as_object() else {
+                        return false;
+                    };
+                    if payload.get("task").and_then(Value::as_u64) != Some(u64::from(task)) {
+                        return false;
+                    }
+                    if let Some(record_id) = record_id {
+                        let closure_record_id = payload
+                            .get("closure_record_id")
+                            .or_else(|| payload.get("record_id"))
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .unwrap_or(history_key.as_str());
+                        if closure_record_id != record_id {
+                            return false;
+                        }
+                    }
+                    payload
+                        .get("dispatch_id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|dispatch_id| !dispatch_id.trim().is_empty())
+                        && payload
+                            .get("execution_run_id")
+                            .and_then(Value::as_str)
+                            .is_some_and(|execution_run_id| !execution_run_id.trim().is_empty())
+                })
+            })
+    }
+
     pub(crate) fn current_task_closure_overlay_needs_restore(&self) -> bool {
         let recoverable = self.current_task_closure_results_from_history();
         if recoverable.is_empty() {
@@ -3835,6 +3894,24 @@ impl AuthoritativeTransitionState {
         &self,
         branch_closure_id: &str,
     ) -> Option<BranchClosureRecord> {
+        self.branch_closure_record_with_status(branch_closure_id, BranchClosureStatusRead::Current)
+    }
+
+    pub(crate) fn branch_closure_record_for_repair_follow_up(
+        &self,
+        branch_closure_id: &str,
+    ) -> Option<BranchClosureRecord> {
+        self.branch_closure_record_with_status(
+            branch_closure_id,
+            BranchClosureStatusRead::CurrentOrHistorical,
+        )
+    }
+
+    fn branch_closure_record_with_status(
+        &self,
+        branch_closure_id: &str,
+        status_read: BranchClosureStatusRead,
+    ) -> Option<BranchClosureRecord> {
         let payload = self
             .state_payload
             .get("branch_closure_records")
@@ -3845,7 +3922,9 @@ impl AuthoritativeTransitionState {
         if json_string(&payload_value, "branch_closure_id")?.trim() != branch_closure_id {
             return None;
         }
-        if json_string(&payload_value, "closure_status")?.trim() != "current" {
+        let closure_status = json_string(&payload_value, "closure_status")?;
+        let closure_status = closure_status.trim();
+        if !status_read.allows(closure_status) {
             return None;
         }
         let source_plan_path = json_string(&payload_value, "source_plan_path")?;
@@ -4303,7 +4382,7 @@ impl AuthoritativeTransitionState {
             })
     }
 
-    fn last_strategy_checkpoint_fingerprint(&self) -> Option<String> {
+    pub(crate) fn last_strategy_checkpoint_fingerprint(&self) -> Option<String> {
         self.state_payload
             .get("last_strategy_checkpoint_fingerprint")
             .and_then(Value::as_str)
@@ -4515,7 +4594,7 @@ impl AuthoritativeTransitionState {
                 &self.state_path,
                 command,
                 &self.state_payload,
-                "state_persist_projection_refresh",
+                "authoritative_event_append",
                 Some(step_hint),
             )?;
         } else {
@@ -4523,7 +4602,7 @@ impl AuthoritativeTransitionState {
                 &self.state_path,
                 command,
                 &self.state_payload,
-                "state_persist_projection_refresh",
+                "authoritative_event_append",
             )?;
         }
         if let Some(injected_failure) =
@@ -4534,46 +4613,6 @@ impl AuthoritativeTransitionState {
                 projection_refresh_failure: Some(injected_failure),
             });
         }
-        let projection_payload =
-            match load_reduced_authoritative_state_for_state_path(&self.state_path) {
-                Ok(Some(reduced)) => reduced,
-                Ok(None) => self.state_payload.clone(),
-                Err(error) => {
-                    return Ok(AuthoritativePersistOutcome {
-                        authoritative_event_committed: true,
-                        projection_refresh_failure: Some(error),
-                    });
-                }
-            };
-        let serialized = match serde_json::to_string_pretty(&projection_payload) {
-            Ok(serialized) => serialized,
-            Err(error) => {
-                return Ok(AuthoritativePersistOutcome {
-                    authoritative_event_committed: true,
-                    projection_refresh_failure: Some(JsonFailure::new(
-                        FailureClass::PartialAuthoritativeMutation,
-                        format!(
-                            "Could not serialize authoritative harness state mutation {}: {error}",
-                            self.state_path.display()
-                        ),
-                    )),
-                });
-            }
-        };
-        if let Err(error) = write_atomic_file(&self.state_path, serialized) {
-            return Ok(AuthoritativePersistOutcome {
-                authoritative_event_committed: true,
-                projection_refresh_failure: Some(JsonFailure::new(
-                    FailureClass::PartialAuthoritativeMutation,
-                    format!(
-                        "Could not persist authoritative harness state {}: {error}",
-                        self.state_path.display()
-                    ),
-                )),
-            });
-        }
-        // The write above refreshes a repo-visible projection only. The next read must reduce
-        // `events.jsonl` rather than reusing this command's partial projection payload.
         invalidate_authoritative_state_payload_cache(&self.state_path);
         Ok(AuthoritativePersistOutcome {
             authoritative_event_committed: true,
@@ -4624,6 +4663,36 @@ pub(crate) fn hydrate_missing_review_projection_summary_payload(
     authoritative_state.hydrate_missing_review_projection_summary_fields()?;
     *state_payload = authoritative_state.state_payload;
     Ok(())
+}
+
+pub(crate) fn materialize_authoritative_transition_state_projection(
+    runtime: &ExecutionRuntime,
+) -> Result<Option<PathBuf>, JsonFailure> {
+    let state_path =
+        harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
+    let Some(projection_payload) = load_reduced_authoritative_state(runtime)? else {
+        return Ok(None);
+    };
+    let serialized = serde_json::to_string_pretty(&projection_payload).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::PartialAuthoritativeMutation,
+            format!(
+                "Could not serialize authoritative harness state projection {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    write_atomic_file(&state_path, serialized).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::PartialAuthoritativeMutation,
+            format!(
+                "Could not materialize authoritative harness state projection {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    invalidate_authoritative_state_payload_cache(&state_path);
+    Ok(Some(state_path))
 }
 
 fn well_formed_late_stage_surface_only_branch_surface(value: &str) -> bool {
@@ -4811,8 +4880,8 @@ pub(crate) fn read_authoritative_transition_state_source(
 
 /// Loads the reduced event-authoritative transition snapshot for the current branch.
 ///
-/// `events.jsonl` is the authority. The `state.json` path is only refreshed as a
-/// repo-visible projection and cache key; reduction still comes from the event log.
+/// `events.jsonl` is the authority. The `state.json` path is a materialized
+/// projection and cache key; reduction still comes from the event log.
 pub(crate) fn load_authoritative_transition_state(
     context: &ExecutionContext,
 ) -> Result<Option<AuthoritativeTransitionState>, JsonFailure> {
@@ -4882,14 +4951,14 @@ pub(crate) fn enforce_authoritative_phase(
         .filter(|value| !value.is_empty());
 
     match phase {
-        Some("handoff_required") => Err(JsonFailure::new(
+        Some(crate::execution::phase::PHASE_HANDOFF_REQUIRED) => Err(JsonFailure::new(
             FailureClass::IllegalHarnessPhase,
             format!(
                 "{} is blocked while the authoritative harness phase is handoff_required.",
                 command.as_str()
             ),
         )),
-        Some("pivot_required") => Err(JsonFailure::new(
+        Some(crate::execution::phase::PHASE_PIVOT_REQUIRED) => Err(JsonFailure::new(
             FailureClass::BlockedOnPlanPivot,
             format!(
                 "{} is blocked while the authoritative harness phase is pivot_required.",
@@ -5448,8 +5517,11 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
         let state_path = tempdir.path().join("state.json");
         let state_target_path = tempdir.path().join("state-target.json");
-        fs::write(&state_target_path, r#"{"harness_phase":"executing"}"#)
-            .expect("state target should be writable");
+        fs::write(
+            &state_target_path,
+            r#"{"harness_phase":crate::execution::phase::PHASE_EXECUTING}"#,
+        )
+        .expect("state target should be writable");
         symlink(&state_target_path, &state_path)
             .expect("symlink authoritative state fixture should be creatable");
 
@@ -5465,9 +5537,12 @@ mod tests {
     fn persist_if_dirty_invalidates_authoritative_state_cache_entry() {
         let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
         let state_path = tempdir.path().join("authoritative-state.json");
-        fs::write(&state_path, r#"{"harness_phase":"executing"}"#)
-            .expect("authoritative state fixture should be writable");
-        let initial_payload = json!({"harness_phase":"executing"});
+        fs::write(
+            &state_path,
+            r#"{"harness_phase":crate::execution::phase::PHASE_EXECUTING}"#,
+        )
+        .expect("authoritative state fixture should be writable");
+        let initial_payload = json!({"harness_phase":crate::execution::phase::PHASE_EXECUTING});
         let initial_gate_state = serde_json::from_value(initial_payload.clone())
             .expect("initial gate-state payload should parse");
         authoritative_state_payload_cache()
@@ -5483,7 +5558,7 @@ mod tests {
             );
 
         let refreshed_payload = json!({
-            "harness_phase": "final_review_pending",
+            "harness_phase": crate::execution::phase::PHASE_FINAL_REVIEW_PENDING,
             "latest_authoritative_sequence": 42
         });
         let state = AuthoritativeTransitionState {

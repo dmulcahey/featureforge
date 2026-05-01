@@ -12,7 +12,9 @@ use crate::contracts::plan::{
 use crate::contracts::runtime::analyze_contract_report;
 use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::execution::current_truth::RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS;
+use crate::execution::phase::{
+    PUBLIC_STATUS_PHASE_VALUES, RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
+};
 use crate::git::{RepositoryIdentity, discover_repo_identity, stored_repo_root_matches_current};
 use crate::paths::{RepoPath, featureforge_state_dir};
 use crate::workflow::manifest::{
@@ -890,26 +892,66 @@ fn resolve_route(
                 .as_ref()
                 .is_some_and(|report| report.contract_state == "valid")
         {
-            if read_only {
-                return resolve_route(runtime, false, false);
+            let implementation_fidelity_gate =
+                evaluate_plan_fidelity_gate(runtime, &approved_spec.path, &plan.path);
+            if plan_fidelity_allows_implementation(&implementation_fidelity_gate) {
+                if read_only {
+                    return resolve_route(runtime, false, false);
+                }
+                return Ok(WorkflowRoute {
+                    schema_version: 2,
+                    status: String::from(
+                        crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
+                    ),
+                    next_skill: String::new(),
+                    spec_path: approved_spec.path.clone(),
+                    plan_path: plan.path.clone(),
+                    contract_state,
+                    reason_codes: vec![String::from(
+                        crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
+                    )],
+                    diagnostics: Vec::new(),
+                    plan_fidelity_review: Some(implementation_fidelity_gate),
+                    scan_truncated,
+                    spec_candidate_count,
+                    plan_candidate_count: 1,
+                    manifest_path,
+                    root,
+                    reason: String::from(
+                        crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
+                    ),
+                    note: String::from(
+                        crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
+                    ),
+                });
             }
+
+            let next_skill = "featureforge:plan-eng-review";
+            let reason_codes =
+                engineering_approval_fidelity_reason_codes(&implementation_fidelity_gate);
+            let diagnostics = engineering_approval_fidelity_diagnostics(
+                &plan,
+                &implementation_fidelity_gate,
+                next_skill,
+            );
+            let reason = compatibility_reason(&reason_codes);
             return Ok(WorkflowRoute {
                 schema_version: 2,
-                status: String::from("implementation_ready"),
-                next_skill: String::new(),
+                status: String::from("plan_review_required"),
+                next_skill: String::from(next_skill),
                 spec_path: approved_spec.path.clone(),
                 plan_path: plan.path.clone(),
                 contract_state,
-                reason_codes: vec![String::from("implementation_ready")],
-                diagnostics: Vec::new(),
-                plan_fidelity_review: None,
+                reason_codes,
+                diagnostics,
+                plan_fidelity_review: Some(implementation_fidelity_gate),
                 scan_truncated,
                 spec_candidate_count,
                 plan_candidate_count: 1,
                 manifest_path,
                 root,
-                reason: String::from("implementation_ready"),
-                note: String::from("implementation_ready"),
+                reason: reason.clone(),
+                note: reason,
             });
         }
 
@@ -1178,14 +1220,40 @@ pub(crate) fn explicit_plan_override_route(
             .as_ref()
             .is_some_and(|report| report.contract_state == "valid")
     {
+        let implementation_fidelity_gate =
+            evaluate_plan_fidelity_gate(workflow, &approved_spec.path, &plan.path);
+        if plan_fidelity_allows_implementation(&implementation_fidelity_gate) {
+            return Ok(decorate(WorkflowRoute {
+                status: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
+                next_skill: String::new(),
+                reason_codes: vec![String::from(
+                    crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
+                )],
+                diagnostics: Vec::new(),
+                plan_fidelity_review: Some(implementation_fidelity_gate),
+                reason: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
+                note: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
+                ..base_route
+            }));
+        }
+
+        let next_skill = "featureforge:plan-eng-review";
+        let reason_codes =
+            engineering_approval_fidelity_reason_codes(&implementation_fidelity_gate);
+        let diagnostics = engineering_approval_fidelity_diagnostics(
+            &plan,
+            &implementation_fidelity_gate,
+            next_skill,
+        );
+        let reason = compatibility_reason(&reason_codes);
         return Ok(decorate(WorkflowRoute {
-            status: String::from("implementation_ready"),
-            next_skill: String::new(),
-            reason_codes: vec![String::from("implementation_ready")],
-            diagnostics: Vec::new(),
-            plan_fidelity_review: None,
-            reason: String::from("implementation_ready"),
-            note: String::from("implementation_ready"),
+            status: String::from("plan_review_required"),
+            next_skill: String::from(next_skill),
+            reason_codes,
+            diagnostics,
+            plan_fidelity_review: Some(implementation_fidelity_gate),
+            reason: reason.clone(),
+            note: reason,
             ..base_route
         }));
     }
@@ -1397,12 +1465,62 @@ fn workflow_handoff_schema_json(schema_label: &str) -> Result<String, Diagnostic
         )
     })?;
     lock_workflow_handoff_schema_version(&mut schema)?;
+    inject_embedded_plan_execution_phase_schema(&mut schema)?;
     serde_json::to_string_pretty(&schema).map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
             format!("Could not serialize {schema_label} schema: {err}"),
         )
     })
+}
+
+fn inject_embedded_plan_execution_phase_schema(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let defs = schema
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Workflow schema is missing `$defs`.",
+            )
+        })?;
+    defs.insert(
+        String::from("PublicStatusPhaseSchema"),
+        serde_json::json!({
+            "enum": PUBLIC_STATUS_PHASE_VALUES,
+            "type": "string"
+        }),
+    );
+    let plan_execution_status = defs
+        .get_mut("PlanExecutionStatus")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Workflow schema is missing embedded `PlanExecutionStatus`.",
+            )
+        })?;
+    let properties = plan_execution_status
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Embedded PlanExecutionStatus schema is missing `properties`.",
+            )
+        })?;
+    properties.insert(
+        String::from("phase"),
+        serde_json::json!({
+            "anyOf": [
+                { "$ref": "#/$defs/PublicStatusPhaseSchema" },
+                { "type": "null" }
+            ]
+        }),
+    );
+    Ok(())
 }
 
 fn lock_workflow_route_schema_version(
@@ -1524,38 +1642,38 @@ fn tighten_workflow_operator_phase_bound_recording_context_contracts(
 ) -> Result<(), DiagnosticError> {
     append_operator_phase_bound_recording_context_requirements(
         schema,
-        "task_closure_recording_ready",
+        crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY,
         &["task_number"],
     )?;
     append_operator_phase_bound_recording_context_requirements(
         schema,
-        "release_readiness_recording_ready",
+        crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY,
         &["branch_closure_id"],
     )?;
     append_operator_phase_bound_recording_context_requirements(
         schema,
-        "release_blocker_resolution_required",
+        crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED,
         &["branch_closure_id"],
     )?;
     append_operator_phase_bound_recording_context_requirements(
         schema,
-        "final_review_recording_ready",
+        crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY,
         &["branch_closure_id"],
     )?;
     append_operator_phase_detail_field_forbidden_outside_allowed_phase_details(
         schema,
         "recording_context",
         &[
-            "task_closure_recording_ready",
-            "release_readiness_recording_ready",
-            "release_blocker_resolution_required",
-            "final_review_recording_ready",
+            crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY,
+            crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY,
+            crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED,
+            crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY,
         ],
     )?;
     append_operator_phase_field_forbidden_outside_const_phase(
         schema,
         "phase",
-        "executing",
+        crate::execution::phase::PHASE_EXECUTING,
         "execution_command_context",
     )?;
     append_operator_phase_detail_field_omitted_only_in_lanes(
@@ -2064,6 +2182,113 @@ fn draft_ready_for_engineering_approval(
         && matches!(gate.state.as_str(), "pass" | "fail")
 }
 
+fn plan_fidelity_allows_implementation(gate: &PlanFidelityReviewReport) -> bool {
+    gate.state == "pass" && gate.reason_codes.is_empty() && gate.verified_surfaces_are_complete()
+}
+
+fn engineering_approval_fidelity_reason_codes(gate: &PlanFidelityReviewReport) -> Vec<String> {
+    let mut reason_codes = vec![String::from(
+        engineering_approval_fidelity_primary_reason_code(gate),
+    )];
+    for code in &gate.reason_codes {
+        if !reason_codes.iter().any(|existing| existing == code) {
+            reason_codes.push(code.clone());
+        }
+    }
+    reason_codes
+}
+
+fn engineering_approval_fidelity_primary_reason_code(
+    gate: &PlanFidelityReviewReport,
+) -> &'static str {
+    if gate.state == "missing"
+        || gate
+            .reason_codes
+            .iter()
+            .any(|code| code == "missing_plan_fidelity_review_artifact")
+    {
+        "engineering_approval_missing_plan_fidelity_review"
+    } else if gate.state == "stale"
+        || gate
+            .reason_codes
+            .iter()
+            .any(|code| code == "stale_plan_fidelity_review_artifact")
+    {
+        "engineering_approval_stale_plan_fidelity_review"
+    } else if gate
+        .reason_codes
+        .iter()
+        .any(|code| code == "plan_fidelity_review_missing_required_surface")
+        || !gate.verified_surfaces_are_complete()
+    {
+        "engineering_approval_incomplete_plan_fidelity_surfaces"
+    } else if gate.state == "fail"
+        || gate
+            .reason_codes
+            .iter()
+            .any(|code| code == "plan_fidelity_review_artifact_not_pass")
+    {
+        "engineering_approval_failed_plan_fidelity_review"
+    } else {
+        "engineering_approval_invalid_plan_fidelity_review"
+    }
+}
+
+fn engineering_approval_fidelity_diagnostics(
+    plan: &WorkflowPlanCandidate,
+    gate: &PlanFidelityReviewReport,
+    next_skill: &str,
+) -> Vec<WorkflowDiagnostic> {
+    let primary_code = engineering_approval_fidelity_primary_reason_code(gate);
+    let remediation = format!(
+        "Return to {next_skill} and refresh the plan-fidelity review gate for the current approved plan before implementation."
+    );
+    let mut diagnostics = vec![WorkflowDiagnostic {
+        code: String::from(primary_code),
+        severity: String::from("error"),
+        artifact: plan.path.clone(),
+        message: engineering_approval_fidelity_message(primary_code),
+        remediation: remediation.clone(),
+    }];
+
+    for diagnostic in &gate.diagnostics {
+        if diagnostics
+            .iter()
+            .any(|existing| existing.code == diagnostic.code)
+        {
+            continue;
+        }
+        diagnostics.push(WorkflowDiagnostic {
+            code: diagnostic.code.clone(),
+            severity: String::from("error"),
+            artifact: plan.path.clone(),
+            message: diagnostic.message.clone(),
+            remediation: remediation.clone(),
+        });
+    }
+    diagnostics
+}
+
+fn engineering_approval_fidelity_message(code: &str) -> String {
+    match code {
+        "engineering_approval_missing_plan_fidelity_review" => {
+            "Engineering Approved plan cannot route to implementation until a current pass plan-fidelity review artifact exists.".to_owned()
+        }
+        "engineering_approval_stale_plan_fidelity_review" => {
+            "Engineering Approved plan cannot route to implementation because the plan-fidelity review artifact is stale.".to_owned()
+        }
+        "engineering_approval_incomplete_plan_fidelity_surfaces" => {
+            "Engineering Approved plan cannot route to implementation because the plan-fidelity review artifact does not verify the exact required surfaces.".to_owned()
+        }
+        "engineering_approval_failed_plan_fidelity_review" => {
+            "Engineering Approved plan cannot route to implementation because the plan-fidelity review did not pass.".to_owned()
+        }
+        _ => {
+            "Engineering Approved plan cannot route to implementation because the plan-fidelity review artifact is invalid.".to_owned()
+        }
+    }
+}
+
 fn fidelity_review_visible_for_route(
     plan: &WorkflowPlanCandidate,
     next_skill: &str,
@@ -2131,7 +2356,7 @@ fn evaluate_plan_fidelity_gate(
                 vec![crate::contracts::plan::ContractDiagnostic {
                     code: String::from("plan_fidelity_verification_incomplete"),
                     message: String::from(
-                        "Plan-fidelity review cannot be validated until the draft plan parses cleanly.",
+                        "Plan-fidelity review cannot be validated until the plan parses cleanly.",
                     ),
                 }],
             );
@@ -2169,7 +2394,7 @@ fn plan_fidelity_gate_diagnostics(
     next_skill: &str,
 ) -> Vec<WorkflowDiagnostic> {
     let remediation = format!(
-        "Return to {next_skill} and rerun the dedicated plan-fidelity reviewer for the current draft."
+        "Return to {next_skill} and rerun the dedicated plan-fidelity reviewer for the current plan."
     );
     gate.diagnostics
         .iter()

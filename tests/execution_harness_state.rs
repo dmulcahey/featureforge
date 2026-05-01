@@ -4,11 +4,10 @@ mod bin_support;
 mod files_support;
 #[path = "support/git.rs"]
 mod git_support;
+#[path = "support/internal_only_direct_helpers.rs"]
+mod internal_only_direct_helpers;
 #[path = "support/json.rs"]
 mod json_support;
-#[allow(dead_code)]
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/projection.rs"]
@@ -29,6 +28,7 @@ use featureforge::paths::{
     harness_authoritative_artifact_path, harness_dependency_index_path, harness_state_path,
 };
 use files_support::write_file;
+use internal_only_direct_helpers::internal_runtime_direct as plan_execution_direct_support;
 use json_support::parse_json;
 use schemars::schema_for;
 use serde_json::{Value, json, to_value};
@@ -215,6 +215,18 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     parse_json(&run_plan_execution(repo, state, args, context), context)
+}
+
+fn materialize_state_dir_projections(repo: &Path, state: &Path, context: &str) -> Value {
+    let materialized = run_plan_execution_json(
+        repo,
+        state,
+        &["materialize-projections", "--plan", PLAN_REL],
+        context,
+    );
+    assert_eq!(materialized["action"], Value::from("materialized"));
+    assert_eq!(materialized["runtime_truth_changed"], Value::Bool(false));
+    materialized
 }
 
 fn run_plan_execution(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
@@ -1377,6 +1389,11 @@ fn complete_writes_contract_evaluation_and_repo_state_provenance_into_step_evide
         state,
         "Completed step with expected contract/evaluation provenance.",
     );
+    materialize_state_dir_projections(
+        repo,
+        state,
+        "materialize evidence projection for per-step provenance assertions",
+    );
     let evidence_path = projection_support::state_dir_projection_path(
         &complete_status,
         complete_status["evidence_path"]
@@ -1453,6 +1470,11 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
         .expect("complete status should expose evidence_path");
     let evidence_path =
         projection_support::state_dir_projection_path(&complete_status, evidence_rel);
+    materialize_state_dir_projections(
+        repo,
+        state,
+        "materialize evidence projection before seeded reopen provenance assertion",
+    );
 
     let seeded_step = read_execution_evidence(&evidence_path)
         .expect("seeded execution evidence should parse before reopen")
@@ -1505,6 +1527,11 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
                 .expect("status should expose execution_fingerprint before reopen"),
         ],
         "reopen should preserve source handoff provenance when applicable",
+    );
+    materialize_state_dir_projections(
+        repo,
+        state,
+        "materialize evidence projection after reopen provenance assertion",
     );
 
     let reopened_step = read_execution_evidence(&evidence_path)

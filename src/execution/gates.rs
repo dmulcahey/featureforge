@@ -9,12 +9,12 @@ use crate::contracts::harness::{
     read_evidence_artifact, read_execution_contract, read_execution_handoff,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::context::{
+    hash_contract_plan, load_execution_context_without_authority_overlay, task_packet_fingerprint,
+};
 use crate::execution::event_log::load_reduced_authoritative_state;
 use crate::execution::internal_args::{GateContractArgs, GateEvaluatorArgs, GateHandoffArgs};
-use crate::execution::state::{
-    ExecutionContext, ExecutionRuntime, GateResult, GateState, hash_contract_plan,
-    load_execution_context_without_authority_overlay, task_packet_fingerprint,
-};
+use crate::execution::state::{ExecutionContext, ExecutionRuntime, GateResult, GateState};
 use crate::git::sha256_hex;
 use crate::paths::{
     harness_authoritative_artifact_path, harness_authoritative_artifacts_dir, harness_state_path,
@@ -551,7 +551,7 @@ fn validate_evaluator_authority_state(
 
     if !matches!(
         state.harness_phase.as_deref(),
-        Some("executing" | "evaluating" | "repairing")
+        Some(crate::execution::phase::PHASE_EXECUTING | "evaluating" | "repairing")
     ) {
         gate.fail(
             FailureClass::IllegalHarnessPhase,
@@ -633,7 +633,10 @@ fn validate_handoff_authority_state(
         return;
     };
 
-    if !matches!(state.harness_phase.as_deref(), Some("handoff_required")) {
+    if !matches!(
+        state.harness_phase.as_deref(),
+        Some(crate::execution::phase::PHASE_HANDOFF_REQUIRED)
+    ) {
         gate.fail(
             FailureClass::IllegalHarnessPhase,
             "handoff_illegal_phase",
@@ -1204,7 +1207,7 @@ pub(crate) fn validate_handoff_semantics(
         .map(String::as_str)
         .collect();
 
-    if handoff.harness_phase != "handoff_required" {
+    if handoff.harness_phase != crate::execution::phase::PHASE_HANDOFF_REQUIRED {
         gate.fail(
             FailureClass::MissingRequiredHandoff,
             "handoff_phase_mismatch",

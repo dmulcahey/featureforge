@@ -3,7 +3,8 @@ use crate::execution::state::{PlanExecutionStatus, StatusBlockingRecord};
 pub(crate) const TARGETLESS_STALE_RECONCILE_REASON_CODE: &str = "stale_unreviewed_target_missing";
 pub(crate) const TARGETLESS_STALE_MISSING_AUTHORITY_CODE: &str =
     "missing_authoritative_stale_target";
-pub(crate) const TARGETLESS_STALE_RECONCILE_PHASE_DETAIL: &str = "runtime_reconcile_required";
+pub(crate) const TARGETLESS_STALE_RECONCILE_PHASE_DETAIL: &str =
+    crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED;
 pub(crate) const TARGETLESS_STALE_RECONCILE_DETAIL: &str = "Review state is stale_unreviewed but no authoritative stale task, branch, or milestone target is bound.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,25 +17,41 @@ impl TargetlessStaleReconcile {
     ) -> bool {
         review_state_status == "stale_unreviewed"
             || status.review_state_status == "stale_unreviewed"
-            || status.phase_detail == "execution_reentry_required"
+            || status.phase_detail == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
     }
 
     pub(crate) fn status_needs_marker(
         review_state_status: &str,
         stale_unreviewed_closures: &[String],
-        has_task_closure_baseline_candidate: bool,
+        _has_task_closure_baseline_candidate: bool,
+        has_authoritative_stale_target: bool,
     ) -> bool {
         review_state_status == "stale_unreviewed"
             && stale_unreviewed_closures.is_empty()
-            && !has_task_closure_baseline_candidate
+            && !has_authoritative_stale_target
     }
 
-    pub(crate) fn status_needs_marker_for_status(status: &PlanExecutionStatus) -> bool {
+    pub(crate) fn status_needs_marker_with_authority(
+        status: &PlanExecutionStatus,
+        has_authoritative_stale_target: bool,
+    ) -> bool {
+        if status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code.as_str() == "negative_result_requires_execution_reentry")
+        {
+            return false;
+        }
         Self::status_needs_marker(
             &status.review_state_status,
             &status.stale_unreviewed_closures,
             task_closure_baseline_repair_candidate_reason_present(status),
+            has_authoritative_stale_target,
         )
+    }
+
+    pub(crate) fn status_needs_marker_for_status(status: &PlanExecutionStatus) -> bool {
+        Self::status_has_diagnostic(status)
     }
 
     pub(crate) fn from_reason_code(reason_code: &str) -> Option<Self> {
@@ -82,6 +99,16 @@ impl TargetlessStaleReconcile {
             TARGETLESS_STALE_RECONCILE_REASON_CODE,
         );
         Self::ensure_reason_codes(&mut status.blocking_reason_codes);
+    }
+
+    pub(crate) fn clear_status_diagnostic(status: &mut PlanExecutionStatus) {
+        status
+            .reason_codes
+            .retain(|code| code != TARGETLESS_STALE_RECONCILE_REASON_CODE);
+        status.blocking_reason_codes.retain(|code| {
+            code != TARGETLESS_STALE_RECONCILE_REASON_CODE
+                && code != TARGETLESS_STALE_MISSING_AUTHORITY_CODE
+        });
     }
 
     pub(crate) fn status_blocking_record(

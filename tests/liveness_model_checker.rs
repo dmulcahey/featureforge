@@ -5,7 +5,7 @@ mod process_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
 
@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-04-01-liveness-model-plan.md";
 const SPEC_REL: &str = "docs/featureforge/specs/2026-04-01-liveness-model-spec.md";
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct ProgressMetric {
     targetless_stale_without_diagnostic: u8,
     hidden_command_exposure: u8,
@@ -357,11 +357,17 @@ fn write_variant_harness_state(fixture: &SyntheticFixtureContext<'_>, synthetic:
         }
         history_records.insert(history_key, history_record);
         if !synthetic.dispatch_lineage_missing {
+            let dispatch_reviewed_state_id =
+                if synthetic.stale_boundary_present && task == boundary_task {
+                    fixture.reviewed_state_id
+                } else {
+                    record_reviewed_state_id
+                };
             dispatch_lineage.insert(
                 format!("task-{task}"),
                 json!({
-                    "dispatch_id": format!("dispatch-{task}"),
-                    "reviewed_state_id": record_reviewed_state_id,
+                    "dispatch_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "reviewed_state_id": dispatch_reviewed_state_id,
                     "execution_run_id": "run-liveness",
                     "source_task": task,
                     "source_step": 1,
@@ -905,6 +911,23 @@ fn public_edge_satisfies_liveness_contract(
     if after < before {
         return true;
     }
+    if let (Some(before_command), Some(after_command)) = (
+        materialized_status_command(before_status),
+        materialized_status_command(after_status),
+    ) && before_command == after_command
+        && is_public_mutation_repeat_guard_command(after_status, &after_command)
+    {
+        return false;
+    }
+    if let (Some(before_command), Some(after_command)) = (
+        materialized_status_command(before_status),
+        materialized_status_command(after_status),
+    ) && semantic_public_mutation_key(&before_command)
+        != semantic_public_mutation_key(&after_command)
+        && is_public_mutation_repeat_guard_command(after_status, &after_command)
+    {
+        return true;
+    }
     if after_status.recommended_command == before_status.recommended_command
         && after_status.phase_detail == before_status.phase_detail
         && after_status.blocking_reason_codes == before_status.blocking_reason_codes
@@ -1101,7 +1124,10 @@ fn is_workflow_operator_command(command: &str) -> bool {
 
 fn materialize_public_command_template(state: &Path, command: &str) -> String {
     let summary = summary_file(state, "liveness-public-edge");
-    let summary = summary.to_string_lossy();
+    materialize_public_command_template_with_summary(command, &summary.to_string_lossy())
+}
+
+fn materialize_public_command_template_with_summary(command: &str, summary: &str) -> String {
     let mut materialized = command
         .replace(
             "[--verification-summary-file <path> when verification ran]",
@@ -1113,11 +1139,760 @@ fn materialize_public_command_template(state: &Path, command: &str) -> String {
         .replace("pass|fail", "pass")
         .replace("<source>", "human-independent-reviewer")
         .replace("<id>", "liveness-model-checker")
-        .replace("<path>", &summary);
+        .replace("<path>", summary);
     if let Some(optional_start) = materialized.find(" [") {
         materialized.truncate(optional_start);
     }
     materialized
+}
+
+fn reopen_target(command: &str) -> Option<(u32, u32)> {
+    let parts = shlex::split(command)?;
+    let words = parts.iter().map(String::as_str).collect::<Vec<_>>();
+    if !words
+        .windows(3)
+        .any(|window| window == ["plan", "execution", "reopen"])
+    {
+        return None;
+    }
+    let task = flag_value_u32(&words, "--task")?;
+    let step = flag_value_u32(&words, "--step")?;
+    Some((task, step))
+}
+
+fn flag_value_u32(words: &[&str], flag: &str) -> Option<u32> {
+    words
+        .windows(2)
+        .find_map(|window| (window[0] == flag).then_some(window[1]))
+        .and_then(|value| value.parse::<u32>().ok())
+}
+
+fn substantive_repo_work_invalidates_current_closure(synthetic: SyntheticState) -> bool {
+    synthetic.stale_boundary_present || synthetic.downstream_stale_step_present
+}
+
+fn assert_no_same_current_task_reopen_without_substantive_work(
+    label: &str,
+    synthetic: SyntheticState,
+    command: &str,
+) {
+    if synthetic.completed_tasks == 0
+        || substantive_repo_work_invalidates_current_closure(synthetic)
+    {
+        return;
+    }
+    let Some((task, step)) = reopen_target(command) else {
+        return;
+    };
+    assert!(
+        task > u32::from(synthetic.completed_tasks),
+        "{label} must not recommend reopening already-current Task {task} Step {step} without substantive repo work invalidating that closure; command={command}"
+    );
+}
+
+fn assert_multistep_reopen_uses_shared_exact_command_semantics(
+    label: &str,
+    synthetic: SyntheticState,
+    command: &str,
+) {
+    if synthetic.steps_per_task <= 1 || synthetic.completed_tasks == 0 {
+        return;
+    }
+    let Some((task, step)) = reopen_target(command) else {
+        return;
+    };
+    if task > u32::from(synthetic.completed_tasks) {
+        return;
+    }
+    assert_eq!(
+        step,
+        u32::from(synthetic.steps_per_task),
+        "{label} must reopen the latest attempted step for completed multi-step Task {task}; command={command}"
+    );
+    assert!(
+        command.contains("--source featureforge:executing-plans"),
+        "{label} must derive reopen source from the shared exact-command execution mode; command={command}"
+    );
+}
+
+fn assert_reopen_liveness_contract(label: &str, synthetic: SyntheticState, command: &str) {
+    assert_no_same_current_task_reopen_without_substantive_work(label, synthetic, command);
+    assert_multistep_reopen_uses_shared_exact_command_semantics(label, synthetic, command);
+}
+
+fn assert_targetless_stale_does_not_fabricate_current_task(
+    label: &str,
+    synthetic: SyntheticState,
+    status: &LivenessPlanExecutionStatus,
+) {
+    if !synthetic.targetless_stale_present || synthetic.stale_boundary_present {
+        return;
+    }
+    let completed_task = u32::from(synthetic.completed_tasks);
+    let execution_context_task = status
+        .execution_command_context
+        .as_ref()
+        .and_then(|context| context.task_number);
+    assert!(
+        status.stale_unreviewed_closures.is_empty(),
+        "{label} targetless stale state must not fabricate stale closure ids: {status:?}"
+    );
+    assert!(
+        status.blocking_task != Some(completed_task)
+            && status.resume_task != Some(completed_task)
+            && execution_context_task != Some(completed_task),
+        "{label} targetless stale state must not fabricate the current task as the stale target: {status:?}"
+    );
+}
+
+fn is_repair_review_state_command(command: &str) -> bool {
+    shlex::split(command).is_some_and(|parts| {
+        let words = parts.iter().map(String::as_str).collect::<Vec<_>>();
+        words
+            .windows(3)
+            .any(|window| window == ["plan", "execution", "repair-review-state"])
+    })
+}
+
+fn assert_repair_review_state_successor_contract(
+    label: &str,
+    before: &LivenessPlanExecutionStatus,
+    after: &LivenessPlanExecutionStatus,
+) {
+    let same_tuple = after.recommended_command == before.recommended_command
+        && after.phase_detail == before.phase_detail
+        && after.blocking_reason_codes == before.blocking_reason_codes;
+    assert!(
+        !same_tuple,
+        "{label} repair-review-state must not return the same public command tuple repeatedly: before={before:?} after={after:?}"
+    );
+
+    let phase = after.phase_detail.as_str();
+    let records_closure = matches!(
+        phase,
+        "task_closure_recording_ready" | "branch_closure_recording_required_for_release_readiness"
+    );
+    let records_late_stage = matches!(
+        phase,
+        "release_readiness_recording_ready"
+            | "release_blocker_resolution_required"
+            | "final_review_dispatch_required"
+            | "final_review_outcome_pending"
+            | "final_review_recording_ready"
+            | "qa_recording_required"
+            | "test_plan_refresh_required"
+            | "finish_review_gate_ready"
+            | "finish_completion_gate_ready"
+    );
+    let diagnostic = blocked_runtime_bug_diagnostic_status(after)
+        || targetless_stale_reconcile_status(after)
+        || (phase == "runtime_reconcile_required" && !after.blocking_reason_codes.is_empty());
+    let advances = after.active_task.is_some()
+        || after
+            .execution_command_context
+            .as_ref()
+            .and_then(|context| context.task_number)
+            .is_some()
+        || after.state_kind == "waiting_external_input"
+        || after.recommended_command.as_deref().is_some_and(|command| {
+            command.contains(" begin ")
+                || command.contains(" complete ")
+                || command.contains(" reopen ")
+                || command.contains(" close-current-task ")
+        });
+
+    assert!(
+        records_closure || records_late_stage || diagnostic || advances,
+        "{label} repair-review-state successor must advance, record closure/late-stage state, or emit a diagnostic: before={before:?} after={after:?}"
+    );
+}
+
+fn public_command_kind(command: &str) -> Option<String> {
+    let parts = shlex::split(command)?;
+    let words = parts.iter().map(String::as_str).collect::<Vec<_>>();
+    match words.as_slice() {
+        ["featureforge", "workflow", "operator", ..] => Some(String::from("workflow operator")),
+        ["featureforge", "plan", "execution", command_kind, ..] => Some((*command_kind).to_owned()),
+        _ => None,
+    }
+}
+
+fn reaches_real_work_or_wait(status: &LivenessPlanExecutionStatus) -> bool {
+    status.state_kind == "terminal"
+        || status.state_kind == "waiting_external_input"
+        || status.active_task.is_some()
+        || status.phase_detail == "execution_in_progress"
+}
+
+fn is_diagnostic_status(status: &LivenessPlanExecutionStatus) -> bool {
+    blocked_runtime_bug_diagnostic_status(status)
+        || current_stale_overlap_runtime_diagnostic(status)
+        || targetless_stale_reconcile_status(status)
+        || (status.phase_detail == "runtime_reconcile_required"
+            && !status.blocking_reason_codes.is_empty())
+}
+
+fn is_legal_real_work_command(command: &str) -> bool {
+    public_command_kind(command)
+        .is_some_and(|kind| matches!(kind.as_str(), "begin" | "complete" | "reopen" | "transfer"))
+}
+
+fn is_replayable_real_work_command(
+    synthetic: SyntheticState,
+    _status: &LivenessPlanExecutionStatus,
+    command: &str,
+) -> bool {
+    match public_command_kind(command).as_deref() {
+        Some("begin" | "transfer") => true,
+        // Completing a step is a human-work boundary. Replaying the templated
+        // command proves the CLI accepts placeholders, not that substantive
+        // task work happened, so bounded liveness stops there.
+        Some("complete") => false,
+        Some("reopen") => reopen_target(command)
+            .is_some_and(|(task, _step)| task <= u32::from(synthetic.completed_tasks)),
+        _ => false,
+    }
+}
+
+fn command_requires_external_result_input(
+    status: &LivenessPlanExecutionStatus,
+    command: &str,
+) -> bool {
+    match public_command_kind(command).as_deref() {
+        Some("close-current-task") => true,
+        Some("advance-late-stage") => {
+            !command.contains("--result")
+                && matches!(
+                    status.phase_detail.as_str(),
+                    "release_readiness_recording_ready"
+                        | "release_blocker_resolution_required"
+                        | "final_review_recording_ready"
+                        | "qa_recording_required"
+                )
+        }
+        _ => false,
+    }
+}
+
+fn assert_public_command_is_safe(label: &str, command: &str) {
+    assert!(
+        command.starts_with("featureforge "),
+        "{label} recommended command must remain public: {command}"
+    );
+    assert!(
+        !contains_hidden_command_token(command),
+        "{label} recommended command must not route through hidden command lanes: {command}"
+    );
+}
+
+fn liveness_route_key(status: &LivenessPlanExecutionStatus, command: &str) -> String {
+    format!(
+        "phase={};command={};scope={:?};task={:?};reasons={:?};blocking_reasons={:?}",
+        status.phase_detail,
+        command,
+        status.blocking_scope,
+        status.blocking_task,
+        status.reason_codes,
+        status.blocking_reason_codes
+    )
+}
+
+fn is_runtime_management_mutation_command(
+    status: &LivenessPlanExecutionStatus,
+    command: &str,
+) -> bool {
+    if is_legal_real_work_command(command)
+        || command_requires_external_result_input(status, command)
+    {
+        return false;
+    }
+
+    public_command_kind(command).is_some_and(|kind| {
+        matches!(
+            kind.as_str(),
+            "advance-late-stage" | "materialize-projections" | "repair-review-state"
+        )
+    })
+}
+
+fn is_public_mutation_repeat_guard_command(
+    status: &LivenessPlanExecutionStatus,
+    command: &str,
+) -> bool {
+    if command_requires_external_result_input(status, command) {
+        return false;
+    }
+
+    public_command_kind(command).is_some_and(|kind| {
+        matches!(
+            kind.as_str(),
+            "advance-late-stage"
+                | "begin"
+                | "complete"
+                | "materialize-projections"
+                | "reopen"
+                | "repair-review-state"
+                | "transfer"
+        )
+    })
+}
+
+fn semantic_public_mutation_key(command: &str) -> String {
+    materialize_public_command_template_with_summary(command, "liveness-public-edge.md")
+}
+
+fn remember_public_mutation_command(
+    seen_commands: &mut BTreeSet<String>,
+    status: &LivenessPlanExecutionStatus,
+    command: &str,
+) -> Result<(), String> {
+    if is_public_mutation_repeat_guard_command(status, command)
+        && !seen_commands.insert(semantic_public_mutation_key(command))
+    {
+        return Err(format!(
+            "repeated public mutation before convergence: {command}"
+        ));
+    }
+    Ok(())
+}
+
+struct BoundedLivenessContext<'a> {
+    runtime: &'a ExecutionRuntime,
+    state: &'a Path,
+    total_tasks: u8,
+    label: &'a str,
+    synthetic: SyntheticState,
+}
+
+fn assert_bounded_runtime_management_path_converges(
+    context: &BoundedLivenessContext<'_>,
+    first_status: &LivenessPlanExecutionStatus,
+    first_successor: &LivenessPlanExecutionStatus,
+    first_command: Option<&str>,
+) {
+    let mut seen_route_keys = BTreeSet::new();
+    let mut seen_public_mutation_commands = BTreeSet::new();
+    if let Some(command) = first_command {
+        assert_reopen_liveness_contract(context.label, context.synthetic, command);
+        seen_route_keys.insert(liveness_route_key(first_status, command));
+        remember_public_mutation_command(&mut seen_public_mutation_commands, first_status, command)
+            .unwrap_or_else(|error| panic!("{} {error}", context.label));
+    }
+
+    let mut previous = first_status.clone();
+    let mut current = first_successor.clone();
+    for edge in 2..=3 {
+        if is_diagnostic_status(&current)
+            || current.state_kind == "terminal"
+            || current.state_kind == "waiting_external_input"
+        {
+            return;
+        }
+
+        let maybe_command = materialized_status_command(&current);
+        if reaches_real_work_or_wait(&current)
+            && maybe_command.as_deref().is_none_or(|command| {
+                !is_replayable_real_work_command(context.synthetic, &current, command)
+            })
+        {
+            return;
+        }
+
+        let command = maybe_command.unwrap_or_else(|| {
+            panic!(
+                "{} bounded convergence edge {edge} reached a non-converged commandless state after excluding real work, wait, and diagnostics: previous={previous:?}; current={current:?}",
+                context.label
+            )
+        });
+        assert_public_command_is_safe(context.label, &command);
+        assert_reopen_liveness_contract(context.label, context.synthetic, &command);
+        let route_key = liveness_route_key(&current, &command);
+        assert!(
+            seen_route_keys.insert(route_key.clone()),
+            "{} repeated the same public route tuple after an intervening edge instead of converging; repeated={route_key}; previous={previous:?}; current={current:?}",
+            context.label
+        );
+        remember_public_mutation_command(&mut seen_public_mutation_commands, &current, &command)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{} {error}; previous={previous:?}; current={current:?}",
+                    context.label
+                )
+            });
+        if command_requires_external_result_input(&current, &command) {
+            return;
+        }
+        if is_legal_real_work_command(&command)
+            && !is_replayable_real_work_command(context.synthetic, &current, &command)
+        {
+            return;
+        }
+
+        let before = progress_metric_from_status(&current, context.total_tasks);
+        let successor = execute_public_progress_edge(context.runtime, context.state, &current)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{} bounded convergence edge {edge} should execute `{command}`: {error}",
+                    context.label
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} bounded convergence edge {edge} should expose a concrete successor from {current:?}",
+                    context.label
+                )
+            });
+        let after = progress_metric_from_status(&successor, context.total_tasks);
+        assert!(
+            public_edge_satisfies_liveness_contract(&current, before, &successor, after),
+            "{} bounded convergence edge {edge} must reduce the metric, expose a different blocker, or reach a diagnostic; before={before:?} after={after:?} current={current:?} successor={successor:?}",
+            context.label
+        );
+        if is_repair_review_state_command(&command) {
+            assert_repair_review_state_successor_contract(context.label, &current, &successor);
+        }
+        previous = current;
+        current = successor;
+    }
+
+    if is_diagnostic_status(&current)
+        || current.state_kind == "terminal"
+        || current.state_kind == "waiting_external_input"
+    {
+        return;
+    }
+    let maybe_command = materialized_status_command(&current);
+    if reaches_real_work_or_wait(&current)
+        && maybe_command.as_deref().is_none_or(|command| {
+            !is_replayable_real_work_command(context.synthetic, &current, command)
+        })
+    {
+        return;
+    }
+    let command = maybe_command.unwrap_or_else(|| {
+        panic!(
+            "{} public runtime-management path exhausted the bounded replay in a non-converged commandless state after excluding real work, wait, and diagnostics: current={current:?}",
+            context.label
+        )
+    });
+    assert_reopen_liveness_contract(context.label, context.synthetic, &command);
+    remember_public_mutation_command(&mut seen_public_mutation_commands, &current, &command)
+        .unwrap_or_else(|error| panic!("{} {error}; current={current:?}", context.label));
+    let route_key = liveness_route_key(&current, &command);
+    assert!(
+        !seen_route_keys.contains(&route_key)
+            || command_requires_external_result_input(&current, &command),
+        "{} public mutation path repeated a prior route tuple within three edges; repeated={route_key}; current={current:?}",
+        context.label
+    );
+}
+
+fn minimal_liveness_status(
+    phase_detail: &str,
+    blocking_reason_codes: Vec<String>,
+    recommended_command: Option<String>,
+) -> LivenessPlanExecutionStatus {
+    LivenessPlanExecutionStatus {
+        phase_detail: phase_detail.to_owned(),
+        review_state_status: String::from("stale_unreviewed"),
+        current_task_closures: Vec::new(),
+        stale_unreviewed_closures: Vec::new(),
+        reason_codes: Vec::new(),
+        blocking_reason_codes,
+        state_kind: String::from("blocked"),
+        next_public_action: None,
+        blockers: Vec::new(),
+        next_action: String::from("repair review state"),
+        recommended_command,
+        blocking_scope: Some(String::from("task")),
+        execution_command_context: None,
+        active_task: None,
+        blocking_task: Some(1),
+        resume_task: None,
+    }
+}
+
+#[test]
+fn repeated_public_mutation_detection_ignores_reason_churn() {
+    let command =
+        String::from("featureforge plan execution repair-review-state --plan docs/plan.md");
+    let mut seen_commands = BTreeSet::new();
+    let before = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("current_task_closure_stale")],
+        Some(command.clone()),
+    );
+    let after = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("projection_reconcile_required")],
+        Some(command.clone()),
+    );
+
+    remember_public_mutation_command(&mut seen_commands, &before, &command)
+        .expect("first runtime-management mutation should be accepted");
+    assert!(
+        remember_public_mutation_command(&mut seen_commands, &after, &command).is_err(),
+        "repeated runtime-management mutation must be rejected even when route metadata changes"
+    );
+    assert!(
+        !public_edge_satisfies_liveness_contract(
+            &before,
+            ProgressMetric::default(),
+            &after,
+            ProgressMetric::default(),
+        ),
+        "public-edge liveness must reject the same runtime-management mutation with changed reasons"
+    );
+
+    let reopen =
+        String::from("featureforge plan execution reopen --plan docs/plan.md --task 1 --step 1");
+    let before = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("current_task_closure_stale")],
+        Some(reopen.clone()),
+    );
+    let after = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("route_metadata_changed")],
+        Some(reopen.clone()),
+    );
+    let mut seen_commands = BTreeSet::new();
+    remember_public_mutation_command(&mut seen_commands, &before, &reopen)
+        .expect("first real-work mutation should be accepted");
+    assert!(
+        remember_public_mutation_command(&mut seen_commands, &after, &reopen).is_err(),
+        "repeated reopen mutation must be rejected even when route metadata changes"
+    );
+    assert!(
+        !public_edge_satisfies_liveness_contract(
+            &before,
+            ProgressMetric::default(),
+            &after,
+            ProgressMetric::default(),
+        ),
+        "public-edge liveness must reject the same real-work mutation with changed reasons"
+    );
+}
+
+#[test]
+fn repeated_public_mutation_detection_rejects_repair_to_repeated_reopen_sequence() {
+    let repair =
+        String::from("featureforge plan execution repair-review-state --plan docs/plan.md");
+    let reopen =
+        String::from("featureforge plan execution reopen --plan docs/plan.md --task 1 --step 1");
+    let mut seen_commands = BTreeSet::new();
+    let repair_status = minimal_liveness_status(
+        "runtime_reconcile_required",
+        vec![String::from(
+            "current_task_closure_overlay_restore_required",
+        )],
+        Some(repair.clone()),
+    );
+    let reopen_status = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("current_task_closure_stale")],
+        Some(reopen.clone()),
+    );
+    let repeated_reopen_status = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("route_metadata_changed_after_reopen")],
+        Some(reopen.clone()),
+    );
+
+    remember_public_mutation_command(&mut seen_commands, &repair_status, &repair)
+        .expect("repair-review-state should be accepted as the first public mutation");
+    remember_public_mutation_command(&mut seen_commands, &reopen_status, &reopen)
+        .expect("first reopen after repair-review-state should be accepted and replayed");
+    assert!(
+        remember_public_mutation_command(&mut seen_commands, &repeated_reopen_status, &reopen)
+            .is_err(),
+        "bounded liveness replay must fail repair-review-state -> reopen -> same reopen loops"
+    );
+}
+
+#[test]
+fn close_current_task_is_a_real_recording_boundary_for_liveness() {
+    let command = "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run";
+    let status = minimal_liveness_status(
+        "task_closure_recording_ready",
+        vec![String::from("task_closure_baseline_repair_candidate")],
+        Some(command.to_owned()),
+    );
+
+    assert!(
+        command_requires_external_result_input(&status, command),
+        "close-current-task records review and verification results, so bounded runtime-management liveness should stop at that real-work boundary"
+    );
+    assert!(
+        !is_runtime_management_mutation_command(&status, command),
+        "close-current-task must not be classified as runtime-management churn"
+    );
+}
+
+#[test]
+fn targetless_stale_guard_rejects_fabricated_current_task_targets() {
+    let synthetic = SyntheticState {
+        completed_tasks: 2,
+        targetless_stale_present: true,
+        ..SyntheticState::base(2)
+    };
+    let clean_status = minimal_liveness_status("execution_reentry_required", Vec::new(), None);
+    assert_targetless_stale_does_not_fabricate_current_task(
+        "targetless-stale clean diagnostic",
+        synthetic,
+        &clean_status,
+    );
+
+    let mut stale_ids = clean_status.clone();
+    stale_ids.stale_unreviewed_closures = vec![String::from("task-2")];
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_targetless_stale_does_not_fabricate_current_task(
+                "targetless-stale fabricated stale id",
+                synthetic,
+                &stale_ids,
+            );
+        })
+        .is_err(),
+        "targetless stale guard must reject fabricated stale closure ids"
+    );
+
+    let mut blocking_task = clean_status.clone();
+    blocking_task.blocking_task = Some(2);
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_targetless_stale_does_not_fabricate_current_task(
+                "targetless-stale fabricated blocking task",
+                synthetic,
+                &blocking_task,
+            );
+        })
+        .is_err(),
+        "targetless stale guard must reject fabricated blocking_task current targets"
+    );
+
+    let mut resume_task = clean_status.clone();
+    resume_task.resume_task = Some(2);
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_targetless_stale_does_not_fabricate_current_task(
+                "targetless-stale fabricated resume task",
+                synthetic,
+                &resume_task,
+            );
+        })
+        .is_err(),
+        "targetless stale guard must reject fabricated resume_task current targets"
+    );
+
+    let mut execution_context = clean_status;
+    execution_context.execution_command_context = Some(LivenessExecutionCommandContext {
+        task_number: Some(2),
+    });
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_targetless_stale_does_not_fabricate_current_task(
+                "targetless-stale fabricated execution context",
+                synthetic,
+                &execution_context,
+            );
+        })
+        .is_err(),
+        "targetless stale guard must reject fabricated execution command context current targets"
+    );
+}
+
+#[test]
+fn same_current_reopen_guard_uses_effective_public_action_lanes() {
+    let synthetic = SyntheticState {
+        completed_tasks: 2,
+        ..SyntheticState::base(2)
+    };
+    let command =
+        String::from("featureforge plan execution reopen --plan docs/plan.md --task 2 --step 1");
+
+    let mut next_action_status =
+        minimal_liveness_status("execution_reentry_required", Vec::new(), None);
+    next_action_status.next_public_action = Some(LivenessNextPublicAction {
+        command: command.clone(),
+    });
+    let effective = materialized_status_command(&next_action_status)
+        .expect("next_public_action should be the effective public command");
+    assert_eq!(effective, command);
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_reopen_liveness_contract(
+                "effective next_public_action reopen",
+                synthetic,
+                &effective,
+            );
+        })
+        .is_err(),
+        "same-current reopen guard must reject next_public_action reopen loops"
+    );
+
+    let mut blocker_status =
+        minimal_liveness_status("execution_reentry_required", Vec::new(), None);
+    blocker_status.blockers = vec![LivenessBlocker {
+        category: String::from("stale"),
+        next_public_action: Some(command.clone()),
+    }];
+    let effective = materialized_status_command(&blocker_status)
+        .expect("blocker action should be the effective public command");
+    assert_eq!(effective, command);
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_reopen_liveness_contract("effective blocker reopen", synthetic, &effective);
+        })
+        .is_err(),
+        "same-current reopen guard must reject blocker-action reopen loops"
+    );
+}
+
+#[test]
+fn multistep_reopen_guard_rejects_step_or_source_divergence() {
+    let synthetic = SyntheticState {
+        completed_tasks: 2,
+        steps_per_task: 2,
+        stale_boundary_present: true,
+        ..SyntheticState::base(2)
+    };
+    let step_one_reopen = String::from(
+        "featureforge plan execution reopen --plan docs/plan.md --task 2 --step 1 --source featureforge:executing-plans",
+    );
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_reopen_liveness_contract(
+                "multistep stale reopen step regression",
+                synthetic,
+                &step_one_reopen,
+            );
+        })
+        .is_err(),
+        "multistep reopen guard must reject stale routes that fall back to step 1"
+    );
+    let wrong_source_reopen = String::from(
+        "featureforge plan execution reopen --plan docs/plan.md --task 2 --step 2 --source featureforge:subagent-driven-development",
+    );
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_reopen_liveness_contract(
+                "multistep stale reopen source regression",
+                synthetic,
+                &wrong_source_reopen,
+            );
+        })
+        .is_err(),
+        "multistep reopen guard must reject stale routes that bypass shared execution-source derivation"
+    );
+    let shared_exact_reopen = String::from(
+        "featureforge plan execution reopen --plan docs/plan.md --task 2 --step 2 --source featureforge:executing-plans",
+    );
+    assert_reopen_liveness_contract(
+        "multistep stale reopen exact command",
+        synthetic,
+        &shared_exact_reopen,
+    );
 }
 
 fn synthetic_liveness_cases(total_tasks: u8) -> Vec<SyntheticState> {
@@ -1519,11 +2294,12 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 );
                 let status = status_value(&runtime, &label);
                 let state_kind = status.state_kind.as_str();
-                let recommended_command = status.recommended_command.as_deref();
+                let public_command = materialized_status_command(&status);
+                assert_targetless_stale_does_not_fabricate_current_task(&label, synthetic, &status);
 
                 if state_kind == "terminal" {
                     assert!(
-                        recommended_command.is_none(),
+                        public_command.is_none(),
                         "terminal states must not expose a public command: {status:?}"
                     );
                     continue;
@@ -1531,7 +2307,7 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
 
                 if state_kind == "waiting_external_input" {
                     assert!(
-                        recommended_command.is_none(),
+                        public_command.is_none(),
                         "waiting states must not expose a public command: {status:?}"
                     );
                     continue;
@@ -1539,12 +2315,7 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
 
                 if targetless_stale_reconcile_status(&status) {
                     assert!(
-                        recommended_command.is_none()
-                            && status.next_public_action.is_none()
-                            && status
-                                .blockers
-                                .iter()
-                                .all(|blocker| blocker.next_public_action.is_none()),
+                        public_command.is_none(),
                         "targetless stale reconcile must not synthesize a repair or reopen loop: {status:?}"
                     );
                     continue;
@@ -1553,12 +2324,7 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 if blocked_runtime_bug_diagnostic_status(&status) {
                     let public_output = format!("{status:?}");
                     assert!(
-                        recommended_command.is_none()
-                            && status.next_public_action.is_none()
-                            && status
-                                .blockers
-                                .iter()
-                                .all(|blocker| blocker.next_public_action.is_none()),
+                        public_command.is_none(),
                         "{label} blocked_runtime_bug must be diagnostic-only: {status:?}"
                     );
                     assert!(
@@ -1571,12 +2337,7 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 if current_stale_overlap_runtime_diagnostic(&status) {
                     let public_output = format!("{status:?}");
                     assert!(
-                        recommended_command.is_none()
-                            && status.next_public_action.is_none()
-                            && status
-                                .blockers
-                                .iter()
-                                .all(|blocker| blocker.next_public_action.is_none()),
+                        public_command.is_none(),
                         "current/stale overlap diagnostic must not synthesize an unsafe mutation: {status:?}"
                     );
                     assert!(
@@ -1587,26 +2348,16 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                     continue;
                 }
 
-                if let Some(command) = recommended_command {
-                    assert!(
-                        command.starts_with("featureforge "),
-                        "recommended command must remain public: {command}"
-                    );
-                    assert!(
-                        !contains_hidden_command_token(command),
-                        "recommended command must not route through hidden command lanes: {command}"
+                if let Some(command) = public_command.as_deref() {
+                    assert_public_command_is_safe(&label, command);
+                    assert_no_same_current_task_reopen_without_substantive_work(
+                        &label, synthetic, command,
                     );
                 } else {
-                    assert!(
-                        status.next_public_action.as_ref().is_some()
-                            || status
-                                .blockers
-                                .iter()
-                                .any(|blocker| { blocker.next_public_action.as_ref().is_some() }),
-                        "actionable states without recommended_command must surface a concrete public-action lane: {status:?}"
+                    panic!(
+                        "actionable states must surface a concrete public-action lane: {status:?}"
                     );
                 }
-
                 let before = progress_metric_from_status(&status, total_tasks);
                 let successor = execute_public_progress_edge(&runtime, state, &status)
                     .unwrap_or_else(|error| {
@@ -1619,6 +2370,25 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 assert!(
                     public_edge_satisfies_liveness_contract(&status, before, &successor, after),
                     "real public progress edge must reduce the metric, expose a different true blocker, emit a deterministic diagnostic, or resolve already-current state; before={before:?} after={after:?} status={status:?} successor={successor:?}"
+                );
+                if public_command
+                    .as_deref()
+                    .is_some_and(is_repair_review_state_command)
+                {
+                    assert_repair_review_state_successor_contract(&label, &status, &successor);
+                }
+                let bounded_context = BoundedLivenessContext {
+                    runtime: &runtime,
+                    state,
+                    total_tasks,
+                    label: &label,
+                    synthetic,
+                };
+                assert_bounded_runtime_management_path_converges(
+                    &bounded_context,
+                    &status,
+                    &successor,
+                    public_command.as_deref(),
                 );
                 executed_successor_edges = executed_successor_edges.saturating_add(1);
             }

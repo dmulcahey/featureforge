@@ -1,17 +1,19 @@
 #[path = "support/bin.rs"]
 mod bin_support;
-#[path = "support/featureforge.rs"]
-mod featureforge_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
-use featureforge_support::{run_featureforge_real_cli, run_featureforge_with_env_control_real_cli};
 use process_support::run;
+use public_featureforge_cli::{
+    run_featureforge_real_cli, run_featureforge_with_env_control_real_cli,
+};
 
 fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
