@@ -247,7 +247,7 @@ Artifact `pass` is the runtime-rendered form of CLI input `--result ready`.
 For workflow-routed implementation work, the derived companion artifact above is not the release gate itself.
 
 - workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.
-- For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`.
+- For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv`. `recommended_command` is display-only compatibility text.
 - Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness.
 - If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path>` and rerun workflow/operator.
 - When workflow/operator reports `phase_detail=release_readiness_recording_ready`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the runtime-owned release-readiness milestone.

@@ -76,11 +76,11 @@ Planning chain in plain language:
 The generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; if no approved plan path is known, resolve it through the normal planning/review handoff, then route with workflow/operator.
 
 Execution starts from an engineering-approved plan and the exact approved plan path.
-Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level command for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`.
+Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level argv vector for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`.
 
 When workflow/operator reports stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
 
-After `repair-review-state`, treat that command's own `recommended_command` as the immediate reroute and complete that follow-up before running any extra command. Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
+After `repair-review-state`, treat that command's own `recommended_public_command_argv` as the immediate reroute and complete that follow-up before running any extra command. `recommended_command` is display-only compatibility text; do not parse it for invocation. Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
 Do not manually edit `**Execution Note:**` lines to recover runtime state; execution-note markdown is projection-only.
 Do not repair runtime routing by editing tracked plan, evidence, review, readiness, QA, or strategy projection files. They are export artifacts; the event log and reducer-owned state are authoritative.
 
@@ -95,7 +95,7 @@ Task closure is enforced at task boundaries, not only at the end of the full pla
 - compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
-- `repair-review-state` returns one exact next command; follow that returned command directly
+- `repair-review-state` returns one exact next command as `recommended_public_command_argv`; follow that argv directly
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is authorized without per-dispatch user-consent prompts
 
 Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):

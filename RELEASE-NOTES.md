@@ -6,7 +6,8 @@
   current passing plan-fidelity gate before implementation routing, public
   replay tests use only compiled CLI helpers, reviewer-mode runtime recursion
   fails closed, and normal route recommendations come from typed public command
-  decisions
+  decisions exposed as `recommended_public_command_argv` while
+  `recommended_command` remains display-only compatibility text
 - split the execution runtime into clearer command, guard, event, reducer,
   read-model, invariant, router, and workflow-presentation boundaries, with
   boundary/liveness tests preventing duplicate routing truth, projection writes
@@ -47,8 +48,8 @@ Historical note: older sections below may mention hidden compatibility/debug com
 
 ### Breaking Output Contract Changes
 
-- `workflow operator --json`: bump `schema_version` to `2`, add the runtime-owned `base_branch` field for downstream workflow guidance, and change normal task/final-review late-stage guidance so `next_action`/`recommended_command` now point at intent-level `close-current-task` and `advance-late-stage` recording commands instead of public `record-review-dispatch` choreography or required public `--dispatch-id` bindings
-- `plan execution status --json`: align the diagnostic surface with the runtime-owned route by exposing the same `harness_phase`, `next_action`/`recommended_command` vocabulary, and late-stage `recording_context` fields while keeping status diagnostic-only
+- `workflow operator --json`: bump `schema_version` to `2`, add the runtime-owned `base_branch` field for downstream workflow guidance, and change normal task/final-review late-stage guidance so `next_action`/`recommended_public_command_argv` plus display-only `recommended_command` now point at intent-level `close-current-task` and `advance-late-stage` recording commands instead of public `record-review-dispatch` choreography or required public `--dispatch-id` bindings
+- `plan execution status --json`: align the diagnostic surface with the runtime-owned route by exposing the same `harness_phase`, `next_action`, `recommended_public_command_argv`, display-only `recommended_command`, and late-stage `recording_context` fields while keeping status diagnostic-only
 
 ## v1.9.0 - 2026-04-11
 

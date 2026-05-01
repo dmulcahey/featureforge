@@ -57,7 +57,7 @@ The authoritative public workflow query surface is:
 - `featureforge workflow operator --plan <path>`
 - `featureforge workflow operator --plan <path> --external-review-result-ready` when the caller already has the external task-review or final-review result in hand and needs workflow/operator to surface the matching recording-ready substate
 
-`featureforge plan execution status --plan <path>` is a supporting diagnostic surface. It must consume the same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`. Any disagreement is a runtime bug.
+`featureforge plan execution status --plan <path>` is a supporting diagnostic surface. It must consume the same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`. Any disagreement is a runtime bug. `recommended_command` is display-only compatibility text; `recommended_public_command_argv` is the machine-invocation representation.
 
 Parity checks must use matching routing inputs. Compare `status --plan <path>` to `workflow operator --plan <path>` for baseline parity, and compare `status --plan <path> --external-review-result-ready` to `workflow operator --plan <path> --external-review-result-ready` when asserting external-review-result-ready recording routes.
 
@@ -66,14 +66,14 @@ Explicit usage rule:
 - agents SHOULD run `featureforge workflow operator --plan <path>` first for normal routing
 - agents SHOULD run `featureforge plan execution status --plan <path>` only when deeper diagnostics are needed
 - when workflow/operator reports stale or missing closure context, agents SHOULD run `featureforge plan execution repair-review-state --plan <path>` directly
-- after `repair-review-state`, the command’s own `recommended_command` is authoritative for the immediate reroute
+- after `repair-review-state`, the command’s own `recommended_public_command_argv` is authoritative for the immediate reroute; do not shell-parse or whitespace-split `recommended_command`
 
 When workflow/operator returns a recording-ready substate, it must surface only the runtime-known ids the current recommended command still needs directly, plus any documented transparency-only identifiers that remain exposed:
 
 - `task_closure_recording_ready` must include the task number; dispatch id is compatibility/debug-only and must not be required for the normal public `close-current-task` path
 - `release_readiness_recording_ready.recording_context.branch_closure_id` and `release_blocker_resolution_required.recording_context.branch_closure_id` must exist for authoritative binding context and transparency even though the aggregate release-readiness path still takes only `--plan`, `--result`, and `--summary-file`
 - `final_review_recording_ready` must include the current branch closure id; dispatch id is compatibility/debug-only and must not be required for the normal public `advance-late-stage` final-review path
-- `recording_context` is omitted entirely when the current `recommended_command` needs no extra runtime-known identifiers and no transparency ids need to be surfaced; it is never `null` or an empty object
+- `recording_context` is omitted entirely when the current recommended public command argv needs no extra runtime-known identifiers and no transparency ids need to be surfaced; it is never `null` or an empty object
 - `final_review_recording_ready.recording_context.branch_closure_id` exists for authoritative binding context and transparency even though the aggregate final-review command itself no longer requires public `--dispatch-id`
 
 Compatibility/debug review-dispatch service responses use explicit action semantics:
@@ -86,7 +86,7 @@ Compatibility/debug review-dispatch service responses use explicit action semant
 When workflow/operator reports `phase=qa_pending` with `phase_detail=test_plan_refresh_required`, direct QA recording is not yet actionable:
 
 - `next_action` becomes `refresh test plan`
-- `recommended_command` remains omitted until the current-branch test-plan artifact is refreshed
+- `recommended_public_command_argv` and `recommended_command` remain omitted until the current-branch test-plan artifact is refreshed
 - the agent must route through `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before rerunning `featureforge workflow operator --plan <path>` or invoking `advance-late-stage`
 
 | operator intent | preferred aggregate command | lower-level primitive or service boundary |
@@ -214,7 +214,7 @@ The public workflow contract should be read like this:
 - `phase_detail` says which substate inside the phase is active
 - `review_state_status` says whether current reviewed state is usable
 - `next_action` says what the operator should do next
-- `recommended_command` says which exact command string or command template should run next
+- `recommended_public_command_argv` says which exact public command argv vector should run next; `recommended_command` is the display-only rendering for human compatibility
 
 Supporting query fields that runtime-owned commands rely on:
 

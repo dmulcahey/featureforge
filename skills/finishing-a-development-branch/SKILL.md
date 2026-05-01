@@ -205,7 +205,7 @@ If the operator reports `qa_pending` with `phase_detail=test_plan_refresh_requir
 
 If the operator reports `qa_pending` with `phase_detail=qa_recording_required`, record QA with `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>`, then rerun `featureforge workflow operator --plan <approved-plan-path>`.
 
-If the operator reports `ready_for_branch_completion`, run the exact `recommended_command` when present and rerun `featureforge workflow operator --plan <approved-plan-path>` until branch completion options are actually routable.
+If the operator reports `ready_for_branch_completion`, run the exact `recommended_public_command_argv` when present and rerun `featureforge workflow operator --plan <approved-plan-path>` until branch completion options are actually routable. Do not shell-parse or whitespace-split `recommended_command`; it is display-only compatibility text.
 
 If the operator reports any other late-stage phase/detail pair, follow that exact operator result instead of forcing QA or finish-gate commands from memory.
 

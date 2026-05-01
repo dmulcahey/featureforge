@@ -711,7 +711,7 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(planEngReview, /If isolated-agent workflows are unavailable, do not present `featureforge:subagent-driven-development` as an available override\./);
   assert.match(
     planEngReview,
-    /If workflow\/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution preflight\./,
+    /If workflow\/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of reopening execution preflight\./,
   );
   assert.doesNotMatch(planEngReview, /review_blocked/);
 
@@ -1034,7 +1034,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(subagentSkill, /Non-execution ad-hoc delegation still follows normal user-consent policy/);
   assert.match(
     subagentSkill,
-    /Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow\/operator `recommended_command`, follow `recommended_command`\./,
+    /Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow\/operator `recommended_public_command_argv`, follow the argv from workflow\/operator\./,
   );
   assert.match(
     subagentSkill,
@@ -1056,7 +1056,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       normalized,
-      /featureforge workflow operator --plan <approved-plan-path>[\s\S]*authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command`/i,
+      /featureforge workflow operator --plan <approved-plan-path>[\s\S]*authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_public_command_argv`/i,
       `${label} should treat workflow operator as the authoritative routing contract`,
     );
     assert.match(
@@ -1066,8 +1066,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       content,
-      /Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow\/operator `recommended_command`, follow `recommended_command`\./,
-      `${label} should treat resume_task/resume_step as advisory-only when they conflict with recommended_command`,
+      /Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow\/operator `recommended_public_command_argv`, follow the argv from workflow\/operator\./,
+      `${label} should treat resume_task/resume_step as advisory-only when they conflict with recommended_public_command_argv`,
     );
     assert.match(
       content,
@@ -1131,8 +1131,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       normalized,
-      /run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly[\s\S]*`recommended_command` is authoritative for the immediate reroute[\s\S]*Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required/i,
-      `${label} should require repair-review-state plus returned recommended_command sequencing`,
+      /run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly[\s\S]*`recommended_public_command_argv` is authoritative for the immediate reroute[\s\S]*Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required/i,
+      `${label} should require repair-review-state plus returned recommended_public_command_argv sequencing`,
     );
     assert.match(
       normalized,
@@ -1980,11 +1980,11 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   );
   assert.match(
     usingFeatureForge,
-    /Treat workflow\/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command` as the authoritative public routing contract\./,
+    /Treat workflow\/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_public_command_argv` as the authoritative public routing contract\. `recommended_command` is display-only compatibility text for humans\./,
   );
   assert.match(
     usingFeatureForge,
-    /Treat `resume_task` and `resume_step` from `featureforge plan execution status --plan <approved-plan-path>` as advisory diagnostics only; if they disagree with workflow\/operator `recommended_command`, follow `recommended_command`\./,
+    /Treat `resume_task` and `resume_step` from `featureforge plan execution status --plan <approved-plan-path>` as advisory diagnostics only; if they disagree with workflow\/operator `recommended_public_command_argv`, follow the argv from workflow\/operator\./,
   );
   assert.match(
     usingFeatureForge,
@@ -2008,7 +2008,7 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   );
   assert.match(
     usingFeatureForge,
-    /If workflow\/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`\./,
+    /If workflow\/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`\./,
   );
   assert.doesNotMatch(usingFeatureForge, /review_blocked/);
   assert.match(
@@ -2044,9 +2044,9 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.match(engReview, /Set `\*\*Head SHA:\*\*` to the current `git rev-parse HEAD` for the branch state that this test-plan artifact covers\./);
   assert.match(engReview, /In that late-stage lane, the terminal state is returning to the finish-gate flow with a regenerated current-branch test-plan artifact, not reopening execution preflight\./);
   assert.match(engReview, /Before presenting the final execution preflight handoff, if `\$_FEATUREFORGE_BIN` is available, call `\$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`\./);
-  assert.match(engReview, /Treat workflow\/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command` as authoritative for public routing\./);
+  assert.match(engReview, /Treat workflow\/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_public_command_argv` as authoritative for public routing\. `recommended_command` is display-only compatibility text\./);
   assert.match(engReview, /If workflow\/operator returns `phase` `executing`, present the normal execution preflight handoff below\./);
-  assert.match(engReview, /If workflow\/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution preflight\./);
+  assert.match(engReview, /If workflow\/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of reopening execution preflight\./);
   assert.doesNotMatch(engReview, /review_blocked/);
   assert.match(engReview, /Do not start implementation inside `plan-eng-review`\./);
 
@@ -2202,7 +2202,7 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     documentRelease,
-    /For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first; workflow\/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`\./,
+    /For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first; workflow\/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv`\. `recommended_command` is display-only compatibility text\./,
   );
   assert.match(documentRelease, /Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness\./);
   assert.match(documentRelease, /If workflow\/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path>` and rerun workflow\/operator\./);
@@ -2299,7 +2299,7 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     readme,
-    /After `repair-review-state`, treat that command's own `recommended_command` as the immediate reroute and complete that follow-up before running any extra command\./,
+    /After `repair-review-state`, treat that command's own `recommended_public_command_argv` as the immediate reroute and complete that follow-up before running any extra command\. `recommended_command` is display-only compatibility text; do not parse it for invocation\./,
   );
   assert.doesNotMatch(
     readme,
@@ -2619,7 +2619,7 @@ test('active docs describe the post-session-entry routing contract', () => {
   );
   assert.match(
     releaseNotes,
-    /plan execution status --json.*harness_phase.*next_action.*recommended_command.*recording_context.*diagnostic-only/is,
+    /plan execution status --json.*harness_phase.*next_action.*recommended_public_command_argv.*recommended_command.*recording_context.*diagnostic-only/is,
     'RELEASE-NOTES.md should describe the aligned plan execution status JSON route vocabulary and recording context output contract',
   );
 });

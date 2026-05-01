@@ -71,9 +71,10 @@ mutation eligibility checks. Hidden/debug commands are not representable as
 public action from reducer truth, guards, and current review state. They return typed
 commands before any display string is rendered.
 
-`src/workflow/operator.rs` presents the route decision. It may render
-`recommended_command` for compatibility, but the recommendation must come from the typed
-public command decision, not from reparsing a hand-written string.
+`src/workflow/operator.rs` presents the route decision. It exposes
+`recommended_public_command_argv` for machine invocation and may render
+`recommended_command` for human compatibility, but both representations must come from
+the typed public command decision, not from reparsing a hand-written string.
 
 `src/workflow/status.rs` owns non-execution workflow routing such as plan-review gates.
 For implementation entry, `Engineering Approved` is not enough by itself: a current
