@@ -150,6 +150,7 @@ function assertReviewerSurfaceCarriesPromptScopedRecursionRule(content, label) {
     'requesting-code-review',
     'plan-fidelity-review',
     'plan-eng-review',
+    'plan-ceo-review',
   ]) {
     assert.match(
       content,
@@ -169,6 +170,12 @@ function assertReviewerSurfaceCarriesPromptScopedRecursionRule(content, label) {
   assert.doesNotMatch(content, /runtime command guard/i, `${label} should not cite runtime guard enforcement`);
   assert.doesNotMatch(content, /reviewer-mode environment/i, `${label} should not cite reviewer-mode environment enforcement`);
   assertNoPositiveReviewerRuntimeInvocation(content, label);
+}
+
+function extractDispatchPromptPayload(content, label) {
+  const match = content.match(/(?:^|\n)  prompt: \|\n([\s\S]*?)\n```/);
+  assert.ok(match, `${label} should contain a dispatchable prompt: | payload`);
+  return match[1];
 }
 
 function assertSeparatesCandidateArtifactsFromAuthoritativeMutations(content, label) {
@@ -1458,6 +1465,14 @@ test('subagent reviewer prompts carry prompt-scoped recursion rule', () => {
       path.join(REPO_ROOT, 'skills/plan-ceo-review/accelerated-reviewer-prompt.md'),
     ],
     [
+      'outside voice ENG reviewer prompt',
+      path.join(REPO_ROOT, 'skills/plan-eng-review/outside-voice-prompt.md'),
+    ],
+    [
+      'outside voice CEO reviewer prompt',
+      path.join(REPO_ROOT, 'skills/plan-ceo-review/outside-voice-prompt.md'),
+    ],
+    [
       'spec reviewer prompt',
       path.join(REPO_ROOT, 'skills/subagent-driven-development/spec-reviewer-prompt.md'),
     ],
@@ -1470,6 +1485,14 @@ test('subagent reviewer prompts carry prompt-scoped recursion rule', () => {
   for (const [label, file] of reviewerPrompts) {
     assertReviewerSurfaceCarriesPromptScopedRecursionRule(readUtf8(file), label);
   }
+
+  const specReviewerPrompt = readUtf8(
+    path.join(REPO_ROOT, 'skills/subagent-driven-development/spec-reviewer-prompt.md'),
+  );
+  assertReviewerSurfaceCarriesPromptScopedRecursionRule(
+    extractDispatchPromptPayload(specReviewerPrompt, 'spec reviewer prompt'),
+    'spec reviewer dispatch payload',
+  );
 });
 
 test('review prompts use deterministic repair-packet findings tied to obligations', () => {

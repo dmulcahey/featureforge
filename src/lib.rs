@@ -64,9 +64,6 @@ pub fn run() -> std::process::ExitCode {
                 }
             },
             PlanCommand::Execution(plan_execution_cli) => {
-                if let Err(error) = reject_runtime_command_in_reviewer_context("plan execution") {
-                    return emit_json::<Value, JsonFailure>(Err(error));
-                }
                 match execution::state::ExecutionRuntime::discover(
                     &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
                 ) {
@@ -154,9 +151,6 @@ pub fn run() -> std::process::ExitCode {
         }
         Some(Command::UpdateCheck(args)) => emit_text(update_check::check(&args)),
         Some(Command::Workflow(workflow_cli)) => {
-            if let Err(error) = reject_runtime_command_in_reviewer_context("workflow") {
-                return emit_json::<Value, JsonFailure>(Err(error));
-            }
             let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             match workflow_cli.command {
                 cli::workflow::WorkflowCommand::Status(args) => {
@@ -202,20 +196,6 @@ fn render_workflow_status(route: workflow::status::WorkflowRoute) -> String {
             route.reason_codes.join(",")
         }
     )
-}
-
-fn reject_runtime_command_in_reviewer_context(command_group: &str) -> Result<(), JsonFailure> {
-    let reviewer_mode = std::env::var("FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED")
-        .unwrap_or_else(|_| String::from("yes"));
-    if reviewer_mode.eq_ignore_ascii_case("no") {
-        return Err(JsonFailure::new(
-            FailureClass::ReviewerRuntimeCommandForbidden,
-            format!(
-                "Reviewer subagents may not run FeatureForge runtime commands. Return a blocked review and name the missing runtime context instead. Forbidden command group: {command_group}."
-            ),
-        ));
-    }
-    Ok(())
 }
 
 fn canonicalized_args() -> Result<Vec<OsString>, JsonFailure> {

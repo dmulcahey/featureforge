@@ -27,6 +27,30 @@ fn assert_file_does_not_contain(path: PathBuf, needle: &str) {
     );
 }
 
+fn dispatch_prompt_payload(path: &Path) -> String {
+    let source = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
+    let marker = "  prompt: |\n";
+    let start = source.find(marker).unwrap_or_else(|| {
+        panic!(
+            "{} should contain a dispatch prompt payload",
+            path.display()
+        )
+    }) + marker.len();
+    let payload = &source[start..];
+    let end = payload.find("\n```").unwrap_or_else(|| {
+        panic!(
+            "{} dispatch prompt payload should close before fence",
+            path.display()
+        )
+    });
+    payload[..end].to_owned()
+}
+
+fn assert_text_contains(label: &str, source: &str, needle: &str) {
+    assert!(source.contains(needle), "{label} should contain {needle:?}");
+}
+
 #[test]
 fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     let root = repo_root();
@@ -119,6 +143,8 @@ fn reviewer_prompts_are_non_recursive_and_runtime_command_free() {
         root.join("skills/plan-fidelity-review/reviewer-prompt.md"),
         root.join("skills/plan-eng-review/accelerated-reviewer-prompt.md"),
         root.join("skills/plan-ceo-review/accelerated-reviewer-prompt.md"),
+        root.join("skills/plan-eng-review/outside-voice-prompt.md"),
+        root.join("skills/plan-ceo-review/outside-voice-prompt.md"),
         root.join("skills/subagent-driven-development/code-quality-reviewer-prompt.md"),
         root.join("skills/subagent-driven-development/spec-reviewer-prompt.md"),
     ];
@@ -143,6 +169,7 @@ fn reviewer_prompts_are_non_recursive_and_runtime_command_free() {
         assert_file_contains(path.clone(), "`requesting-code-review`");
         assert_file_contains(path.clone(), "`plan-fidelity-review`");
         assert_file_contains(path.clone(), "`plan-eng-review`");
+        assert_file_contains(path.clone(), "`plan-ceo-review`");
         assert_file_contains(
             path.clone(),
             "return a blocked review finding that names the missing context instead of spawning another agent.",
@@ -173,6 +200,50 @@ fn reviewer_prompts_are_non_recursive_and_runtime_command_free() {
     assert_file_does_not_contain(
         root.join("skills/requesting-code-review/SKILL.md"),
         "Do not launch, request, or delegate to additional subagents",
+    );
+
+    let spec_payload = dispatch_prompt_payload(
+        &root.join("skills/subagent-driven-development/spec-reviewer-prompt.md"),
+    );
+    assert_text_contains(
+        "spec reviewer dispatch payload",
+        &spec_payload,
+        "## Review-subagent recursion rule",
+    );
+    assert_text_contains(
+        "spec reviewer dispatch payload",
+        &spec_payload,
+        "You are a reviewer.",
+    );
+    assert_text_contains(
+        "spec reviewer dispatch payload",
+        &spec_payload,
+        "Do not launch, request, or delegate to additional subagents while performing this review.",
+    );
+    assert_text_contains(
+        "spec reviewer dispatch payload",
+        &spec_payload,
+        "return a blocked review finding that names the missing context instead of spawning another agent.",
+    );
+}
+
+#[test]
+fn reviewer_recursion_is_not_enforced_by_runtime_environment_guards() {
+    let root = repo_root();
+
+    for path in [root.join("src/lib.rs"), root.join("src/diagnostics/mod.rs")] {
+        assert_file_does_not_contain(
+            path.clone(),
+            "FEATUREFORGE_REVIEWER_RUNTIME_COMMANDS_ALLOWED",
+        );
+        assert_file_does_not_contain(path.clone(), "FEATUREFORGE_REVIEWER_CONTEXT");
+        assert_file_does_not_contain(path.clone(), "ReviewerRuntimeCommandForbidden");
+        assert_file_does_not_contain(path, "reviewer-mode environment");
+    }
+
+    assert_file_does_not_contain(
+        root.join("src/lib.rs"),
+        "reject_runtime_command_in_reviewer_context",
     );
 }
 
