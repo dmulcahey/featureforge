@@ -325,9 +325,14 @@ fn targetless_stale_reconcile_output(
     actions_performed: Vec<String>,
     blocking_reason_codes: Vec<String>,
     blocker_metadata: String,
-    concrete_stale_target_repair_command: Option<String>,
+    concrete_stale_target_repair_command: Option<PublicCommand>,
 ) -> RepairReviewStateOutput {
     if !stale_unreviewed_closures.is_empty() {
+        let recommended_command = concrete_stale_target_repair_command
+            .as_ref()
+            .map(PublicCommand::to_display_command);
+        let recommended_public_command_argv =
+            recommended_public_command_argv(concrete_stale_target_repair_command.as_ref());
         return RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -337,8 +342,8 @@ fn targetless_stale_reconcile_output(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: Some(String::from("execution_reentry")),
-            recommended_command: concrete_stale_target_repair_command.clone(),
-            recommended_public_command_argv: None,
+            recommended_command: recommended_command.clone(),
+            recommended_public_command_argv,
             trace_summary: String::from(
                 "Repair review state found a concrete stale branch or milestone target but no task reopen target; repair must continue without fabricating a current task closure target.",
             ) + blocker_metadata.as_str(),
@@ -349,7 +354,7 @@ fn targetless_stale_reconcile_output(
             blocking_task: None,
             blocking_step: None,
             blocking_reason_codes,
-            authoritative_next_action: concrete_stale_target_repair_command,
+            authoritative_next_action: recommended_command,
         };
     }
     let mut blocking_reason_codes = blocking_reason_codes;
@@ -1571,7 +1576,7 @@ pub fn repair_review_state(
                 actions_performed,
                 final_routing.blocking_reason_codes.clone(),
                 blocker_metadata,
-                routing_recommended_command(&final_routing),
+                final_routing.recommended_public_command.clone(),
             ));
         };
         let final_routing = bind_execution_reentry_repair_target_and_refresh_routing(
@@ -1696,7 +1701,7 @@ pub fn repair_review_state(
                     actions_performed,
                     final_routing.blocking_reason_codes.clone(),
                     blocker_metadata,
-                    routing_recommended_command(&final_routing),
+                    final_routing.recommended_public_command.clone(),
                 ));
             };
             let final_routing = bind_execution_reentry_repair_target_and_refresh_routing(
@@ -1862,7 +1867,7 @@ pub fn repair_review_state(
                 actions_performed,
                 route_action.blocking_reason_codes.clone(),
                 blocker_metadata,
-                route_action.recommended_command(),
+                route_action.recommended_public_command.clone(),
             ));
         };
         let final_routing = bind_execution_reentry_repair_target_and_refresh_routing(
@@ -3144,4 +3149,78 @@ fn recommended_branch_closure_command(args: &StatusArgs) -> String {
         "featureforge plan execution advance-late-stage --plan {}",
         args.plan.display()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_review_state_snapshot() -> ReviewStateSnapshot {
+        ReviewStateSnapshot {
+            current_task_closures: Vec::new(),
+            current_branch_closure: None,
+            superseded_closures: Vec::new(),
+            stale_unreviewed_closures: Vec::new(),
+            missing_derived_overlays: Vec::new(),
+            branch_drift_confined_to_late_stage_surface: false,
+            trace_summary: String::new(),
+        }
+    }
+
+    #[test]
+    fn targetless_stale_reconcile_output_derives_recommendation_surfaces_from_public_command() {
+        let plan = String::from("docs/featureforge/plans/plan with spaces.md");
+        let command = PublicCommand::Reopen {
+            plan: plan.clone(),
+            task: 2,
+            step: 1,
+            source: Some(String::from("featureforge:executing-plans")),
+            reason: Some(String::from(
+                "stale branch target requires execution reentry",
+            )),
+            fingerprint: Some(String::from("fingerprint-1")),
+        };
+        let expected_display = command.to_display_command();
+        let expected_argv = command.to_argv();
+
+        let output = targetless_stale_reconcile_output(
+            empty_review_state_snapshot(),
+            vec![String::from("branch:stale")],
+            Vec::new(),
+            vec![String::from("stale_unreviewed")],
+            String::new(),
+            Some(command),
+        );
+
+        assert_eq!(
+            output.required_follow_up.as_deref(),
+            Some("execution_reentry")
+        );
+        assert_eq!(output.recommended_command, Some(expected_display.clone()));
+        assert_eq!(output.authoritative_next_action, Some(expected_display));
+        assert_eq!(
+            output.recommended_public_command_argv,
+            Some(expected_argv.clone())
+        );
+        assert!(
+            expected_argv.iter().any(|part| part == &plan),
+            "argv must preserve the plan path as one argument"
+        );
+    }
+
+    #[test]
+    fn targetless_stale_reconcile_output_omits_recommendation_surfaces_without_public_command() {
+        let output = targetless_stale_reconcile_output(
+            empty_review_state_snapshot(),
+            vec![String::from("branch:stale")],
+            Vec::new(),
+            vec![String::from("stale_unreviewed")],
+            String::new(),
+            None,
+        );
+
+        assert_eq!(output.recommended_command, None);
+        assert_eq!(output.recommended_public_command_argv, None);
+        assert_eq!(output.authoritative_next_action, None);
+    }
 }
