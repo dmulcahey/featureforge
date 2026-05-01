@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
+use crate::execution::command_eligibility::recommended_public_command_argv;
 #[cfg(test)]
 use crate::execution::context::EvidenceAttempt;
 use crate::execution::context::{
@@ -402,6 +403,8 @@ fn project_routing_decision_onto_status(
             });
     status.next_action = route_decision.next_action.clone();
     status.recommended_public_command = route_decision.recommended_public_command.clone();
+    status.recommended_public_command_argv =
+        recommended_public_command_argv(status.recommended_public_command.as_ref());
     status.recommended_command = route_decision.recommended_command.clone();
     status.blocking_task = routing.blocking_task;
     status.blocking_scope = routing.blocking_scope.clone();
@@ -849,6 +852,8 @@ pub(crate) fn apply_shared_routing_projection_to_read_scope_with_routing(
     read_scope.status.state_kind = route_decision.state_kind.clone();
     read_scope.status.recommended_public_command =
         route_decision.recommended_public_command.clone();
+    read_scope.status.recommended_public_command_argv =
+        recommended_public_command_argv(read_scope.status.recommended_public_command.as_ref());
     read_scope.status.recommended_command = route_decision.recommended_command.clone();
     read_scope.status.next_public_action = route_decision.next_public_action.clone();
     read_scope.status.blockers = route_decision.blockers.clone();
@@ -1409,6 +1414,7 @@ pub(crate) fn status_from_context_with_overlay(
         raw_workspace_tree_id: Some(semantic_snapshot.raw_workspace_tree_id),
         next_action: String::from("inspect_workflow"),
         recommended_public_command: None,
+        recommended_public_command_argv: None,
         recommended_command: None,
         finish_review_gate_pass_branch_closure_id: None,
         reason_codes: Vec::new(),

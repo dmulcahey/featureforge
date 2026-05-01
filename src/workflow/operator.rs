@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::cli::workflow::OperatorArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
+use crate::execution::command_eligibility::recommended_public_command_argv;
 use crate::execution::harness::EvaluatorKind;
 use crate::execution::phase;
 use crate::execution::query::{
@@ -150,6 +151,8 @@ pub struct WorkflowDoctor {
     pub next_step: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocking_scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,6 +196,8 @@ pub struct WorkflowHandoff {
     pub next_action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: Option<Vec<String>>,
     #[schemars(with = "WorkflowOperatorStateKindSchema")]
     pub state_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -242,6 +247,8 @@ pub struct WorkflowOperator {
     pub next_action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -304,6 +311,7 @@ struct OperatorContext {
     operator_execution_command_context: Option<WorkflowOperatorExecutionCommandContext>,
     operator_next_action: String,
     operator_recommended_command: Option<String>,
+    operator_recommended_public_command_argv: Option<Vec<String>>,
     operator_base_branch: Option<String>,
     operator_blocking_scope: Option<String>,
     operator_blocking_task: Option<u32>,
@@ -511,6 +519,7 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
         next_action: next_action_for_context(&context).to_owned(),
         next_step: next_step_text(&context),
         recommended_command: context.operator_recommended_command.clone(),
+        recommended_public_command_argv: context.operator_recommended_public_command_argv.clone(),
         blocking_scope: context.operator_blocking_scope.clone(),
         blocking_task: context.operator_blocking_task,
         external_wait_state: context.operator_external_wait_state.clone(),
@@ -831,6 +840,7 @@ fn handoff_from_context(
         execution_started,
         next_action: next_action_for_context(&context).to_owned(),
         recommended_command: context.operator_recommended_command.clone(),
+        recommended_public_command_argv: context.operator_recommended_public_command_argv.clone(),
         state_kind: context.operator_state_kind.clone(),
         next_public_action: context.operator_next_public_action.clone(),
         blockers: context.operator_blockers.clone(),
@@ -902,6 +912,7 @@ fn operator_from_context(context: OperatorContext, args: &OperatorArgs) -> Workf
         execution_command_context: context.operator_execution_command_context.clone(),
         next_action: context.operator_next_action.clone(),
         recommended_command: context.operator_recommended_command.clone(),
+        recommended_public_command_argv: context.operator_recommended_public_command_argv.clone(),
         base_branch: context.operator_base_branch.clone(),
         blocking_scope: context.operator_blocking_scope.clone(),
         blocking_task: context.operator_blocking_task,
@@ -1201,6 +1212,12 @@ fn build_context_from_routing(
         .as_ref()
         .map(|status| status.recommended_command.clone())
         .unwrap_or_else(|| route_decision.recommended_command.clone());
+    let operator_recommended_public_command_argv = execution_status
+        .as_ref()
+        .and_then(|status| status.recommended_public_command_argv.clone())
+        .or_else(|| {
+            recommended_public_command_argv(route_decision.recommended_public_command.as_ref())
+        });
     let status_recording_context = execution_status
         .as_ref()
         .and_then(|status| status.recording_context.as_ref());
@@ -1393,6 +1410,7 @@ fn build_context_from_routing(
         operator_execution_command_context,
         operator_next_action,
         operator_recommended_command,
+        operator_recommended_public_command_argv,
         operator_base_branch,
         operator_blocking_scope,
         operator_blocking_task,
@@ -1942,6 +1960,7 @@ mod tests {
             operator_execution_command_context: None,
             operator_next_action: String::from("wait for external review result"),
             operator_recommended_command: recommended_command.map(str::to_owned),
+            operator_recommended_public_command_argv: None,
             operator_base_branch: Some(String::from("main")),
             operator_blocking_scope: Some(String::from("task")),
             operator_blocking_task: Some(1),
@@ -1987,6 +2006,7 @@ mod tests {
             recommended_command: Some(String::from(
                 "featureforge plan execution complete --plan docs/featureforge/plans/sample.md --task 1 --step 2 --source featureforge:executing-plans --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint abcdef",
             )),
+            recommended_public_command_argv: None,
             base_branch: Some(String::from("main")),
             blocking_scope: Some(String::from("task")),
             blocking_task: Some(1),

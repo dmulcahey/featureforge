@@ -2347,6 +2347,7 @@ mod tests {
             raw_workspace_tree_id: Some(String::from("git_tree:debug")),
             next_action: String::from("runtime diagnostic required"),
             recommended_public_command: None,
+            recommended_public_command_argv: None,
             recommended_command: Some(String::from(
                 "featureforge plan execution record-review-dispatch --plan docs/featureforge/plans/example.md --scope task --task 1",
             )),

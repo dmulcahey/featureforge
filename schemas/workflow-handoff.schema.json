@@ -779,6 +779,15 @@
             "null"
           ]
         },
+        "recommended_public_command_argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "recording_context": {
           "$ref": "#/$defs/PublicRecordingContext"
         },
@@ -1568,6 +1577,15 @@
     "recommended_command": {
       "type": [
         "string",
+        "null"
+      ]
+    },
+    "recommended_public_command_argv": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
         "null"
       ]
     },

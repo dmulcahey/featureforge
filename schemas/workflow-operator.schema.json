@@ -443,6 +443,15 @@
     "recommended_command": {
       "type": "string"
     },
+    "recommended_public_command_argv": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "recording_context": {
       "$ref": "#/$defs/WorkflowOperatorRecordingContext"
     },

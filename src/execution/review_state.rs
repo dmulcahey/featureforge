@@ -9,7 +9,7 @@ use crate::cli::plan_execution::StatusArgs;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::command_eligibility::{
     PublicAdvanceLateStageMode, PublicCommand, PublicMutationKind, PublicMutationRequest,
-    require_public_mutation,
+    recommended_public_command_argv, require_public_mutation,
 };
 use crate::execution::current_truth::{
     BranchRerecordingUnsupportedReason, branch_closure_rerecording_assessment,
@@ -101,6 +101,8 @@ pub struct RepairReviewStateOutput {
     pub actions_performed: Vec<String>,
     pub required_follow_up: Option<String>,
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: Option<Vec<String>>,
     pub trace_summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phase: Option<String>,
@@ -199,6 +201,10 @@ impl RepairRouteAction {
             .as_ref()
             .map(PublicCommand::to_display_command)
     }
+
+    fn recommended_command_argv(&self) -> Option<Vec<String>> {
+        recommended_public_command_argv(self.recommended_public_command.as_ref())
+    }
 }
 
 fn route_decision_recommended_command(route_decision: &RouteDecision) -> Option<String> {
@@ -213,6 +219,10 @@ fn routing_recommended_command(routing: &ExecutionRoutingState) -> Option<String
         .recommended_public_command
         .as_ref()
         .map(PublicCommand::to_display_command)
+}
+
+fn routing_recommended_command_argv(routing: &ExecutionRoutingState) -> Option<Vec<String>> {
+    recommended_public_command_argv(routing.recommended_public_command.as_ref())
 }
 
 fn public_command_is_repair_review_state(command: Option<&PublicCommand>) -> bool {
@@ -230,12 +240,11 @@ fn public_command_is_execution_reentry(command: Option<&PublicCommand>) -> bool 
     )
 }
 
-fn advance_late_stage_display_command(plan: String) -> String {
+fn advance_late_stage_public_command(plan: String) -> PublicCommand {
     PublicCommand::AdvanceLateStage {
         plan,
         mode: PublicAdvanceLateStageMode::Basic,
     }
-    .to_display_command()
 }
 
 struct RepairPhaseBundle {
@@ -329,6 +338,7 @@ fn targetless_stale_reconcile_output(
             actions_performed,
             required_follow_up: Some(String::from("execution_reentry")),
             recommended_command: concrete_stale_target_repair_command.clone(),
+            recommended_public_command_argv: None,
             trace_summary: String::from(
                 "Repair review state found a concrete stale branch or milestone target but no task reopen target; repair must continue without fabricating a current task closure target.",
             ) + blocker_metadata.as_str(),
@@ -354,6 +364,7 @@ fn targetless_stale_reconcile_output(
         actions_performed,
         required_follow_up: None,
         recommended_command: None,
+        recommended_public_command_argv: None,
         trace_summary: String::from(TARGETLESS_STALE_RECONCILE_DETAIL) + blocker_metadata.as_str(),
         phase: Some(String::from(crate::execution::phase::PHASE_EXECUTING)),
         phase_detail: Some(String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL)),
@@ -1339,6 +1350,7 @@ pub fn repair_review_state(
         && let Some(task_number) = task_closure_repair_target_task.or(final_routing.blocking_task)
     {
         let close_command = close_current_task_repair_command(&status_args, task_number);
+        let close_command_argv = close_current_task_repair_command_argv(&status_args, task_number);
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -1349,6 +1361,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: None,
             recommended_command: Some(close_command.clone()),
+            recommended_public_command_argv: Some(close_command_argv),
             trace_summary: String::from(
                 "Repair review state reconciled stale task-boundary state and refreshed routing; task closure is ready to record or refresh.",
             ) + repair_blocker_metadata_suffix(&repair_plan).as_str(),
@@ -1385,10 +1398,9 @@ pub fn repair_review_state(
             == crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY
     {
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
-        let recommended_command = format!(
-            "featureforge plan execution advance-late-stage --plan {}",
-            status_args.plan.display()
-        );
+        let recommended_public_command =
+            advance_late_stage_public_command(status_args.plan.display().to_string());
+        let recommended_command = recommended_public_command.to_display_command();
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -1399,6 +1411,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: Some(String::from("advance_late_stage")),
             recommended_command: Some(recommended_command.clone()),
+            recommended_public_command_argv: Some(recommended_public_command.to_argv()),
             trace_summary: String::from(
                 "Repair review state reconciled projections and refreshed routing; branch closure must be re-recorded before late-stage progression can continue.",
             ) + blocker_metadata.as_str(),
@@ -1426,6 +1439,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: None,
             recommended_command: routing_recommended_command(&final_routing),
+            recommended_public_command_argv: routing_recommended_command_argv(&final_routing),
             trace_summary: String::from(
                 "Repair review state reconciled stale task-boundary state and refreshed routing; task closure is ready to record or refresh.",
             ) + blocker_metadata.as_str(),
@@ -1441,6 +1455,7 @@ pub fn repair_review_state(
         && let Some(task_number) = repair_plan.target_task.or(final_routing.blocking_task)
     {
         let close_command = close_current_task_repair_command(&status_args, task_number);
+        let close_command_argv = close_current_task_repair_command_argv(&status_args, task_number);
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
@@ -1452,6 +1467,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: None,
             recommended_command: Some(close_command.clone()),
+            recommended_public_command_argv: Some(close_command_argv),
             trace_summary: String::from(
                 "Repair review state reconciled stale task-boundary state and refreshed routing; task closure is ready to record or refresh.",
             ) + blocker_metadata.as_str(),
@@ -1498,6 +1514,7 @@ pub fn repair_review_state(
                 actions_performed,
                 required_follow_up: Some(String::from("request_external_review")),
                 recommended_command: None,
+                recommended_public_command_argv: None,
                 trace_summary: repair_follow_up_trace_summary(
                     "request_external_review",
                     branch_rerecording_unsupported_reason,
@@ -1512,10 +1529,11 @@ pub fn repair_review_state(
                 authoritative_next_action: routing_recommended_command(&final_routing),
             });
         }
-        let recommended_command = match final_routing.recommended_public_command.as_ref() {
-            Some(command @ PublicCommand::AdvanceLateStage { .. }) => command.to_display_command(),
-            _ => advance_late_stage_display_command(status_args.plan.display().to_string()),
+        let recommended_public_command = match final_routing.recommended_public_command.as_ref() {
+            Some(command @ PublicCommand::AdvanceLateStage { .. }) => command.clone(),
+            _ => advance_late_stage_public_command(status_args.plan.display().to_string()),
         };
+        let recommended_command = recommended_public_command.to_display_command();
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -1526,6 +1544,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: Some(String::from("advance_late_stage")),
             recommended_command: Some(recommended_command.clone()),
+            recommended_public_command_argv: Some(recommended_public_command.to_argv()),
             trace_summary: String::from(
                 "Repair review state reconciled projections and refreshed routing; branch closure must be re-recorded before late-stage progression can continue.",
             ) + blocker_metadata.as_str(),
@@ -1569,6 +1588,12 @@ pub fn repair_review_state(
             task_number,
             step_number,
         );
+        let reopen_command_argv = reopen_execution_reentry_repair_command_argv(
+            &status_args,
+            Some(&final_routing),
+            task_number,
+            step_number,
+        );
         let blocker_metadata = repair_blocker_metadata_suffix(stale_reentry_repair_plan);
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
@@ -1580,6 +1605,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: Some(String::from("execution_reentry")),
             recommended_command: Some(reopen_command.clone()),
+            recommended_public_command_argv: Some(reopen_command_argv),
             trace_summary: repair_follow_up_trace_summary(
                 "execution_reentry",
                 stale_reentry_branch_rerecording_unsupported_reason,
@@ -1610,6 +1636,14 @@ pub fn repair_review_state(
         } else {
             recommended_command.clone()
         };
+        let recommended_public_command_argv = if required_follow_up_from_routing(&final_routing)
+            .as_deref()
+            == Some(required_follow_up)
+        {
+            routing_recommended_command_argv(&final_routing)
+        } else {
+            None
+        };
         if required_follow_up == "execution_reentry"
             && task_scope_structural_reason.is_none()
             && branch_scope_structural_reason.is_none()
@@ -1621,6 +1655,8 @@ pub fn repair_review_state(
             && let Some(task_number) = final_routing.blocking_task
         {
             let close_command = close_current_task_repair_command(&status_args, task_number);
+            let close_command_argv =
+                close_current_task_repair_command_argv(&status_args, task_number);
             return Ok(RepairReviewStateOutput {
                 action: String::from("blocked"),
                 current_task_closures: snapshot.current_task_closures,
@@ -1631,6 +1667,7 @@ pub fn repair_review_state(
                 actions_performed,
                 required_follow_up: None,
                 recommended_command: Some(close_command.clone()),
+                recommended_public_command_argv: Some(close_command_argv),
                 trace_summary: String::from(
                     "Repair review state reconciled stale task-boundary state and refreshed routing; task closure is ready to record or refresh.",
                 ) + blocker_metadata.as_str(),
@@ -1676,6 +1713,12 @@ pub fn repair_review_state(
                 task_number,
                 step_number,
             );
+            let reopen_command_argv = reopen_execution_reentry_repair_command_argv(
+                &status_args,
+                Some(&final_routing),
+                task_number,
+                step_number,
+            );
             return Ok(RepairReviewStateOutput {
                 action: String::from("blocked"),
                 current_task_closures: snapshot.current_task_closures,
@@ -1686,6 +1729,7 @@ pub fn repair_review_state(
                 actions_performed,
                 required_follow_up: Some(String::from("execution_reentry")),
                 recommended_command: Some(reopen_command.clone()),
+                recommended_public_command_argv: Some(reopen_command_argv),
                 trace_summary: repair_follow_up_trace_summary(
                     "execution_reentry",
                     branch_rerecording_unsupported_reason,
@@ -1712,6 +1756,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: Some(required_follow_up.to_owned()),
             recommended_command,
+            recommended_public_command_argv,
             trace_summary: repair_follow_up_trace_summary(
                 required_follow_up,
                 branch_rerecording_unsupported_reason,
@@ -1741,6 +1786,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: None,
             recommended_command,
+            recommended_public_command_argv: route_action.recommended_command_argv(),
             trace_summary: String::from(
                 "Repair review state reconciled stale task-boundary state and refreshed routing; task closure is ready to record or refresh.",
             ) + blocker_metadata.as_str(),
@@ -1764,6 +1810,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: Some(required_follow_up.clone()),
             recommended_command,
+            recommended_public_command_argv: route_action.recommended_command_argv(),
             trace_summary: repair_follow_up_trace_summary(
                 required_follow_up.as_str(),
                 branch_rerecording_unsupported_reason,
@@ -1790,6 +1837,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: None,
             recommended_command: route_action.recommended_command(),
+            recommended_public_command_argv: route_action.recommended_command_argv(),
             trace_summary: String::from(
                 "Repair review state reconciled available overlays but unresolved authoritative blockers still require repair-review-state reconciliation.",
             ) + blocker_metadata.as_str(),
@@ -1831,6 +1879,12 @@ pub fn repair_review_state(
             task_number,
             step_number,
         );
+        let reopen_command_argv = reopen_execution_reentry_repair_command_argv(
+            &status_args,
+            Some(&final_routing),
+            task_number,
+            step_number,
+        );
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
@@ -1842,6 +1896,7 @@ pub fn repair_review_state(
             actions_performed,
             required_follow_up: Some(String::from("execution_reentry")),
             recommended_command: Some(reopen_command.clone()),
+            recommended_public_command_argv: Some(reopen_command_argv),
             trace_summary: repair_follow_up_trace_summary(
                 "execution_reentry",
                 branch_rerecording_unsupported_reason,
@@ -1887,6 +1942,7 @@ pub fn repair_review_state(
         actions_performed,
         required_follow_up: None,
         recommended_command,
+        recommended_public_command_argv: route_action.recommended_command_argv(),
         trace_summary: if repaired_any_overlays {
             String::from(
                 "Repaired missing derived review-state overlays from authoritative closure records.",
@@ -2504,10 +2560,19 @@ fn repair_target_step(
 }
 
 fn close_current_task_repair_command(args: &StatusArgs, task_number: u32) -> String {
-    format!(
-        "featureforge plan execution close-current-task --plan {} --task {task_number} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-        args.plan.display()
-    )
+    close_current_task_repair_public_command(args, task_number).to_display_command()
+}
+
+fn close_current_task_repair_command_argv(args: &StatusArgs, task_number: u32) -> Vec<String> {
+    close_current_task_repair_public_command(args, task_number).to_argv()
+}
+
+fn close_current_task_repair_public_command(args: &StatusArgs, task_number: u32) -> PublicCommand {
+    PublicCommand::CloseCurrentTask {
+        plan: args.plan.display().to_string(),
+        task: Some(task_number),
+        include_result_template: true,
+    }
 }
 
 fn reopen_execution_reentry_repair_command(
@@ -2531,18 +2596,53 @@ fn reopen_execution_reentry_repair_command(
     )
 }
 
+fn reopen_execution_reentry_repair_command_argv(
+    args: &StatusArgs,
+    routing: Option<&ExecutionRoutingState>,
+    task_number: u32,
+    step_number: u32,
+) -> Vec<String> {
+    if let Some(command) = routing.and_then(|routing| {
+        routed_reopen_public_command_for_target(routing, task_number, step_number)
+    }) {
+        return command.to_argv();
+    }
+    let fingerprint = routing
+        .and_then(|routing| routing.execution_status.as_ref())
+        .map(|status| status.execution_fingerprint.clone())
+        .unwrap_or_else(|| String::from("<fingerprint>"));
+    PublicCommand::Reopen {
+        plan: args.plan.display().to_string(),
+        task: task_number,
+        step: step_number,
+        source: Some(String::from("featureforge:executing-plans")),
+        reason: Some(String::from("<reason>")),
+        fingerprint: Some(fingerprint),
+    }
+    .to_argv()
+}
+
 fn routed_reopen_command_for_target(
     routing: &ExecutionRoutingState,
     task_number: u32,
     step_number: u32,
 ) -> Option<String> {
+    routed_reopen_public_command_for_target(routing, task_number, step_number)
+        .map(|command| command.to_display_command())
+}
+
+fn routed_reopen_public_command_for_target(
+    routing: &ExecutionRoutingState,
+    task_number: u32,
+    step_number: u32,
+) -> Option<PublicCommand> {
     let command = routing.recommended_public_command.as_ref()?;
     let request = command.to_mutation_request()?;
     if request.kind == PublicMutationKind::Reopen
         && request.task == Some(task_number)
         && request.step == Some(step_number)
     {
-        Some(command.to_display_command())
+        Some(command.clone())
     } else {
         None
     }

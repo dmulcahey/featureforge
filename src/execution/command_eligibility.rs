@@ -539,6 +539,184 @@ impl PublicCommand {
         }
     }
 
+    pub fn to_argv(&self) -> Vec<String> {
+        let mut argv = vec![String::from("featureforge")];
+        match self {
+            Self::WorkflowOperator {
+                plan,
+                external_review_result_ready,
+            } => {
+                push_args(&mut argv, ["workflow", "operator", "--plan"]);
+                argv.push(plan.clone());
+                if *external_review_result_ready {
+                    argv.push(String::from("--external-review-result-ready"));
+                }
+            }
+            Self::Status { plan } => {
+                push_args(&mut argv, ["plan", "execution", "status", "--plan"]);
+                argv.push(plan.clone());
+            }
+            Self::RepairReviewState { plan } => {
+                push_args(
+                    &mut argv,
+                    ["plan", "execution", "repair-review-state", "--plan"],
+                );
+                argv.push(plan.clone());
+            }
+            Self::Begin {
+                plan,
+                task,
+                step,
+                execution_mode,
+                fingerprint,
+            } => {
+                push_execution_task_step_args(&mut argv, "begin", plan, *task, *step);
+                push_optional_flag(&mut argv, "--execution-mode", execution_mode.as_deref());
+                push_optional_flag(
+                    &mut argv,
+                    "--expect-execution-fingerprint",
+                    fingerprint.as_deref(),
+                );
+            }
+            Self::Complete {
+                plan,
+                task,
+                step,
+                source,
+                fingerprint,
+            } => {
+                push_execution_task_step_args(&mut argv, "complete", plan, *task, *step);
+                push_optional_flag(&mut argv, "--source", source.as_deref());
+                push_args(
+                    &mut argv,
+                    ["--claim", "<claim>", "--manual-verify-summary", "<summary>"],
+                );
+                push_optional_flag(
+                    &mut argv,
+                    "--expect-execution-fingerprint",
+                    fingerprint.as_deref(),
+                );
+            }
+            Self::Reopen {
+                plan,
+                task,
+                step,
+                source,
+                reason,
+                fingerprint,
+            } => {
+                push_execution_task_step_args(&mut argv, "reopen", plan, *task, *step);
+                push_optional_flag(&mut argv, "--source", source.as_deref());
+                push_optional_flag(&mut argv, "--reason", reason.as_deref());
+                push_optional_flag(
+                    &mut argv,
+                    "--expect-execution-fingerprint",
+                    fingerprint.as_deref(),
+                );
+            }
+            Self::TransferRepairStep {
+                plan,
+                task,
+                step,
+                fingerprint,
+            } => {
+                push_args(&mut argv, ["plan", "execution", "transfer", "--plan"]);
+                argv.push(plan.clone());
+                push_arg_value(&mut argv, "--repair-task", task.to_string());
+                push_arg_value(&mut argv, "--repair-step", step.to_string());
+                push_optional_flag(
+                    &mut argv,
+                    "--expect-execution-fingerprint",
+                    fingerprint.as_deref(),
+                );
+            }
+            Self::TransferHandoff { plan, scope } => {
+                push_args(&mut argv, ["plan", "execution", "transfer", "--plan"]);
+                argv.push(plan.clone());
+                push_arg_value(&mut argv, "--scope", scope.clone());
+                push_args(&mut argv, ["--to", "<owner>", "--reason", "<reason>"]);
+            }
+            Self::CloseCurrentTask {
+                plan,
+                task,
+                include_result_template,
+            } => {
+                push_args(
+                    &mut argv,
+                    ["plan", "execution", "close-current-task", "--plan"],
+                );
+                argv.push(plan.clone());
+                if let Some(task) = task {
+                    push_arg_value(&mut argv, "--task", task.to_string());
+                }
+                if *include_result_template {
+                    push_args(
+                        &mut argv,
+                        [
+                            "--review-result",
+                            "pass|fail",
+                            "--review-summary-file",
+                            "<path>",
+                            "--verification-result",
+                            "pass|fail|not-run",
+                            "[--verification-summary-file",
+                            "<path>",
+                            "when",
+                            "verification",
+                            "ran]",
+                        ],
+                    );
+                }
+            }
+            Self::AdvanceLateStage { plan, mode } => {
+                push_args(
+                    &mut argv,
+                    ["plan", "execution", "advance-late-stage", "--plan"],
+                );
+                argv.push(plan.clone());
+                match mode {
+                    PublicAdvanceLateStageMode::Basic => {}
+                    PublicAdvanceLateStageMode::ReleaseReadinessResultTemplate => {
+                        push_args(
+                            &mut argv,
+                            ["--result", "ready|blocked", "--summary-file", "<path>"],
+                        );
+                    }
+                    PublicAdvanceLateStageMode::QaResultTemplate => {
+                        push_args(
+                            &mut argv,
+                            ["--result", "pass|fail", "--summary-file", "<path>"],
+                        );
+                    }
+                    PublicAdvanceLateStageMode::FinalReviewResultTemplate => {
+                        push_args(
+                            &mut argv,
+                            [
+                                "--reviewer-source",
+                                "<source>",
+                                "--reviewer-id",
+                                "<id>",
+                                "--result",
+                                "pass|fail",
+                                "--summary-file",
+                                "<path>",
+                            ],
+                        );
+                    }
+                }
+            }
+            Self::MaterializeProjectionsStateDirOnly { plan, scope } => {
+                push_args(
+                    &mut argv,
+                    ["plan", "execution", "materialize-projections", "--plan"],
+                );
+                argv.push(plan.clone());
+                push_optional_flag(&mut argv, "--scope", scope.as_deref());
+            }
+        }
+        argv
+    }
+
     pub fn to_mutation_request(&self) -> Option<PublicMutationRequest> {
         match self {
             Self::RepairReviewState { .. } => Some(PublicMutationRequest {
@@ -638,6 +816,12 @@ impl PublicCommand {
             | Self::MaterializeProjectionsStateDirOnly { .. } => None,
         }
     }
+}
+
+pub(crate) fn recommended_public_command_argv(
+    command: Option<&PublicCommand>,
+) -> Option<Vec<String>> {
+    command.map(PublicCommand::to_argv)
 }
 
 #[derive(Default)]
@@ -794,6 +978,7 @@ pub(crate) fn command_invokes_hidden_lane(command: &str) -> bool {
         .any(|token| command.contains(token))
 }
 
+#[cfg(test)]
 pub(crate) fn command_is_legal_public_command(command: &str) -> bool {
     PublicCommand::parse_display_command(command)
         .is_some_and(|command| !command.to_display_command().is_empty())
@@ -983,9 +1168,7 @@ pub(crate) fn require_public_mutation(
                 .as_ref()
                 .map(|action| action.command.clone())
         })
-        .filter(|command| {
-            !command_invokes_hidden_lane(command) && command_is_legal_public_command(command)
-        })
+        .filter(|command| !command_invokes_hidden_lane(command))
         .unwrap_or_else(|| String::from("none"));
     let task = request
         .task
@@ -1108,6 +1291,35 @@ fn request_fingerprint_matches_status(
 
 fn parse_u32_token(token: &str) -> Option<u32> {
     token.parse::<u32>().ok()
+}
+
+fn push_args<const N: usize>(argv: &mut Vec<String>, args: [&str; N]) {
+    argv.extend(args.into_iter().map(String::from));
+}
+
+fn push_arg_value(argv: &mut Vec<String>, flag: &str, value: String) {
+    argv.push(flag.to_owned());
+    argv.push(value);
+}
+
+fn push_optional_flag(argv: &mut Vec<String>, flag: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        push_arg_value(argv, flag, value.to_owned());
+    }
+}
+
+fn push_execution_task_step_args(
+    argv: &mut Vec<String>,
+    command: &str,
+    plan: &str,
+    task: u32,
+    step: u32,
+) {
+    push_args(argv, ["plan", "execution"]);
+    argv.push(command.to_owned());
+    push_arg_value(argv, "--plan", plan.to_owned());
+    push_arg_value(argv, "--task", task.to_string());
+    push_arg_value(argv, "--step", step.to_string());
 }
 
 fn optional_flag(prefix: &str, value: Option<&str>) -> String {

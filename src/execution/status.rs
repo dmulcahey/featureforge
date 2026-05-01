@@ -246,6 +246,8 @@ pub struct PlanExecutionStatus {
     #[serde(skip)]
     #[schemars(skip)]
     pub recommended_public_command: Option<PublicCommand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: Option<Vec<String>>,
     pub recommended_command: Option<String>,
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
     pub reason_codes: Vec<String>,

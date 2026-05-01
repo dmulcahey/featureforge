@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use crate::execution::command_eligibility::{
-    PublicCommand, PublicCommandKind, command_invokes_hidden_lane, command_is_legal_public_command,
-    decide_public_mutation,
+    PublicCommand, PublicCommandKind, command_invokes_hidden_lane, decide_public_mutation,
+    recommended_public_command_argv,
 };
 use crate::execution::reentry_reconcile::{
     TARGETLESS_STALE_RECONCILE_PHASE_DETAIL, TARGETLESS_STALE_RECONCILE_REASON_CODE,
@@ -94,6 +94,8 @@ fn inject_status_invariant_test_violation_from_env(
                 execution_mode: None,
                 fingerprint: Some(String::from("injected")),
             });
+            status.recommended_public_command_argv =
+                recommended_public_command_argv(status.recommended_public_command.as_ref());
             status.recommended_command = Some(String::from(
                 "featureforge plan execution begin --plan injected --task 999 --step 1 --expect-execution-fingerprint injected",
             ));
@@ -118,9 +120,7 @@ const RUNTIME_INVARIANT_CODES: &[&str] = &[
     "execution_reentry_target_missing",
     "illegal_execution_command_context",
     "recommended_command_hidden_or_debug",
-    "recommended_command_illegal_public_shape",
     "next_public_action_hidden_or_debug",
-    "next_public_action_illegal_public_shape",
     "recommended_command_next_action_mismatch",
     TARGETLESS_STALE_RECONCILE_REASON_CODE,
     "terminal_recommended_command",
@@ -208,7 +208,6 @@ fn check_public_commands(
             "recommended command",
             recommended_command,
             "recommended_command_hidden_or_debug",
-            "recommended_command_illegal_public_shape",
             violations,
         );
     }
@@ -217,7 +216,6 @@ fn check_public_commands(
             "next public action",
             next_public_action.command.as_str(),
             "next_public_action_hidden_or_debug",
-            "next_public_action_illegal_public_shape",
             violations,
         );
     }
@@ -243,7 +241,6 @@ fn check_public_command_shape(
     label: &str,
     command: &str,
     hidden_code: &'static str,
-    illegal_code: &'static str,
     violations: &mut Vec<RuntimeInvariantViolation>,
 ) {
     if command_invokes_hidden_lane(command) {
@@ -251,14 +248,6 @@ fn check_public_command_shape(
             code: hidden_code,
             severity: RuntimeInvariantSeverity::RuntimeBug,
             detail: format!("{label} must not expose hidden/debug command `{command}`."),
-        });
-        return;
-    }
-    if !command_is_legal_public_command(command) {
-        violations.push(RuntimeInvariantViolation {
-            code: illegal_code,
-            severity: RuntimeInvariantSeverity::RuntimeBug,
-            detail: format!("{label} must be one legal public command shape, got `{command}`."),
         });
     }
 }
@@ -363,6 +352,7 @@ fn convert_status_to_runtime_reconcile_or_bug(
     }
     status.next_action = String::from("repair review state / reenter execution");
     status.recommended_public_command = None;
+    status.recommended_public_command_argv = None;
     status.recommended_command = None;
     status.execution_command_context = None;
     status.execution_reentry_target_source = None;
@@ -414,6 +404,8 @@ fn inject_current_stale_overlap(status: &mut PlanExecutionStatus) {
         reason: Some(String::from("injected")),
         fingerprint: None,
     });
+    status.recommended_public_command_argv =
+        recommended_public_command_argv(status.recommended_public_command.as_ref());
     status.recommended_command = Some(format!(
         "featureforge plan execution reopen --plan injected --task {} --step 1 --source featureforge:executing-plans --reason injected",
         current.task
@@ -438,6 +430,7 @@ fn inject_targetless_stale_unreviewed(status: &mut PlanExecutionStatus) {
     status.execution_reentry_target_source = None;
     status.public_repair_targets.clear();
     status.recommended_public_command = None;
+    status.recommended_public_command_argv = None;
     status.recommended_command = None;
     status.next_public_action = None;
     status.blockers.clear();

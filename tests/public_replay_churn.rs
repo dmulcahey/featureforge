@@ -466,8 +466,12 @@ fn write_current_pass_plan_fidelity_review_artifact(
 }
 
 fn status(cli: &mut PublicCli<'_>, context: &str) -> Value {
+    status_for_plan(cli, EXEC_PLAN_REL, context)
+}
+
+fn status_for_plan(cli: &mut PublicCli<'_>, plan_rel: &str, context: &str) -> Value {
     cli.json(
-        &["plan", "execution", "status", "--plan", EXEC_PLAN_REL],
+        &["plan", "execution", "status", "--plan", plan_rel],
         context,
     )
 }
@@ -648,12 +652,7 @@ fn invoke_recommended_public_command_for_context(
     context: &str,
 ) -> Value {
     assert_public_json_excludes_hidden_tokens(operator_json, context);
-    let recommended_command = operator_json["recommended_command"]
-        .as_str()
-        .unwrap_or_else(|| {
-            panic!("{context}: route should expose recommended_command: {operator_json}")
-        });
-    let command_parts = parse_public_recommended_command(recommended_command, context);
+    let command_parts = public_recommended_command_argv(operator_json, context);
     let args = concrete_public_command_args(cli.repo, &command_parts, context);
     let args_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     let output = cli.json(&args_refs, context);
@@ -661,18 +660,28 @@ fn invoke_recommended_public_command_for_context(
     output
 }
 
-fn parse_public_recommended_command(recommended_command: &str, context: &str) -> Vec<String> {
-    let command_parts = recommended_command
-        .split_whitespace()
-        .map(str::to_owned)
+fn public_recommended_command_argv(value: &Value, context: &str) -> Vec<String> {
+    let command_parts = value["recommended_public_command_argv"]
+        .as_array()
+        .unwrap_or_else(|| {
+            panic!("{context}: route should expose recommended_public_command_argv: {value}")
+        })
+        .iter()
+        .map(|part| {
+            part.as_str()
+                .unwrap_or_else(|| {
+                    panic!("{context}: recommended_public_command_argv entries must be strings: {value}")
+                })
+                .to_owned()
+        })
         .collect::<Vec<_>>();
     assert!(
         command_parts.len() >= 3,
-        "{context}: recommended command should include a featureforge command group, got {recommended_command:?}"
+        "{context}: recommended argv should include a featureforge command group, got {command_parts:?}"
     );
     assert_eq!(
         command_parts[0], "featureforge",
-        "{context}: recommended command should start with featureforge, got {recommended_command:?}"
+        "{context}: recommended argv should start with featureforge, got {command_parts:?}"
     );
     assert_public_runtime_args(
         &command_parts.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -1024,6 +1033,26 @@ fn setup_execution_fixture(name: &str) -> (TempDir, TempDir) {
     (repo_dir, state_dir)
 }
 
+fn setup_execution_fixture_with_additional_plan(name: &str, plan_rel: &str) -> (TempDir, TempDir) {
+    let (repo_dir, state_dir) = init_repo(name);
+    let repo = repo_dir.path();
+    write_execution_spec_and_plan(repo);
+    let plan_contents =
+        fs::read_to_string(repo.join(EXEC_PLAN_REL)).expect("base execution plan should read");
+    write_file(&repo.join(plan_rel), &plan_contents);
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        ".featureforge/reviews/public-replay-execution-plan-with-spaces-fidelity.md",
+        plan_rel,
+        EXEC_SPEC_REL,
+    );
+    commit_all(
+        repo,
+        "public replay execution fixture with spaced plan path",
+    );
+    (repo_dir, state_dir)
+}
+
 fn complete_task_1_without_closure(cli: &mut PublicCli<'_>, repo: &Path) -> Value {
     let initial_status = status(cli, "public replay status before begin");
     let begin = begin_task(
@@ -1046,6 +1075,63 @@ fn complete_task_1_without_closure(cli: &mut PublicCli<'_>, repo: &Path) -> Valu
             .expect("begin should expose execution fingerprint"),
         "public replay complete task 1",
     )
+}
+
+#[test]
+fn public_replay_recommended_argv_handles_plan_paths_with_spaces() {
+    let spaced_plan_rel = "docs/featureforge/plans/public replay execution plan.md";
+    let (repo_dir, state_dir) = setup_execution_fixture_with_additional_plan(
+        "public-replay-recommended-argv-spaces",
+        spaced_plan_rel,
+    );
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+
+    let initial_status = status_for_plan(
+        &mut cli,
+        spaced_plan_rel,
+        "recommended argv spaced plan initial status",
+    );
+    assert_eq!(
+        initial_status["recommended_public_command_argv"],
+        json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            spaced_plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            initial_status["execution_fingerprint"]
+                .as_str()
+                .expect("initial status should expose execution fingerprint")
+        ]),
+        "recommended argv should keep the plan path with spaces as one argv element: {initial_status}"
+    );
+    assert!(
+        initial_status["recommended_command"]
+            .as_str()
+            .is_some_and(|command| command.contains(spaced_plan_rel)),
+        "rendered command remains present for human display: {initial_status}"
+    );
+
+    let begin = invoke_recommended_public_command_for_context(
+        &mut cli,
+        &initial_status,
+        "recommended argv spaced plan begin",
+    );
+    assert_eq!(
+        begin["active_task"],
+        json!(1),
+        "argv replay should begin Task 1 even though the plan path contains spaces: {begin}"
+    );
 }
 
 #[test]
