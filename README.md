@@ -159,7 +159,7 @@ Core validation:
 ```bash
 node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs --check
-node --test tests/codex-runtime/*.test.mjs
+node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/review-accelerator-contract.eval.mjs
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-targets --all-features --no-fail-fast

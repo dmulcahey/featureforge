@@ -10,10 +10,12 @@ const ROOT = path.resolve(MODULE_DIR, '..');
 const REQUIRED_SOURCE_ARCHIVE_PATHS = [
   'scripts/gen-agent-docs.mjs',
   'scripts/gen-skill-docs.mjs',
+  'scripts/run-codex-runtime-tests.mjs',
   'scripts/verify-source-archive.mjs',
   'docs/testing.md',
   'tests/codex-runtime/eval-observability.test.mjs',
   'tests/codex-runtime/gen-skill-docs.unit.test.mjs',
+  'tests/codex-runtime/node-doc-contract-wrapper.test.mjs',
   'tests/codex-runtime/project-memory-content.test.mjs',
   'tests/codex-runtime/skill-doc-contracts.test.mjs',
   'tests/codex-runtime/skill-doc-generation.test.mjs',

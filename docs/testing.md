@@ -12,7 +12,7 @@ Run these commands from the repo root for the core contract surface:
 ```bash
 node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs --check
-node --test tests/codex-runtime/*.test.mjs
+node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/*.eval.mjs
 npm --prefix tests/brainstorm-server test
 cargo clippy --all-targets --all-features -- -D warnings
@@ -36,7 +36,7 @@ no-fail-fast nextest gate:
 ```bash
 node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs --check
-node --test tests/codex-runtime/*.test.mjs
+node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/*.eval.mjs
 cargo test --test public_cli_flow_contracts -- --nocapture
 cargo test --test public_replay_churn -- --nocapture
@@ -133,6 +133,13 @@ time -p cargo test --quiet --test plan_execution
 - workflow-fixture invariants
 - routing and eval-document contract assertions
 
+Run this layer through `node scripts/run-codex-runtime-tests.mjs` in release
+and branch gates. The wrapper runs `node --test tests/codex-runtime/*.test.mjs`
+with a fixed timeout and fails closed if the grouped Node process prints a
+green TAP summary but does not exit. The raw command should still exit with
+status 0 in local and CI shells, but the release checklist uses the wrapper so
+open handles cannot be mistaken for success.
+
 `tests/brainstorm-server` `npm test` covers:
 
 - brainstorm server HTTP/WebSocket behavior
@@ -168,7 +175,7 @@ Editing skill templates or generated skill docs:
 
 ```bash
 node scripts/gen-skill-docs.mjs --check
-node --test tests/codex-runtime/*.test.mjs
+node scripts/run-codex-runtime-tests.mjs
 ```
 
 Editing brainstorm-server runtime scripts or launch wrappers:
@@ -202,7 +209,7 @@ node scripts/gen-skill-docs.mjs
 node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs
 node scripts/gen-agent-docs.mjs --check
-node --test tests/codex-runtime/*.test.mjs
+node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/review-accelerator-contract.eval.mjs
 npm --prefix tests/brainstorm-server test
 node scripts/verify-source-archive.mjs
@@ -275,7 +282,7 @@ Historical final-remediation plans used targeted Rust subsets while closing spec
 ```bash
 node scripts/gen-skill-docs.mjs
 node scripts/gen-agent-docs.mjs
-node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs
+node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/review-accelerator-contract.eval.mjs
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-targets --all-features --no-fail-fast
