@@ -360,13 +360,17 @@ pub fn validate_v2_evidence_provenance(context: &ExecutionContext, gate: &mut Ga
     let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
     let latest_attempts = latest_completed_attempts_by_step(&context.evidence);
     let latest_file_proofs = latest_completed_attempts_by_file(&context.evidence, &latest_attempts);
+    let public_repair_remediation = format!(
+        "The affected step's execution proof metadata is stale. Follow `featureforge workflow operator --plan {}` and then the returned `recommended_public_command_argv` to replay or repair the step through public runtime commands.",
+        context.plan_rel
+    );
 
     if context.evidence.plan_fingerprint.as_deref() != Some(contract_plan_fingerprint.as_str()) {
         gate.fail(
             FailureClass::StaleExecutionEvidence,
             "plan_fingerprint_mismatch",
             "Execution evidence plan fingerprint no longer matches the approved plan source.",
-            "Rebuild the execution evidence for the current approved plan revision.",
+            public_repair_remediation.clone(),
         );
     }
     if context.evidence.source_spec_fingerprint.as_deref() != Some(source_spec_fingerprint.as_str())
@@ -375,7 +379,7 @@ pub fn validate_v2_evidence_provenance(context: &ExecutionContext, gate: &mut Ga
             FailureClass::StaleExecutionEvidence,
             "source_spec_fingerprint_mismatch",
             "Execution evidence source spec fingerprint no longer matches the approved source spec.",
-            "Rebuild the execution evidence for the current approved spec revision.",
+            public_repair_remediation,
         );
     }
 

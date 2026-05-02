@@ -5,21 +5,19 @@ pub(super) fn enforce_plain_unit_review_truth(
     execution_run_id: &str,
     gate: &mut GateState,
 ) {
-    let current_run_receipts = match current_run_plain_unit_review_receipt_paths(
-        context,
-        execution_run_id,
-    ) {
-        Ok(paths) => paths,
-        Err(error) => {
-            gate.fail(
-                FailureClass::MalformedExecutionState,
-                "plain_unit_review_receipts_unreadable",
-                error,
-                "Restore authoritative unit-review receipt readability and retry gate-review or gate-finish.",
-            );
-            return;
-        }
-    };
+    let current_run_receipts =
+        match current_run_plain_unit_review_receipt_paths(context, execution_run_id) {
+            Ok(paths) => paths,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "plain_unit_review_receipts_unreadable",
+                    error,
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
+                );
+                return;
+            }
+        };
     if current_run_receipts.is_empty() {
         return;
     }
@@ -32,7 +30,7 @@ pub(super) fn enforce_plain_unit_review_truth(
                     FailureClass::MalformedExecutionState,
                     "plain_unit_review_receipt_strategy_checkpoint_missing",
                     "Authoritative strategy checkpoint provenance is missing for current-run unit-review receipt validation.",
-                    "Restore authoritative strategy checkpoint provenance and retry gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -41,7 +39,7 @@ pub(super) fn enforce_plain_unit_review_truth(
                     FailureClass::MalformedExecutionState,
                     "plain_unit_review_receipt_strategy_checkpoint_missing",
                     error.message,
-                    "Restore authoritative strategy checkpoint provenance and retry gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -79,7 +77,7 @@ pub(super) fn enforce_plain_unit_review_truth(
                 FailureClass::MalformedExecutionState,
                 "plain_unit_review_receipt_malformed",
                 "A current-run unit-review receipt has an unreadable filename.",
-                "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         };
@@ -93,7 +91,7 @@ pub(super) fn enforce_plain_unit_review_truth(
                     "Current-run unit-review receipt {} does not match any checked plan step.",
                     receipt_path.display()
                 ),
-                "Remove or repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         };
@@ -105,7 +103,7 @@ pub(super) fn enforce_plain_unit_review_truth(
                     "Current-run unit-review receipt {} has no completed evidence attempt to validate against.",
                     receipt_path.display()
                 ),
-                "Rebuild the execution evidence for the affected step and retry gate-review or gate-finish.",
+                PUBLIC_WORKFLOW_OPERATOR_REMEDIATION,
             );
             return;
         };
@@ -123,7 +121,7 @@ pub(super) fn enforce_plain_unit_review_truth(
                     "Task {} Step {} is missing packet fingerprint provenance required to validate plain unit-review receipts.",
                     task_number, step_number
                 ),
-                "Repair the execution evidence for the affected step and retry gate-review or gate-finish.",
+                PUBLIC_WORKFLOW_OPERATOR_REMEDIATION,
             );
             return;
         };
@@ -140,7 +138,7 @@ pub(super) fn enforce_plain_unit_review_truth(
                     "Task {} Step {} is missing reviewed checkpoint provenance required to validate plain unit-review receipts.",
                     task_number, step_number
                 ),
-                "Repair the execution evidence for the affected step and retry gate-review or gate-finish.",
+                PUBLIC_WORKFLOW_OPERATOR_REMEDIATION,
             );
             return;
         };
@@ -154,7 +152,7 @@ pub(super) fn enforce_plain_unit_review_truth(
                         "Could not read current-run unit-review receipt {}: {error}",
                         receipt_path.display()
                     ),
-                    "Restore the authoritative unit-review receipt and retry gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -192,7 +190,7 @@ pub(super) fn validate_authoritative_worktree_lease_fingerprint(
                 "Authoritative worktree lease fingerprint is unverifiable in {}.",
                 lease_path
             ),
-            "Repair the authoritative worktree lease artifact and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return false;
     };
@@ -205,7 +203,7 @@ pub(super) fn validate_authoritative_worktree_lease_fingerprint(
                 "Authoritative worktree lease fingerprint does not match canonical content in {}.",
                 lease_path
             ),
-            "Regenerate the authoritative worktree lease artifact from canonical content and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return false;
     }
@@ -224,7 +222,7 @@ pub(super) fn load_authoritative_active_contract(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_authoritative_state_unavailable",
                 "Authoritative harness state is unavailable for execution-unit review gating.",
-                "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return None;
         }
@@ -233,7 +231,7 @@ pub(super) fn load_authoritative_active_contract(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_authoritative_state_unavailable",
                 error.message,
-                "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return None;
         }
@@ -248,7 +246,7 @@ pub(super) fn load_authoritative_active_contract(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_contract_missing",
             "Authoritative harness state is missing the active contract path required to validate execution-unit review provenance.",
-            "Restore the authoritative active contract and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     };
@@ -262,7 +260,7 @@ pub(super) fn load_authoritative_active_contract(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_contract_missing",
             "Authoritative harness state is missing the active contract fingerprint required to validate execution-unit review provenance.",
-            "Restore the authoritative active contract and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     };
@@ -271,7 +269,7 @@ pub(super) fn load_authoritative_active_contract(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_contract_path_invalid",
             "Authoritative active contract path must be a normalized relative filename.",
-            "Restore the authoritative active contract path and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -281,7 +279,7 @@ pub(super) fn load_authoritative_active_contract(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_contract_path_invalid",
             "Authoritative active contract path does not match the active contract fingerprint-derived filename.",
-            "Restore the authoritative active contract path and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -301,7 +299,7 @@ pub(super) fn load_authoritative_active_contract(
                     "Could not inspect authoritative active contract {}: {error}",
                     active_contract_path.display()
                 ),
-                "Restore the authoritative active contract and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return None;
         }
@@ -314,7 +312,7 @@ pub(super) fn load_authoritative_active_contract(
                 "Authoritative active contract must be a regular file in {}.",
                 active_contract_path.display()
             ),
-            "Restore the authoritative active contract and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -414,7 +412,7 @@ pub(super) fn enforce_serial_unit_review_truth(
                     "Task {} Step {} is missing the packet fingerprint required for serial unit-review gating.",
                     step.task_number, step.step_number
                 ),
-                "Rebuild the execution evidence for the completed step and retry gate-review or gate-finish.",
+                PUBLIC_WORKFLOW_OPERATOR_REMEDIATION,
             );
             return;
         };
@@ -431,7 +429,7 @@ pub(super) fn enforce_serial_unit_review_truth(
                     "Task {} Step {} is missing the reviewed checkpoint SHA required for serial unit-review gating.",
                     step.task_number, step.step_number
                 ),
-                "Rebuild the execution evidence for the completed step and retry gate-review or gate-finish.",
+                PUBLIC_WORKFLOW_OPERATOR_REMEDIATION,
             );
             return;
         };
@@ -462,7 +460,7 @@ pub(super) fn enforce_serial_unit_review_truth(
                     "Task {} Step {} serial unit-review reconcile proof could not be verified against repository history.",
                     step.task_number, step.step_number
                 ),
-                "Restore repository history readability and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         };
@@ -487,7 +485,7 @@ pub(super) fn enforce_serial_unit_review_truth(
                         step.step_number,
                         review_receipt_path.display()
                     ),
-                    "Record a dedicated-independent serial unit-review receipt for the completed execution unit and retry gate-review or gate-finish.",
+                    PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
                 );
                 return;
             }
@@ -502,7 +500,7 @@ pub(super) fn enforce_serial_unit_review_truth(
                     step.step_number,
                     review_receipt_path.display()
                 ),
-                "Restore the authoritative serial unit-review receipt and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -516,7 +514,7 @@ pub(super) fn enforce_serial_unit_review_truth(
                         "Could not read authoritative serial unit-review receipt {}: {error}",
                         review_receipt_path.display()
                     ),
-                    "Restore the authoritative serial unit-review receipt and retry gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -533,7 +531,7 @@ pub(super) fn enforce_serial_unit_review_truth(
                     step.step_number,
                     review_receipt_path.display()
                 ),
-                "Regenerate the authoritative serial unit-review receipt from canonical content and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         };
@@ -598,7 +596,7 @@ pub(super) fn enforce_serial_unit_review_truth(
                     "Task {} Step {} serial unit-review receipt does not bind the completed step checkpoint.",
                     step.task_number, step.step_number
                 ),
-                "Regenerate the authoritative serial unit-review receipt from the completed step checkpoint and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -610,7 +608,7 @@ pub(super) fn enforce_serial_unit_review_truth(
                     "Task {} Step {} serial unit-review receipt does not bind the completed step result commit.",
                     step.task_number, step.step_number
                 ),
-                "Regenerate the authoritative serial unit-review receipt from the completed step result and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -647,7 +645,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_malformed",
             "The authoritative unit-review receipt is malformed.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -661,7 +659,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_stage_mismatch",
             "The authoritative unit-review receipt has the wrong review stage.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -675,7 +673,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_not_dedicated",
             "The authoritative unit-review receipt is not dedicated-independent.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -689,7 +687,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_plan_mismatch",
             "The authoritative unit-review receipt does not match the current plan.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -703,7 +701,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_plan_revision_mismatch",
             "The authoritative unit-review receipt does not match the current plan revision.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -717,7 +715,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_run_mismatch",
             "The authoritative unit-review receipt does not match the current execution run.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -731,7 +729,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_unit_mismatch",
             "The authoritative unit-review receipt does not match the reviewed execution unit.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -745,7 +743,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_lease_fingerprint_mismatch",
             "The authoritative unit-review receipt does not match the reviewed lease fingerprint.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -759,7 +757,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_context_key_mismatch",
             "The authoritative unit-review receipt does not match the current execution context.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -773,7 +771,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_task_packet_mismatch",
             "The authoritative unit-review receipt does not match the approved task packet.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -787,7 +785,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_unit_contract_mismatch",
             "The authoritative unit-review receipt does not bind the approved unit contract.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -798,7 +796,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_unit_contract_mismatch",
             "The authoritative unit-review receipt must bind a distinct approved unit contract fingerprint.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -812,7 +810,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_reconcile_mode_mismatch",
             "The authoritative unit-review receipt does not prove an identity-preserving reconcile.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -826,7 +824,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_identity_preserving_proof_mismatch",
             "The authoritative unit-review receipt does not bind the exact reconciled commit.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -840,7 +838,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_identity_preserving_proof_unverifiable",
             "The authoritative unit-review receipt exact reconcile proof could not be verified against repository history.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     };
@@ -854,7 +852,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_identity_preserving_proof_mismatch",
             "The authoritative unit-review receipt does not bind the exact reconciled commit object.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -868,7 +866,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_worktree_mismatch",
             "The authoritative unit-review receipt does not match the reviewed worktree.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -877,7 +875,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_not_pass",
             "The authoritative unit-review receipt is not marked pass.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -891,7 +889,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_generator_mismatch",
             "The authoritative unit-review receipt does not come from the unit-review generator.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -907,7 +905,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_binding_path_invalid",
             "The authoritative unit-review receipt path does not match the reviewed execution unit provenance.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -920,7 +918,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_head_missing",
             "The authoritative unit-review receipt is missing its reviewed checkpoint.",
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     };
@@ -933,7 +931,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
                 "Authoritative unit-review receipt fingerprint is unverifiable in {}.",
                 receipt_path.display()
             ),
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     };
@@ -945,7 +943,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
                 "Authoritative unit-review receipt fingerprint does not match canonical content in {}.",
                 receipt_path.display()
             ),
-            "Regenerate the authoritative unit-review receipt from canonical content and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -962,7 +960,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
                 "Authoritative unit-review receipt fingerprint header does not match canonical content in {}.",
                 receipt_path.display()
             ),
-            "Regenerate the authoritative unit-review receipt from canonical content and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
     }
@@ -1015,7 +1013,7 @@ fn validate_plain_unit_review_receipt(
                 "Current-run unit-review receipt {} is malformed.",
                 receipt_path.display()
             ),
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return false;
     }
@@ -1038,7 +1036,7 @@ fn validate_plain_unit_review_receipt(
                     receipt_path.display(),
                     forbidden_header
                 ),
-                "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return false;
         }
@@ -1058,7 +1056,7 @@ fn validate_plain_unit_review_receipt(
                 "Current-run unit-review receipt path {} does not match the reviewed execution unit provenance.",
                 receipt_path.display()
             ),
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return false;
     }
@@ -1071,7 +1069,7 @@ fn validate_plain_unit_review_receipt(
                 "Current-run unit-review receipt fingerprint is unverifiable in {}.",
                 receipt_path.display()
             ),
-            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return false;
     };
@@ -1088,7 +1086,7 @@ fn validate_plain_unit_review_receipt(
                 "Current-run unit-review receipt fingerprint header does not match canonical content in {}.",
                 receipt_path.display()
             ),
-            "Regenerate the authoritative unit-review receipt from canonical content and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return false;
     }
@@ -1224,7 +1222,7 @@ fn validate_plain_unit_review_receipt(
                 mismatched_fields.join(", ")
                 , mismatch_details.join("; ")
             ),
-            "Regenerate the authoritative unit-review receipt for the completed step and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return false;
     }

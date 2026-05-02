@@ -18,6 +18,10 @@ module.
 | `src/execution/repair_target_selection.rs` | 450 | execution reentry and repair target selection |
 | `src/execution/late_stage_route_selection.rs` | 350 | late-stage public route selection |
 | `src/execution/public_route_selection.rs` | 400 | public next-action route seed projection |
+| `src/execution/read_model/late_stage.rs` | 400 | read-model late-stage precedence projection |
+| `src/execution/read_model/public_route_projection.rs` | 700 | read-model public route DTO projection |
+| `src/execution/read_model/review_state.rs` | 260 | read-model review-state authority projection |
+| `src/execution/read_model/task_state.rs` | 500 | read-model task-boundary and exact-command projection |
 
 ## Reduced Facade Caps
 
@@ -49,8 +53,10 @@ either `Status: documented exception` or `Status: scheduled follow-up`.
 ### `src/execution/read_model.rs`
 
 - Status: scheduled follow-up
-- Follow-up: continue extracting public blocking, exact-command, and status
-  projection families into focused read-model projection modules.
+- Follow-up: task-state, review-state, late-stage, and public-route projection
+  families have focused child modules. Continue extracting public blocking
+  record projection and status overlay hydration once those families have stable
+  ownership boundaries.
 - Boundary guard: read-model modules must not import mutation commands, append
   events, or write projection files directly.
 

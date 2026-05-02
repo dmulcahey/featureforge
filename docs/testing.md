@@ -100,6 +100,22 @@ node scripts/gen-skill-docs.mjs --check
 node --test tests/codex-runtime/skill-doc-budget.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs
 ```
 
+Release checklists must record prompt-surface failures in two separate lines:
+
+- Prompt budget enforcement: `tests/codex-runtime/skill-doc-budget.test.mjs`
+  fails when generated top-level skill docs or `skills/skill-doc-budgets.json`
+  exceed the approved manifest budget.
+- Mandatory-law retention: `tests/codex-runtime/skill-doc-contracts.test.mjs`
+  fails when compaction removes required workflow routing law, approval law,
+  protected-branch repo-safety law, hidden-helper bans, fail-closed stop rules,
+  reviewer-recursion prohibitions, or `recommended_public_command_argv`
+  authority from top-level skill docs.
+
+Any change to `skills/skill-doc-budgets.json`, including line limits, enforce
+mode, or the set of budgeted skills, requires explicit prompt-budget review in
+the release notes or review record. Do not treat manifest changes as routine
+test-fixture updates.
+
 Do not lower prompt budgets by moving mandatory workflow routing law, approval
 law, protected-branch repo-safety law, hidden-helper bans, fail-closed stop
 rules, reviewer-recursion prohibitions, or `recommended_public_command_argv`

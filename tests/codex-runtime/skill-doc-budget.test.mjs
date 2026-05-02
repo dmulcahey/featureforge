@@ -98,6 +98,36 @@ test('generated skill budget manifest is machine-readable and enforce mode after
   assertBudgetManifestShape(manifest);
 });
 
+test('release validation docs keep prompt budget enforcement mandatory and review-owned', () => {
+  const testingDoc = readUtf8(path.join(REPO_ROOT, 'docs/testing.md'));
+
+  assert.match(
+    testingDoc,
+    /node scripts\/run-codex-runtime-tests\.mjs/,
+    'docs/testing.md should keep codex-runtime tests in the release validation matrix',
+  );
+  assert.match(
+    testingDoc,
+    /node --test tests\/codex-runtime\/skill-doc-budget\.test\.mjs tests\/codex-runtime\/skill-doc-contracts\.test\.mjs/,
+    'docs/testing.md should name the prompt-budget and mandatory-law tests together',
+  );
+  assert.match(
+    testingDoc,
+    /The budget gate must stay in enforce mode for release work:/,
+    'docs/testing.md should mark prompt budgets as a mandatory release gate',
+  );
+  assert.match(
+    testingDoc,
+    /Prompt budget enforcement: `tests\/codex-runtime\/skill-doc-budget\.test\.mjs`[\s\S]*Mandatory-law retention: `tests\/codex-runtime\/skill-doc-contracts\.test\.mjs`/,
+    'release checklist guidance should distinguish budget failures from missing-law failures',
+  );
+  assert.match(
+    testingDoc,
+    /Any change to `skills\/skill-doc-budgets\.json`[\s\S]*requires explicit prompt-budget review/,
+    'budget manifest changes should require explicit prompt-budget review',
+  );
+});
+
 test('generated skill budget report covers top-level generated SKILL.md files only', () => {
   const manifest = readBudgetManifest();
   const counts = collectGeneratedSkillLineCounts();

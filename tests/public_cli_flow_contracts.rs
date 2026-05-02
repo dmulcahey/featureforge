@@ -3,6 +3,7 @@ mod rust_source_scan;
 
 use std::collections::HashSet;
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -75,15 +76,17 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
         "close-current-task follow-up routing should use typed public command authority"
     );
 
-    let read_model = read_repo_file("src/execution/read_model.rs");
-    let route_target_start = read_model
+    let read_model_route_projection =
+        read_repo_file("src/execution/read_model/public_route_projection.rs");
+    let route_target_start = read_model_route_projection
         .find("fn route_exposes_repair_review_state_target")
-        .expect("read model should expose public route repair target projection");
-    let route_target_end = read_model[route_target_start..]
+        .expect("read model public route projection module should expose repair target projection");
+    let route_target_end = read_model_route_projection[route_target_start..]
         .find("\nfn should_preserve_local_preflight_route")
         .map(|offset| route_target_start + offset)
-        .expect("read model target projection slice should have a stable following helper");
-    let route_target_projection = &read_model[route_target_start..route_target_end];
+        .expect("read model public route projection slice should have a stable following helper");
+    let route_target_projection =
+        &read_model_route_projection[route_target_start..route_target_end];
     for forbidden in [
         "recommended_command",
         "next_public_action",
@@ -318,6 +321,8 @@ fn release_gates_keep_public_flow_and_internal_compatibility_suites_separate() {
     }
     for forbidden in [
         "internal_only_compatibility",
+        "tests/internal_",
+        "--test internal_",
         "support/internal_only_direct_helpers.rs",
         "support/internal_runtime_direct.rs",
         "support/plan_execution_direct.rs",
@@ -334,10 +339,16 @@ fn release_gates_keep_public_flow_and_internal_compatibility_suites_separate() {
         internal_script.contains("cargo nextest run"),
         "internal compatibility gate should be a runnable nextest command"
     );
-    assert!(
-        internal_script.contains("internal_only_compatibility"),
-        "internal compatibility gate should run explicitly quarantined internal-only tests"
-    );
+    for required in [
+        "tests/internal_*.rs",
+        "internal_test_args+=(--test \"$test_name\")",
+        "--no-fail-fast",
+    ] {
+        assert!(
+            internal_script.contains(required),
+            "internal compatibility gate must include internal test files through `{required}`"
+        );
+    }
     for forbidden in [
         "--test public_cli_flow_contracts",
         "--test public_replay_churn",
@@ -378,14 +389,210 @@ fn release_gates_keep_public_flow_and_internal_compatibility_suites_separate() {
 }
 
 #[test]
+fn internal_compatibility_test_names_live_only_in_internal_files() {
+    let mut violations = Vec::new();
+    let mut internal_files_with_compatibility_names = Vec::new();
+    for file in top_level_rust_test_files(&repo_root().join("tests")) {
+        let rel = repo_relative(&file);
+        let source = fs::read_to_string(&file)
+            .unwrap_or_else(|error| panic!("{} should be readable: {error}", file.display()));
+        let compatibility_names = internal_compatibility_function_names(&rel, &source);
+        if compatibility_names.is_empty() {
+            continue;
+        }
+        if file_name_is_internal_quarantine(&rel) {
+            internal_files_with_compatibility_names.push(rel);
+        } else {
+            violations.push(format!(
+                "{rel} declares internal compatibility functions outside a tests/internal_*.rs file: {}",
+                compatibility_names.join(", ")
+            ));
+        }
+    }
+
+    assert!(
+        !internal_files_with_compatibility_names.is_empty(),
+        "internal compatibility coverage should live in top-level tests/internal_*.rs files"
+    );
+    assert!(
+        violations.is_empty(),
+        "internal compatibility tests must be split out of public/runtime test files:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn internal_compatibility_name_scan_catches_cfg_test_wrapped_items() {
+    let compatibility_fn = hidden_literal(&[
+        "internal_only_",
+        "compatibility_hidden_inside_cfg_test_module",
+    ]);
+    let fixture = format!(
+        r#"
+#[cfg(test)]
+mod tests {{
+    #[test]
+    fn {compatibility_fn}() {{}}
+}}
+"#
+    );
+
+    let compatibility_names =
+        internal_compatibility_function_names("tests/public_fixture.rs", &fixture);
+
+    assert_eq!(
+        compatibility_names,
+        vec![compatibility_fn],
+        "internal compatibility split scan must include cfg(test)-wrapped test declarations"
+    );
+}
+
+#[test]
+fn production_diagnostics_do_not_route_to_hidden_gates_or_receipt_repair() {
+    let mut violations = Vec::new();
+    let forbidden_patterns = public_diagnostic_forbidden_patterns();
+    for file in production_source_and_active_doc_files() {
+        let rel = repo_relative(&file);
+        let source = fs::read_to_string(&file)
+            .unwrap_or_else(|error| panic!("{} should be readable: {error}", file.display()));
+        violations.extend(diagnostic_pattern_violations_for_source(
+            &rel,
+            &source,
+            &forbidden_patterns,
+        ));
+    }
+
+    assert!(
+        violations.is_empty(),
+        "production public diagnostics and active docs must not revive hidden-gate or receipt-repair wording:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn production_diagnostic_scan_includes_root_and_review_active_docs() {
+    let files = production_source_and_active_doc_files()
+        .into_iter()
+        .map(|file| repo_relative(&file))
+        .collect::<HashSet<_>>();
+
+    for required in ["AGENTS.md", "README.md", "RELEASE-NOTES.md", "TODOS.md"] {
+        assert!(
+            files.contains(required),
+            "root active doc `{required}` must be covered by the hidden-gate and receipt-repair wording scan"
+        );
+    }
+    assert!(
+        files.contains("review/checklist.md"),
+        "active review guidance must be covered by the hidden-gate and receipt-repair wording scan"
+    );
+}
+
+#[test]
+fn production_diagnostic_scanner_only_allows_explicit_historical_comments() {
+    let forbidden_patterns = public_diagnostic_forbidden_patterns();
+    let active_doc = "This historical note says retry gate-review.";
+    let production_string =
+        r#"let remediation = "historical retry gate-review guidance must still fail";"#;
+    let raw_string_star_line = "let remediation = r#\"\n* historical retry gate-review\n\"#;";
+    let raw_string_line_comment = "let remediation = r#\"// historical: retry gate-review\"#;";
+    let rebuild_evidence_remediation =
+        r#"let remediation = "Rebuild the execution evidence for the affected step";"#;
+    let no_article_receipt_repair =
+        r#"let remediation = "Restore authoritative unit-review receipt readability";"#;
+    let source_comment = "// historical: retry gate-review was old wording";
+    let block_comment = "/* historical:\n * retry gate-review was old wording\n */";
+
+    assert!(
+        diagnostic_pattern_violations_for_source(
+            "docs/testing.md",
+            active_doc,
+            &forbidden_patterns
+        )
+        .iter()
+        .any(|violation| violation.contains("retry gate-review")),
+        "active docs must not bypass the scan by saying historical"
+    );
+    assert!(
+        diagnostic_pattern_violations_for_source(
+            "src/execution/example.rs",
+            production_string,
+            &forbidden_patterns
+        )
+        .iter()
+        .any(|violation| violation.contains("retry gate-review")),
+        "production string literals must not bypass the scan by saying historical"
+    );
+    assert!(
+        diagnostic_pattern_violations_for_source(
+            "src/execution/example.rs",
+            raw_string_star_line,
+            &forbidden_patterns
+        )
+        .iter()
+        .any(|violation| violation.contains("retry gate-review")),
+        "raw production string lines must not bypass the scan by looking like block comments"
+    );
+    assert!(
+        diagnostic_pattern_violations_for_source(
+            "src/execution/example.rs",
+            raw_string_line_comment,
+            &forbidden_patterns
+        )
+        .iter()
+        .any(|violation| violation.contains("retry gate-review")),
+        "raw production strings must not bypass the scan by containing line-comment markers"
+    );
+    assert!(
+        diagnostic_pattern_violations_for_source(
+            "src/execution/example.rs",
+            rebuild_evidence_remediation,
+            &forbidden_patterns
+        )
+        .iter()
+        .any(|violation| violation.contains("rebuild the execution evidence")),
+        "scanner must catch direct rebuild-evidence remediation wording"
+    );
+    assert!(
+        diagnostic_pattern_violations_for_source(
+            "src/execution/example.rs",
+            no_article_receipt_repair,
+            &forbidden_patterns
+        )
+        .iter()
+        .any(|violation| violation.contains("restore authoritative unit-review receipt")),
+        "scanner must catch the original no-article receipt repair wording"
+    );
+    assert!(
+        diagnostic_pattern_violations_for_source(
+            "src/execution/example.rs",
+            source_comment,
+            &forbidden_patterns
+        )
+        .is_empty(),
+        "explicitly historical Rust comments may document removed wording"
+    );
+    assert!(
+        diagnostic_pattern_violations_for_source(
+            "src/execution/example.rs",
+            block_comment,
+            &forbidden_patterns
+        )
+        .is_empty(),
+        "explicitly historical Rust block comments may document removed wording"
+    );
+}
+
+#[test]
 fn scanner_rejects_internal_only_quarantine_inside_public_gate_suite() {
     let helper = hidden_literal(&[
         "internal_only_try_run_",
         "plan_execution_output_direct(repo, state, args, context);",
     ]);
     let hidden_command = hidden_literal(&["record", "-review-dispatch"]);
+    let compatibility_fn = hidden_literal(&["internal_only_", "compatibility_fixture"]);
     let fixture = format!(
-        "#[test]\nfn internal_only_compatibility_fixture() {{\n    {helper}\n    let _ = &[\"{hidden_command}\"];\n}}\n"
+        "#[test]\nfn {compatibility_fn}() {{\n    {helper}\n    let _ = &[\"{hidden_command}\"];\n}}\n"
     );
 
     let violations =
@@ -734,27 +941,6 @@ fn public_replay_fixture() {{
 }
 
 #[test]
-fn internal_quarantine_bridge_imports_are_explicitly_reasoned() {
-    for rel in [
-        "tests/contracts_execution_runtime_boundaries.rs",
-        "tests/execution_harness_state.rs",
-        "tests/execution_query.rs",
-        "tests/plan_execution.rs",
-        "tests/plan_execution_topology.rs",
-        "tests/workflow_runtime.rs",
-        "tests/workflow_runtime_final_review.rs",
-        "tests/workflow_shell_smoke.rs",
-    ] {
-        let reason = protected_internal_quarantine_import_exception_reason(rel)
-            .expect("mixed internal-helper quarantine bridge import exception should be listed");
-        assert!(
-            reason.len() > 40 && reason.contains("internal"),
-            "{rel} internal-helper quarantine bridge import exception should have a specific reason"
-        );
-    }
-}
-
-#[test]
 fn internal_helper_bridge_is_quarantined() {
     let source = read_repo_file("tests/support/internal_only_direct_helpers.rs");
     assert!(
@@ -776,10 +962,6 @@ fn internal_helper_bridge_is_quarantined() {
 #[test]
 fn explicit_internal_helper_scope_exceptions_are_reasoned() {
     for (rel, function_name) in [
-        (
-            "tests/plan_execution.rs",
-            "assert_begin_blocks_cross_task_without_prior_task_closure",
-        ),
         (
             "tests/workflow_shell_smoke.rs",
             "setup_qa_pending_case_slow",
@@ -837,7 +1019,7 @@ mod internal_runtime_direct;
 mod plan_execution_direct_support;
 
 #[test]
-fn internal_only_compatibility_fixture() {{}}
+fn internal_compatibility_fixture() {{}}
 "#
     );
     let violations =
@@ -892,19 +1074,20 @@ fn scanner_allows_explicitly_quarantined_internal_file_fixture() {
 }
 
 #[test]
-fn scanner_allows_explicit_internal_only_test_quarantine() {
+fn scanner_allows_internal_only_helper_wrapper_quarantine_outside_public_gate_files() {
     let helper = hidden_literal(&[
         "internal_only_try_run_",
         "plan_execution_output_direct(repo, state, args, context);",
     ]);
     let hidden_command = hidden_literal(&["record", "-review-dispatch"]);
+    let compatibility_fn = hidden_literal(&["internal_only_", "helper_fixture"]);
     let fixture = format!(
-        "#[test]\nfn internal_only_compatibility_fixture() {{\n    {helper}\n    let _ = &[\"{hidden_command}\"];\n}}\n"
+        "#[test]\nfn {compatibility_fn}() {{\n    {helper}\n    let _ = &[\"{hidden_command}\"];\n}}\n"
     );
 
     assert!(
         scan_source_for_public_flow_violations("tests/public_fixture.rs", &fixture).is_empty(),
-        "internal_only_* test scopes are explicit test-level quarantines"
+        "non-public helper-wrapper fixtures may still quarantine low-level helper coverage by name"
     );
 }
 
@@ -1124,47 +1307,11 @@ fn is_protected_public_flow_file(rel: &str) -> bool {
     )
 }
 
-fn protected_internal_quarantine_import_exception_reason(rel: &str) -> Option<&'static str> {
-    match rel {
-        "tests/contracts_execution_runtime_boundaries.rs" => Some(
-            "mixed boundary contract file keeps internal-only compatibility probes in internal_only_* tests",
-        ),
-        "tests/execution_harness_state.rs" => Some(
-            "execution harness state coverage intentionally exercises direct runtime helpers in internal_only_* tests",
-        ),
-        "tests/execution_query.rs" => Some(
-            "execution query boundary coverage intentionally compares direct internal probes with public surfaces",
-        ),
-        "tests/plan_execution.rs" => Some(
-            "plan execution compatibility matrix intentionally exercises direct internal helpers in internal_only_* tests",
-        ),
-        "tests/plan_execution_topology.rs" => Some(
-            "topology compatibility coverage intentionally exercises direct internal recommendation helpers",
-        ),
-        "tests/workflow_runtime.rs" => Some(
-            "workflow runtime compatibility matrix intentionally exercises direct internal helpers in internal_only_* tests",
-        ),
-        "tests/workflow_runtime_final_review.rs" => Some(
-            "final-review runtime compatibility matrix intentionally exercises direct internal helpers in internal_only_* tests",
-        ),
-        "tests/workflow_shell_smoke.rs" => Some(
-            "workflow shell smoke compatibility matrix intentionally exercises direct internal helpers in internal_only_* tests",
-        ),
-        _ => None,
-    }
-}
-
 fn explicit_internal_helper_scope_exception_reason(
     rel: &str,
     function_name: &str,
 ) -> Option<&'static str> {
     match (rel, function_name) {
-        (
-            "tests/plan_execution.rs",
-            "assert_begin_blocks_cross_task_without_prior_task_closure",
-        ) => Some(
-            "public begin-boundary assertion uses internal preflight acceptance strictly as fixture setup",
-        ),
         ("tests/workflow_shell_smoke.rs", "setup_qa_pending_case_slow") => Some(
             "late-stage fixture setup seeds dispatched branch review artifact before public routing assertions",
         ),
@@ -1206,9 +1353,6 @@ fn forbidden_internal_support_imports(rel: &str, source: &str) -> Vec<String> {
 }
 
 fn internal_quarantine_bridge_imports(rel: &str, source: &str) -> Vec<String> {
-    if protected_internal_quarantine_import_exception_reason(rel).is_some() {
-        return Vec::new();
-    }
     rust_source_scan::parse_rust_source(rel, source)
         .items
         .iter()
@@ -1854,12 +1998,21 @@ fn denied_helper_calls() -> Vec<String> {
         hidden_literal(&["internal_only_unit_", "plan_execution_pre", "flight_json("]),
         concat!("internal_only_", "plan_execution_fixture_json(").to_owned(),
         hidden_literal(&[
-            "internal_only_compatibility_",
+            "internal_only_",
+            "compatibility_",
             "workflow_pre",
             "flight_json(",
         ]),
-        concat!("internal_only_compatibility_", "workflow_gate_review_json(").to_owned(),
-        concat!("internal_only_compatibility_", "workflow_gate_finish_json(").to_owned(),
+        hidden_literal(&[
+            "internal_only_",
+            "compatibility_",
+            "workflow_gate_review_json(",
+        ]),
+        hidden_literal(&[
+            "internal_only_",
+            "compatibility_",
+            "workflow_gate_finish_json(",
+        ]),
         hidden_literal(&["internal_only_workflow_", "pre", "flight_output("]),
         concat!("internal_only_workflow_", "gate_review_output(").to_owned(),
         concat!("internal_only_workflow_", "gate_finish_output(").to_owned(),
@@ -1885,11 +2038,297 @@ fn denied_hidden_literals() -> Vec<String> {
     ]
 }
 
+fn public_diagnostic_forbidden_patterns() -> Vec<String> {
+    vec![
+        hidden_literal(&["retry gate", "-review"]),
+        hidden_literal(&["retry gate", "-finish"]),
+        "rebuild the execution evidence".to_owned(),
+        "record a dedicated-independent serial unit-review receipt".to_owned(),
+        "record the authoritative unit-review receipt".to_owned(),
+        "repair the authoritative unit-review receipt".to_owned(),
+        "restore authoritative unit-review receipt".to_owned(),
+        "restore the authoritative unit-review receipt".to_owned(),
+    ]
+}
+
+fn diagnostic_pattern_violations_for_source(
+    rel: &str,
+    source: &str,
+    forbidden_patterns: &[String],
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let source_lower = source.to_ascii_lowercase();
+    let historical_comment_ranges = if rel.ends_with(".rs") {
+        rust_historical_comment_ranges(source)
+    } else {
+        Vec::new()
+    };
+
+    for pattern in forbidden_patterns {
+        let pattern_lower = pattern.to_ascii_lowercase();
+        for (start, _) in source_lower.match_indices(&pattern_lower) {
+            let end = start + pattern_lower.len();
+            if !range_is_inside_any(start..end, &historical_comment_ranges) {
+                violations.push(format!(
+                    "{rel}:{} public diagnostics/docs must route through workflow operator, repair-review-state, close-current-task, or advance-late-stage instead of `{pattern}`",
+                    line_number_for_byte(source, start)
+                ));
+            }
+        }
+    }
+    violations
+}
+
+fn rust_historical_comment_ranges(source: &str) -> Vec<Range<usize>> {
+    let bytes = source.as_bytes();
+    let mut ranges = Vec::new();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if let Some(raw_string_end) = rust_raw_string_end(bytes, index) {
+            index = raw_string_end;
+            continue;
+        }
+
+        if bytes[index] == b'"' {
+            index = rust_quoted_string_end(bytes, index);
+            continue;
+        }
+
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            let start = index;
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            if rust_comment_is_explicitly_historical(&source[start..index]) {
+                ranges.push(start..index);
+            }
+            continue;
+        }
+
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            let start = index;
+            index = rust_block_comment_end(bytes, index);
+            if rust_comment_is_explicitly_historical(&source[start..index]) {
+                ranges.push(start..index);
+            }
+            continue;
+        }
+
+        index += 1;
+    }
+
+    ranges
+}
+
+fn rust_raw_string_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let raw_prefix_index = if bytes.get(start) == Some(&b'r') {
+        start
+    } else if matches!(bytes.get(start), Some(b'b' | b'c')) && bytes.get(start + 1) == Some(&b'r') {
+        start + 1
+    } else {
+        return None;
+    };
+
+    let mut quote_index = raw_prefix_index + 1;
+    while bytes.get(quote_index) == Some(&b'#') {
+        quote_index += 1;
+    }
+    if bytes.get(quote_index) != Some(&b'"') {
+        return None;
+    }
+
+    let hashes = quote_index - raw_prefix_index - 1;
+    let mut index = quote_index + 1;
+    while index < bytes.len() {
+        if bytes[index] == b'"'
+            && bytes
+                .get(index + 1..index + 1 + hashes)
+                .is_some_and(|suffix| suffix.iter().all(|byte| *byte == b'#'))
+        {
+            return Some(index + 1 + hashes);
+        }
+        index += 1;
+    }
+
+    Some(bytes.len())
+}
+
+fn rust_quoted_string_end(bytes: &[u8], start: usize) -> usize {
+    let mut index = start + 1;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == b'"' {
+            return index + 1;
+        }
+        index += 1;
+    }
+    bytes.len()
+}
+
+fn rust_block_comment_end(bytes: &[u8], start: usize) -> usize {
+    let mut depth = 1usize;
+    let mut index = start + 2;
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'/' && bytes[index + 1] == b'*' {
+            depth += 1;
+            index += 2;
+        } else if bytes[index] == b'*' && bytes[index + 1] == b'/' {
+            depth -= 1;
+            index += 2;
+            if depth == 0 {
+                return index;
+            }
+        } else {
+            index += 1;
+        }
+    }
+    bytes.len()
+}
+
+fn rust_comment_is_explicitly_historical(comment: &str) -> bool {
+    let trimmed = comment.trim_start();
+    let body = if let Some(body) = trimmed.strip_prefix("//") {
+        body
+    } else if let Some(body) = trimmed.strip_prefix("/*") {
+        body
+    } else {
+        return false;
+    };
+    let body = body.trim_start_matches(['/', '*', '!']).trim_start();
+    body.to_ascii_lowercase().starts_with("historical")
+}
+
+fn range_is_inside_any(range: Range<usize>, ranges: &[Range<usize>]) -> bool {
+    ranges
+        .iter()
+        .any(|allowed| range.start >= allowed.start && range.end <= allowed.end)
+}
+
+fn line_number_for_byte(source: &str, byte_index: usize) -> usize {
+    source[..byte_index]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1
+}
+
+fn production_source_and_active_doc_files() -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_root_active_doc_files(&mut files);
+    collect_files_with_extensions(&repo_root().join("src"), &["rs"], &mut files);
+    collect_files_with_extensions(&repo_root().join("skills"), &["md", "tmpl"], &mut files);
+    collect_files_with_extensions(&repo_root().join("references"), &["md"], &mut files);
+    collect_active_doc_files(&repo_root().join("docs"), &mut files);
+    collect_active_doc_files(&repo_root().join("review"), &mut files);
+    files.sort();
+    files.dedup();
+    files
+}
+
+fn collect_root_active_doc_files(files: &mut Vec<PathBuf>) {
+    let root = repo_root();
+    for entry in fs::read_dir(&root).unwrap_or_else(|error| {
+        panic!("{} should be readable: {error}", root.display());
+    }) {
+        let entry = entry.expect("directory entry should be readable");
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name.ends_with(".md") || name.ends_with(".md.tmpl") {
+            files.push(path);
+        }
+    }
+}
+
+fn collect_active_doc_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    if dir.file_name().and_then(|name| name.to_str()) == Some("archive") {
+        return;
+    }
+    collect_files_with_extensions(dir, &["md"], files);
+}
+
 fn rust_test_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     collect_rust_test_files(root, &mut files);
     files.sort();
     files
+}
+
+fn top_level_rust_test_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = fs::read_dir(root)
+        .unwrap_or_else(|error| panic!("{} should be readable: {error}", root.display()))
+        .map(|entry| {
+            entry
+                .expect("test directory entry should be readable")
+                .path()
+        })
+        .filter(|path| {
+            path.is_file()
+                && path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    files
+}
+
+fn internal_compatibility_function_names(rel: &str, source: &str) -> Vec<String> {
+    let syntax = rust_source_scan::parse_rust_source(rel, source);
+    let mut names = Vec::new();
+    collect_item_function_names_including_cfg_test(&syntax.items, &mut names);
+    names.sort();
+    names.dedup();
+    let compatibility_prefix = hidden_literal(&["internal_only_", "compatibility_"]);
+    let fs_prefix = hidden_literal(&["internal_only_", "fs"]);
+    names
+        .into_iter()
+        .filter(|name| name.starts_with(&compatibility_prefix) || name.starts_with(&fs_prefix))
+        .collect()
+}
+
+fn collect_item_function_names_including_cfg_test(items: &[syn::Item], names: &mut Vec<String>) {
+    for item in items {
+        match item {
+            syn::Item::Fn(item_fn) => names.push(item_fn.sig.ident.to_string()),
+            syn::Item::Mod(item_mod) => {
+                if let Some((_, nested_items)) = &item_mod.content {
+                    collect_item_function_names_including_cfg_test(nested_items, names);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_files_with_extensions(dir: &Path, extensions: &[&str], files: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).unwrap_or_else(|error| {
+        panic!("{} should be readable: {error}", dir.display());
+    }) {
+        let entry = entry.expect("directory entry should be readable");
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().and_then(|name| name.to_str()) == Some("archive") {
+                continue;
+            }
+            collect_files_with_extensions(&path, extensions, files);
+        } else if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extensions.contains(&extension))
+        {
+            files.push(path);
+        }
+    }
 }
 
 fn production_command_authority_files() -> Vec<PathBuf> {

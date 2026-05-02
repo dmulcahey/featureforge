@@ -32,7 +32,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                             "Could not inspect authoritative worktree leases in {}: {error}",
                             artifacts_dir.display()
                         ),
-                        "Restore authoritative worktree lease readability and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -42,7 +42,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                     FailureClass::MalformedExecutionState,
                     "worktree_lease_authoritative_state_unavailable",
                     "Authoritative harness state is unavailable for worktree lease gating.",
-                    "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
             }
             return;
@@ -52,7 +52,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_authoritative_state_unavailable",
                 error.message,
-                "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -64,7 +64,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_authoritative_run_identity_missing",
                 "Authoritative harness state is missing its current run identity.",
-                "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -76,7 +76,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_run_context_mismatch",
             "Authoritative run identity does not match the current plan context.",
-            "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return;
     }
@@ -88,7 +88,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_index_missing",
             "Authoritative harness state is missing the active worktree lease fingerprint index for the current run.",
-            "Restore the authoritative worktree lease fingerprints and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return;
     };
@@ -98,7 +98,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_index_missing",
             "Authoritative harness state is missing the active worktree lease binding index for the current run.",
-            "Restore the authoritative worktree lease bindings and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return;
     };
@@ -110,7 +110,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_binding_duplicate",
             "Authoritative harness state contains duplicate active worktree lease fingerprints for the current run.",
-            "Restore the authoritative worktree lease fingerprints and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return;
     }
@@ -130,7 +130,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                     FailureClass::MalformedExecutionState,
                     "worktree_lease_artifacts_unreadable",
                     error,
-                    "Restore authoritative worktree lease readability and retry gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -140,7 +140,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_authoritative_binding_missing",
                 "Authoritative harness state is missing the active worktree lease fingerprint index for the current run.",
-                "Restore the authoritative worktree lease fingerprints and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -155,7 +155,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                     FailureClass::MalformedExecutionState,
                     "worktree_lease_authoritative_state_unavailable",
                     error.message,
-                    "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -187,7 +187,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_binding_missing",
             "Authoritative harness state is missing one or more active worktree lease bindings for the current run.",
-            "Restore the authoritative worktree lease bindings and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return;
     }
@@ -207,7 +207,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                     "Authoritative active contract {} is malformed: {error}",
                     active_contract_path.display()
                 ),
-                "Restore the authoritative active contract and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -217,7 +217,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_contract_unreadable",
             "Authoritative active contract fingerprint does not match its canonical content.",
-            "Restore the authoritative active contract and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return;
     }
@@ -229,7 +229,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_head_unavailable",
                 error.message,
-                "Restore repository HEAD inspection and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -244,7 +244,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_authoritative_binding_missing",
                 "Authoritative harness state contains a worktree lease binding that is not indexed by the current runtime state.",
-                "Restore the authoritative worktree lease bindings and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -259,7 +259,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
             FailureClass::MalformedExecutionState,
             "worktree_lease_authoritative_binding_duplicate",
             "Authoritative harness state contains duplicate or missing active worktree lease bindings for the current run.",
-            "Restore the authoritative worktree lease bindings and retry gate-review or gate-finish.",
+            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return;
     }
@@ -292,7 +292,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         "Could not inspect authoritative worktree lease {}: {error}",
                         lease_path.display()
                     ),
-                    "Restore authoritative worktree lease readability and retry gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -305,7 +305,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                     "Authoritative worktree lease must be a regular file in {}.",
                     lease_path.display()
                 ),
-                "Restore authoritative worktree lease readability and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -320,7 +320,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         "Could not read authoritative worktree lease {}: {error}",
                         lease_path.display()
                     ),
-                    "Restore authoritative worktree lease readability and retry gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -336,7 +336,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         "Authoritative worktree lease is malformed in {}: {error}",
                         lease_path.display()
                     ),
-                    "Repair the authoritative worktree lease artifact and retry gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -355,7 +355,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_binding_path_invalid",
                 "Authoritative worktree lease binding path does not match the canonical runtime-owned filename.",
-                "Restore the authoritative worktree lease binding path and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -365,7 +365,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_provenance_unindexed",
                 "Authoritative worktree lease fingerprint is not indexed by the current runtime state.",
-                "Regenerate the authoritative worktree lease from the current runtime and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -375,7 +375,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_run_id_mismatch",
                 "Authoritative worktree lease body does not match the current execution run.",
-                "Regenerate the authoritative worktree lease from the current runtime and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -384,7 +384,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_plan_context_mismatch",
                 "Authoritative worktree lease does not match the current plan and execution context.",
-                "Regenerate the authoritative worktree lease from the current runtime and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -393,7 +393,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_validation_failed",
                 error.message,
-                "Repair the authoritative worktree lease artifact and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -408,7 +408,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_authoritative_state_missing",
                 "Authoritative harness state is missing the baseline head provenance required for worktree lease gating.",
-                "Restore the authoritative worktree lease baseline provenance and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -423,7 +423,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_authoritative_state_missing",
                 "Authoritative harness state is missing the baseline worktree provenance required for worktree lease gating.",
-                "Restore the authoritative worktree lease baseline provenance and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -443,7 +443,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                 FailureClass::MalformedExecutionState,
                 "worktree_lease_execution_context_key_mismatch",
                 "Authoritative worktree lease body does not match the current execution context.",
-                "Regenerate the authoritative worktree lease from the current runtime context and retry gate-review or gate-finish.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             return;
         }
@@ -462,7 +462,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                     FailureClass::ExecutionStateNotReady,
                     "worktree_lease_open",
                     "An authoritative worktree lease remains open.",
-                    "Reconcile and clean the worktree lease before rerunning gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -471,7 +471,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                     FailureClass::ExecutionStateNotReady,
                     "worktree_lease_reconcile_pending",
                     "An authoritative worktree lease has passed review but not yet been reconciled.",
-                    "Reconcile the reviewed checkpoint back onto the active branch before rerunning gate-review or gate-finish.",
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 return;
             }
@@ -486,7 +486,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_review_receipt_missing",
                         "An authoritative unit-review receipt is required before a cleaned worktree lease can release dependent work.",
-                        "Record the authoritative unit-review receipt for the current reviewed checkpoint and retry gate-review or gate-finish.",
+                        PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
                     );
                     return;
                 };
@@ -500,7 +500,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_review_receipt_task_packet_missing",
                         "An authoritative unit-review receipt is required to bind the approved task packet before a cleaned worktree lease can release dependent work.",
-                        "Record the authoritative unit-review receipt for the current approved task packet and retry gate-review or gate-finish.",
+                        PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
                     );
                     return;
                 };
@@ -513,7 +513,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::MalformedExecutionState,
                         "worktree_lease_review_receipt_task_packet_not_authoritative",
                         "The authoritative unit-review receipt does not bind a task packet from the current authoritative contract.",
-                        "Record the authoritative unit-review receipt for the current approved task packet and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -527,7 +527,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_review_receipt_unit_contract_missing",
                         "An authoritative unit-review receipt is required to bind the approved unit contract before a cleaned worktree lease can release dependent work.",
-                        "Record the authoritative unit-review receipt for the current approved unit contract and retry gate-review or gate-finish.",
+                        PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
                     );
                     return;
                 };
@@ -543,7 +543,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::MalformedExecutionState,
                         "worktree_lease_review_receipt_unit_contract_mismatch",
                         "The authoritative unit-review receipt does not bind the canonical approved unit contract fingerprint.",
-                        "Record the authoritative unit-review receipt for the current approved unit contract and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -557,7 +557,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_review_receipt_missing",
                         "An authoritative unit-review receipt is required to bind the reviewed checkpoint before a cleaned worktree lease can release dependent work.",
-                        "Record the authoritative unit-review receipt for the current reviewed checkpoint and retry gate-review or gate-finish.",
+                        PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
                     );
                     return;
                 };
@@ -571,7 +571,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_reconcile_mode_missing",
                         "An authoritative unit-review receipt is required to bind the identity-preserving reconcile mode before a cleaned worktree lease can release dependent work.",
-                        "Record the authoritative unit-review receipt for the current identity-preserving reconcile and retry gate-review or gate-finish.",
+                        PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
                     );
                     return;
                 };
@@ -585,7 +585,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_identity_preserving_proof_missing",
                         "An authoritative unit-review receipt is required to bind the exact reconciled commit before a cleaned worktree lease can release dependent work.",
-                        "Record the authoritative unit-review receipt for the current exact reconciled commit and retry gate-review or gate-finish.",
+                        PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
                     );
                     return;
                 };
@@ -599,7 +599,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_identity_preserving_proof_missing",
                         "An authoritative unit-review receipt is required to bind the exact reconciled commit object before a cleaned worktree lease can release dependent work.",
-                        "Record the authoritative unit-review receipt for the current exact reconciled commit object and retry gate-review or gate-finish.",
+                        PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
                     );
                     return;
                 };
@@ -613,7 +613,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_identity_preserving_proof_missing",
                         "An authoritative worktree lease is missing the exact reconciled commit proof required to release dependent work.",
-                        "Regenerate the authoritative worktree lease from the recorded identity-preserving reconcile and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 };
@@ -627,7 +627,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_identity_preserving_proof_missing",
                         "An authoritative worktree lease is missing the exact reconciled commit object proof required to release dependent work.",
-                        "Regenerate the authoritative worktree lease from the recorded identity-preserving reconcile and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 };
@@ -641,7 +641,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::MalformedExecutionState,
                         "worktree_lease_identity_preserving_proof_unverifiable",
                         "The authoritative worktree lease exact reconcile proof could not be verified against repository history.",
-                        "Regenerate the authoritative worktree lease from the recorded identity-preserving reconcile and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 };
@@ -652,7 +652,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::StaleProvenance,
                         "worktree_lease_identity_preserving_lease_proof_mismatch",
                         "The authoritative worktree lease exact reconciled commit object proof does not match the reviewed reconcile proof.",
-                        "Regenerate the authoritative worktree lease from the recorded identity-preserving reconcile and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -662,7 +662,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::StaleProvenance,
                         "worktree_lease_identity_preserving_proof_mismatch",
                         "The authoritative worktree lease exact reconciled commit object does not match the authoritative unit-review receipt.",
-                        "Regenerate the authoritative worktree lease from the recorded unit-review receipt and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -676,7 +676,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_review_receipt_missing",
                         "An authoritative unit-review receipt is required before a cleaned worktree lease can release dependent work.",
-                        "Record the authoritative unit-review receipt for the current reviewed checkpoint and retry gate-review or gate-finish.",
+                        PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
                     );
                     return;
                 };
@@ -704,7 +704,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                                 "Could not inspect authoritative unit-review receipt {}: {error}",
                                 review_receipt_path.display()
                             ),
-                            "Record the authoritative unit-review receipt for the current reviewed checkpoint and retry gate-review or gate-finish.",
+                            PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
                         );
                         return;
                     }
@@ -717,8 +717,8 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                             "Authoritative unit-review receipt must be a regular file in {}.",
                             review_receipt_path.display()
                         ),
-                        "Restore the authoritative unit-review receipt and retry gate-review or gate-finish.",
-                        );
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
+                    );
                     return;
                 }
                 let expected_review_receipt_filename = format!(
@@ -735,7 +735,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::MalformedExecutionState,
                         "worktree_lease_binding_path_invalid",
                         "Authoritative unit-review receipt binding path does not match the reviewed execution unit provenance.",
-                        "Restore the authoritative unit-review receipt binding path and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -749,7 +749,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                                 "Could not read authoritative unit-review receipt {}: {error}",
                                 review_receipt_path.display()
                             ),
-                            "Restore the authoritative unit-review receipt and retry gate-review or gate-finish.",
+                            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                         );
                         return;
                     }
@@ -780,7 +780,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::StaleProvenance,
                         "worktree_lease_identity_preserving_provenance_mismatch",
                         "Authoritative worktree lease reviewed checkpoint does not match the runtime-owned unit-review binding.",
-                        "Regenerate the authoritative worktree lease from the recorded unit-review receipt and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -789,7 +789,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::StaleProvenance,
                         "worktree_lease_identity_preserving_proof_mismatch",
                         "Authoritative worktree lease reconciled result does not match the runtime-owned unit-review binding.",
-                        "Regenerate the authoritative worktree lease from the recorded unit-review receipt and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -804,7 +804,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::MalformedExecutionState,
                         "worktree_lease_execution_context_key_mismatch",
                         "Authoritative worktree lease binding does not match the current execution context.",
-                        "Regenerate the authoritative worktree lease binding from the current runtime context and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -815,7 +815,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::StaleProvenance,
                         "worktree_lease_identity_preserving_reconcile_mode_mismatch",
                         "Authoritative worktree lease does not prove an identity-preserving reconcile.",
-                        "Regenerate the authoritative worktree lease from the recorded identity-preserving reconcile and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -827,7 +827,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::StaleProvenance,
                         "worktree_lease_review_receipt_checkpoint_mismatch",
                         "Authoritative worktree lease reviewed checkpoint does not match the authoritative unit-review receipt.",
-                        "Regenerate the authoritative worktree lease from the recorded unit-review receipt and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -842,7 +842,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::StaleProvenance,
                         "worktree_lease_identity_preserving_provenance_mismatch",
                         "Authoritative worktree lease baseline head provenance does not match the current authoritative baseline.",
-                        "Regenerate the authoritative worktree lease from the identity-preserving reviewed checkpoint and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -857,7 +857,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::StaleProvenance,
                         "worktree_lease_identity_preserving_provenance_mismatch",
                         "Authoritative worktree lease baseline worktree provenance does not match the current authoritative baseline.",
-                        "Regenerate the authoritative worktree lease from the identity-preserving reviewed checkpoint and retry gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -870,7 +870,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::StaleProvenance,
                         "worktree_lease_checkpoint_mismatch",
                         "Authoritative worktree lease reconciled result is not descended from the reviewed checkpoint.",
-                        "Reconcile the reviewed checkpoint back onto the active branch history and rerun gate-review or gate-finish with a fresh lease.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -883,7 +883,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::StaleProvenance,
                         "worktree_lease_checkpoint_mismatch",
                         "Authoritative worktree lease reconciled result is not contained in the current branch history.",
-                        "Reconcile the reviewed checkpoint back onto the active branch history and rerun gate-review or gate-finish with a fresh lease.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -892,7 +892,7 @@ pub(super) fn enforce_worktree_lease_binding_truth(
                         FailureClass::ExecutionStateNotReady,
                         "worktree_lease_cleanup_pending",
                         "Authoritative worktree lease has not been cleaned up yet.",
-                        "Clean the temporary worktree before rerunning gate-review or gate-finish.",
+                        PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                     );
                     return;
                 }
@@ -955,9 +955,7 @@ fn normalize_authoritative_artifact_binding_path(
                     format!(
                         "Authoritative {artifact_kind} binding path must be a normalized relative filename."
                     ),
-                    format!(
-                        "Restore the authoritative {artifact_kind} binding path and retry gate-review or gate-finish."
-                    ),
+                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
                 );
                 None
             } else {
@@ -971,9 +969,7 @@ fn normalize_authoritative_artifact_binding_path(
                 format!(
                     "Authoritative {artifact_kind} binding path must be a normalized relative filename."
                 ),
-                format!(
-                    "Restore the authoritative {artifact_kind} binding path and retry gate-review or gate-finish."
-                ),
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
             );
             None
         }

@@ -275,7 +275,7 @@ pub(super) fn evaluate_pre_checkpoint_finish_gate(
             FailureClass::ReleaseArtifactNotFresh,
             "release_artifact_base_branch_unresolved",
             "Finish readiness could not determine the expected base branch for the current workspace.",
-            "Resolve the release base branch before running gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     };
@@ -286,7 +286,7 @@ pub(super) fn evaluate_pre_checkpoint_finish_gate(
                 FailureClass::MalformedExecutionState,
                 "authoritative_transition_state_missing",
                 "Finish readiness requires authoritative transition state.",
-                "Restore authoritative transition state before running gate-finish.",
+                PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
             );
             return false;
         }
@@ -298,7 +298,7 @@ pub(super) fn evaluate_pre_checkpoint_finish_gate(
                     "Finish readiness could not read authoritative transition state: {}",
                     error.message
                 ),
-                "Restore authoritative transition state before running gate-finish.",
+                PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
             );
             return false;
         }
@@ -308,7 +308,7 @@ pub(super) fn evaluate_pre_checkpoint_finish_gate(
             FailureClass::MalformedExecutionState,
             "current_branch_closure_id_missing",
             "Finish readiness requires a current branch-closure binding.",
-            "Record or repair the current branch closure before running gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     };
@@ -318,7 +318,7 @@ pub(super) fn evaluate_pre_checkpoint_finish_gate(
             FailureClass::MalformedExecutionState,
             "current_branch_reviewed_state_id_missing",
             "Finish readiness requires a current reviewed-branch-state binding.",
-            "Repair authoritative branch-closure overlays before running gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     };

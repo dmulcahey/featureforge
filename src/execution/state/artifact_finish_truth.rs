@@ -198,7 +198,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::MalformedExecutionState,
             "release_artifact_malformed",
             "The current release-readiness record is not marked current.",
-            "Repair the authoritative release-readiness record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -207,7 +207,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::MalformedExecutionState,
             "release_artifact_malformed",
             "The current release-readiness record has an invalid summary hash binding.",
-            "Repair the authoritative release-readiness record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -216,7 +216,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::ReleaseArtifactNotFresh,
             "release_docs_state_missing",
             "The current release-readiness milestone is not bound to the still-current branch closure.",
-            "Run document-release for the current branch closure and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -272,7 +272,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::ReleaseArtifactNotFresh,
             "release_artifact_head_mismatch",
             "The current release-readiness milestone does not match the current reviewed branch state.",
-            "Run document-release for the current branch closure and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -281,7 +281,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::ReleaseArtifactNotFresh,
             "release_artifact_generator_mismatch",
             "The current release-readiness milestone has an invalid generated-by identity.",
-            "Repair the authoritative release-readiness record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -347,7 +347,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::MalformedExecutionState,
             "review_artifact_malformed",
             "The current final-review record is not marked current.",
-            "Repair the authoritative final-review record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -356,7 +356,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::MalformedExecutionState,
             "review_artifact_malformed",
             "The current final-review record has an invalid summary hash binding.",
-            "Repair the authoritative final-review record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -441,7 +441,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::MalformedExecutionState,
             "review_artifact_reviewer_source_invalid",
             "The current final-review milestone has an invalid reviewer source.",
-            "Repair the authoritative final-review record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -450,7 +450,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::MalformedExecutionState,
             "review_artifact_malformed",
             "The current final-review milestone is missing dispatch or reviewer identity bindings.",
-            "Repair the authoritative final-review record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -464,7 +464,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::MalformedExecutionState,
             "review_artifact_malformed",
             "The current final-review milestone has a QA-requirement binding that does not match the approved plan.",
-            "Repair the authoritative final-review record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -498,7 +498,7 @@ fn validate_current_final_review_authoritative_bindings(
             FailureClass::MalformedExecutionState,
             "review_artifact_malformed",
             "The current final-review milestone is missing its authoritative artifact fingerprint binding.",
-            "Repair the authoritative final-review record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     };
@@ -507,7 +507,7 @@ fn validate_current_final_review_authoritative_bindings(
             FailureClass::MalformedExecutionState,
             "review_artifact_malformed",
             "The current final-review milestone has a non-canonical authoritative artifact fingerprint binding.",
-            "Repair the authoritative final-review record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -519,7 +519,7 @@ fn validate_current_final_review_authoritative_bindings(
                     FailureClass::MalformedExecutionState,
                     "review_artifact_malformed",
                     "Authoritative strategy checkpoint provenance is missing for current final-review validation.",
-                    "Restore authoritative strategy checkpoint provenance and retry gate-finish.",
+                    PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
                 );
                 return false;
             }
@@ -528,7 +528,7 @@ fn validate_current_final_review_authoritative_bindings(
                     FailureClass::MalformedExecutionState,
                     "review_artifact_malformed",
                     error.message,
-                    "Restore authoritative strategy checkpoint provenance and retry gate-finish.",
+                    PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
                 );
                 return false;
             }
@@ -540,7 +540,7 @@ fn validate_current_final_review_authoritative_bindings(
             FailureClass::MalformedExecutionState,
             "review_artifact_malformed",
             "Authoritative strategy checkpoint provenance must be a canonical fingerprint for current final-review validation.",
-            "Restore authoritative strategy checkpoint provenance and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     };
@@ -599,7 +599,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::MalformedExecutionState,
             "qa_artifact_malformed",
             "The current QA record is not marked current.",
-            "Repair the authoritative QA record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -608,7 +608,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::MalformedExecutionState,
             "qa_artifact_malformed",
             "The current QA record has an invalid summary hash binding.",
-            "Repair the authoritative QA record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -694,7 +694,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_generator_mismatch",
             "The current QA milestone has an invalid generated-by identity.",
-            "Repair the authoritative QA record and retry gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     }
@@ -728,7 +728,7 @@ fn require_authoritative_test_plan_binding_for_current_qa(
             FailureClass::QaArtifactNotFresh,
             "qa_source_test_plan_mismatch",
             "The current QA milestone is missing its authoritative test-plan binding.",
-            "Refresh the current test plan and rerun QA before gate-finish.",
+            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
         return false;
     };

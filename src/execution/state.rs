@@ -155,6 +155,11 @@ mod runtime_methods;
 mod unit_review_truth;
 mod worktree_lease_truth;
 
+pub(super) const PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION: &str = "The runtime proof metadata is stale or invalid. Run `featureforge plan execution repair-review-state --plan <approved-plan-path>` and follow its `recommended_public_command_argv`; do not manually edit internal proof artifacts.";
+pub(super) const PUBLIC_WORKFLOW_OPERATOR_REMEDIATION: &str = "The execution proof metadata is stale or invalid. Run `featureforge workflow operator --plan <approved-plan-path>` and follow its `recommended_public_command_argv` to replay or repair through public runtime commands.";
+pub(super) const PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION: &str = "The completed execution unit is missing current independent review proof metadata. Refresh the task boundary through the runtime-routed public `close-current-task` path; do not record internal proof artifacts directly.";
+pub(super) const PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION: &str = "The late-stage proof metadata is stale or invalid. Run `featureforge workflow operator --plan <approved-plan-path>` and follow its `recommended_public_command_argv`, which may route to the public `advance-late-stage` path.";
+
 pub(crate) use artifact_finish_truth::current_test_plan_artifact_path_for_qa_recording;
 use artifact_finish_truth::{
     require_current_browser_qa_pass_for_finish, require_current_final_review_pass_for_finish,

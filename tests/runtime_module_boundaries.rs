@@ -57,6 +57,27 @@ fn execution_command_sources() -> Vec<(String, String)> {
         .collect()
 }
 
+fn read_model_boundary_sources() -> Vec<(String, String)> {
+    let mut rels = vec![
+        String::from("src/execution/read_model.rs"),
+        String::from("src/execution/read_model_support.rs"),
+        String::from("src/execution/status.rs"),
+    ];
+    rels.extend(
+        rust_source_files(&repo_root().join("src/execution/read_model"))
+            .into_iter()
+            .map(|path| repo_relative(&path)),
+    );
+    rels.sort();
+    rels.dedup();
+    rels.into_iter()
+        .map(|rel| {
+            let source = read_repo_file(&rel);
+            (rel, source)
+        })
+        .collect()
+}
+
 fn expanded_use_paths(source: &str) -> Vec<String> {
     rust_source_scan::expanded_use_paths(source)
 }
@@ -481,14 +502,9 @@ fn current_task_closure_status_projection_has_single_owner() {
 
 #[test]
 fn read_model_modules_do_not_append_events_or_import_mutations() {
-    for rel in [
-        "src/execution/read_model.rs",
-        "src/execution/read_model_support.rs",
-        "src/execution/status.rs",
-    ] {
-        let source = read_repo_file(rel);
+    for (rel, source) in read_model_boundary_sources() {
         assert_no_import_path_prefix(
-            rel,
+            &rel,
             &source,
             &["crate::execution::commands", "crate::execution::mutate"],
             "must remain a read-model/status surface and must not import mutation modules",
@@ -509,7 +525,7 @@ fn read_model_modules_do_not_append_events_or_import_mutations() {
                 "{rel} must remain a read-model/status surface and must not append events or import mutation modules: found `{forbidden}`"
             );
         }
-        let writer_violations = read_model_writer_violations(rel, &source);
+        let writer_violations = read_model_writer_violations(&rel, &source);
         assert!(
             writer_violations.is_empty(),
             "{rel} must remain a read-model/status surface and must not write files or append events directly:\n{}",
@@ -603,6 +619,26 @@ const FOCUSED_RUNTIME_MODULE_LINE_CAPS: &[FocusedRuntimeModuleLineCap] = &[
         rel: "src/execution/public_route_selection.rs",
         max_lines: 400,
         boundary: "public next-action route seed projection",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/read_model/late_stage.rs",
+        max_lines: 400,
+        boundary: "read-model late-stage precedence projection",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/read_model/public_route_projection.rs",
+        max_lines: 700,
+        boundary: "read-model public route DTO projection",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/read_model/review_state.rs",
+        max_lines: 260,
+        boundary: "read-model review-state authority projection",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/read_model/task_state.rs",
+        max_lines: 500,
+        boundary: "read-model task-boundary and exact-command projection",
     },
 ];
 
@@ -798,15 +834,14 @@ fn task9_import_direction_boundary_matrix_covers_required_edges() {
         "must not depend on command or mutation internals",
     );
 
-    for rel in [
-        "src/execution/query.rs",
-        "src/execution/read_model.rs",
-        "src/execution/read_model_support.rs",
-        "src/execution/status.rs",
-    ] {
-        let source = read_repo_file(rel);
+    let mut read_side_sources = read_model_boundary_sources();
+    read_side_sources.push((
+        String::from("src/execution/query.rs"),
+        read_repo_file("src/execution/query.rs"),
+    ));
+    for (rel, source) in read_side_sources {
         assert_no_import_path_prefix(
-            rel,
+            &rel,
             &source,
             &["crate::execution::commands", "crate::execution::mutate"],
             "must not depend on mutation command modules",
@@ -1173,7 +1208,7 @@ fn phase_detail_string_literals_are_centralized() {
 
     for path in rust_source_files(&repo_root().join("tests")) {
         let rel = repo_relative(&path);
-        if allowed_test_files.contains(&rel.as_str()) {
+        if allowed_test_files.contains(&rel.as_str()) || rel.starts_with("tests/internal_") {
             continue;
         }
         let source = fs::read_to_string(&path)

@@ -37,7 +37,7 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
             gate.fail(
                 FailureClass::ExecutionStateNotReady,
                 "finish_review_gate_checkpoint_missing",
-                "Finish readiness requires a persisted gate-review pass checkpoint for the current branch closure.",
+                "Finish readiness requires a persisted finish-review checkpoint for the current branch closure.",
                 format!(
                     "Run `featureforge workflow operator --plan {}` and complete the recommended public command sequence before finishing.",
                     context.plan_rel
@@ -49,10 +49,10 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
                 FailureClass::MalformedExecutionState,
                 "finish_review_gate_checkpoint_unavailable",
                 format!(
-                    "Finish readiness could not validate the persisted gate-review pass checkpoint: {}",
+                    "Finish readiness could not validate the persisted finish-review checkpoint: {}",
                     error.message
                 ),
-                "Restore authoritative finish-gate checkpoint state before running gate-finish.",
+                PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
             );
         }
     }
@@ -154,7 +154,7 @@ pub(super) fn enforce_review_authoritative_late_gate_truth(
                 FailureClass::MalformedExecutionState,
                 "authoritative_state_unavailable",
                 error.message,
-                "Restore authoritative harness state readability and validity before running gate-review.",
+                PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
             );
             return;
         }
@@ -172,7 +172,7 @@ pub(super) fn enforce_review_authoritative_late_gate_truth(
                 FailureClass::MalformedExecutionState,
                 "authoritative_state_unavailable",
                 error.message,
-                "Restore authoritative event-log state before running gate-review.",
+                PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
             );
             return;
         }
@@ -209,7 +209,7 @@ fn fail_missing_review_downstream_truth(field_name: &str, field_label: &str, gat
         FailureClass::StaleProvenance,
         &format!("{field_name}_missing"),
         format!("Authoritative {field_label} truth is missing for review readiness."),
-        "Refresh authoritative late-gate truth before running gate-review.",
+        PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
     );
 }
 
@@ -221,7 +221,7 @@ fn enforce_finish_dependency_index_truth(context: &ExecutionContext, gate: &mut 
                 FailureClass::MalformedExecutionState,
                 "authoritative_state_unavailable",
                 error.message,
-                "Restore authoritative harness state readability and validity before running gate-finish.",
+                PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
             );
             return;
         }
@@ -257,7 +257,7 @@ fn validate_review_dependency_index_truth(raw_state: Option<&str>, gate: &mut Ga
         FailureClass::DependencyIndexMismatch,
         code,
         message,
-        "Refresh authoritative dependency-index truth before running gate-review.",
+        PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
     );
 }
 
@@ -285,6 +285,6 @@ fn validate_finish_dependency_index_truth(raw_state: Option<&str>, gate: &mut Ga
         FailureClass::DependencyIndexMismatch,
         code,
         message,
-        "Refresh authoritative dependency-index truth before running gate-finish.",
+        PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
     );
 }
