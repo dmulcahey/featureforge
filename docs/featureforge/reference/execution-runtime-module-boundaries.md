@@ -13,7 +13,8 @@ module.
 
 | Module | Cap | Boundary |
 | --- | ---: | --- |
-| `src/execution/closure_dispatch.rs` | 780 | current closure dispatch authority |
+| `src/execution/closure_dispatch.rs` | 720 | current closure dispatch authority |
+| `src/execution/closure_dispatch_mutation.rs` | 160 | review-dispatch mutation and bootstrap |
 | `src/execution/closure_diagnostics.rs` | 520 | artifact/projection diagnostic reason classification |
 | `src/execution/current_closure_projection.rs` | 450 | current task-closure DTO and reason projection |
 | `src/execution/stale_target_projection.rs` | 850 | stale target and stale closure projection |

@@ -74,7 +74,7 @@ When workflow/operator returns a recording-ready substate, it must surface only 
 - `release_readiness_recording_ready.recording_context.branch_closure_id` and `release_blocker_resolution_required.recording_context.branch_closure_id` must exist for authoritative binding context and transparency even though the aggregate release-readiness path still takes only `--plan`, `--result`, and `--summary-file`
 - `final_review_recording_ready` must include the current branch closure id; dispatch id is compatibility/debug-only and must not be required for the normal public `advance-late-stage` final-review path
 - `recording_context` is omitted entirely when the current recommended public command argv needs no extra runtime-known identifiers and no transparency ids need to be surfaced; it is never `null` or an empty object
-- `final_review_recording_ready.recording_context.branch_closure_id` exists for authoritative binding context and transparency even though the aggregate final-review command itself no longer requires public `--dispatch-id`
+- `final_review_recording_ready.recording_context.branch_closure_id` exists for authoritative binding context and transparency even though the aggregate final-review command itself no longer requires a public dispatch-id flag
 
 Compatibility/debug review-dispatch service responses use explicit action semantics:
 

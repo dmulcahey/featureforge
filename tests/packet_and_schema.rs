@@ -952,6 +952,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "finish branch",
             "close current task",
             "continue execution",
+            "runtime diagnostic required",
             "request final review",
             "execution reentry required",
             "hand off",
@@ -1646,6 +1647,125 @@ fn runtime_golden_phase_details_are_declared_by_public_schemas() {
 }
 
 #[test]
+fn runtime_golden_next_actions_are_declared_by_public_schemas() {
+    let schemas_dir = unique_temp_dir("public-next-action-schema-coverage");
+    write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
+    write_plan_execution_schema(&schemas_dir).expect("plan execution schema should write");
+
+    let plan_schema: Value = serde_json::from_str(
+        &fs::read_to_string(schemas_dir.join("plan-execution-status.schema.json"))
+            .expect("generated plan execution schema should read"),
+    )
+    .expect("generated plan execution schema should parse");
+    let operator_schema: Value = serde_json::from_str(
+        &fs::read_to_string(schemas_dir.join("workflow-operator.schema.json"))
+            .expect("generated workflow operator schema should read"),
+    )
+    .expect("generated workflow operator schema should parse");
+
+    let golden_routes: Value = serde_json::from_str(
+        &fs::read_to_string(repo_fixture_path(
+            "tests/fixtures/runtime-goldens/public-runtime-routes.json",
+        ))
+        .expect("public runtime route golden should read"),
+    )
+    .expect("public runtime route golden should parse");
+
+    let scenarios = golden_routes
+        .get("scenarios")
+        .and_then(Value::as_array)
+        .expect("public runtime route golden should expose scenarios");
+    let plan_next_actions = schema_enum_set(
+        &plan_schema,
+        &schema_properties(&plan_schema)["next_action"],
+    )
+    .expect("plan execution next_action schema should expose an enum");
+    let operator_next_actions = schema_enum_set(
+        &operator_schema,
+        &schema_properties(&operator_schema)["next_action"],
+    )
+    .expect("workflow operator next_action schema should expose an enum");
+
+    let mut missing_from_plan = BTreeSet::new();
+    let mut missing_from_operator = BTreeSet::new();
+    for scenario in scenarios {
+        if let Some(plan_next_action) = scenario
+            .pointer("/plan_execution_status/json/next_action")
+            .and_then(Value::as_str)
+            && !plan_next_actions.contains(plan_next_action)
+        {
+            missing_from_plan.insert(plan_next_action.to_owned());
+        }
+        if let Some(operator_next_action) = scenario
+            .pointer("/workflow_operator/json/next_action")
+            .and_then(Value::as_str)
+            && !operator_next_actions.contains(operator_next_action)
+        {
+            missing_from_operator.insert(operator_next_action.to_owned());
+        }
+    }
+
+    assert!(
+        missing_from_plan.is_empty() && missing_from_operator.is_empty(),
+        "public runtime route golden next_action values must be declared by public schemas; plan missing {missing_from_plan:?}, operator missing {missing_from_operator:?}"
+    );
+}
+
+#[test]
+fn runtime_golden_preflight_routes_are_actionable_or_explicitly_input_bound() {
+    let golden_routes: Value = serde_json::from_str(
+        &fs::read_to_string(repo_fixture_path(
+            "tests/fixtures/runtime-goldens/public-runtime-routes.json",
+        ))
+        .expect("public runtime route golden should read"),
+    )
+    .expect("public runtime route golden should parse");
+
+    let scenarios = golden_routes
+        .get("scenarios")
+        .and_then(Value::as_array)
+        .expect("public runtime route golden should expose scenarios");
+    let mut violations = Vec::new();
+    for scenario in scenarios {
+        let label = scenario
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or("<unlabeled>");
+        for surface in ["plan_execution_status", "workflow_operator"] {
+            let Some(route) = scenario
+                .get(surface)
+                .and_then(|surface| surface.get("json"))
+            else {
+                continue;
+            };
+            let phase = route.get("phase").and_then(Value::as_str);
+            let phase_detail = route.get("phase_detail").and_then(Value::as_str);
+            let is_preflight_route = phase == Some(phase::PHASE_EXECUTION_PREFLIGHT)
+                || phase_detail == Some(phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED);
+            if !is_preflight_route {
+                continue;
+            }
+            let has_executable_argv = route
+                .get("recommended_public_command_argv")
+                .and_then(Value::as_array)
+                .is_some_and(|argv| !argv.is_empty());
+            let has_required_inputs = route
+                .get("required_inputs")
+                .and_then(Value::as_array)
+                .is_some_and(|inputs| !inputs.is_empty());
+            if !has_executable_argv && !has_required_inputs {
+                violations.push(format!("{label}:{surface}"));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public preflight routes must expose exact argv or typed required_inputs; violations: {violations:?}"
+    );
+}
+
+#[test]
 fn runtime_golden_operator_phases_are_declared_by_operator_schema() {
     let schemas_dir = unique_temp_dir("public-operator-phase-schema-coverage");
     write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
@@ -1736,6 +1856,7 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
             "finish branch",
             "close current task",
             "continue execution",
+            "runtime diagnostic required",
             "request final review",
             "execution reentry required",
             "hand off",

@@ -7,33 +7,11 @@ fn project_routing_decision_onto_status(
     status: &mut PlanExecutionStatus,
     routing: &ExecutionRoutingState,
     route_decision: &RouteDecision,
-    require_exact_execution_command: bool,
+    _require_exact_execution_command: bool,
     authoritative_stale_target: Option<
         crate::execution::next_action::AuthoritativeStaleReentryTarget<'_>,
     >,
 ) {
-    if !require_exact_execution_command
-        && should_preserve_local_preflight_route(status, route_decision)
-    {
-        status.phase = Some(String::from(phase::PHASE_EXECUTION_PREFLIGHT));
-        status.phase_detail = String::from(phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED);
-        status.review_state_status = route_decision.review_state_status.clone();
-        status.recording_context = None;
-        status.execution_command_context = None;
-        status.execution_reentry_target_source = None;
-        status.public_repair_targets.clear();
-        status.next_action = String::from("execution preflight");
-        status.recommended_command = None;
-        status.recommended_public_command = None;
-        status.recommended_public_command_argv = None;
-        status.required_inputs.clear();
-        status.blocking_task = None;
-        status.blocking_scope = None;
-        status.external_wait_state = None;
-        status.blocking_reason_codes.clear();
-        status.projection_diagnostics.clear();
-        return;
-    }
     status.phase = Some(route_decision.phase.clone());
     status.harness_phase = if status.execution_started == "no"
         && matches!(status.harness_phase, HarnessPhase::ImplementationHandoff)
@@ -73,7 +51,7 @@ fn project_routing_decision_onto_status(
             });
     status.next_action = route_decision.next_action.clone();
     status.recommended_public_command = route_decision.recommended_public_command.clone();
-    status.recommended_public_command_argv = route_decision.recommended_public_command_argv();
+    status.recommended_public_command_argv = route_decision.public_command_argv();
     status.required_inputs = route_decision.required_inputs.clone();
     status.recommended_command = route_decision.recommended_command.clone();
     status.blocking_task = routing.blocking_task;
@@ -138,21 +116,6 @@ fn project_routing_decision_onto_status(
         status.blocking_scope = Some(String::from("task"));
         status.blocking_task = Some(task_number);
     }
-}
-
-fn should_preserve_local_preflight_route(
-    status: &PlanExecutionStatus,
-    route_decision: &RouteDecision,
-) -> bool {
-    status.execution_started == "no"
-        && route_decision.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
-        && route_decision.review_state_status == "clean"
-        && status.active_task.is_none()
-        && status.active_step.is_none()
-        && status.resume_task.is_none()
-        && status.resume_step.is_none()
-        && status.current_task_closures.is_empty()
-        && status.reason_codes.is_empty()
 }
 
 fn project_public_repair_target_warning_codes(
@@ -238,8 +201,7 @@ pub(crate) fn apply_shared_routing_projection_to_read_scope_with_routing(
     read_scope.status.state_kind = route_decision.state_kind.clone();
     read_scope.status.recommended_public_command =
         route_decision.recommended_public_command.clone();
-    read_scope.status.recommended_public_command_argv =
-        route_decision.recommended_public_command_argv();
+    read_scope.status.recommended_public_command_argv = route_decision.public_command_argv();
     read_scope.status.required_inputs = route_decision.required_inputs.clone();
     read_scope.status.recommended_command = route_decision.recommended_command.clone();
     read_scope.status.next_public_action = route_decision.next_public_action.clone();

@@ -13,6 +13,7 @@ use crate::execution::closure_diagnostics::merge_status_projection_diagnostics;
 use crate::execution::command_eligibility::PublicCommandInputRequirement;
 use crate::execution::harness::EvaluatorKind;
 use crate::execution::phase;
+use crate::execution::public_command_types::RecommendedPublicCommandArgv;
 use crate::execution::query::{
     ExecutionRoutingState, query_workflow_routing_state, query_workflow_routing_state_for_runtime,
     task_review_result_requires_verification,
@@ -102,6 +103,8 @@ enum WorkflowOperatorNextActionSchema {
     CloseCurrentTask,
     #[serde(rename = "continue execution")]
     ContinueExecution,
+    #[serde(rename = "runtime diagnostic required")]
+    RuntimeDiagnosticRequired,
     #[serde(rename = "request final review")]
     RequestFinalReview,
     #[serde(rename = "execution reentry required")]
@@ -153,7 +156,7 @@ pub struct WorkflowDoctor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_public_command_argv: Option<Vec<String>>,
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -200,7 +203,7 @@ pub struct WorkflowHandoff {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_public_command_argv: Option<Vec<String>>,
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[schemars(with = "WorkflowOperatorStateKindSchema")]
@@ -253,7 +256,7 @@ pub struct WorkflowOperator {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_public_command_argv: Option<Vec<String>>,
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -318,7 +321,7 @@ struct OperatorContext {
     operator_execution_command_context: Option<WorkflowOperatorExecutionCommandContext>,
     operator_next_action: String,
     operator_recommended_command: Option<String>,
-    operator_recommended_public_command_argv: Option<Vec<String>>,
+    operator_recommended_public_command_argv: RecommendedPublicCommandArgv,
     operator_required_inputs: Vec<PublicCommandInputRequirement>,
     operator_base_branch: Option<String>,
     operator_blocking_scope: Option<String>,
@@ -1221,7 +1224,7 @@ fn build_context_from_routing(
         .map(|status| status.next_action.clone())
         .unwrap_or_else(|| route_decision.next_action.clone());
     let operator_recommended_command = route_decision.recommended_command.clone();
-    let operator_recommended_public_command_argv = route_decision.recommended_public_command_argv();
+    let operator_recommended_public_command_argv = route_decision.public_command_argv();
     let operator_required_inputs = route_decision.required_inputs.clone();
     let operator_recording_context =
         route_decision

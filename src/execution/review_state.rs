@@ -22,6 +22,7 @@ use crate::execution::follow_up::{
     repair_follow_up_source_decision_hash,
 };
 use crate::execution::next_action::{reopen_public_command, repair_review_state_public_command};
+use crate::execution::public_command_types::RecommendedPublicCommandArgv;
 use crate::execution::query::{
     ExecutionRoutingExecutionCommandContext, ExecutionRoutingState, ReviewStateBranchClosure,
     ReviewStateSnapshot, ReviewStateTaskClosure, apply_read_surface_invariants_to_routing,
@@ -105,7 +106,7 @@ pub struct RepairReviewStateOutput {
     pub required_follow_up: Option<String>,
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_public_command_argv: Option<Vec<String>>,
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     pub trace_summary: String,
@@ -200,7 +201,7 @@ struct RepairRouteAction {
     recommends_execution_reentry: bool,
     recommended_public_command: Option<PublicCommand>,
     recommended_command: Option<String>,
-    recommended_public_command_argv: Option<Vec<String>>,
+    recommended_public_command_argv: RecommendedPublicCommandArgv,
     required_inputs: Vec<PublicCommandInputRequirement>,
 }
 
@@ -209,7 +210,7 @@ impl RepairRouteAction {
         self.recommended_command.clone()
     }
 
-    fn recommended_command_argv(&self) -> Option<Vec<String>> {
+    fn recommended_command_argv(&self) -> RecommendedPublicCommandArgv {
         self.recommended_public_command_argv.clone()
     }
 
@@ -222,7 +223,7 @@ fn public_recommendation_surfaces(
     command: Option<&PublicCommand>,
 ) -> (
     Option<String>,
-    Option<Vec<String>>,
+    RecommendedPublicCommandArgv,
     Vec<PublicCommandInputRequirement>,
 ) {
     public_command_recommendation_surfaces(command)
@@ -258,7 +259,7 @@ fn routing_recommended_command_argv(routing: &ExecutionRoutingState) -> Option<V
     routing
         .route_decision
         .as_ref()
-        .and_then(RouteDecision::recommended_public_command_argv)
+        .and_then(RouteDecision::public_command_argv)
 }
 
 fn routing_required_inputs(routing: &ExecutionRoutingState) -> Vec<PublicCommandInputRequirement> {
@@ -293,7 +294,7 @@ fn route_decision_surfaces(
 ) {
     (
         RouteDecision::recommended_command_display(route_decision),
-        route_decision.recommended_public_command_argv(),
+        route_decision.public_command_argv(),
         route_decision.required_inputs.clone(),
     )
 }
@@ -428,7 +429,7 @@ fn repair_route_action_from_route_decision(
         ),
         recommended_public_command: route_decision.recommended_public_command.clone(),
         recommended_command: RouteDecision::recommended_command_display(route_decision),
-        recommended_public_command_argv: route_decision.recommended_public_command_argv(),
+        recommended_public_command_argv: route_decision.public_command_argv(),
         required_inputs: route_decision.required_inputs.clone(),
     }
 }

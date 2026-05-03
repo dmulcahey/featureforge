@@ -1733,6 +1733,10 @@ pub(crate) fn negative_result_follow_up(operator: &ExecutionRoutingState) -> Opt
 }
 
 #[cfg(test)]
+#[path = "command_eligibility_hidden_flag_tests.rs"]
+mod hidden_flag_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1880,26 +1884,6 @@ mod tests {
                 "hidden/debug command must not parse as typed public command: {command}"
             );
             assert!(!command_is_legal_public_command(command));
-        }
-    }
-
-    #[test]
-    fn internal_flags_are_unrepresentable_as_typed_public_commands() {
-        let commands = [
-            "featureforge plan execution begin --plan docs/plan.md --task 1 --step 2 --dispatch-id dispatch-1",
-            "featureforge plan execution complete --plan docs/plan.md --task 1 --step 2 --dispatch-id dispatch-1 --claim done --manual-verify-summary summary.md",
-            "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --dispatch-id dispatch-1 --review-result pass --review-summary-file review.md --verification-result pass",
-            "featureforge plan execution advance-late-stage --plan docs/plan.md --dispatch-id dispatch-1",
-            "featureforge plan execution advance-late-stage --plan docs/plan.md --branch-closure-id branch-closure-1",
-        ];
-
-        for command in commands {
-            assert!(
-                PublicCommand::parse_display_command(command).is_none(),
-                "internal flag must not parse as typed public command: {command}"
-            );
-            assert!(!command_is_legal_public_command(command));
-            assert!(public_mutation_request_from_command(command).is_none());
         }
     }
 

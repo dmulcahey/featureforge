@@ -371,7 +371,7 @@ fn normalize_non_started_same_branch_status(status: &mut PlanExecutionStatus) {
     }
     status.phase = Some(String::from(phase::PHASE_EXECUTION_PREFLIGHT));
     status.phase_detail = String::from(phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED);
-    status.next_action = String::from("execution preflight");
+    status.next_action = String::from("continue execution");
     status.recommended_command = None;
     status.recording_context = None;
     status.execution_command_context = None;

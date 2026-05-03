@@ -1239,19 +1239,21 @@ fn reconcile_review_state_threads_external_review_ready_through_routing_requerie
 
 #[test]
 fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
-    let closure_dispatch_source =
-        fs::read_to_string(repo_root().join("src/execution/closure_dispatch.rs"))
-            .expect("execution closure dispatch source should be readable");
+    let closure_dispatch_mutation_source =
+        fs::read_to_string(repo_root().join("src/execution/closure_dispatch_mutation.rs"))
+            .expect("execution closure dispatch mutation source should be readable");
     let review_gate_source =
         fs::read_to_string(repo_root().join("src/execution/state/review_gate.rs"))
             .expect("execution review gate source should be readable");
-    let dispatch_start = closure_dispatch_source
+    let dispatch_start = closure_dispatch_mutation_source
         .find("fn record_review_dispatch_strategy_checkpoint(")
-        .expect("closure_dispatch.rs should keep record_review_dispatch_strategy_checkpoint");
-    let dispatch_end = closure_dispatch_source[dispatch_start..]
-        .find("pub(crate) fn existing_task_dispatch_reviewed_state_status(")
+        .expect(
+            "closure_dispatch_mutation.rs should keep record_review_dispatch_strategy_checkpoint",
+        );
+    let dispatch_end = closure_dispatch_mutation_source[dispatch_start..]
+        .find("fn record_review_dispatch_strategy_checkpoint_without_claim(")
         .map(|offset| dispatch_start + offset)
-        .expect("closure_dispatch.rs should keep existing_task_dispatch_reviewed_state_status");
+        .expect("closure_dispatch_mutation.rs should keep no-claim dispatch mutation after authoritative wrapper");
     let checkpoint_start = review_gate_source
         .find("fn persist_finish_review_gate_pass_checkpoint(")
         .expect("review_gate.rs should keep persist_finish_review_gate_pass_checkpoint");
@@ -1259,7 +1261,7 @@ fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
         .find("fn gate_review_from_context_internal(")
         .map(|offset| checkpoint_start + offset)
         .expect("review_gate.rs should keep gate_review_from_context_internal");
-    let dispatch_source = &closure_dispatch_source[dispatch_start..dispatch_end];
+    let dispatch_source = &closure_dispatch_mutation_source[dispatch_start..dispatch_end];
     let checkpoint_source = &review_gate_source[checkpoint_start..checkpoint_end];
 
     assert!(
@@ -1836,9 +1838,23 @@ fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_
         &operator_direct_without_authority,
     ] {
         let recommended = payload["recommended_command"].as_str().unwrap_or("");
+        let recommended_argv = payload["recommended_public_command_argv"]
+            .as_array()
+            .expect("FS-13 operator should expose executable public argv for re-entry after authority loss");
+        let command_kind = payload["execution_command_context"]["command_kind"]
+            .as_str()
+            .expect("FS-13 operator should expose execution command kind after authority loss");
+        assert_eq!(payload["next_action"], "continue execution");
+        assert_eq!(command_kind, "begin");
         assert!(
-            !recommended.contains("--task 1 --step 1"),
-            "FS-13 operator must not route to Task 1 Step 1 from markdown-only note text when authoritative open-step state is absent: {payload:?}",
+            recommended.starts_with("featureforge plan execution begin "),
+            "FS-13 operator should recover through the typed public begin route instead of legacy markdown note state when authoritative open-step state is absent: {payload:?}",
+        );
+        assert!(
+            recommended_argv.iter().all(|value| value
+                .as_str()
+                .is_some_and(|arg| !matches!(arg, "reopen" | "resume"))),
+            "FS-13 operator must not derive reopen/resume from markdown-only note text when authoritative open-step state is absent: {payload:?}",
         );
     }
 }

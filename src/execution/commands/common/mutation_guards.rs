@@ -67,8 +67,6 @@ pub(in crate::execution::commands) fn begin_failure_class_from_blocking_reason_c
                 | "prior_task_current_closure_missing"
                 | "prior_task_current_closure_stale"
                 | "prior_task_current_closure_invalid"
-                | "prior_task_review_dispatch_missing"
-                | "prior_task_review_dispatch_stale"
                 | "prior_task_review_not_green"
                 | "prior_task_verification_missing"
                 | "prior_task_verification_missing_legacy"

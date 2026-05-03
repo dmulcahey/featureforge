@@ -3103,10 +3103,7 @@ fn internal_only_compatibility_canonical_workflow_phase_routes_enabled_ready_pla
     );
     assert_eq!(phase_json["route_status"], "implementation_ready");
     assert_eq!(phase_json["phase"], concat!("execution_pre", "flight"));
-    assert_eq!(
-        phase_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(phase_json["next_action"], "continue execution");
     assert!(phase_json.get("session_entry").is_none());
     assert_eq!(phase_json["schema_version"], 3);
     assert_eq!(phase_json["route"]["schema_version"], 3);
@@ -3335,10 +3332,7 @@ fn internal_only_compatibility_workflow_read_commands_do_not_persist_preflight_a
             "flight acceptance"
         ),
     );
-    assert_eq!(
-        handoff_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(handoff_json["next_action"], "continue execution");
 
     let status_after_reads = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
@@ -3443,10 +3437,7 @@ fn internal_only_compatibility_canonical_workflow_public_json_commands_work_for_
         Value::String(execution_preflight_phase.clone())
     );
     assert_eq!(doctor_json["route_status"], "implementation_ready");
-    assert_eq!(
-        doctor_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(doctor_json["next_action"], "continue execution");
     assert_eq!(
         doctor_json["spec_path"],
         "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md"
@@ -3471,10 +3462,7 @@ fn internal_only_compatibility_canonical_workflow_public_json_commands_work_for_
     );
     assert_eq!(handoff_json["route_status"], "implementation_ready");
     assert_eq!(handoff_json["execution_started"], "no");
-    assert_eq!(
-        handoff_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(handoff_json["next_action"], "continue execution");
     assert_eq!(
         handoff_json["spec_path"],
         "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md"
@@ -5384,10 +5372,7 @@ fn internal_only_compatibility_canonical_workflow_routes_blocked_preflight_back_
         concat!("workflow phase for blocked-pre", "flight routing fixture"),
     );
     assert_eq!(phase_json["phase"], concat!("execution_pre", "flight"));
-    assert_eq!(
-        phase_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(phase_json["next_action"], "continue execution");
 
     let doctor_json = workflow_doctor_json(
         &runtime,
@@ -5416,10 +5401,7 @@ fn internal_only_compatibility_canonical_workflow_routes_blocked_preflight_back_
     );
     assert_eq!(handoff_json["phase"], concat!("execution_pre", "flight"));
     assert_eq!(handoff_json["execution_started"], "no");
-    assert_eq!(
-        handoff_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(handoff_json["next_action"], "continue execution");
     assert_eq!(handoff_json["recommended_skill"], "");
     assert_eq!(handoff_json["recommendation"], Value::Null);
     assert_eq!(handoff_json["recommendation_reason"], "");
@@ -5463,10 +5445,7 @@ fn internal_only_compatibility_canonical_workflow_routes_dirty_worktree_back_to_
         ),
     );
     assert_eq!(phase_json["phase"], concat!("execution_pre", "flight"));
-    assert_eq!(
-        phase_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(phase_json["next_action"], "continue execution");
 
     let doctor_json = workflow_doctor_json(
         &runtime,
@@ -5590,10 +5569,7 @@ fn internal_only_compatibility_canonical_workflow_routes_accepted_preflight_from
         ),
     );
     assert_eq!(phase_json["phase"], concat!("execution_pre", "flight"));
-    assert_eq!(
-        phase_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(phase_json["next_action"], "continue execution");
 
     let handoff_json = workflow_handoff_json(
         &runtime,
@@ -5603,10 +5579,7 @@ fn internal_only_compatibility_canonical_workflow_routes_accepted_preflight_from
         ),
     );
     assert_eq!(handoff_json["phase"], concat!("execution_pre", "flight"));
-    assert_eq!(
-        handoff_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(handoff_json["next_action"], "continue execution");
 
     let doctor_json = workflow_doctor_json(
         &runtime,

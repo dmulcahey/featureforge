@@ -4611,10 +4611,7 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
         phase_json["phase"],
         Value::String(execution_preflight_phase.clone())
     );
-    assert_eq!(
-        phase_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(phase_json["next_action"], "continue execution");
     assert!(phase_json.get("session_entry").is_none());
     assert_eq!(phase_json["schema_version"], 3);
     assert_eq!(phase_json["route"]["schema_version"], 3);
@@ -4627,10 +4624,7 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
         doctor_json["phase"],
         Value::String(execution_preflight_phase.clone())
     );
-    assert_eq!(
-        doctor_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(doctor_json["next_action"], "continue execution");
     assert!(doctor_json.get("session_entry").is_none());
     assert_eq!(doctor_json["schema_version"], 3);
     assert_eq!(doctor_json["route"]["schema_version"], 3);
@@ -4643,10 +4637,7 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
         handoff_json["phase"],
         Value::String(execution_preflight_phase)
     );
-    assert_eq!(
-        handoff_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(handoff_json["next_action"], "continue execution");
     assert_eq!(handoff_json["recommended_skill"], Value::from(""));
     assert!(handoff_json.get("session_entry").is_none());
     assert_eq!(handoff_json["schema_version"], 3);
@@ -4760,10 +4751,7 @@ fn canonical_workflow_operator_ignores_spawned_subagent_context_markers() {
         operator_json["phase"],
         Value::String(execution_preflight_phase.clone())
     );
-    assert_eq!(
-        operator_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(operator_json["next_action"], "continue execution");
     assert!(operator_json.get("session_entry").is_none());
 }
 
@@ -4809,10 +4797,7 @@ fn canonical_workflow_operator_ignores_spawned_subagent_opt_in_markers() {
         operator_json["phase"],
         Value::String(execution_preflight_phase)
     );
-    assert_eq!(
-        operator_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(operator_json["next_action"], "continue execution");
     assert!(operator_json.get("session_entry").is_none());
 }
 
@@ -4969,20 +4954,14 @@ fn canonical_workflow_operator_surfaces_fail_closed_when_session_entry_is_bypass
         phase_json["phase"],
         Value::String(execution_preflight_phase.clone())
     );
-    assert_eq!(
-        phase_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(phase_json["next_action"], "continue execution");
     assert!(phase_json.get("session_entry").is_none());
 
     assert_eq!(
         handoff_json["phase"],
         Value::String(execution_preflight_phase)
     );
-    assert_eq!(
-        handoff_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(handoff_json["next_action"], "continue execution");
     assert_eq!(handoff_json["recommended_skill"], Value::from(""));
     assert!(handoff_json.get("session_entry").is_none());
 }
@@ -5127,7 +5106,7 @@ fn canonical_workflow_public_text_surfaces_prefer_operator_and_status_over_remov
     assert!(operator_output.status.success());
     let operator_stdout = String::from_utf8_lossy(&operator_output.stdout);
     assert!(operator_stdout.contains("Workflow operator"));
-    assert!(operator_stdout.contains(concat!("Next action: execution pre", "flight")));
+    assert!(operator_stdout.contains("Next action: continue execution"));
     assert!(operator_stdout.contains(
         "Spec: docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md"
     ));
@@ -5182,10 +5161,7 @@ fn canonical_workflow_doctor_exposes_harness_state_before_execution_starts() {
         Value::String(execution_preflight_phase)
     );
     assert_eq!(doctor_json["route_status"], "implementation_ready");
-    assert_eq!(
-        doctor_json["next_action"],
-        concat!("execution pre", "flight")
-    );
+    assert_eq!(doctor_json["next_action"], "continue execution");
     assert_eq!(doctor_json["execution_status"]["execution_started"], "no");
     assert_eq!(doctor_json["gate_review"], Value::Null);
     assert_eq!(doctor_json["gate_finish"], Value::Null);

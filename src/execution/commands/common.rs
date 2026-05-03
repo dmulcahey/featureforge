@@ -17,6 +17,7 @@ pub(super) use crate::execution::closure_dispatch::{
     TaskDispatchReviewedStateStatus, ensure_final_review_dispatch_id_matches,
     ensure_task_dispatch_id_matches, task_dispatch_reviewed_state_status,
 };
+pub(super) use crate::execution::closure_dispatch_mutation::ensure_current_review_dispatch_id;
 pub(super) use crate::execution::command_eligibility::{
     PublicCommand, PublicCommandInputRequirement, PublicMutationKind, PublicMutationRequest,
     PublicTransferMode, blocked_follow_up_for_operator, close_current_task_required_follow_up,
@@ -74,6 +75,7 @@ pub(super) use crate::execution::projection_renderer::{
     render_execution_projections, render_final_review_artifacts, render_qa_artifact,
     render_release_readiness_artifact,
 };
+pub(super) use crate::execution::public_command_types::RecommendedPublicCommandArgv;
 pub(super) use crate::execution::query::ExecutionRoutingState;
 pub(super) use crate::execution::recording::{
     BranchClosureWrite, BrowserQaWrite, CurrentTaskClosureWrite, FinalReviewWrite,
@@ -92,16 +94,15 @@ pub(super) use crate::execution::semantic_identity::{
 };
 pub(super) use crate::execution::stale_target_projection::RuntimeGateSnapshot;
 pub(super) use crate::execution::state::{
-    EvidenceAttempt, ExecutionContext, ExecutionEvidence, ExecutionRuntime,
-    ExistingTaskDispatchReviewedStateStatus, FileProof, NO_REPO_FILES_MARKER, PlanExecutionStatus,
-    RebuildEvidenceCandidate, RebuildEvidenceCounts, RebuildEvidenceFilter, RebuildEvidenceOutput,
-    RebuildEvidenceTarget, current_head_sha, current_review_dispatch_id_candidate,
-    current_test_plan_artifact_path_for_qa_recording, discover_rebuild_candidates,
-    ensure_current_review_dispatch_id, ensure_public_intent_preflight_ready,
-    existing_task_dispatch_reviewed_state_status, load_execution_context_for_exact_plan,
-    load_execution_context_for_mutation, normalize_begin_request, normalize_complete_request,
-    normalize_note_request, normalize_rebuild_evidence_request, normalize_reopen_request,
-    normalize_source, normalize_transfer_request, persist_allowed_public_begin_preflight,
+    EvidenceAttempt, ExecutionContext, ExecutionEvidence, ExecutionRuntime, FileProof,
+    NO_REPO_FILES_MARKER, PlanExecutionStatus, RebuildEvidenceCandidate, RebuildEvidenceCounts,
+    RebuildEvidenceFilter, RebuildEvidenceOutput, RebuildEvidenceTarget, current_head_sha,
+    current_review_dispatch_id_candidate, current_test_plan_artifact_path_for_qa_recording,
+    discover_rebuild_candidates, ensure_public_intent_preflight_ready,
+    load_execution_context_for_exact_plan, load_execution_context_for_mutation,
+    normalize_begin_request, normalize_complete_request, normalize_note_request,
+    normalize_rebuild_evidence_request, normalize_reopen_request, normalize_source,
+    normalize_transfer_request, persist_allowed_public_begin_preflight,
     public_intent_preflight_persistence_required, require_normalized_text,
     require_preflight_acceptance, task_packet_fingerprint, validate_expected_fingerprint,
 };

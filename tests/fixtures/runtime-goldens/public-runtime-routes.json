@@ -66,7 +66,7 @@
           "last_release_docs_artifact_fingerprint": null,
           "last_strategy_checkpoint_fingerprint": null,
           "latest_authoritative_sequence": 0,
-          "next_action": "execution preflight",
+          "next_action": "continue execution",
           "next_public_action": {
             "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
             "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"
@@ -149,7 +149,7 @@
             "step_id": 1,
             "task_number": 1
           },
-          "next_action": "execution preflight",
+          "next_action": "continue execution",
           "next_public_action": {
             "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
             "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"
@@ -2010,7 +2010,7 @@
           "last_release_docs_artifact_fingerprint": null,
           "last_strategy_checkpoint_fingerprint": null,
           "latest_authoritative_sequence": 0,
-          "next_action": "execution preflight",
+          "next_action": "continue execution",
           "next_public_action": {
             "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
             "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"
@@ -2258,7 +2258,7 @@
           "last_release_docs_artifact_fingerprint": null,
           "last_strategy_checkpoint_fingerprint": null,
           "latest_authoritative_sequence": 0,
-          "next_action": "execution preflight",
+          "next_action": "continue execution",
           "next_public_action": {
             "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
             "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"
@@ -2341,7 +2341,7 @@
             "step_id": 1,
             "task_number": 1
           },
-          "next_action": "execution preflight",
+          "next_action": "continue execution",
           "next_public_action": {
             "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
             "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"

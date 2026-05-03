@@ -23,9 +23,8 @@ use crate::execution::authority::{
 };
 pub(crate) use crate::execution::closure_diagnostics::authoritative_unit_review_receipt_path;
 pub(crate) use crate::execution::closure_dispatch::{
-    ExistingTaskDispatchReviewedStateStatus, current_review_dispatch_id_candidate,
-    current_review_dispatch_id_from_lineage, current_review_dispatch_id_if_still_current,
-    ensure_current_review_dispatch_id, existing_task_dispatch_reviewed_state_status,
+    current_review_dispatch_id_candidate, current_review_dispatch_id_from_lineage,
+    current_review_dispatch_id_if_still_current,
 };
 pub use crate::execution::context::{
     EvidenceAttempt, EvidenceFormat, ExecutionContext, ExecutionEvidence, FileProof,

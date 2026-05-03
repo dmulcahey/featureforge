@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::OnceLock;
 
 const INTERNAL_RUNTIME_HELPER_HEADER: &str = "//! INTERNAL_RUNTIME_HELPER_TEST: this file intentionally exercises unavailable runtime internals.";
@@ -93,7 +94,7 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
 
     let workflow_operator = read_repo_file("src/workflow/operator.rs");
     assert!(
-        workflow_operator.contains("route_decision.recommended_public_command_argv()"),
+        workflow_operator.contains("route_decision.public_command_argv()"),
         "workflow operator should project executable argv from the route decision contract"
     );
     for forbidden in [
@@ -109,7 +110,7 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
     let read_model_route_projection =
         read_repo_file("src/execution/read_model/public_route_projection.rs");
     assert!(
-        read_model_route_projection.contains("route_decision.recommended_public_command_argv()"),
+        read_model_route_projection.contains("route_decision.public_command_argv()"),
         "plan execution status should project argv from the route decision contract"
     );
     assert!(
@@ -335,6 +336,35 @@ fn public_cli_json_helper_uses_the_compiled_binary_only() {
 }
 
 #[test]
+fn public_normal_path_help_hides_internal_compatibility_flags() {
+    let hidden_flags = [
+        hidden_literal(&["--dispatch", "-id"]),
+        hidden_literal(&["--branch", "-closure-id"]),
+    ];
+    for command in ["close-current-task", "advance-late-stage"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_featureforge"))
+            .args(["plan", "execution", command, "--help"])
+            .output()
+            .unwrap_or_else(|error| panic!("plan execution {command} --help should run: {error}"));
+        assert!(
+            output.status.success(),
+            "plan execution {command} --help should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout)
+            .expect("normal-path command help stdout should be utf-8");
+        for hidden_flag in &hidden_flags {
+            assert!(
+                !stdout.contains(hidden_flag),
+                "public normal-path help for `{command}` must not expose hidden compatibility flag `{hidden_flag}`:\n{stdout}"
+            );
+        }
+    }
+}
+
+#[test]
 fn public_test_files_do_not_use_internal_helpers_or_hidden_commands() {
     let mut violations = Vec::new();
     for file in rust_test_files(&repo_root().join("tests")) {
@@ -342,6 +372,7 @@ fn public_test_files_do_not_use_internal_helpers_or_hidden_commands() {
         let source = fs::read_to_string(&file)
             .unwrap_or_else(|error| panic!("{} should be readable: {error}", file.display()));
         violations.extend(scan_source_for_public_flow_violations(&rel, &source));
+        violations.extend(scan_stale_dispatch_public_flow_violations(&rel, &source));
     }
 
     assert!(
@@ -349,6 +380,59 @@ fn public_test_files_do_not_use_internal_helpers_or_hidden_commands() {
         "public-flow tests must not use internal helpers or hidden command literals:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn stale_dispatch_public_flow_test_is_static_guarded() {
+    let source = read_repo_file("tests/workflow_shell_smoke.rs");
+    let violations =
+        scan_stale_dispatch_public_flow_violations("tests/workflow_shell_smoke.rs", &source);
+    assert!(
+        violations.is_empty(),
+        "stale-dispatch public-flow tests must not use hidden helpers or dispatch flags:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn active_docs_do_not_teach_internal_compatibility_flags_or_env_gate() {
+    let denied_terms = internal_compatibility_hidden_surface_terms();
+    let mut violations = Vec::new();
+    for path in internal_compatibility_active_doc_files() {
+        let rel = repo_relative(&path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
+        for term in &denied_terms {
+            for (start, _) in source.match_indices(term) {
+                violations.push(format!(
+                    "{rel}:{} active docs and prompts must not teach internal compatibility flag/env `{term}`",
+                    line_number_for_byte(&source, start)
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "active docs/prompts must not teach hidden compatibility flags or env gate:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn internal_execution_flag_gate_documents_reason_and_expiry() {
+    let outputs = read_repo_file("src/execution/commands/common/outputs.rs");
+    for required in [
+        "INTERNAL_EXECUTION_FLAGS_COMPATIBILITY_REASON",
+        "temporary migration support for pre-public dispatch and branch-closure identifiers",
+        "INTERNAL_EXECUTION_FLAGS_EXPIRY_CONDITION",
+        "internal migration coverage no longer requires explicit dispatch or branch-closure ids",
+    ] {
+        assert!(
+            outputs.contains(required),
+            "internal execution flag gate must document compatibility purpose and expiry via `{required}`"
+        );
+    }
 }
 
 #[test]
@@ -1124,6 +1208,75 @@ fn public_replay_fixture() {{
 }
 
 #[test]
+fn scanner_rejects_stale_dispatch_public_flow_hidden_terms() {
+    let hidden_command = hidden_literal(&["record", "-review-dispatch"]);
+    let hidden_gate = hidden_literal(&["gate", "-review"]);
+    let hidden_rebuild = hidden_literal(&["rebuild", "-evidence"]);
+    let hidden_flag = hidden_literal(&["--dispatch", "-id"]);
+    let fixture = format!(
+        r#"
+fn public_close_current_task_records_positive_closure_after_stale_dispatch_lineage_without_dispatch_id() {{
+    internal_only_seed_dispatch(repo, state);
+    let _ = run_plan_execution_json_real_cli(repo, state, &[
+        "{hidden_command}",
+        "{hidden_gate}",
+        "{hidden_rebuild}",
+        "{hidden_flag}",
+    ], "stale dispatch public replay should reject hidden terms");
+}}
+
+fn internal_only_compatibility_plan_execution_close_current_task_rejects_explicit_stale_dispatch_id_after_drift() {{
+    let _ = run_featureforge_with_env(repo, state, &[
+        "plan",
+        "execution",
+        "close-current-task",
+        "{hidden_flag}",
+        "stale-dispatch",
+    ], &[], "internal fixture may use hidden dispatch id");
+}}
+"#
+    );
+    let violations =
+        scan_stale_dispatch_public_flow_violations("tests/workflow_shell_smoke.rs", &fixture);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("internal_only_seed_dispatch")),
+        "stale-dispatch scanner should reject internal_only_* helpers in public replay tests, got {violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains(&hidden_command)),
+        "stale-dispatch scanner should reject hidden dispatch commands in public replay tests, got {violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains(&hidden_gate)),
+        "stale-dispatch scanner should reject hidden review gates in public replay tests, got {violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains(&hidden_rebuild)),
+        "stale-dispatch scanner should reject hidden evidence rebuilds in public replay tests, got {violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains(&hidden_flag)),
+        "stale-dispatch scanner should reject hidden dispatch flags in public replay tests, got {violations:?}"
+    );
+    assert!(
+        violations.iter().all(|violation| !violation.contains(
+            "internal_only_compatibility_plan_execution_close_current_task_rejects_explicit_stale_dispatch_id_after_drift"
+        )),
+        "stale-dispatch scanner should keep internal compatibility tests quarantined, got {violations:?}"
+    );
+}
+
+#[test]
 fn internal_helper_bridge_is_quarantined() {
     let source = read_repo_file("tests/support/internal_only_direct_helpers.rs");
     assert!(
@@ -1447,6 +1600,66 @@ fn scan_source_for_public_flow_violations(rel: &str, source: &str) -> Vec<String
         if inside_command_invocation && trimmed.ends_with(");") {
             inside_command_invocation = false;
             inside_command_args_array = false;
+        }
+    }
+    violations
+}
+
+fn scan_stale_dispatch_public_flow_violations(rel: &str, source: &str) -> Vec<String> {
+    if !rel.ends_with(".rs") {
+        return Vec::new();
+    }
+    let function_spans = rust_source_scan::function_spans(rel, source);
+    let protected_stale_dispatch_public_functions = function_spans
+        .iter()
+        .filter(|span| {
+            span.name.contains("stale_dispatch")
+                && !span.name.starts_with("internal_only_")
+                && !span.name.starts_with("setup_")
+                && !span.name.starts_with("scanner_")
+                && span.name != "scan_stale_dispatch_public_flow_violations"
+                && span.name != "stale_dispatch_public_flow_test_is_static_guarded"
+        })
+        .collect::<Vec<_>>();
+    if protected_stale_dispatch_public_functions.is_empty() {
+        return Vec::new();
+    }
+    let denied_literals = [
+        hidden_literal(&["record", "-review-dispatch"]),
+        hidden_literal(&["gate", "-review"]),
+        hidden_literal(&["rebuild", "-evidence"]),
+        hidden_literal(&["--dispatch", "-id"]),
+    ];
+    let mut concat_collector = ConcatLiteralCollector::default();
+    let mut violations = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let line_number = index + 1;
+        let Some(function_name) = function_name_for_line(&function_spans, line_number) else {
+            continue;
+        };
+        if !protected_stale_dispatch_public_functions
+            .iter()
+            .any(|span| span.name == function_name)
+        {
+            continue;
+        }
+        let trimmed = line.trim();
+        if let Some(call) = trimmed
+            .split(|character: char| !(character == '_' || character.is_ascii_alphanumeric()))
+            .find(|token| token.starts_with("internal_only_"))
+        {
+            violations.push(format!(
+                "{rel}:{line_number} stale-dispatch public-flow test `{function_name}` must not call internal helper `{call}`"
+            ));
+        }
+        for candidate in candidate_string_literals(trimmed, &mut concat_collector) {
+            for denied in &denied_literals {
+                if candidate.value == *denied {
+                    violations.push(format!(
+                        "{rel}:{line_number} stale-dispatch public-flow test `{function_name}` must not use hidden command or flag `{denied}`"
+                    ));
+                }
+            }
         }
     }
     violations
@@ -2267,6 +2480,27 @@ fn task4_active_public_surface_files() -> Vec<PathBuf> {
     files.sort();
     files.dedup();
     files
+}
+
+fn internal_compatibility_active_doc_files() -> Vec<PathBuf> {
+    let root = repo_root();
+    let mut files = Vec::new();
+    collect_root_active_doc_files(&mut files);
+    collect_files_with_extensions(&root.join("skills"), &["md", "tmpl"], &mut files);
+    collect_files_with_extensions(&root.join("references"), &["md"], &mut files);
+    collect_active_doc_files(&root.join("docs"), &mut files);
+    collect_active_doc_files(&root.join("review"), &mut files);
+    files.sort();
+    files.dedup();
+    files
+}
+
+fn internal_compatibility_hidden_surface_terms() -> Vec<String> {
+    vec![
+        hidden_literal(&["--dispatch", "-id"]),
+        hidden_literal(&["--branch", "-closure-id"]),
+        hidden_literal(&["FEATUREFORGE", "_ALLOW_INTERNAL_EXECUTION_FLAGS"]),
+    ]
 }
 
 fn diagnostic_pattern_violations_for_source(

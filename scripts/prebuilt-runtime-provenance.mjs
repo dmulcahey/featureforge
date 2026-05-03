@@ -11,6 +11,12 @@ const DEFAULT_ROOT = path.resolve(MODULE_DIR, '..');
 const SOURCE_FINGERPRINT_ROOTS = ['Cargo.toml', 'Cargo.lock', 'VERSION', 'src'];
 const ROOT_BINARY_PATH = 'bin/featureforge';
 const ROOT_BINARY_TARGET = 'darwin-arm64';
+const HOST_TARGET_OVERRIDE_ENV = 'FEATUREFORGE_PREBUILT_HOST_TARGET';
+const HELP_ARGV = [
+  ['--help'],
+  ['plan', 'execution', '--help'],
+  ['workflow', '--help'],
+];
 
 function joined(parts, separator) {
   return parts.join(separator);
@@ -179,6 +185,20 @@ function fail(failures, message) {
   failures.push(message);
 }
 
+function hostPrebuiltTarget() {
+  const override = process.env[HOST_TARGET_OVERRIDE_ENV];
+  if (override !== undefined && override !== '') {
+    return override === 'none' ? undefined : override;
+  }
+  if (process.platform === 'darwin' && process.arch === 'arm64') {
+    return 'darwin-arm64';
+  }
+  if (process.platform === 'win32' && process.arch === 'x64') {
+    return 'windows-x64';
+  }
+  return undefined;
+}
+
 function verifyManifest(root, manifest, failures, targetFilter) {
   if (manifest.runtime_revision === undefined || manifest.runtime_revision === '') {
     fail(failures, 'manifest runtime_revision is required');
@@ -267,12 +287,39 @@ function verifyManifest(root, manifest, failures, targetFilter) {
   }
 }
 
-function verifyRootBinary(root, manifest, failures, targetFilter) {
+function rootBinaryTarget(root, manifest) {
+  const rootBinary = path.join(root, ROOT_BINARY_PATH);
+  if (!fs.existsSync(rootBinary)) {
+    return undefined;
+  }
+  const rootSha = sha256File(rootBinary);
+  for (const [target, entry] of Object.entries(manifest.targets ?? {}).sort(([left], [right]) => left.localeCompare(right))) {
+    if (entry?.binary_sha256 === `sha256:${rootSha}`) {
+      return target;
+    }
+    if (entry?.binary_path) {
+      const targetBinary = path.join(root, entry.binary_path);
+      if (fs.existsSync(targetBinary) && sha256File(targetBinary) === rootSha) {
+        return target;
+      }
+    }
+  }
+  return undefined;
+}
+
+function verifyRootBinary(root, manifest, failures, targetFilter, rootTargetKey) {
   if (targetFilter !== undefined && targetFilter !== ROOT_BINARY_TARGET) {
     return;
   }
   const rootBinary = path.join(root, ROOT_BINARY_PATH);
   if (!fs.existsSync(rootBinary)) {
+    return;
+  }
+  if (rootTargetKey !== ROOT_BINARY_TARGET) {
+    fail(
+      failures,
+      `${ROOT_BINARY_PATH}: root shipped runtime hash is not represented by ${ROOT_BINARY_TARGET} manifest target provenance`,
+    );
     return;
   }
   const rootTarget = manifest.targets?.[ROOT_BINARY_TARGET];
@@ -330,7 +377,36 @@ function binaryAuditPaths(manifest) {
   return [...paths].sort();
 }
 
-function runHelp(root, relative, args, failures) {
+function fileInspection(root, relative, failures) {
+  const absolute = path.join(root, relative);
+  try {
+    return childProcess.execFileSync('file', [absolute], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch (error) {
+    fail(failures, `${relative}: could not inspect incompatible binary with file: ${error.message}`);
+    return undefined;
+  }
+}
+
+function reportSkippedHelp(root, relative, binaryTarget, hostTarget, failures) {
+  const inspection = fileInspection(root, relative, failures);
+  if (inspection === undefined) {
+    return;
+  }
+  console.log(JSON.stringify({
+    event: 'prebuilt_runtime_help_skipped',
+    binary: relative,
+    binary_target: binaryTarget,
+    host_target: hostTarget ?? null,
+    reason: 'incompatible-host-target',
+    file: inspection,
+  }));
+}
+
+function runHelp(root, relative, args, failures, options = {}) {
   const absolute = path.join(root, relative);
   try {
     childProcess.execFileSync(absolute, args, {
@@ -341,20 +417,86 @@ function runHelp(root, relative, args, failures) {
     return;
   } catch (error) {
     const output = `${error.message ?? ''}\n${error.stdout ?? ''}\n${error.stderr ?? ''}`;
-    if (/exec format|bad cpu type|cannot execute binary file|not a valid win32/i.test(output)) {
-      try {
-        childProcess.execFileSync('file', [absolute], {
-          cwd: root,
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        return;
-      } catch (fileError) {
-        fail(failures, `${relative}: could not run help or inspect with file: ${fileError.message}`);
-        return;
-      }
+    if (
+      options.allowIncompatibleBinarySkip === true
+      && /exec format|bad cpu type|cannot execute binary file|not a valid win32|syntax error|unexpected token|unexpected word/i.test(output)
+    ) {
+      fileInspection(root, relative, failures);
+      return;
     }
     fail(failures, `${relative} ${args.join(' ')} failed: ${output.trim()}`);
+  }
+}
+
+function appendHelpCandidate(candidates, seenPaths, candidate) {
+  if (!candidate?.relative || seenPaths.has(candidate.relative)) {
+    return;
+  }
+  seenPaths.add(candidate.relative);
+  candidates.push(candidate);
+}
+
+function manifestHelpCandidate(manifest, target) {
+  const entry = manifest.targets?.[target];
+  if (!entry?.binary_path) {
+    return undefined;
+  }
+  return {
+    relative: entry.binary_path,
+    target,
+  };
+}
+
+function runHelpMatrix(root, candidate, hostTarget, failures) {
+  if (candidate.target !== undefined && candidate.target === hostTarget) {
+    for (const args of HELP_ARGV) {
+      runHelp(root, candidate.relative, args, failures);
+    }
+    return;
+  }
+  reportSkippedHelp(root, candidate.relative, candidate.target, hostTarget, failures);
+}
+
+function verifyHelp(root, manifest, failures, targetFilter, rootTargetKey, skipHelp) {
+  if (skipHelp) {
+    return;
+  }
+
+  const hostTarget = hostPrebuiltTarget();
+  const candidates = [];
+  const seenPaths = new Set();
+
+  if (targetFilter !== undefined) {
+    appendHelpCandidate(
+      candidates,
+      seenPaths,
+      manifestHelpCandidate(manifest, targetFilter),
+    );
+  } else if (hostTarget !== undefined) {
+    appendHelpCandidate(
+      candidates,
+      seenPaths,
+      manifestHelpCandidate(manifest, hostTarget),
+    );
+  }
+
+  const rootBinary = path.join(root, ROOT_BINARY_PATH);
+  const shouldCheckRootHelp = (
+    fs.existsSync(rootBinary)
+    && (
+      targetFilter === undefined
+      || (rootTargetKey !== undefined && targetFilter === rootTargetKey)
+    )
+  );
+  if (shouldCheckRootHelp) {
+    appendHelpCandidate(candidates, seenPaths, {
+      relative: ROOT_BINARY_PATH,
+      target: rootTargetKey,
+    });
+  }
+
+  for (const candidate of candidates) {
+    runHelpMatrix(root, candidate, hostTarget, failures);
   }
 }
 
@@ -362,17 +504,13 @@ function verify(root, options) {
   const manifest = readManifest(root);
   const failures = [];
   const targetFilter = options.get('target');
+  const rootTargetKey = rootBinaryTarget(root, manifest);
   verifyManifest(root, manifest, failures, targetFilter);
-  verifyRootBinary(root, manifest, failures, targetFilter);
+  verifyRootBinary(root, manifest, failures, targetFilter, rootTargetKey);
   for (const relative of binaryAuditPaths(manifest)) {
     auditBinary(root, relative, failures);
   }
-  const shouldCheckRootHelp = targetFilter === undefined || targetFilter === ROOT_BINARY_TARGET;
-  if (!options.get('skip-help') && shouldCheckRootHelp && fs.existsSync(path.join(root, 'bin/featureforge'))) {
-    runHelp(root, 'bin/featureforge', ['--help'], failures);
-    runHelp(root, 'bin/featureforge', ['plan', 'execution', '--help'], failures);
-    runHelp(root, 'bin/featureforge', ['workflow', '--help'], failures);
-  }
+  verifyHelp(root, manifest, failures, targetFilter, rootTargetKey, options.get('skip-help'));
   if (failures.length > 0) {
     console.error('Prebuilt runtime validation failed:');
     for (const failure of failures) {

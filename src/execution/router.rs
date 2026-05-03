@@ -25,6 +25,7 @@ use crate::execution::next_action::{
     select_authoritative_stale_reentry_target,
 };
 use crate::execution::phase;
+use crate::execution::public_command_types::RecommendedPublicCommandArgv;
 use crate::execution::public_repair_targets::public_repair_target_candidates_from_authority;
 use crate::execution::public_route_selection::shared_next_action_seed_from_runtime_state;
 #[cfg(test)]
@@ -116,7 +117,7 @@ impl PublicRouteDecision {
         )
     }
 
-    pub(crate) fn recommended_public_command_argv(&self) -> Option<Vec<String>> {
+    pub(crate) fn public_command_argv(&self) -> RecommendedPublicCommandArgv {
         self.invocation
             .as_ref()
             .map(|invocation| invocation.argv.clone())

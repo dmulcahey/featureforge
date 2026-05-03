@@ -295,6 +295,7 @@
         "finish branch",
         "close current task",
         "continue execution",
+        "runtime diagnostic required",
         "request final review",
         "execution reentry required",
         "hand off",

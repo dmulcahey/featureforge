@@ -23,6 +23,12 @@ use process_support::run;
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-25-cli-parse-boundary-design.md";
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-25-cli-parse-boundary.md";
 
+fn internal_execution_flag_rejected_message(flag: &str, command: &str) -> String {
+    format!(
+        "{flag} is an internal compatibility flag and is not available in normal public execution. It exists only for temporary migration support for pre-public dispatch and branch-closure identifiers and should be removed when internal migration coverage no longer requires explicit dispatch or branch-closure ids. Run {command} without it."
+    )
+}
+
 fn init_repo(name: &str) -> (TempDir, TempDir) {
     let repo_dir = TempDir::new().expect("repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
@@ -156,9 +162,9 @@ fn internal_only_compatibility_close_current_task_rejects_hidden_dispatch_id_wit
     assert_eq!(json["error_class"], "InvalidCommandInput");
     assert_eq!(
         json["message"],
-        Value::from(format!(
-            "{} is an internal compatibility flag and is not available in normal public execution. Run close-current-task without it.",
-            concat!("--dispatch", "-id")
+        Value::from(internal_execution_flag_rejected_message(
+            concat!("--dispatch", "-id"),
+            "close-current-task"
         ))
     );
 }
@@ -170,17 +176,17 @@ fn internal_only_compatibility_advance_late_stage_rejects_hidden_lineage_flags_w
         (
             concat!("--dispatch", "-id"),
             "dispatch-001",
-            concat!(
-                "--dispatch",
-                "-id is an internal compatibility flag and is not available in normal public execution. Run advance-late-stage without it."
+            internal_execution_flag_rejected_message(
+                concat!("--dispatch", "-id"),
+                "advance-late-stage",
             ),
         ),
         (
             concat!("--branch", "-closure-id"),
             "branch-closure-001",
-            concat!(
-                "--branch",
-                "-closure-id is an internal compatibility flag and is not available in normal public execution. Run advance-late-stage without it."
+            internal_execution_flag_rejected_message(
+                concat!("--branch", "-closure-id"),
+                "advance-late-stage",
             ),
         ),
     ];
@@ -210,7 +216,7 @@ fn internal_only_compatibility_advance_late_stage_rejects_hidden_lineage_flags_w
         let json = parse_failure_json(&output, "advance-late-stage hidden lineage flag guard");
 
         assert_eq!(json["error_class"], "InvalidCommandInput");
-        assert_eq!(json["message"], expected_message);
+        assert_eq!(json["message"], Value::from(expected_message));
     }
 }
 

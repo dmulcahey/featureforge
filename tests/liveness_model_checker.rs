@@ -1261,11 +1261,13 @@ fn is_workflow_operator_command(command: &str) -> bool {
 fn public_argv_part_has_template_token(part: &str) -> bool {
     const DENYLIST: &[&str] = &[
         "<approved-plan-path>",
+        "[when verification ran]",
         "when verification ran",
         "<path>",
         "<reason>",
         "<claim>",
         "<summary>",
+        "<owner>",
         "<source>",
         "<id>",
         "pass|fail",
@@ -1758,12 +1760,49 @@ fn minimal_liveness_status(
     }
 }
 
+fn task_closure_required_inputs() -> Vec<Value> {
+    vec![
+        json!({
+            "name": "review_result",
+            "kind": "enum",
+            "values": ["pass", "fail"],
+        }),
+        json!({
+            "name": "review_summary_file",
+            "kind": "path",
+            "must_exist": true,
+        }),
+        json!({
+            "name": "verification_result",
+            "kind": "enum",
+            "values": ["pass", "fail", "not-run"],
+        }),
+    ]
+}
+
 fn exact_argv_for_test_command(command: &str) -> Option<Vec<String>> {
     let argv = shlex::split(command)?;
-    (!argv
-        .iter()
-        .any(|part| public_argv_part_has_template_token(part)))
-    .then_some(argv)
+    assert_exact_public_argv_is_executable(&argv)
+        .ok()
+        .map(|()| argv)
+}
+
+#[test]
+fn exact_argv_for_test_command_rejects_split_optional_verification_placeholder() {
+    let command = String::from(
+        "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --review-result pass --review-summary-file review.md --verification-result pass [when verification ran]",
+    );
+
+    assert!(
+        exact_argv_for_test_command(&command).is_none(),
+        "display-only optional verification prose must not be materialized into executable argv"
+    );
+
+    let status = minimal_liveness_status("task_closure_recording_ready", Vec::new(), Some(command));
+    assert!(
+        status.recommended_public_command_argv.is_none(),
+        "liveness fixtures must model split optional prose as missing typed input, not argv"
+    );
 }
 
 #[test]
@@ -1866,13 +1905,28 @@ fn repeated_public_mutation_detection_rejects_repair_to_repeated_reopen_sequence
 
 #[test]
 fn close_current_task_is_a_real_recording_boundary_for_liveness() {
-    let command = "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run";
-    let status = minimal_liveness_status(
+    let command = "featureforge plan execution close-current-task --plan docs/plan.md --task 1";
+    let mut status = minimal_liveness_status(
         "task_closure_recording_ready",
         vec![String::from("task_closure_baseline_repair_candidate")],
-        Some(command.to_owned()),
+        None,
     );
+    status.state_kind = String::from("waiting_external_input");
+    status.next_action = String::from("close current task");
+    status.required_inputs = task_closure_required_inputs();
 
+    assert!(
+        status_missing_public_inputs(&status),
+        "close-current-task must expose typed required_inputs when external review or verification values are absent"
+    );
+    assert!(
+        status.recommended_public_command_argv.is_none(),
+        "missing external values must suppress exact public argv"
+    );
+    assert!(
+        display_status_command(&status).is_none(),
+        "the liveness external-input fixture must not model missing values with executable-looking display templates"
+    );
     assert!(
         command_requires_external_result_input(&status, command),
         "close-current-task records review and verification results, so bounded runtime-management liveness should stop at that real-work boundary"

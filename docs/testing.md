@@ -379,6 +379,14 @@ PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w
 node scripts/prebuilt-runtime-provenance.mjs verify --repo-root .
 ```
 
+The full provenance verifier always validates the manifest, source fingerprint,
+binary hash/checksum provenance, and denied-string audit. Public help execution
+runs for the manifest target matching the host, or for the explicit `--target`
+when it matches the host. It also probes the root checked-in `bin/featureforge`
+surface when that root binary target matches the host. On incompatible targets
+the verifier runs `file`, emits a structured help-skip reason, and continues if
+the non-execution checks are clean.
+
 If Homebrew `cargo`/`rustc` shadow rustup-managed toolchains on `PATH`, put the rustup toolchain shims first before running the Windows GNU refresh command so the installed `x86_64-pc-windows-gnu` standard library can be found. The GNU cross-build also expects `x86_64-w64-mingw32-gcc` to be available on `PATH`.
 
 Then rerun:

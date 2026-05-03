@@ -21,7 +21,7 @@ pub struct TransferOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_public_command_argv: Option<Vec<String>>,
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -206,7 +206,7 @@ pub(crate) fn public_next_action_text(decision: &NextActionDecision) -> String {
                 || decision.phase_detail
                     == crate::execution::phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED
             {
-                String::from("execution preflight")
+                String::from("continue execution")
             } else if decision.phase_detail
                 == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
                 && (structural_task_repair_lane || stale_unreviewed_repair_lane)

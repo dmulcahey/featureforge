@@ -590,6 +590,7 @@ fn command_common_remains_a_facade_over_bounded_domain_modules() {
 #[test]
 fn closure_dispatch_authority_is_not_raw_transition_dispatch_fallback() {
     let closure_dispatch = read_repo_file("src/execution/closure_dispatch.rs");
+    let closure_dispatch_mutation = read_repo_file("src/execution/closure_dispatch_mutation.rs");
     assert!(
         closure_dispatch.contains("pub(crate) fn current_review_dispatch_id_candidate")
             && closure_dispatch.contains("pub(crate) fn current_review_dispatch_id_from_lineage")
@@ -597,13 +598,39 @@ fn closure_dispatch_authority_is_not_raw_transition_dispatch_fallback() {
         "closure dispatch must own current public dispatch candidate selection through the current-lineage helper"
     );
     assert!(
-        closure_dispatch.contains("pub(crate) fn ensure_current_review_dispatch_id")
-            && closure_dispatch.contains("validate_expected_dispatch_id")
-            && closure_dispatch.contains("record_review_dispatch_strategy_checkpoint")
+        closure_dispatch.contains("validate_expected_dispatch_id")
             && closure_dispatch.contains("ensure_task_dispatch_id_matches")
             && closure_dispatch.contains("ensure_final_review_dispatch_id_matches")
             && closure_dispatch.contains("task_dispatch_reviewed_state_status"),
-        "closure dispatch must own current dispatch ensuring, explicit hidden dispatch-id validation, and dispatch authority recording"
+        "closure dispatch must own current dispatch validation and explicit hidden dispatch-id validation"
+    );
+    assert!(
+        !closure_dispatch.contains("fn record_review_dispatch_strategy_checkpoint(")
+            && !closure_dispatch
+                .contains("fn record_review_dispatch_strategy_checkpoint_without_claim(")
+            && !closure_dispatch.contains("fn ensure_review_dispatch_authoritative_bootstrap(")
+            && !closure_dispatch.contains("closure_dispatch_mutation")
+            && !closure_dispatch.contains("ReviewDispatchMutationAction"),
+        "closure_dispatch.rs must not regain or re-export dispatch mutation or bootstrap authority"
+    );
+    assert!(
+        closure_dispatch_mutation.contains("pub(crate) fn ensure_current_review_dispatch_id")
+            && closure_dispatch_mutation
+                .contains("pub(crate) fn ensure_review_dispatch_authoritative_bootstrap")
+            && closure_dispatch_mutation
+                .contains("pub(crate) fn record_review_dispatch_strategy_checkpoint")
+            && closure_dispatch_mutation
+                .contains("fn record_review_dispatch_strategy_checkpoint_without_claim")
+            && closure_dispatch_mutation.contains("ReviewDispatchMutationAction")
+            && closure_dispatch_mutation.contains("claim_step_write_authority")
+            && closure_dispatch_mutation.contains("persist_if_dirty_with_failpoint_and_command"),
+        "closure_dispatch_mutation.rs must own dispatch mutation, bootstrap, write authority, and event persistence"
+    );
+    assert!(
+        closure_dispatch.contains("task_closure_dispatch_lineage_reason_code(reason_code)")
+            && !closure_dispatch.contains("\"prior_task_review_dispatch_missing\"")
+            && !closure_dispatch.contains("\"prior_task_review_dispatch_stale\""),
+        "closure_dispatch.rs must consume dispatch-lineage diagnostics through closure_diagnostics instead of duplicating stale/missing dispatch reason literals"
     );
     let runtime_methods = read_repo_file("src/execution/state/runtime_methods.rs");
     assert!(
@@ -643,6 +670,26 @@ fn closure_dispatch_authority_is_not_raw_transition_dispatch_fallback() {
         "command-local dispatch_lineage helpers must not be recreated outside closure_dispatch"
     );
 
+    let command_local_currentness_tokens = [
+        "strategy_review_dispatch_lineage",
+        "ExistingTaskDispatchReviewedStateStatus",
+        "current_review_dispatch_id_from_lineage",
+        "shared_current_task_review_dispatch_id",
+        "shared_current_final_review_dispatch_id",
+        "task_review_dispatch_id(task)",
+    ];
+    for (rel, source) in execution_command_sources() {
+        if rel == "src/execution/commands/common/operator_outputs.rs" {
+            continue;
+        }
+        for forbidden in command_local_currentness_tokens {
+            assert!(
+                !source.contains(forbidden),
+                "{rel} must not reimplement dispatch currentness checks locally; consume closure_dispatch authority instead: found `{forbidden}`"
+            );
+        }
+    }
+
     for rel in [
         "src/execution/reducer.rs",
         "src/execution/public_repair_targets.rs",
@@ -662,6 +709,47 @@ fn closure_receipt_diagnostics_stay_out_of_public_route_selection() {
         closure_diagnostics.contains("TASK_BOUNDARY_PROJECTION_DIAGNOSTIC_REASON_CODES")
             && closure_diagnostics.contains("task_boundary_projection_diagnostic_reason_code"),
         "closure diagnostics must centralize receipt/projection diagnostic classification"
+    );
+    let diagnostic_codes_start = closure_diagnostics
+        .find("pub(crate) const TASK_BOUNDARY_PROJECTION_DIAGNOSTIC_REASON_CODES")
+        .expect("closure_diagnostics.rs should keep task-boundary diagnostic code vocabulary");
+    let diagnostic_codes_end = closure_diagnostics[diagnostic_codes_start..]
+        .find("pub(crate) fn task_boundary_projection_diagnostic_reason_code")
+        .map(|offset| diagnostic_codes_start + offset)
+        .expect("closure_diagnostics.rs should keep diagnostic code predicate after vocabulary");
+    let diagnostic_codes = &closure_diagnostics[diagnostic_codes_start..diagnostic_codes_end];
+    assert!(
+        diagnostic_codes.contains("\"prior_task_review_dispatch_missing\"")
+            && diagnostic_codes.contains("\"prior_task_review_dispatch_stale\""),
+        "stale/missing task-review dispatch lineage must remain diagnostic-only vocabulary"
+    );
+    let public_codes_start = closure_diagnostics
+        .find("const PUBLIC_TASK_BOUNDARY_REASON_CODES")
+        .expect("closure_diagnostics.rs should keep public task-boundary reason vocabulary");
+    let public_codes_end = closure_diagnostics[public_codes_start..]
+        .find("#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]")
+        .map(|offset| public_codes_start + offset)
+        .expect("closure_diagnostics.rs should keep public task-boundary state after vocabulary");
+    let public_codes = &closure_diagnostics[public_codes_start..public_codes_end];
+    assert!(
+        !public_codes.contains("\"prior_task_review_dispatch_missing\"")
+            && !public_codes.contains("\"prior_task_review_dispatch_stale\""),
+        "stale/missing task-review dispatch lineage must not become public blocking reason vocabulary"
+    );
+    let recording_blocker_start = closure_diagnostics
+        .find("fn task_closure_recording_blocking_reason_code")
+        .expect("closure_diagnostics.rs should keep task-closure recording blocker predicate");
+    let recording_blocker_end = closure_diagnostics[recording_blocker_start..]
+        .find("pub(crate) fn task_closure_dispatch_lineage_reason_code")
+        .map(|offset| recording_blocker_start + offset)
+        .expect(
+            "closure_diagnostics.rs should keep dispatch-lineage predicate after blocker predicate",
+        );
+    let recording_blocker = &closure_diagnostics[recording_blocker_start..recording_blocker_end];
+    assert!(
+        !recording_blocker.contains("\"prior_task_review_dispatch_missing\"")
+            && !recording_blocker.contains("\"prior_task_review_dispatch_stale\""),
+        "task-closure recording blockers must not consume stale/missing dispatch diagnostics as blockers"
     );
     assert!(
         closure_diagnostics.contains("push_task_closure_pending_verification_reason_codes_for_run")
@@ -725,6 +813,37 @@ fn closure_receipt_diagnostics_stay_out_of_public_route_selection() {
                 .contains("public_task_boundary_decision(status).diagnostic_reason_codes"),
         "public route projection must delegate task-boundary diagnostic projection to closure_diagnostics"
     );
+    let router = read_repo_file("src/execution/router.rs");
+    let public_blocking_start = router
+        .find("fn public_route_blocking_reason_codes")
+        .expect("router.rs should keep public_route_blocking_reason_codes");
+    let public_blocking_end = router[public_blocking_start..]
+        .find("fn prior_task_closure_progress_edge_required")
+        .map(|offset| public_blocking_start + offset)
+        .expect("router.rs should keep prior_task_closure_progress_edge_required after public blocking projection");
+    let public_blocking = &router[public_blocking_start..public_blocking_end];
+    assert!(
+        public_blocking.contains("!task_boundary_projection_diagnostic_reason_code(reason_code)")
+            && !public_blocking.contains("\"prior_task_review_dispatch_missing\"")
+            && !public_blocking.contains("\"prior_task_review_dispatch_stale\""),
+        "public route blocking reasons must filter diagnostic reason codes through closure_diagnostics instead of naming stale dispatch lineage as blockers"
+    );
+    let mutation_guards = read_repo_file("src/execution/commands/common/mutation_guards.rs");
+    let begin_failure_start = mutation_guards
+        .find(
+            "pub(in crate::execution::commands) fn begin_failure_class_from_blocking_reason_codes",
+        )
+        .expect("mutation_guards.rs should keep begin failure-class projection");
+    let begin_failure_end = mutation_guards[begin_failure_start..]
+        .find("pub(in crate::execution::commands) fn begin_failure_class_from_status")
+        .map(|offset| begin_failure_start + offset)
+        .expect("mutation_guards.rs should keep begin_failure_class_from_status after failure-class projection");
+    let begin_failure_classification = &mutation_guards[begin_failure_start..begin_failure_end];
+    assert!(
+        !begin_failure_classification.contains("\"prior_task_review_dispatch_missing\"")
+            && !begin_failure_classification.contains("\"prior_task_review_dispatch_stale\""),
+        "public mutation guard failure classification must not consume stale/missing dispatch diagnostics as blockers"
+    );
     let workflow_operator = read_repo_file("src/workflow/operator.rs");
     assert!(
         workflow_operator.contains("merge_status_projection_diagnostics")
@@ -743,8 +862,13 @@ struct FocusedRuntimeModuleLineCap {
 const FOCUSED_RUNTIME_MODULE_LINE_CAPS: &[FocusedRuntimeModuleLineCap] = &[
     FocusedRuntimeModuleLineCap {
         rel: "src/execution/closure_dispatch.rs",
-        max_lines: 780,
+        max_lines: 720,
         boundary: "current closure dispatch authority",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/closure_dispatch_mutation.rs",
+        max_lines: 160,
+        boundary: "review-dispatch mutation and bootstrap",
     },
     FocusedRuntimeModuleLineCap {
         rel: "src/execution/closure_diagnostics.rs",

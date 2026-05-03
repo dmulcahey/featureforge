@@ -137,7 +137,8 @@ pub(in crate::execution::commands) fn workflow_operator_requery_optional_surface
 pub(in crate::execution::commands) struct CloseCurrentTaskFollowUpRecommendation {
     pub(in crate::execution::commands) required_follow_up: Option<String>,
     pub(in crate::execution::commands) recommended_command: Option<String>,
-    pub(in crate::execution::commands) recommended_public_command_argv: Option<Vec<String>>,
+    pub(in crate::execution::commands) recommended_public_command_argv:
+        RecommendedPublicCommandArgv,
     pub(in crate::execution::commands) required_inputs: Vec<PublicCommandInputRequirement>,
 }
 

@@ -6327,7 +6327,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_stale_dispatch_
         ],
         "plan execution task review dispatch for close-current-task summary ordering fixture",
     );
-    let _dispatch_id = dispatch["dispatch_id"]
+    let dispatch_id = dispatch["dispatch_id"]
         .as_str()
         .expect("summary ordering fixture should expose dispatch id")
         .to_owned();
@@ -6338,15 +6338,19 @@ fn internal_only_compatibility_plan_execution_close_current_task_stale_dispatch_
     );
 
     let missing_review_summary = repo.join("missing-close-current-task-review-summary.md");
-    let close_json = internal_only_run_plan_execution_json_direct_or_cli(
+    let close_output = run_featureforge_with_env(
         repo,
         state,
         &[
+            "plan",
+            "execution",
             "close-current-task",
             "--plan",
             plan_rel,
             "--task",
             "1",
+            concat!("--dispatch", "-id"),
+            &dispatch_id,
             "--review-result",
             "fail",
             "--review-summary-file",
@@ -6356,22 +6360,29 @@ fn internal_only_compatibility_plan_execution_close_current_task_stale_dispatch_
             "--verification-result",
             "not-run",
         ],
+        &[(
+            concat!("FEATUREFORGE", "_ALLOW_INTERNAL_EXECUTION_FLAGS"),
+            "1",
+        )],
         "close-current-task should fail closed through out-of-phase routing before summary validation",
     );
-
-    assert_eq!(close_json["action"], Value::from("blocked"));
-    assert_eq!(
-        close_json["dispatch_validation_action"],
-        Value::from("blocked")
+    assert!(
+        !close_output.status.success(),
+        "explicit stale close-current-task dispatch id should fail closed before summary validation"
     );
-    assert_eq!(
-        close_json["required_follow_up"],
-        Value::from("execution_reentry")
+    let stderr = String::from_utf8_lossy(&close_output.stderr);
+    assert!(
+        !stderr.contains("Could not read review summary file"),
+        "explicit stale dispatch validation should fail before reading the summary file: {stderr}"
+    );
+    assert!(
+        stderr.contains("dispatch"),
+        "explicit stale dispatch validation should explain dispatch failure, got {stderr}"
     );
 }
 
 #[test]
-fn internal_only_compatibility_plan_execution_close_current_task_requires_fresh_reviewed_state_after_dispatch()
+fn internal_only_compatibility_plan_execution_close_current_task_rejects_explicit_stale_dispatch_id_after_drift()
  {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) = init_repo("plan-execution-close-current-task-stale-after-dispatch");
@@ -6394,7 +6405,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_requires_fresh_
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
     let authoritative_state = authoritative_harness_state(repo, state);
-    let _dispatch_id =
+    let dispatch_id =
         authoritative_state["strategy_review_dispatch_lineage"]["task-1"]["dispatch_id"]
             .as_str()
             .expect("stale close-current-task fixture should expose dispatch_id")
@@ -6414,15 +6425,19 @@ fn internal_only_compatibility_plan_execution_close_current_task_requires_fresh_
         "Task 1 verification passed against the current reviewed state.\n",
     );
 
-    let close_json = internal_only_run_plan_execution_json_direct_or_cli(
+    let close_output = run_featureforge_with_env(
         repo,
         state,
         &[
+            "plan",
+            "execution",
             "close-current-task",
             "--plan",
             plan_rel,
             "--task",
             "1",
+            concat!("--dispatch", "-id"),
+            &dispatch_id,
             "--review-result",
             "pass",
             "--review-summary-file",
@@ -6436,10 +6451,26 @@ fn internal_only_compatibility_plan_execution_close_current_task_requires_fresh_
                 .to_str()
                 .expect("verification summary path should be utf-8"),
         ],
+        &[(
+            concat!("FEATUREFORGE", "_ALLOW_INTERNAL_EXECUTION_FLAGS"),
+            "1",
+        )],
         "close-current-task should fail closed after post-dispatch tracked drift",
     );
-    assert_eq!(close_json["action"], "blocked");
-    assert_eq!(close_json["required_follow_up"], "execution_reentry");
+    assert!(
+        !close_output.status.success(),
+        "explicit stale close-current-task dispatch id should fail closed after tracked drift"
+    );
+    let stderr = String::from_utf8_lossy(&close_output.stderr);
+    assert!(
+        stderr.contains("dispatch"),
+        "explicit stale dispatch failure should mention dispatch validation, got {stderr}"
+    );
+    let authoritative_state = authoritative_harness_state(repo, state);
+    assert!(
+        authoritative_state["current_task_closure_records"]["task-1"].is_null(),
+        "explicit stale dispatch-id failure must not record a current task closure"
+    );
 }
 
 #[test]
@@ -6522,7 +6553,7 @@ fn internal_only_compatibility_workflow_operator_routes_stale_task_review_dispat
 }
 
 #[test]
-fn internal_only_compatibility_plan_execution_close_current_task_requires_dispatch_reviewed_state_binding()
+fn internal_only_compatibility_plan_execution_close_current_task_refreshes_missing_dispatch_reviewed_state_binding_without_public_dispatch_id()
  {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) =
@@ -6583,8 +6614,8 @@ fn internal_only_compatibility_plan_execution_close_current_task_requires_dispat
     );
 
     assert_eq!(close_json["action"], "blocked");
-    assert_eq!(close_json["dispatch_validation_action"], "blocked");
-    assert_eq!(close_json["required_follow_up"], "request_external_review");
+    assert_eq!(close_json["dispatch_validation_action"], "validated");
+    assert_eq!(close_json["required_follow_up"], "execution_reentry");
 }
 
 #[test]

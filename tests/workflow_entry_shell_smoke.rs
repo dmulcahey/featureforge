@@ -524,9 +524,8 @@ fn fs02_entry_route_surfaces_share_parity_and_budget() {
     );
     assert_eq!(
         operator_json["next_action"],
-        Value::from(concat!("execution pre", "flight")),
-        "FS-02 entry-path classification should stay on execution {} for comment-only drift",
-        concat!("pre", "flight")
+        Value::from("continue execution"),
+        "FS-02 entry-path classification should stay on the executable begin lane for comment-only drift"
     );
     assert_parity_probe_budget("FS-02", runtime_management_commands, 2);
 }

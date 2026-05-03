@@ -81,12 +81,12 @@ pub(crate) struct SharedNextActionRoutingInputs<'a> {
 }
 
 fn shared_next_action_seed_from_precomputed_decision(
-    context: &ExecutionContext,
+    _context: &ExecutionContext,
     status: &PlanExecutionStatus,
     inputs: SharedNextActionRoutingInputs<'_>,
     decision: NextActionDecision,
 ) -> Result<Option<WorkflowRoutingDecision>, JsonFailure> {
-    let mut default_phase = default_phase_for_shared_seed(status, &decision);
+    let default_phase = default_phase_for_shared_seed(status, &decision);
     let mut phase_detail = decision.phase_detail.clone();
     let review_state_status = decision.review_state_status.clone();
     let mut recording_context = None;
@@ -132,19 +132,6 @@ fn shared_next_action_seed_from_precomputed_decision(
             if decision.kind == NextActionKind::Reopen {
                 blocking_task = Some(execution_route_target.task_number);
             }
-        }
-    }
-    if next_action == "execution preflight"
-        && marker_free_started_execution(context)
-        && execution_command_context
-            .as_ref()
-            .is_some_and(|command| command.task_number == Some(1) && command.step_id == Some(1))
-    {
-        recommended_public_command = None;
-        if !inputs.require_exact_execution_command {
-            default_phase = String::from(phase::PHASE_EXECUTING);
-            phase_detail = String::from(phase::DETAIL_EXECUTION_IN_PROGRESS);
-            execution_command_context = None;
         }
     }
     if phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
@@ -275,13 +262,5 @@ fn stale_branch_closure_refresh_required(status: &PlanExecutionStatus) -> bool {
         && status.blocking_records.iter().any(|record| {
             record.record_type == "branch_closure"
                 && record.review_state_status == "missing_current_closure"
-        })
-}
-
-fn marker_free_started_execution(context: &ExecutionContext) -> bool {
-    context.plan_document.execution_mode != "none"
-        && context.evidence.attempts.is_empty()
-        && context.steps.iter().all(|step| {
-            !step.checked && step.note_state.is_none() && step.note_summary.trim().is_empty()
         })
 }

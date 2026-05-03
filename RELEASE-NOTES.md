@@ -44,7 +44,7 @@ Breaking churn-prevention cutover that makes the execution event log the sole ru
 
 Patch release focused on closing the remaining open authority/documentation gaps from the task-boundary hardening work without changing the broader public workflow model.
 
-- internalize normal-path task/final-review dispatch-lineage binding so operator-led `close-current-task` and `advance-late-stage` no longer require public `--dispatch-id`
+- internalize normal-path task/final-review dispatch-lineage binding so operator-led `close-current-task` and `advance-late-stage` no longer require a public dispatch-id flag
 - remove public normal-path `record-review-dispatch` choreography from active review/execution guidance while keeping the compatibility/debug primitive available off the main path
 - align runtime routing, schemas, skill docs, shared review-state reference guidance, and regression coverage on the refactored public command mapping
 - keep `plan execution status --json` and `workflow operator --json` on the same runtime-owned routing decision instead of allowing diagnostic/status drift
@@ -59,7 +59,7 @@ Historical note: older sections below may mention hidden compatibility/debug com
 
 ### Breaking Output Contract Changes
 
-- `workflow operator --json`: bump `schema_version` to `2`, add the runtime-owned `base_branch` field for downstream workflow guidance, and change normal task/final-review late-stage guidance so `next_action`/`recommended_public_command_argv` plus display-only `recommended_command` now point at intent-level `close-current-task` and `advance-late-stage` recording commands instead of public `record-review-dispatch` choreography or required public `--dispatch-id` bindings
+- `workflow operator --json`: bump `schema_version` to `2`, add the runtime-owned `base_branch` field for downstream workflow guidance, and change normal task/final-review late-stage guidance so `next_action`/`recommended_public_command_argv` plus display-only `recommended_command` now point at intent-level `close-current-task` and `advance-late-stage` recording commands instead of public `record-review-dispatch` choreography or required public dispatch-id bindings
 - `plan execution status --json`: align the diagnostic surface with the runtime-owned route by exposing the same `harness_phase`, `next_action`, `recommended_public_command_argv`, display-only `recommended_command`, and late-stage `recording_context` fields while keeping status diagnostic-only
 
 ## v1.9.0 - 2026-04-11

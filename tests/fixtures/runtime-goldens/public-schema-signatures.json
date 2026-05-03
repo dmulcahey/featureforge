@@ -1213,6 +1213,7 @@
             "resolve release blocker",
             "run QA",
             "run verification",
+            "runtime diagnostic required",
             "wait for external review result"
           ],
           "items": null,
@@ -1572,6 +1573,7 @@
             "resolve release blocker",
             "run QA",
             "run verification",
+            "runtime diagnostic required",
             "wait for external review result"
           ],
           "items": null,

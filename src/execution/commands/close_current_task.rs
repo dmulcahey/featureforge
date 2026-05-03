@@ -192,53 +192,15 @@ pub fn close_current_task(
     let dispatch_id = if let Some(dispatch_id) = candidate_dispatch_id {
         dispatch_id
     } else {
-        match existing_task_dispatch_reviewed_state_status(
-            &initial_context,
-            args.task,
-            &initial_reviewed_state_id,
-            &initial_raw_reviewed_state_id,
-        )? {
-            Some(ExistingTaskDispatchReviewedStateStatus::Current) | None => {}
-            Some(ExistingTaskDispatchReviewedStateStatus::MissingReviewedStateBinding) => {
-                return Ok(blocked_close_current_task_output(
-                    BlockedCloseCurrentTaskOutputContext {
-                        task_number: args.task,
-                        dispatch_validation_action: "blocked",
-                        task_closure_status: "not_current",
-                        closure_record_id: None,
-                        code: None,
-                        recommended_command: None,
-                        recommended_public_command_argv: None,
-                        required_inputs: Vec::new(),
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("request_external_review")),
-                        trace_summary: "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
-                    },
-                ));
-            }
-            Some(ExistingTaskDispatchReviewedStateStatus::StaleReviewedState) => {
-                return Ok(blocked_close_current_task_output(
-                    BlockedCloseCurrentTaskOutputContext {
-                        task_number: args.task,
-                        dispatch_validation_action: "blocked",
-                        task_closure_status: "not_current",
-                        closure_record_id: None,
-                        code: None,
-                        recommended_command: None,
-                        recommended_public_command_argv: None,
-                        required_inputs: Vec::new(),
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
-                        trace_summary: "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
-                    },
-                ));
-            }
-        }
+        // Historical stale/missing dispatch lineage is a status/operator
+        // diagnostic. The public mutation path refreshes current dispatch
+        // authority here, then the post-refresh checks below fail closed if
+        // the runtime still cannot produce current binding.
         ensure_current_review_dispatch_id(
             &initial_context,
             ReviewDispatchScopeArg::Task,
             Some(args.task),
-            args.dispatch_id.as_deref(),
+            None,
         )?
     };
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;

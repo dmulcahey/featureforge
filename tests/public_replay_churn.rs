@@ -176,12 +176,20 @@ fn assert_public_json_excludes_hidden_tokens(value: &Value, context: &str) {
 
 fn public_json_hidden_token_violation(value: &Value) -> Option<(String, String)> {
     let text = serde_json::to_string(value).expect("json should serialize");
+    if json_contains_stale_preflight_next_action(value) {
+        return Some((
+            concat!("next_action=", "execution pre", "flight").to_owned(),
+            text,
+        ));
+    }
     for hidden in [
         concat!("record", "-review-dispatch"),
         concat!("gate", "-review"),
         concat!("gate", "-finish"),
         concat!("rebuild", "-evidence"),
         concat!("--dispatch", "-id"),
+        concat!("--branch", "-closure-id"),
+        concat!("FEATUREFORGE", "_ALLOW_INTERNAL_EXECUTION_FLAGS"),
         concat!("unit", "-review receipt"),
         concat!("task", "-verification receipt"),
         concat!("\"pre", "flight\""),
@@ -198,6 +206,17 @@ fn public_json_hidden_token_violation(value: &Value) -> Option<(String, String)>
     None
 }
 
+fn json_contains_stale_preflight_next_action(value: &Value) -> bool {
+    match value {
+        Value::Object(fields) => fields.iter().any(|(key, value)| {
+            (key == "next_action" && value.as_str() == Some(concat!("execution pre", "flight")))
+                || json_contains_stale_preflight_next_action(value)
+        }),
+        Value::Array(values) => values.iter().any(json_contains_stale_preflight_next_action),
+        _ => false,
+    }
+}
+
 #[test]
 fn public_json_hidden_token_assertion_rejects_command_shaped_preflight_leaks() {
     let leaked = json!({
@@ -211,10 +230,36 @@ fn public_json_hidden_token_assertion_rejects_command_shaped_preflight_leaks() {
         "hidden-token detector should identify the command-shaped preflight leak"
     );
 
+    let stale_next_action = json!({
+        "next_action": concat!("execution pre", "flight"),
+    });
+    let (hidden, _) = public_json_hidden_token_violation(&stale_next_action)
+        .expect("hidden-token detector should reject stale preflight next_action values");
+    assert_eq!(
+        hidden,
+        concat!("next_action=", "execution pre", "flight"),
+        "hidden-token detector should identify the retired preflight next_action field value"
+    );
+
+    for leaked in [
+        concat!("--branch", "-closure-id"),
+        concat!("FEATUREFORGE", "_ALLOW_INTERNAL_EXECUTION_FLAGS"),
+    ] {
+        let value = json!({
+            "recommended_public_command_argv": ["featureforge", "plan", "execution", "advance-late-stage", leaked],
+        });
+        let (hidden, _) = public_json_hidden_token_violation(&value)
+            .expect("hidden-token detector should reject hidden compatibility flag/env leaks");
+        assert_eq!(
+            hidden, leaked,
+            "hidden-token detector should identify hidden compatibility leak `{leaked}`"
+        );
+    }
+
     let allowed_route_state = json!({
         "phase_detail": concat!("execution_pre", "flight_required"),
         "repo_state_drift_state": concat!("pre", "flight_pending"),
-        "next_action": concat!("execution pre", "flight"),
+        "next_action": "continue execution",
     });
     assert!(
         public_json_hidden_token_violation(&allowed_route_state).is_none(),
@@ -824,11 +869,13 @@ fn public_recommended_command_argv(value: &Value, context: &str) -> Vec<String> 
 fn assert_public_argv_has_no_display_only_tokens(command_parts: &[String], context: &str) {
     const DISPLAY_ONLY_DENYLIST: &[&str] = &[
         "<approved-plan-path>",
+        "[when verification ran]",
         "when verification ran",
         "<path>",
         "<reason>",
         "<claim>",
         "<summary>",
+        "<owner>",
         "<source>",
         "<id>",
         "pass|fail",

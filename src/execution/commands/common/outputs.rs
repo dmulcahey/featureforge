@@ -21,7 +21,7 @@ pub struct CloseCurrentTaskOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_public_command_argv: Option<Vec<String>>,
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -50,6 +50,10 @@ pub struct MaterializeProjectionsOutput {
 
 pub(in crate::execution::commands) const INTERNAL_EXECUTION_FLAGS_ENV: &str =
     "FEATUREFORGE_ALLOW_INTERNAL_EXECUTION_FLAGS";
+pub(in crate::execution::commands) const INTERNAL_EXECUTION_FLAGS_COMPATIBILITY_REASON: &str =
+    "temporary migration support for pre-public dispatch and branch-closure identifiers";
+pub(in crate::execution::commands) const INTERNAL_EXECUTION_FLAGS_EXPIRY_CONDITION: &str =
+    "internal migration coverage no longer requires explicit dispatch or branch-closure ids";
 
 pub(in crate::execution::commands) fn internal_execution_flags_enabled() -> bool {
     std::env::var(INTERNAL_EXECUTION_FLAGS_ENV).as_deref() == Ok("1")
@@ -65,7 +69,7 @@ pub(in crate::execution::commands) fn require_internal_execution_flag_allowed(
     Err(JsonFailure::new(
         FailureClass::InvalidCommandInput,
         format!(
-            "{flag} is an internal compatibility flag and is not available in normal public execution. Run {command} without it."
+            "{flag} is an internal compatibility flag and is not available in normal public execution. It exists only for {INTERNAL_EXECUTION_FLAGS_COMPATIBILITY_REASON} and should be removed when {INTERNAL_EXECUTION_FLAGS_EXPIRY_CONDITION}. Run {command} without it."
         ),
     ))
 }
@@ -187,7 +191,7 @@ pub struct RecordBranchClosureOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_public_command_argv: Option<Vec<String>>,
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -214,7 +218,7 @@ pub struct AdvanceLateStageOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_public_command_argv: Option<Vec<String>>,
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -234,7 +238,7 @@ pub struct RecordQaOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_public_command_argv: Option<Vec<String>>,
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -276,7 +280,8 @@ pub(in crate::execution::commands) struct BlockedCloseCurrentTaskOutputContext<'
     pub(in crate::execution::commands) closure_record_id: Option<String>,
     pub(in crate::execution::commands) code: Option<String>,
     pub(in crate::execution::commands) recommended_command: Option<String>,
-    pub(in crate::execution::commands) recommended_public_command_argv: Option<Vec<String>>,
+    pub(in crate::execution::commands) recommended_public_command_argv:
+        RecommendedPublicCommandArgv,
     pub(in crate::execution::commands) required_inputs: Vec<PublicCommandInputRequirement>,
     pub(in crate::execution::commands) rederive_via_workflow_operator: Option<bool>,
     pub(in crate::execution::commands) required_follow_up: Option<String>,

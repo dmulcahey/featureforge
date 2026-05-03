@@ -793,7 +793,7 @@ pub(super) fn advance_late_stage_impl(
         if args.branch_closure_id.is_some() {
             return Err(JsonFailure::new(
                 FailureClass::InvalidCommandInput,
-                "final_review_branch_closure_id_invalid: final-review advance-late-stage does not accept --branch-closure-id; use the workflow/operator recording_context branch_closure_id.",
+                "final_review_branch_closure_id_invalid: final-review advance-late-stage does not accept a branch-closure-id compatibility flag; use the workflow/operator recording_context branch_closure_id.",
             ));
         }
         let reviewer_source = args

@@ -633,6 +633,60 @@ fn verify_prebuilt_fixture(root: &Path) -> std::process::Output {
     run(command, "prebuilt fixture provenance verify")
 }
 
+fn verify_prebuilt_fixture_with_host_target(
+    root: &Path,
+    host_target: &str,
+    extra_env: &[(&str, &Path)],
+) -> std::process::Output {
+    verify_prebuilt_fixture_with_host_target_and_args(root, host_target, &[], extra_env)
+}
+
+fn verify_prebuilt_fixture_with_host_target_and_args(
+    root: &Path,
+    host_target: &str,
+    extra_args: &[&str],
+    extra_env: &[(&str, &Path)],
+) -> std::process::Output {
+    let mut command = Command::new("node");
+    command
+        .arg(repo_root().join("scripts/prebuilt-runtime-provenance.mjs"))
+        .arg("verify")
+        .args(extra_args)
+        .arg("--repo-root")
+        .arg(root)
+        .env("FEATUREFORGE_PREBUILT_HOST_TARGET", host_target);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    run(command, "prebuilt fixture provenance verify")
+}
+
+fn write_complete_prebuilt_fixture(root: &Path, darwin_body: &str, windows_body: &str) {
+    let darwin_rel = "bin/prebuilt/darwin-arm64/featureforge";
+    let darwin_checksum_rel = "bin/prebuilt/darwin-arm64/featureforge.sha256";
+    let windows_rel = "bin/prebuilt/windows-x64/featureforge.exe";
+    let windows_checksum_rel = "bin/prebuilt/windows-x64/featureforge.exe.sha256";
+
+    write_minimal_prebuilt_source(root, "source-v1");
+    write_prebuilt_fixture_binary(
+        root,
+        darwin_rel,
+        darwin_checksum_rel,
+        "featureforge",
+        darwin_body,
+    );
+    write_prebuilt_fixture_binary(
+        root,
+        windows_rel,
+        windows_checksum_rel,
+        "featureforge.exe",
+        windows_body,
+    );
+    write_executable(&root.join("bin/featureforge"), darwin_body);
+    update_prebuilt_fixture_manifest(root, "darwin-arm64", darwin_rel, darwin_checksum_rel);
+    update_prebuilt_fixture_manifest(root, "windows-x64", windows_rel, windows_checksum_rel);
+}
+
 fn write_poison_runtime_launcher(root: &Path, marker: &str) {
     let poison_body = format!(
         "#!/usr/bin/env bash\nprintf '%s\\n' '{marker}' >> \"$FEATUREFORGE_TEST_LOG\"\nexit 86\n"
@@ -1019,6 +1073,245 @@ fn prebuilt_runtime_provenance_rejects_root_binary_drift() {
         &stderr,
         "bin/featureforge: root shipped runtime",
         "prebuilt provenance root drift failure",
+    );
+}
+
+#[test]
+fn prebuilt_runtime_provenance_runs_help_on_matching_host_target() {
+    let temp = TempDir::new().expect("prebuilt fixture root should exist");
+    let root = temp.path();
+    let help_log = root.join("help.log");
+    let darwin_body =
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$FEATUREFORGE_TEST_LOG\"\nexit 0\n";
+    write_complete_prebuilt_fixture(root, darwin_body, "windows runtime\n");
+
+    let output = verify_prebuilt_fixture_with_host_target(
+        root,
+        "darwin-arm64",
+        &[("FEATUREFORGE_TEST_LOG", help_log.as_path())],
+    );
+    assert!(
+        output.status.success(),
+        "same-target prebuilt verification should run help successfully\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let help_invocations = read_utf8(&help_log);
+    assert_contains(
+        &help_invocations,
+        "--help",
+        "same-target prebuilt verification",
+    );
+    assert_contains(
+        &help_invocations,
+        "plan execution --help",
+        "same-target prebuilt verification",
+    );
+    assert_contains(
+        &help_invocations,
+        "workflow --help",
+        "same-target prebuilt verification",
+    );
+    assert_not_contains(
+        &String::from_utf8_lossy(&output.stdout),
+        "prebuilt_runtime_help_skipped",
+        "same-target prebuilt verification",
+    );
+}
+
+#[test]
+fn prebuilt_runtime_provenance_rejects_same_platform_help_failures() {
+    let temp = TempDir::new().expect("prebuilt fixture root should exist");
+    let root = temp.path();
+    let darwin_body = "#!/usr/bin/env bash\nprintf 'help failed\\n' >&2\nexit 17\n";
+    write_complete_prebuilt_fixture(root, darwin_body, "windows runtime\n");
+
+    let output = verify_prebuilt_fixture_with_host_target(root, "darwin-arm64", &[]);
+    assert!(
+        !output.status.success(),
+        "same-target prebuilt verification should fail when help fails\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_contains(
+        &String::from_utf8_lossy(&output.stderr),
+        "bin/featureforge --help failed",
+        "same-target prebuilt help failure",
+    );
+}
+
+#[test]
+fn prebuilt_runtime_provenance_runs_matching_manifest_target_help_after_root_skip() {
+    let temp = TempDir::new().expect("prebuilt fixture root should exist");
+    let root = temp.path();
+    let help_log = root.join("help.log");
+    let darwin_body = "#!/usr/bin/env bash\nprintf 'unexpected execution\\n' >> \"$FEATUREFORGE_TEST_LOG\"\nexit 86\n";
+    let windows_body = "#!/usr/bin/env bash\nprintf '%s\\n' \"windows:$*\" >> \"$FEATUREFORGE_TEST_LOG\"\nexit 0\n";
+    write_complete_prebuilt_fixture(root, darwin_body, windows_body);
+
+    let output = verify_prebuilt_fixture_with_host_target(
+        root,
+        "windows-x64",
+        &[("FEATUREFORGE_TEST_LOG", help_log.as_path())],
+    );
+    assert!(
+        output.status.success(),
+        "incompatible-target prebuilt verification should skip help after clean audits\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let help_invocations = read_utf8(&help_log);
+    assert_contains(
+        &help_invocations,
+        "windows:--help",
+        "matching manifest-target prebuilt verification",
+    );
+    assert_contains(
+        &help_invocations,
+        "windows:plan execution --help",
+        "matching manifest-target prebuilt verification",
+    );
+    assert_contains(
+        &help_invocations,
+        "windows:workflow --help",
+        "matching manifest-target prebuilt verification",
+    );
+    assert_not_contains(
+        &help_invocations,
+        "unexpected execution",
+        "matching manifest-target prebuilt verification",
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_contains(
+        &stdout,
+        "prebuilt_runtime_help_skipped",
+        "incompatible-target prebuilt verification",
+    );
+    assert_contains(
+        &stdout,
+        "\"binary_target\":\"darwin-arm64\"",
+        "incompatible-target prebuilt verification",
+    );
+    assert_contains(
+        &stdout,
+        "\"host_target\":\"windows-x64\"",
+        "incompatible-target prebuilt verification",
+    );
+}
+
+#[test]
+fn prebuilt_runtime_provenance_target_filter_runs_matching_target_help() {
+    let temp = TempDir::new().expect("prebuilt fixture root should exist");
+    let root = temp.path();
+    let help_log = root.join("help.log");
+    let darwin_body = "#!/usr/bin/env bash\nprintf 'unexpected root execution\\n' >> \"$FEATUREFORGE_TEST_LOG\"\nexit 86\n";
+    let windows_body = "#!/usr/bin/env bash\nprintf '%s\\n' \"windows-target:$*\" >> \"$FEATUREFORGE_TEST_LOG\"\nexit 0\n";
+    write_complete_prebuilt_fixture(root, darwin_body, windows_body);
+
+    let output = verify_prebuilt_fixture_with_host_target_and_args(
+        root,
+        "windows-x64",
+        &["--target", "windows-x64"],
+        &[("FEATUREFORGE_TEST_LOG", help_log.as_path())],
+    );
+    assert!(
+        output.status.success(),
+        "target-filtered prebuilt verification should run matching target help successfully\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let help_invocations = read_utf8(&help_log);
+    assert_contains(
+        &help_invocations,
+        "windows-target:--help",
+        "target-filtered prebuilt verification",
+    );
+    assert_contains(
+        &help_invocations,
+        "windows-target:plan execution --help",
+        "target-filtered prebuilt verification",
+    );
+    assert_contains(
+        &help_invocations,
+        "windows-target:workflow --help",
+        "target-filtered prebuilt verification",
+    );
+    assert_not_contains(
+        &String::from_utf8_lossy(&output.stdout),
+        "prebuilt_runtime_help_skipped",
+        "target-filtered prebuilt verification",
+    );
+}
+
+#[test]
+fn prebuilt_runtime_provenance_rejects_matching_manifest_target_help_failures() {
+    let temp = TempDir::new().expect("prebuilt fixture root should exist");
+    let root = temp.path();
+    let darwin_body = "#!/usr/bin/env bash\nexit 0\n";
+    let windows_body = "#!/usr/bin/env bash\nprintf 'windows help failed\\n' >&2\nexit 17\n";
+    write_complete_prebuilt_fixture(root, darwin_body, windows_body);
+
+    let output = verify_prebuilt_fixture_with_host_target(root, "windows-x64", &[]);
+    assert!(
+        !output.status.success(),
+        "matching target prebuilt verification should fail when target help fails\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_contains(
+        &String::from_utf8_lossy(&output.stderr),
+        "bin/prebuilt/windows-x64/featureforge.exe --help failed",
+        "matching target prebuilt help failure",
+    );
+}
+
+#[test]
+fn prebuilt_runtime_provenance_rejects_denied_strings_even_when_help_is_incompatible() {
+    let temp = TempDir::new().expect("prebuilt fixture root should exist");
+    let root = temp.path();
+    let darwin_body =
+        "#!/usr/bin/env bash\n# record-review-dispatch must fail the binary audit\nexit 0\n";
+    write_complete_prebuilt_fixture(root, darwin_body, "windows runtime\n");
+
+    let output = verify_prebuilt_fixture_with_host_target(root, "windows-x64", &[]);
+    assert!(
+        !output.status.success(),
+        "incompatible-target prebuilt verification should still fail denied-string audits\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_contains(
+        &String::from_utf8_lossy(&output.stderr),
+        "contains denied public/control-plane string",
+        "incompatible-target denied-string audit",
+    );
+}
+
+#[test]
+fn prebuilt_runtime_provenance_rejects_hash_mismatches_even_when_help_is_incompatible() {
+    let temp = TempDir::new().expect("prebuilt fixture root should exist");
+    let root = temp.path();
+    write_complete_prebuilt_fixture(
+        root,
+        "#!/usr/bin/env bash\nprintf 'darwin runtime\\n'\n",
+        "windows runtime\n",
+    );
+    write_executable(
+        &root.join("bin/featureforge"),
+        "#!/usr/bin/env bash\nprintf 'root drift without denied strings\\n'\n",
+    );
+
+    let output = verify_prebuilt_fixture_with_host_target(root, "windows-x64", &[]);
+    assert!(
+        !output.status.success(),
+        "incompatible-target prebuilt verification should still fail root hash drift\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_contains(
+        &String::from_utf8_lossy(&output.stderr),
+        "bin/featureforge: root shipped runtime hash",
+        "incompatible-target root hash audit",
     );
 }
 

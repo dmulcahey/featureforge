@@ -17,6 +17,7 @@ use crate::execution::phase::{
     PUBLIC_STATUS_PHASE_VALUES, RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
     RECORDING_CONTEXT_PHASE_DETAILS,
 };
+use crate::execution::public_command_types::RecommendedPublicCommandArgv;
 use crate::execution::router::{
     Blocker as RuntimeBlocker, NextPublicAction as RuntimeNextPublicAction,
 };
@@ -112,6 +113,8 @@ enum NextActionSchema {
     CloseCurrentTask,
     #[serde(rename = "continue execution")]
     ContinueExecution,
+    #[serde(rename = "runtime diagnostic required")]
+    RuntimeDiagnosticRequired,
     #[serde(rename = "request final review")]
     RequestFinalReview,
     #[serde(rename = "execution reentry required")]
@@ -247,7 +250,7 @@ pub struct PlanExecutionStatus {
     #[schemars(skip)]
     pub recommended_public_command: Option<PublicCommand>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recommended_public_command_argv: Option<Vec<String>>,
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     pub recommended_command: Option<String>,

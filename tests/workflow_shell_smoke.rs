@@ -361,6 +361,7 @@ fn assert_no_hidden_helper_commands_used(commands: &[String]) {
         &["record", "-review-dispatch"],
         &["gate", "-review"],
         &["rebuild", "-evidence"],
+        &["--dispatch", "-id"],
     ];
     for command in commands {
         assert!(
@@ -368,6 +369,24 @@ fn assert_no_hidden_helper_commands_used(commands: &[String]) {
                 .iter()
                 .all(|hidden| !contains_hidden_parts(command, hidden)),
             "normal-path command sequences may not include hidden helper commands, got `{command}`"
+        );
+    }
+}
+
+fn assert_no_stale_dispatch_public_replay_hidden_terms(route: &Value, context: &str) {
+    let route_text = serde_json::to_string(route)
+        .unwrap_or_else(|error| panic!("{context} should serialize for hidden-term scan: {error}"));
+    let hidden_command_tokens = [
+        &["record", "-review-dispatch"][..],
+        &["gate", "-review"],
+        &["rebuild", "-evidence"],
+        &["--dispatch", "-id"],
+    ];
+    for hidden in hidden_command_tokens {
+        assert!(
+            !contains_hidden_parts(&route_text, hidden),
+            "{context} must not expose hidden stale-dispatch replay term `{}` in {route_text}",
+            hidden.join("")
         );
     }
 }
@@ -2366,21 +2385,37 @@ fn workflow_operator_routes_marker_free_started_execution_to_exact_begin_command
         "workflow operator json for marker-free begin-command routing",
     );
 
-    assert_eq!(operator_json["phase"], "executing");
+    assert_eq!(operator_json["phase"], "execution_preflight");
     assert_eq!(operator_json["phase_detail"], "execution_in_progress");
     assert_eq!(operator_json["review_state_status"], "clean");
+    assert_eq!(operator_json["next_action"], "continue execution");
+    assert_eq!(operator_json["state_kind"], "actionable_public_command");
     assert_eq!(
-        operator_json["next_action"],
-        concat!("execution pre", "flight")
+        operator_json["recommended_public_command_argv"],
+        json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--expect-execution-fingerprint",
+            status_json["execution_fingerprint"]
+                .as_str()
+                .expect("status should expose execution fingerprint for exact begin argv"),
+        ])
     );
-    assert_eq!(operator_json["recommended_command"], Value::Null);
-    assert_eq!(operator_json["execution_command_context"], Value::Null);
+    assert_eq!(
+        operator_json["execution_command_context"]["command_kind"],
+        "begin"
+    );
     assert_eq!(status_json["phase_detail"], operator_json["phase_detail"]);
     assert_eq!(status_json["next_action"], operator_json["next_action"]);
-    assert_eq!(
-        status_json["recommended_command"],
-        operator_json["recommended_command"]
-    );
+    assert_eq!(status_json["state_kind"], operator_json["state_kind"]);
     assert_eq!(
         status_json["execution_command_context"],
         operator_json["execution_command_context"]
@@ -6629,6 +6664,168 @@ fn task_close_internal_dispatch_runtime_management_budget_is_capped() {
         "TASK-CLOSE-INTERNAL-DISPATCH-BUDGET",
         runtime_management_commands,
         2,
+    );
+}
+
+#[test]
+fn public_close_current_task_records_positive_closure_after_stale_dispatch_lineage_without_dispatch_id()
+ {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("public-close-current-task-stale-dispatch-refresh");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    prepare_missing_task_closure_baseline_close_fixture(repo, state, plan_rel, "main");
+
+    let mut authoritative_state = authoritative_harness_state(repo, state);
+    authoritative_state["strategy_review_dispatch_lineage"]["task-1"] = json!({
+        "dispatch_id": "task-1-stale-dispatch",
+        "semantic_reviewed_state_id": "git_tree:stale-reviewed-state",
+        "reviewed_state_id": "git_tree:stale-reviewed-state",
+        "task_completion_lineage_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+    });
+    write_authoritative_harness_state(repo, state, &authoritative_state);
+
+    let review_summary_path = repo.join("public-stale-dispatch-review-summary.md");
+    let verification_summary_path = repo.join("public-stale-dispatch-verification-summary.md");
+    write_file(
+        &review_summary_path,
+        "Public stale-dispatch independent review passed.\n",
+    );
+    write_file(
+        &verification_summary_path,
+        "Public stale-dispatch verification passed.\n",
+    );
+
+    let operator_ready = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+            "--json",
+        ],
+        "public stale-dispatch close-current-task operator route",
+    );
+    assert_eq!(
+        operator_ready["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "public stale-dispatch route should stay on task closure recording: {operator_ready}"
+    );
+    assert_eq!(
+        operator_ready["next_action"],
+        Value::from("close current task")
+    );
+    assert!(
+        operator_ready["blocking_reason_codes"]
+            .as_array()
+            .is_none_or(|codes| {
+                !codes
+                    .iter()
+                    .any(|code| code.as_str() == Some("prior_task_review_dispatch_stale"))
+            }),
+        "stale dispatch lineage must remain diagnostic-only for public routing: {operator_ready}"
+    );
+    assert_no_stale_dispatch_public_replay_hidden_terms(
+        &operator_ready,
+        "public stale-dispatch operator route",
+    );
+
+    let close_json = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "close-current-task",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--review-result",
+            "pass",
+            "--review-summary-file",
+            review_summary_path
+                .to_str()
+                .expect("public stale-dispatch review summary path should be utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary_path
+                .to_str()
+                .expect("public stale-dispatch verification summary path should be utf-8"),
+        ],
+        "public stale-dispatch close-current-task",
+    );
+    assert_eq!(
+        close_json["action"],
+        Value::from("recorded"),
+        "public close-current-task should record after refreshing stale dispatch lineage without hidden dispatch id: {close_json}"
+    );
+    assert_eq!(
+        close_json["dispatch_validation_action"],
+        Value::from("validated")
+    );
+    assert_no_stale_dispatch_public_replay_hidden_terms(
+        &close_json,
+        "public stale-dispatch close-current-task output",
+    );
+
+    let authoritative_state = authoritative_harness_state(repo, state);
+    let current_record = &authoritative_state["current_task_closure_records"]["task-1"];
+    assert_eq!(current_record["closure_status"], Value::from("current"));
+    assert_eq!(current_record["review_result"], Value::from("pass"));
+    assert_eq!(current_record["verification_result"], Value::from("pass"));
+    assert_ne!(
+        current_record["dispatch_id"],
+        Value::from("task-1-stale-dispatch"),
+        "close-current-task should bind the refreshed current dispatch id, not stale historical lineage"
+    );
+
+    let operator_after = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "public stale-dispatch close-current-task follow-up operator route",
+    );
+    assert_ne!(
+        operator_after["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "same task should not reroute to task closure after public stale-dispatch close succeeds: {operator_after}"
+    );
+    if operator_after["phase_detail"] == "execution_reentry_required" {
+        assert_ne!(
+            operator_after["blocking_task"],
+            Value::from(1_u64),
+            "same task should not reroute to execution reentry after public stale-dispatch close succeeds: {operator_after}"
+        );
+    }
+    assert_no_stale_dispatch_public_replay_hidden_terms(
+        &operator_after,
+        "public stale-dispatch follow-up operator route",
+    );
+
+    let status_after = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "public stale-dispatch close-current-task follow-up status route",
+    );
+    assert_ne!(
+        status_after["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "status should not reroute the same task to task closure after public stale-dispatch close succeeds: {status_after}"
+    );
+    if status_after["phase_detail"] == "execution_reentry_required" {
+        assert_ne!(
+            status_after["blocking_task"],
+            Value::from(1_u64),
+            "status should not reroute the same task to execution reentry after public stale-dispatch close succeeds: {status_after}"
+        );
+    }
+    assert_no_stale_dispatch_public_replay_hidden_terms(
+        &status_after,
+        "public stale-dispatch follow-up status route",
     );
 }
 
