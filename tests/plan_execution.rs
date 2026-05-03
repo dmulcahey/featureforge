@@ -3254,10 +3254,9 @@ fn repair_review_state_fails_closed_without_authoritative_open_step_state() {
     );
     assert!(
         failure["message"].as_str().is_some_and(|message| {
-            message.contains(&format!(
-                "{} requires authoritative current task-closure state",
-                concat!("record", "-branch-closure"),
-            ))
+            message.contains(
+                "advance-late-stage branch-closure recording requires authoritative current task-closure state",
+            )
         }),
         "repair-review-state should fail closed on the authoritative blocker instead of materializing markdown notes, got {failure:?}"
     );

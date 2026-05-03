@@ -52,6 +52,44 @@
       ],
       "type": "object"
     },
+    "PublicCommandInputKind": {
+      "enum": [
+        "text",
+        "enum",
+        "path"
+      ],
+      "type": "string"
+    },
+    "PublicCommandInputRequirement": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/PublicCommandInputKind"
+        },
+        "must_exist": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required_when": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
     "WorkflowOperatorCommandKindSchema": {
       "enum": [
         "begin",
@@ -454,6 +492,12 @@
     },
     "recording_context": {
       "$ref": "#/$defs/WorkflowOperatorRecordingContext"
+    },
+    "required_inputs": {
+      "items": {
+        "$ref": "#/$defs/PublicCommandInputRequirement"
+      },
+      "type": "array"
     },
     "review_state_status": {
       "$ref": "#/$defs/WorkflowOperatorReviewStateStatusSchema"

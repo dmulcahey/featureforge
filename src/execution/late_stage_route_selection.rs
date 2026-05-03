@@ -1,4 +1,4 @@
-use crate::execution::command_eligibility::PublicAdvanceLateStageMode;
+use crate::execution::command_eligibility::public_advance_late_stage_mode_for_phase_detail;
 use crate::execution::current_truth::{
     handoff_decision_scope as shared_handoff_decision_scope, reason_code_requires_test_plan_refresh,
 };
@@ -170,20 +170,11 @@ pub(crate) fn late_stage_decision(
     let recommended_public_command = match phase_detail {
         crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
         | crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
-        | crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => Some(
-            advance_late_stage_public_command(plan_path, PublicAdvanceLateStageMode::Basic),
-        ),
-        crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY => {
-            Some(advance_late_stage_public_command(
-                plan_path,
-                PublicAdvanceLateStageMode::FinalReviewResultTemplate,
-            ))
-        }
-        crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED => {
-            Some(advance_late_stage_public_command(
-                plan_path,
-                PublicAdvanceLateStageMode::QaResultTemplate,
-            ))
+        | crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED
+        | crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY
+        | crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED => {
+            public_advance_late_stage_mode_for_phase_detail(phase_detail)
+                .map(|mode| advance_late_stage_public_command(plan_path, mode))
         }
         crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
         | crate::execution::phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING

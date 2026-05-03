@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::cli::plan_execution::StatusArgs;
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::closure_diagnostics::public_task_boundary_decision;
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
 use crate::execution::command_eligibility::PublicCommand;
 use crate::execution::current_closure_projection::project_current_task_closures;
@@ -24,7 +25,7 @@ use crate::execution::current_truth::{
     late_stage_review_blocked as shared_late_stage_review_blocked,
     late_stage_review_truth_blocked as shared_late_stage_review_truth_blocked,
     normalized_plan_qa_requirement as shared_normalized_plan_qa_requirement,
-    public_task_boundary_decision, task_review_result_requires_verification_reason_codes,
+    task_review_result_requires_verification_reason_codes,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
     task_scope_stale_review_state_reason_present as shared_task_scope_stale_review_state_reason_present,
 };
@@ -39,10 +40,10 @@ use crate::execution::follow_up::{
 };
 use crate::execution::harness::HarnessPhase;
 #[cfg(test)]
-use crate::execution::next_action::{NextActionDecision, NextActionKind, public_next_action_text};
+use crate::execution::next_action::{
+    NextActionDecision, NextActionKind, compute_next_action_decision, public_next_action_text,
+};
 use crate::execution::phase;
-#[cfg(test)]
-use crate::execution::read_model::resolve_exact_execution_command_from_context;
 use crate::execution::reducer::{RuntimeState, reduce_execution_read_scope};
 use crate::execution::router::{
     RouteDecision, project_non_runtime_workflow_routing_state, project_runtime_routing_state,
@@ -173,6 +174,25 @@ pub struct ExecutionRoutingState {
     pub current_branch_closure_id: Option<String>,
     pub current_release_readiness_result: Option<String>,
     pub base_branch: Option<String>,
+}
+
+impl ExecutionRoutingState {
+    pub(crate) fn bind_public_command(
+        &mut self,
+        command: PublicCommand,
+        execution_command_context: Option<ExecutionRoutingExecutionCommandContext>,
+    ) {
+        let recommended_command = command
+            .to_invocation()
+            .map(|_| command.to_display_command());
+        if let Some(route_decision) = self.route_decision.as_mut() {
+            route_decision.bind_public_command(Some(command.clone()));
+            route_decision.execution_command_context = execution_command_context.clone();
+        }
+        self.recommended_command = recommended_command;
+        self.recommended_public_command = Some(command);
+        self.execution_command_context = execution_command_context;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1159,15 +1179,22 @@ fn required_execution_command_for_routing(
     } else {
         load_execution_context(&runtime, &plan_path_buf)?
     };
-    let resolved = resolve_exact_execution_command_from_context(&context, status, plan_path)
+    let decision = compute_next_action_decision(&context, status, plan_path)
+        .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
+    let command = decision
+        .recommended_public_command
+        .as_ref()
+        .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
+    let request = command
+        .to_mutation_request()
         .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
     Ok((
         ExecutionRoutingExecutionCommandContext {
-            command_kind: String::from(resolved.command_kind),
-            task_number: Some(resolved.task_number),
-            step_id: resolved.step_id,
+            command_kind: request.command_name.to_owned(),
+            task_number: request.task,
+            step_id: request.step,
         },
-        resolved.recommended_command,
+        command.to_display_command(),
     ))
 }
 

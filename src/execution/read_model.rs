@@ -2,8 +2,11 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::closure_diagnostics::task_closure_recording_status_reason_codes;
+use crate::execution::closure_dispatch::{
+    current_final_review_dispatch_id_from_authority, current_task_review_dispatch_id_for_task,
+};
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
-use crate::execution::command_eligibility::{PublicCommandKind, recommended_public_command_argv};
 #[cfg(test)]
 use crate::execution::context::EvidenceAttempt;
 use crate::execution::context::{
@@ -27,17 +30,14 @@ use crate::execution::current_truth::{
     branch_closure_rerecording_assessment,
     branch_source_task_closure_ids as shared_branch_source_task_closure_ids,
     current_branch_closure_has_tracked_drift as shared_current_branch_closure_has_tracked_drift,
-    current_final_review_dispatch_id as shared_current_final_review_dispatch_id,
     current_late_stage_branch_bindings as shared_current_late_stage_branch_bindings,
     current_task_negative_result_task as shared_current_task_negative_result_task,
-    current_task_review_dispatch_id as shared_current_task_review_dispatch_id,
     final_review_dispatch_still_current as shared_final_review_dispatch_still_current,
     late_stage_missing_current_closure_stale_provenance_present as shared_late_stage_missing_current_closure_stale_provenance_present,
     late_stage_qa_blocked as shared_late_stage_qa_blocked,
     late_stage_release_blocked as shared_late_stage_release_blocked,
     late_stage_review_blocked as shared_late_stage_review_blocked,
     late_stage_review_truth_blocked as shared_late_stage_review_truth_blocked,
-    legacy_repair_follow_up_unbound,
     live_review_state_repair_reroute as shared_live_review_state_repair_reroute,
     live_review_state_status_for_reroute as shared_live_review_state_status_for_reroute,
     live_task_scope_repair_precedence_active as shared_live_task_scope_repair_precedence_active,
@@ -48,19 +48,13 @@ use crate::execution::current_truth::{
     public_late_stage_rederivation_basis_present,
     public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
     public_review_state_stale_unreviewed_for_reroute as shared_public_review_state_stale_unreviewed_for_reroute,
-    public_task_boundary_decision,
     qa_requirement_policy_invalid as shared_qa_requirement_policy_invalid,
     release_readiness_result_for_branch_closure as shared_release_readiness_result_for_branch_closure,
-    resolve_actionable_repair_follow_up_for_status,
-    resolve_actionable_repair_follow_up_for_status_with_source_hash,
-    task_closure_contributes_to_branch_surface,
+    resolve_actionable_repair_follow_up_for_status, task_closure_contributes_to_branch_surface,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
     task_scope_stale_review_state_reason_present as shared_task_scope_stale_review_state_reason_present,
 };
 use crate::execution::fields::FIELD_HANDOFF_REQUIRED;
-use crate::execution::follow_up::{
-    execution_step_repair_target_id, repair_follow_up_source_decision_hash,
-};
 use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, DownstreamFreshnessState, EvaluationVerdict, EvaluatorKind,
     ExecutionRunId, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE,
@@ -73,8 +67,8 @@ use crate::execution::leases::{
 #[cfg(test)]
 use crate::execution::next_action::{NextActionDecision, NextActionKind, public_next_action_text};
 use crate::execution::next_action::{
-    compute_next_action_decision, exact_execution_command_from_decision, execution_reentry_target,
-    select_authoritative_stale_reentry_target,
+    compute_next_action_decision, execution_command_route_target_from_decision,
+    execution_reentry_target, select_authoritative_stale_reentry_target,
 };
 use crate::execution::observability::REASON_CODE_STALE_PROVENANCE;
 use crate::execution::phase;
@@ -90,9 +84,7 @@ use crate::execution::read_model_support::{
     require_prior_task_closure_for_begin, resolve_branch_closure_reviewed_tree_sha,
     stale_unreviewed_allows_task_closure_baseline_bridge, task_boundary_reason_code_from_message,
     task_closure_baseline_repair_candidate_with_stale_target, task_closure_recording_prerequisites,
-    task_closure_recording_reason_code, task_completion_lineage_fingerprint,
 };
-use crate::execution::recording::current_task_closure_postconditions_would_mutate;
 use crate::execution::reducer::RuntimeState;
 use crate::execution::reentry_reconcile::{
     TARGETLESS_STALE_MISSING_AUTHORITY_CODE, TARGETLESS_STALE_RECONCILE_REASON_CODE,
@@ -112,12 +104,9 @@ use crate::execution::state::record_review_dispatch_blocked_output_from_gate;
 use crate::execution::status::PublicReviewStateTaskClosure;
 use crate::execution::status::{
     GateProjectionInputs, GateResult, GateState, PlanExecutionStatus,
-    PublicExecutionCommandContext, PublicRecordingContext, PublicRepairTarget,
-    StatusBlockingRecord,
+    PublicExecutionCommandContext, PublicRecordingContext, StatusBlockingRecord,
 };
-use crate::execution::topology::{
-    load_preflight_acceptance, pending_chunk_id, preflight_acceptance_for_context,
-};
+use crate::execution::topology::{pending_chunk_id, preflight_acceptance_for_context};
 use crate::execution::transitions::{
     AuthoritativeTransitionState, PersistedReviewStateFieldClass, classify_review_state_field,
     load_authoritative_transition_state, load_authoritative_transition_state_relaxed,
@@ -142,7 +131,6 @@ pub(crate) use late_stage::{
 pub(crate) use public_route_projection::{
     apply_shared_routing_projection_to_read_scope,
     apply_shared_routing_projection_to_read_scope_with_routing,
-    project_persisted_public_repair_targets,
 };
 pub(crate) use review_state::{
     FinalReviewDispatchAuthority, current_final_review_dispatch_authority_for_context,
@@ -150,20 +138,20 @@ pub(crate) use review_state::{
 };
 use task_state::completed_plan_missing_current_closure_task;
 pub(crate) use task_state::{
-    ExactExecutionCommand, ExecutionReentryCurrentTaskClosureTargets,
+    ExecutionCommandRouteTarget, ExecutionReentryCurrentTaskClosureTargets,
     apply_task_boundary_status_overlay,
     execution_reentry_current_task_closure_targets_from_stale_tasks, recommended_execution_source,
-    reopen_exact_execution_command_for_task, require_public_exact_execution_command,
-    resolve_exact_execution_command,
+    reopen_execution_command_route_target_for_task, require_public_execution_command_route_target,
+    resolve_execution_command_route_target,
 };
 
 #[cfg(test)]
-pub(crate) fn resolve_exact_execution_command_from_context(
+pub(crate) fn resolve_execution_command_route_target_from_context(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
     plan_path: &str,
-) -> Option<ExactExecutionCommand> {
-    task_state::resolve_exact_execution_command_from_context(context, status, plan_path)
+) -> Option<ExecutionCommandRouteTarget> {
+    task_state::resolve_execution_command_route_target_from_context(context, status, plan_path)
 }
 
 pub(crate) struct ExecutionReadScope {
@@ -688,6 +676,7 @@ pub(crate) fn status_from_context_with_overlay(
         next_action: String::from("inspect_workflow"),
         recommended_public_command: None,
         recommended_public_command_argv: None,
+        required_inputs: Vec::new(),
         recommended_command: None,
         finish_review_gate_pass_branch_closure_id: None,
         reason_codes: Vec::new(),
@@ -2810,16 +2799,6 @@ fn push_status_reason_code_once(status: &mut PlanExecutionStatus, reason_code: &
     }
 }
 
-pub(crate) fn push_status_warning_code_once(status: &mut PlanExecutionStatus, warning_code: &str) {
-    if !status
-        .warning_codes
-        .iter()
-        .any(|existing| existing == warning_code)
-    {
-        status.warning_codes.push(warning_code.to_owned());
-    }
-}
-
 pub(crate) fn task_scope_review_state_repair_reason(status: &PlanExecutionStatus) -> Option<&str> {
     status
         .reason_codes
@@ -3197,7 +3176,7 @@ fn parse_reason_codes(
 }
 
 #[cfg(test)]
-mod exact_execution_command_tests {
+mod execution_command_route_target_tests {
     use super::*;
     use crate::test_support::init_committed_test_repo;
     use serde_json::Value;
@@ -3395,12 +3374,14 @@ mod exact_execution_command_tests {
             current_branch_closure_id: None,
             finish_review_gate_pass_branch_closure_id: None,
             recommended_command: None,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
         }
     }
 
     #[test]
-    fn resolve_exact_execution_command_from_context_uses_first_unchecked_step_without_markers() {
+    fn resolve_execution_command_route_target_from_context_uses_first_unchecked_step_without_markers()
+     {
         let (_repo_dir, context, plan_rel) = unresolved_execution_context();
         let mut status =
             status_from_context(&context).expect("status should derive for exact-command test");
@@ -3410,24 +3391,21 @@ mod exact_execution_command_tests {
         status.harness_phase = HarnessPhase::Executing;
         status.execution_mode = String::from("featureforge:executing-plans");
 
-        let resolved =
-            resolve_exact_execution_command_from_context(&context, &status, plan_rel.as_str())
-                .expect("marker-free started execution should derive the first unchecked step");
+        let resolved = resolve_execution_command_route_target_from_context(
+            &context,
+            &status,
+            plan_rel.as_str(),
+        )
+        .expect("marker-free started execution should derive the first unchecked step");
 
         assert_eq!(resolved.command_kind, "begin");
         assert_eq!(resolved.task_number, 1);
         assert_eq!(resolved.step_id, Some(1));
-        assert_eq!(
-            resolved.recommended_command,
-            format!(
-                "featureforge plan execution begin --plan {plan_rel} --task 1 --step 1 --expect-execution-fingerprint {}",
-                status.execution_fingerprint
-            )
-        );
     }
 
     #[test]
-    fn resolve_exact_execution_command_from_context_fails_closed_for_malformed_active_marker() {
+    fn resolve_execution_command_route_target_from_context_fails_closed_for_malformed_active_marker()
+     {
         let (_repo_dir, context, plan_rel) = unresolved_execution_context();
         let mut status =
             status_from_context(&context).expect("status should derive for exact-command test");
@@ -3439,8 +3417,12 @@ mod exact_execution_command_tests {
         status.active_step = None;
 
         assert!(
-            resolve_exact_execution_command_from_context(&context, &status, plan_rel.as_str())
-                .is_none(),
+            resolve_execution_command_route_target_from_context(
+                &context,
+                &status,
+                plan_rel.as_str()
+            )
+            .is_none(),
             "malformed active execution markers must fail closed instead of synthesizing a begin command"
         );
     }
@@ -3704,7 +3686,7 @@ mod exact_execution_command_tests {
 
         let output = record_review_dispatch_blocked_output_from_gate(&context, &args, gate);
         let output_json =
-            serde_json::to_value(output).expect("record-review-dispatch output should serialize");
+            serde_json::to_value(output).expect("review-dispatch output should serialize");
 
         assert_eq!(
             output_json["code"],

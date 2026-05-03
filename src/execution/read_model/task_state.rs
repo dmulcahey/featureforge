@@ -153,12 +153,11 @@ fn push_task_closure_recording_status_reasons(
     if stale_bridge_ready {
         push_status_reason_code_once(status, "task_closure_baseline_bridge_ready");
     }
-    for reason_code in prerequisites
-        .blocking_reason_codes
-        .iter()
-        .filter(|reason_code| task_closure_recording_reason_code(reason_code))
-    {
-        push_status_reason_code_once(status, reason_code);
+    for reason_code in task_closure_recording_status_reason_codes(
+        &prerequisites.blocking_reason_codes,
+        &prerequisites.diagnostic_reason_codes,
+    ) {
+        push_status_reason_code_once(status, &reason_code);
     }
 }
 
@@ -191,61 +190,46 @@ pub(crate) fn execution_reentry_current_task_closure_targets_from_stale_tasks(
     })
 }
 
-pub(crate) struct ExactExecutionCommand {
+pub(crate) struct ExecutionCommandRouteTarget {
     pub command_kind: &'static str,
     pub task_number: u32,
     pub step_id: Option<u32>,
-    pub recommended_command: String,
 }
 
-pub(crate) fn resolve_exact_execution_command(
+pub(crate) fn resolve_execution_command_route_target(
     status: &PlanExecutionStatus,
-    plan_path: &str,
-) -> Option<ExactExecutionCommand> {
-    let execution_source = recommended_execution_source(status.execution_mode.as_str());
+    _plan_path: &str,
+) -> Option<ExecutionCommandRouteTarget> {
     if let Some((task_number, step_id)) = status.active_task.zip(status.active_step) {
-        return Some(ExactExecutionCommand {
+        return Some(ExecutionCommandRouteTarget {
             command_kind: "complete",
             task_number,
             step_id: Some(step_id),
-            recommended_command: format!(
-                "featureforge plan execution complete --plan {plan_path} --task {task_number} --step {step_id} --source {} --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint {}",
-                execution_source, status.execution_fingerprint
-            ),
         });
     }
     if let Some((task_number, step_id)) = status.resume_task.zip(status.resume_step) {
-        return Some(ExactExecutionCommand {
+        return Some(ExecutionCommandRouteTarget {
             command_kind: "begin",
             task_number,
             step_id: Some(step_id),
-            recommended_command: format!(
-                "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_id} --expect-execution-fingerprint {}",
-                status.execution_fingerprint
-            ),
         });
     }
     if let Some((task_number, step_id)) = status.blocking_task.zip(status.blocking_step) {
-        return Some(ExactExecutionCommand {
+        return Some(ExecutionCommandRouteTarget {
             command_kind: "begin",
             task_number,
             step_id: Some(step_id),
-            recommended_command: format!(
-                "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_id} --expect-execution-fingerprint {}",
-                status.execution_fingerprint
-            ),
         });
     }
     None
 }
 
-pub(crate) fn reopen_exact_execution_command_for_task(
+pub(crate) fn reopen_execution_command_route_target_for_task(
     context: &ExecutionContext,
-    status: &PlanExecutionStatus,
-    plan_path: &str,
+    _status: &PlanExecutionStatus,
+    _plan_path: &str,
     task_number: u32,
-) -> Option<ExactExecutionCommand> {
-    let execution_source = recommended_execution_source(status.execution_mode.as_str());
+) -> Option<ExecutionCommandRouteTarget> {
     let step_id = latest_attempted_step_for_task(context, task_number).or_else(|| {
         context
             .steps
@@ -253,14 +237,10 @@ pub(crate) fn reopen_exact_execution_command_for_task(
             .find(|step| step.task_number == task_number)
             .map(|step| step.step_number)
     })?;
-    Some(ExactExecutionCommand {
+    Some(ExecutionCommandRouteTarget {
         command_kind: "reopen",
         task_number,
         step_id: Some(step_id),
-        recommended_command: format!(
-            "featureforge plan execution reopen --plan {plan_path} --task {task_number} --step {step_id} --source {} --reason <reason> --expect-execution-fingerprint {}",
-            execution_source, status.execution_fingerprint
-        ),
     })
 }
 
@@ -300,22 +280,22 @@ pub(super) fn completed_plan_missing_current_closure_task(
     })
 }
 
-pub(crate) fn resolve_exact_execution_command_from_context(
+pub(crate) fn resolve_execution_command_route_target_from_context(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
     plan_path: &str,
-) -> Option<ExactExecutionCommand> {
+) -> Option<ExecutionCommandRouteTarget> {
     let decision = compute_next_action_decision(context, status, plan_path)?;
-    exact_execution_command_from_decision(status, &decision, plan_path)
+    execution_command_route_target_from_decision(status, &decision, plan_path)
 }
 
-pub(crate) fn require_exact_execution_command(
+pub(crate) fn require_execution_command_route_target(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
     plan_path: &str,
     context_label: &str,
-) -> Result<ExactExecutionCommand, JsonFailure> {
-    let command = resolve_exact_execution_command_from_context(context, status, plan_path)
+) -> Result<ExecutionCommandRouteTarget, JsonFailure> {
+    let command = resolve_execution_command_route_target_from_context(context, status, plan_path)
         .ok_or_else(|| {
             JsonFailure::new(
                 FailureClass::MalformedExecutionState,
@@ -324,16 +304,10 @@ pub(crate) fn require_exact_execution_command(
                 ),
             )
         })?;
-    if command.recommended_command.trim().is_empty() {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!("{context_label} derived an empty exact execution command."),
-        ));
-    }
     Ok(command)
 }
 
-fn public_exact_execution_command_basis_present(
+fn public_execution_command_route_basis_present(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
 ) -> bool {
@@ -355,7 +329,7 @@ fn public_exact_execution_command_basis_present(
             .is_some()
 }
 
-fn public_exact_execution_command_required(
+fn public_execution_command_route_required(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
 ) -> bool {
@@ -364,8 +338,8 @@ fn public_exact_execution_command_required(
         || status.active_task.is_some()
         || status.resume_task.is_some()
         || status.blocking_task.is_some())
-        && public_exact_execution_command_basis_present(context, status);
-    let exact_execution_route = (status.execution_started == "yes"
+        && public_execution_command_route_basis_present(context, status);
+    let execution_command_route = (status.execution_started == "yes"
         && matches!(
             status.phase_detail.as_str(),
             phase::DETAIL_EXECUTION_IN_PROGRESS
@@ -377,20 +351,21 @@ fn public_exact_execution_command_required(
                 phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED
             ));
     execution_context_present
-        && exact_execution_route
+        && execution_command_route
         && status.review_state_status == "clean"
         && !execution_reentry_requires_review_state_repair(Some(context), status)
 }
 
-pub(crate) fn require_public_exact_execution_command(
+pub(crate) fn require_public_execution_command_route_target(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
 ) -> Result<(), JsonFailure> {
-    if public_exact_execution_command_required(context, status) {
+    if public_execution_command_route_required(context, status) {
         if status.execution_command_context.is_some() && status.recommended_command.is_some() {
             return Ok(());
         }
-        let _ = require_exact_execution_command(context, status, &context.plan_rel, "status")?;
+        let _ =
+            require_execution_command_route_target(context, status, &context.plan_rel, "status")?;
     }
     Ok(())
 }

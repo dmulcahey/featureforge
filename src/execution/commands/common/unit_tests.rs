@@ -752,7 +752,7 @@ fn advance_late_stage_final_review_with_dispatch_id_requeries_when_dispatch_foll
         false,
         AdvanceLateStageOutputContext {
             stage_path: "final_review",
-            delegated_primitive: "record-final-review",
+            operation: "record_final_review_outcome",
             branch_closure_id: Some(String::from("branch-closure-1")),
             dispatch_id: Some(String::from("dispatch-123")),
             result: "pass",
@@ -845,7 +845,7 @@ fn advance_late_stage_final_review_with_matching_dispatch_lineage_keeps_dispatch
         true,
         AdvanceLateStageOutputContext {
             stage_path: "final_review",
-            delegated_primitive: "record-final-review",
+            operation: "record_final_review_outcome",
             branch_closure_id: Some(String::from("branch-closure-1")),
             dispatch_id: Some(String::from("dispatch-123")),
             result: "pass",

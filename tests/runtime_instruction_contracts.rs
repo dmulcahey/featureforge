@@ -8,6 +8,7 @@ mod install_support;
 mod process_support;
 
 use assert_cmd::Command as AssertCommand;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -457,6 +458,66 @@ fn generated_skill_doc_paths() -> Vec<PathBuf> {
         .collect()
 }
 
+fn active_prompt_doc_paths() -> Vec<PathBuf> {
+    fn collect(root: &Path, dir: &Path, paths: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir)
+            .unwrap_or_else(|error| panic!("{} should be readable: {error}", dir.display()))
+            .filter_map(Result::ok)
+        {
+            let path = entry.path();
+            let rel = path
+                .strip_prefix(root)
+                .expect("active prompt path should be repo-relative")
+                .to_string_lossy()
+                .replace('\\', "/");
+            if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+                if [
+                    ".git",
+                    "target",
+                    "node_modules",
+                    "docs/archive",
+                    "docs/featureforge/archive",
+                    "docs/project_notes",
+                ]
+                .iter()
+                .any(|prefix| rel == *prefix || rel.starts_with(&format!("{prefix}/")))
+                {
+                    continue;
+                }
+                collect(root, &path, paths);
+            } else if entry.file_type().is_ok_and(|file_type| file_type.is_file()) {
+                let is_text_prompt = rel.ends_with(".md")
+                    || rel.ends_with(".md.tmpl")
+                    || (rel.starts_with(".codex/agents/") && rel.ends_with(".toml"));
+                if is_text_prompt && rel != "docs/testing.md" {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+
+    let root = repo_root();
+    let mut paths = Vec::new();
+    for rel_root in [
+        "README.md",
+        "AGENTS.md",
+        "docs",
+        "qa",
+        "references",
+        "review",
+        "skills",
+        ".codex/agents",
+    ] {
+        let path = root.join(rel_root);
+        if path.is_file() {
+            paths.push(path);
+        } else if path.is_dir() {
+            collect(&root, &path, &mut paths);
+        }
+    }
+    paths
+}
+
 fn extract_bash_block(content: &str, heading: &str) -> String {
     let mut in_heading = false;
     let mut in_block = false;
@@ -499,6 +560,77 @@ fn write_executable(path: &Path, body: &str) {
         fs::set_permissions(path, fs::Permissions::from_mode(0o755))
             .expect("executable should stay executable");
     }
+}
+
+fn write_utf8(path: &Path, body: &str) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("file parent dir should exist");
+    }
+    fs::write(path, body).expect("file should be writable");
+}
+
+fn sha256_hex(contents: &str) -> String {
+    format!("{:x}", Sha256::digest(contents.as_bytes()))
+}
+
+fn write_minimal_prebuilt_source(root: &Path, source_marker: &str) {
+    write_utf8(
+        &root.join("Cargo.toml"),
+        "[package]\nname = \"prebuilt-fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+    );
+    write_utf8(&root.join("VERSION"), "1.0.0\n");
+    write_utf8(
+        &root.join("src/main.rs"),
+        &format!("fn main() {{ println!(\"{source_marker}\"); }}\n"),
+    );
+}
+
+fn write_prebuilt_fixture_binary(
+    root: &Path,
+    binary_rel: &str,
+    checksum_rel: &str,
+    binary_name: &str,
+    body: &str,
+) {
+    write_executable(&root.join(binary_rel), body);
+    write_utf8(
+        &root.join(checksum_rel),
+        &format!("{}  {binary_name}\n", sha256_hex(body)),
+    );
+}
+
+fn update_prebuilt_fixture_manifest(
+    root: &Path,
+    target: &str,
+    binary_rel: &str,
+    checksum_rel: &str,
+) {
+    let mut command = Command::new("node");
+    command
+        .arg(repo_root().join("scripts/prebuilt-runtime-provenance.mjs"))
+        .arg("update")
+        .arg("--target")
+        .arg(target)
+        .arg("--binary-path")
+        .arg(binary_rel)
+        .arg("--checksum-path")
+        .arg(checksum_rel)
+        .arg("--version")
+        .arg("1.0.0")
+        .arg("--repo-root")
+        .arg(root);
+    run_checked(command, "prebuilt fixture provenance update");
+}
+
+fn verify_prebuilt_fixture(root: &Path) -> std::process::Output {
+    let mut command = Command::new("node");
+    command
+        .arg(repo_root().join("scripts/prebuilt-runtime-provenance.mjs"))
+        .arg("verify")
+        .arg("--skip-help")
+        .arg("--repo-root")
+        .arg(root);
+    run(command, "prebuilt fixture provenance verify")
 }
 
 fn write_poison_runtime_launcher(root: &Path, marker: &str) {
@@ -706,6 +838,9 @@ fn repo_checkout_canonical_launcher_uses_manifest_selected_binary_path() {
     let manifest = read_utf8(root.join("bin/prebuilt/manifest.json"));
     for needle in [
         &format!("\"runtime_revision\": \"{}\"", env!("CARGO_PKG_VERSION")),
+        "\"source_fingerprint\": \"sha256:",
+        "\"source_fingerprint_algorithm\": \"sha256\"",
+        "\"source_fingerprint_path_count\":",
         "bin/prebuilt/darwin-arm64/featureforge",
         "bin/prebuilt/darwin-arm64/featureforge.sha256",
         "bin/prebuilt/windows-x64/featureforge.exe",
@@ -725,8 +860,36 @@ fn repo_checkout_canonical_launcher_uses_manifest_selected_binary_path() {
         let checksum_path = entry["checksum_path"]
             .as_str()
             .expect("manifest checksum path should be a string");
+        let binary_sha256 = entry["binary_sha256"]
+            .as_str()
+            .expect("manifest binary sha256 should be a string");
+        let source_fingerprint = entry["source_fingerprint"]
+            .as_str()
+            .expect("manifest target source fingerprint should be a string");
+        let source_fingerprint_algorithm = entry["source_fingerprint_algorithm"]
+            .as_str()
+            .expect("manifest target source fingerprint algorithm should be a string");
+        let source_fingerprint_path_count = entry["source_fingerprint_path_count"]
+            .as_u64()
+            .expect("manifest target source fingerprint path count should be an integer");
         assert_contains(runtime_path, "featureforge", "bin/prebuilt/manifest.json");
         assert_contains(checksum_path, "featureforge", "bin/prebuilt/manifest.json");
+        assert!(
+            binary_sha256.starts_with("sha256:"),
+            "manifest binary sha should be algorithm-qualified: {binary_sha256}"
+        );
+        assert!(
+            source_fingerprint.starts_with("sha256:"),
+            "manifest target source fingerprint should be algorithm-qualified: {source_fingerprint}"
+        );
+        assert_eq!(
+            source_fingerprint_algorithm, "sha256",
+            "manifest target source fingerprint algorithm should be sha256"
+        );
+        assert!(
+            source_fingerprint_path_count > 0,
+            "manifest target source fingerprint should cover the runtime source tree"
+        );
     }
     for relative in [
         "bin/prebuilt/darwin-arm64/featureforge",
@@ -739,6 +902,124 @@ fn repo_checkout_canonical_launcher_uses_manifest_selected_binary_path() {
             "renamed prebuilt runtime asset should exist: {relative}"
         );
     }
+    assert_eq!(
+        fs::read(root.join("bin/featureforge")).expect("root runtime should be readable"),
+        fs::read(root.join("bin/prebuilt/darwin-arm64/featureforge"))
+            .expect("darwin prebuilt runtime should be readable"),
+        "root shipped runtime must be hash-identical to darwin-arm64 prebuilt runtime"
+    );
+}
+
+#[test]
+fn prebuilt_runtime_provenance_rejects_partially_refreshed_targets() {
+    let temp = TempDir::new().expect("prebuilt fixture root should exist");
+    let root = temp.path();
+    let darwin_rel = "bin/prebuilt/darwin-arm64/featureforge";
+    let darwin_checksum_rel = "bin/prebuilt/darwin-arm64/featureforge.sha256";
+    let windows_rel = "bin/prebuilt/windows-x64/featureforge.exe";
+    let windows_checksum_rel = "bin/prebuilt/windows-x64/featureforge.exe.sha256";
+
+    write_minimal_prebuilt_source(root, "source-v1");
+    let darwin_v1 = "#!/usr/bin/env bash\nprintf 'darwin v1\\n'\n";
+    write_prebuilt_fixture_binary(
+        root,
+        darwin_rel,
+        darwin_checksum_rel,
+        "featureforge",
+        darwin_v1,
+    );
+    write_prebuilt_fixture_binary(
+        root,
+        windows_rel,
+        windows_checksum_rel,
+        "featureforge.exe",
+        "windows v1\n",
+    );
+    write_executable(&root.join("bin/featureforge"), darwin_v1);
+    update_prebuilt_fixture_manifest(root, "darwin-arm64", darwin_rel, darwin_checksum_rel);
+    update_prebuilt_fixture_manifest(root, "windows-x64", windows_rel, windows_checksum_rel);
+    let clean_verify = verify_prebuilt_fixture(root);
+    assert!(
+        clean_verify.status.success(),
+        "fresh fixture should verify before stale-target regression\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&clean_verify.stdout),
+        String::from_utf8_lossy(&clean_verify.stderr)
+    );
+
+    write_minimal_prebuilt_source(root, "source-v2");
+    let darwin_v2 = "#!/usr/bin/env bash\nprintf 'darwin v2\\n'\n";
+    write_prebuilt_fixture_binary(
+        root,
+        darwin_rel,
+        darwin_checksum_rel,
+        "featureforge",
+        darwin_v2,
+    );
+    write_executable(&root.join("bin/featureforge"), darwin_v2);
+    update_prebuilt_fixture_manifest(root, "darwin-arm64", darwin_rel, darwin_checksum_rel);
+
+    let stale_verify = verify_prebuilt_fixture(root);
+    assert!(
+        !stale_verify.status.success(),
+        "verification should reject a target not refreshed for the current source fingerprint\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&stale_verify.stdout),
+        String::from_utf8_lossy(&stale_verify.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&stale_verify.stderr);
+    assert_contains(
+        &stderr,
+        "bin/prebuilt/windows-x64/featureforge.exe: manifest source_fingerprint",
+        "prebuilt provenance stale target failure",
+    );
+}
+
+#[test]
+fn prebuilt_runtime_provenance_rejects_root_binary_drift() {
+    let temp = TempDir::new().expect("prebuilt fixture root should exist");
+    let root = temp.path();
+    let darwin_rel = "bin/prebuilt/darwin-arm64/featureforge";
+    let darwin_checksum_rel = "bin/prebuilt/darwin-arm64/featureforge.sha256";
+    let windows_rel = "bin/prebuilt/windows-x64/featureforge.exe";
+    let windows_checksum_rel = "bin/prebuilt/windows-x64/featureforge.exe.sha256";
+
+    write_minimal_prebuilt_source(root, "source-v1");
+    let darwin = "#!/usr/bin/env bash\nprintf 'darwin runtime\\n'\n";
+    write_prebuilt_fixture_binary(
+        root,
+        darwin_rel,
+        darwin_checksum_rel,
+        "featureforge",
+        darwin,
+    );
+    write_prebuilt_fixture_binary(
+        root,
+        windows_rel,
+        windows_checksum_rel,
+        "featureforge.exe",
+        "windows runtime\n",
+    );
+    write_executable(&root.join("bin/featureforge"), darwin);
+    update_prebuilt_fixture_manifest(root, "darwin-arm64", darwin_rel, darwin_checksum_rel);
+    update_prebuilt_fixture_manifest(root, "windows-x64", windows_rel, windows_checksum_rel);
+
+    write_executable(
+        &root.join("bin/featureforge"),
+        "#!/usr/bin/env bash\nprintf 'root drift without denied strings\\n'\n",
+    );
+
+    let output = verify_prebuilt_fixture(root);
+    assert!(
+        !output.status.success(),
+        "verification should reject root binary drift even when string audit is clean\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        &stderr,
+        "bin/featureforge: root shipped runtime",
+        "prebuilt provenance root drift failure",
+    );
 }
 
 #[test]
@@ -1384,6 +1665,22 @@ fn cutover_script_keeps_the_legacy_root_content_scan_repo_bounded_and_single_pas
 }
 
 #[test]
+fn cutover_script_runs_prebuilt_runtime_provenance_gate() {
+    let script = read_utf8(repo_root().join("scripts/check-featureforge-cutover.sh"));
+
+    assert_contains(
+        &script,
+        "scripts/prebuilt-runtime-provenance.mjs",
+        "scripts/check-featureforge-cutover.sh",
+    );
+    assert_contains(
+        &script,
+        "verify --repo-root",
+        "scripts/check-featureforge-cutover.sh",
+    );
+}
+
+#[test]
 fn copilot_install_docs_use_the_skills_root_as_the_discovery_link() {
     let root = repo_root();
 
@@ -1511,9 +1808,9 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
                 "Artifact `pass` is the runtime-rendered form of CLI input `--result ready`.",
                 "Do not hand-write or edit this artifact.",
                 "workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.",
-                "Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness.",
-                "If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path>` and rerun workflow/operator.",
-                "When workflow/operator reports `phase_detail=release_readiness_recording_ready`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the runtime-owned release-readiness milestone.",
+                "If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.",
+                "If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path>` with the concrete plan and rerun workflow/operator.",
+                "When workflow/operator reports `phase_detail=release_readiness_recording_ready`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` only after substituting concrete values.",
                 "renders `**Result:** pass|blocked` in the derived companion artifact",
             ],
         ),
@@ -1543,7 +1840,15 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/document-release/SKILL.md"),
-        "For workflow-routed work, `BASE_BRANCH` is runtime-owned context from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`) and the active release-readiness lineage. Use that exact value and do not redetect.",
+        "For workflow-routed work, get `BASE_BRANCH` from `workflow operator --json` (`base_branch`) for the concrete approved plan path; any `<approved-plan-path>` command text here is input shape, not exact argv.",
+    );
+    assert_file_not_contains(
+        root.join("skills/document-release/SKILL.md"),
+        "Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness.",
+    );
+    assert_file_not_contains(
+        root.join("skills/document-release/SKILL.md"),
+        "run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>`",
     );
     assert_file_contains(
         root.join("skills/document-release/SKILL.md"),
@@ -1680,7 +1985,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_public_command_argv` as the authoritative public routing contract.",
+        "Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs` as the authoritative public routing contract.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1833,11 +2138,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`",
-    );
-    assert_file_contains(
-        root.join("skills/executing-plans/SKILL.md"),
-        "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
+        "rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1845,7 +2146,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` before any additional recording commands.",
+        "After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` when present before any additional recording commands. If argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun the route owner.",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1879,7 +2180,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/executing-plans/SKILL.md"),
         &[
             "after review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`",
-            "rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`",
+            "rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator",
             "no exceptions: only after close-current-task succeeds may Task `N+1` begin",
         ],
     );
@@ -1921,7 +2222,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.",
+        "Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1933,15 +2234,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-    );
-    assert_file_contains(
-        root.join("skills/subagent-driven-development/SKILL.md"),
         "When workflow/operator reports `review_state_status` as stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` before any additional recording commands.",
+        "After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` when present before any additional recording commands. If argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun the route owner.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1979,7 +2276,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/subagent-driven-development/SKILL.md"),
         &[
             "After review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`.",
-            "Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.",
+            "Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator.",
             "No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.",
         ],
     );
@@ -2082,7 +2379,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("docs/featureforge/reference")
             .join("2026-04-01-review-state-reference.md"),
-        "same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`",
+        "same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `required_inputs`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`",
     );
     assert_file_contains(
         root.join("docs/featureforge/reference")
@@ -2177,8 +2474,8 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
         concat!(
-            "If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of reopening execution pre",
-            "flight."
+            "If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` when present instead of reopening execution pre",
+            "flight; when argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator."
         ),
     );
     assert_file_not_contains(
@@ -3124,6 +3421,44 @@ fn execution_skill_docs_keep_candidate_artifacts_and_authoritative_mutations_sep
         "skills/requesting-code-review/SKILL.md",
     );
     assert_downstream_material_stays_gate_and_harness_aware(&qa_skill, "skills/qa-only/SKILL.md");
+}
+
+#[test]
+fn active_prompt_docs_do_not_teach_hidden_helper_command_names() {
+    let forbidden_terms = [
+        hidden_text(&["record", "-review-dispatch"]),
+        hidden_text(&["gate", "-review"]),
+        hidden_text(&["gate", "-finish"]),
+        hidden_text(&["rebuild", "-evidence"]),
+        hidden_text(&["record", "-branch-closure"]),
+        hidden_text(&["record", "-release-readiness"]),
+        hidden_text(&["record", "-final-review"]),
+        hidden_text(&["record", "-qa"]),
+        hidden_text(&["workflow plan", "-fidelity record"]),
+        hidden_text(&["plan", "_fidelity_receipt"]),
+        hidden_text(&["plan", "-fidelity-receipt"]),
+        hidden_text(&["Plan", "-fidelity receipt"]),
+    ];
+    let mut violations = Vec::new();
+    let root = repo_root();
+
+    for path in active_prompt_doc_paths() {
+        let content = read_utf8(&path);
+        for forbidden_term in &forbidden_terms {
+            if content.contains(forbidden_term) {
+                let rel = path
+                    .strip_prefix(&root)
+                    .expect("active prompt path should be repo-relative");
+                violations.push(format!("{}: {forbidden_term}", rel.display()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "active prompt/docs should not teach hidden helper command names:\n{}",
+        violations.join("\n")
+    );
 }
 
 #[test]

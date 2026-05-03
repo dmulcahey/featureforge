@@ -7,18 +7,20 @@ use crate::execution::current_truth::{
     release_readiness_result_for_branch_closure, resolve_actionable_repair_follow_up,
 };
 use crate::execution::leases::StatusAuthoritativeOverlay;
+use crate::execution::public_repair_targets::{
+    public_repair_target_candidates_from_authority, public_repair_target_warning_codes,
+};
 use crate::execution::semantic_identity::{SemanticWorkspaceSnapshot, semantic_workspace_snapshot};
 use crate::execution::stale_target_projection::{
-    RuntimeGateSnapshot, StaleTargetProjectionInputs, closure_baseline_candidate_task,
-    project_authoritative_stale_targets, project_stale_unreviewed_closures,
+    RuntimeGateSnapshot, StaleTargetProjectionInputs, project_authoritative_stale_targets,
+    project_stale_unreviewed_closures,
 };
 use crate::execution::state::{
     ExecutionContext, ExecutionDerivedTruth, ExecutionReadScope, FinalReviewDispatchAuthority,
-    GateProjectionInputs, GateResult, GateState, PlanExecutionStatus,
+    GateProjectionInputs, GateResult, GateState, PlanExecutionStatus, PublicRepairTarget,
     compute_status_blocking_records, current_task_review_dispatch_id_for_status,
     derive_execution_truth_from_authority, derive_execution_truth_from_authority_with_gates,
     gate_finish_from_context, gate_review_from_context, preflight_from_context,
-    project_persisted_public_repair_targets,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
 use crate::execution::transitions::AuthoritativeTransitionState;
@@ -29,6 +31,7 @@ pub(crate) struct RuntimeState {
     pub(crate) context: ExecutionContext,
     pub(crate) semantic_workspace: SemanticWorkspaceSnapshot,
     pub(crate) status: PlanExecutionStatus,
+    pub(crate) route_repair_target_candidates: Vec<PublicRepairTarget>,
     pub(crate) preflight: Option<GateResult>,
     pub(crate) gate_review: Option<GateResult>,
     pub(crate) gate_finish: Option<GateResult>,
@@ -175,7 +178,21 @@ fn build_runtime_state_from_event_authority(
     };
     status.blocking_records =
         compute_status_blocking_records(context, &status, gate_finish_for_blocking_records)?;
-    project_persisted_public_repair_targets(context, &mut status, event_authority_state, None);
+    for warning_code in public_repair_target_warning_codes(event_authority_state) {
+        if !status
+            .warning_codes
+            .iter()
+            .any(|existing| existing == warning_code)
+        {
+            status.warning_codes.push(warning_code.to_owned());
+        }
+    }
+    let route_repair_target_candidates = public_repair_target_candidates_from_authority(
+        context,
+        &status,
+        event_authority_state,
+        None,
+    );
     let usable_current_branch_closure_identity =
         usable_current_branch_closure_identity_from_authoritative_state(
             context,
@@ -230,20 +247,13 @@ fn build_runtime_state_from_event_authority(
                     .map(|record| record.base_branch)
             })
     });
-    let dispatch_target_task = status
-        .blocking_task
-        .or_else(|| closure_baseline_candidate_task(context));
     let task_review_dispatch_id = task_review_dispatch_id
-        .or_else(|| current_task_review_dispatch_id_for_status(context, &status, overlay.as_ref()))
-        .or_else(|| {
-            dispatch_target_task.and_then(|task| {
-                event_authority_state.and_then(|state| state.task_review_dispatch_id(task))
-            })
-        });
+        .or_else(|| current_task_review_dispatch_id_for_status(context, &status, overlay.as_ref()));
     let mut runtime_state = RuntimeState {
         context: context.clone(),
         semantic_workspace,
         status,
+        route_repair_target_candidates,
         preflight,
         gate_review,
         gate_finish,

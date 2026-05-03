@@ -48,6 +48,7 @@ pub fn close_current_task(
                         code: None,
                         recommended_command: None,
                         recommended_public_command_argv: None,
+                        required_inputs: Vec::new(),
                         rederive_via_workflow_operator: None,
                         required_follow_up: Some(String::from("request_external_review")),
                         trace_summary: "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
@@ -64,6 +65,7 @@ pub fn close_current_task(
                         code: None,
                         recommended_command: None,
                         recommended_public_command_argv: None,
+                        required_inputs: Vec::new(),
                         rederive_via_workflow_operator: None,
                         required_follow_up: Some(String::from("execution_reentry")),
                         trace_summary: "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
@@ -94,6 +96,7 @@ pub fn close_current_task(
                     code: None,
                     recommended_command: follow_up.recommended_command,
                     recommended_public_command_argv: follow_up.recommended_public_command_argv,
+                    required_inputs: follow_up.required_inputs,
                     rederive_via_workflow_operator: None,
                     required_follow_up: follow_up.required_follow_up,
                     trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
@@ -175,6 +178,7 @@ pub fn close_current_task(
                         code: None,
                         recommended_command: None,
                         recommended_public_command_argv: None,
+                        required_inputs: Vec::new(),
                         rederive_via_workflow_operator: None,
                         required_follow_up: Some(String::from("execution_reentry")),
                         trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
@@ -184,13 +188,52 @@ pub fn close_current_task(
             }
         }
     }
-    let mut summary_hashes = candidate_dispatch_id
-        .is_none()
-        .then(|| close_current_task_summary_hashes(args))
-        .transpose()?;
+    let mut summary_hashes = None;
     let dispatch_id = if let Some(dispatch_id) = candidate_dispatch_id {
         dispatch_id
     } else {
+        match existing_task_dispatch_reviewed_state_status(
+            &initial_context,
+            args.task,
+            &initial_reviewed_state_id,
+            &initial_raw_reviewed_state_id,
+        )? {
+            Some(ExistingTaskDispatchReviewedStateStatus::Current) | None => {}
+            Some(ExistingTaskDispatchReviewedStateStatus::MissingReviewedStateBinding) => {
+                return Ok(blocked_close_current_task_output(
+                    BlockedCloseCurrentTaskOutputContext {
+                        task_number: args.task,
+                        dispatch_validation_action: "blocked",
+                        task_closure_status: "not_current",
+                        closure_record_id: None,
+                        code: None,
+                        recommended_command: None,
+                        recommended_public_command_argv: None,
+                        required_inputs: Vec::new(),
+                        rederive_via_workflow_operator: None,
+                        required_follow_up: Some(String::from("request_external_review")),
+                        trace_summary: "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
+                    },
+                ));
+            }
+            Some(ExistingTaskDispatchReviewedStateStatus::StaleReviewedState) => {
+                return Ok(blocked_close_current_task_output(
+                    BlockedCloseCurrentTaskOutputContext {
+                        task_number: args.task,
+                        dispatch_validation_action: "blocked",
+                        task_closure_status: "not_current",
+                        closure_record_id: None,
+                        code: None,
+                        recommended_command: None,
+                        recommended_public_command_argv: None,
+                        required_inputs: Vec::new(),
+                        rederive_via_workflow_operator: None,
+                        required_follow_up: Some(String::from("execution_reentry")),
+                        trace_summary: "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
+                    },
+                ));
+            }
+        }
         ensure_current_review_dispatch_id(
             &initial_context,
             ReviewDispatchScopeArg::Task,
@@ -229,6 +272,7 @@ pub fn close_current_task(
                     code: None,
                     recommended_command: None,
                     recommended_public_command_argv: None,
+                    required_inputs: Vec::new(),
                     rederive_via_workflow_operator: None,
                     required_follow_up: Some(String::from("request_external_review")),
                     trace_summary: "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
@@ -246,6 +290,7 @@ pub fn close_current_task(
                     code: None,
                     recommended_command: None,
                     recommended_public_command_argv: None,
+                    required_inputs: Vec::new(),
                     rederive_via_workflow_operator: None,
                     required_follow_up: Some(String::from("execution_reentry")),
                     trace_summary: "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
@@ -284,6 +329,7 @@ pub fn close_current_task(
                     code: None,
                     recommended_command: follow_up.recommended_command,
                     recommended_public_command_argv: follow_up.recommended_public_command_argv,
+                    required_inputs: follow_up.required_inputs,
                     rederive_via_workflow_operator: None,
                     required_follow_up: follow_up.required_follow_up,
                     trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
@@ -362,6 +408,7 @@ pub fn close_current_task(
                         code: None,
                         recommended_command: None,
                         recommended_public_command_argv: None,
+                        required_inputs: Vec::new(),
                         rederive_via_workflow_operator: None,
                         required_follow_up: Some(String::from("execution_reentry")),
                         trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
@@ -448,6 +495,7 @@ pub fn close_current_task(
                         code: None,
                         recommended_command: None,
                         recommended_public_command_argv: None,
+                        required_inputs: Vec::new(),
                         rederive_via_workflow_operator: None,
                         required_follow_up: Some(String::from("execution_reentry")),
                         trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
@@ -477,6 +525,7 @@ pub fn close_current_task(
                         code: None,
                         recommended_command: follow_up.recommended_command,
                         recommended_public_command_argv: follow_up.recommended_public_command_argv,
+                        required_inputs: follow_up.required_inputs,
                         rederive_via_workflow_operator: None,
                         required_follow_up: follow_up.required_follow_up,
                         trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
@@ -530,6 +579,7 @@ pub fn close_current_task(
                 code: None,
                 recommended_command: None,
                 recommended_public_command_argv: None,
+                required_inputs: Vec::new(),
                 rederive_via_workflow_operator: None,
                 required_follow_up: None,
                 blocking_scope: None,
@@ -564,6 +614,7 @@ pub fn close_current_task(
                         code: None,
                         recommended_command: None,
                         recommended_public_command_argv: None,
+                        required_inputs: Vec::new(),
                         rederive_via_workflow_operator: None,
                         required_follow_up: Some(String::from("execution_reentry")),
                         trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
@@ -589,7 +640,7 @@ pub fn close_current_task(
                     &operator,
                     Some(authoritative_state),
                 );
-                let (recommended_command, recommended_public_command_argv) =
+                let (recommended_command, recommended_public_command_argv, required_inputs) =
                     close_current_task_recommendation_for_follow_up(
                         required_follow_up.as_deref(),
                         &operator,
@@ -603,6 +654,7 @@ pub fn close_current_task(
                         code: None,
                         recommended_command,
                         recommended_public_command_argv,
+                        required_inputs,
                         rederive_via_workflow_operator: None,
                         required_follow_up,
                         trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
@@ -630,7 +682,7 @@ pub fn close_current_task(
                 &operator,
                 Some(authoritative_state),
             );
-            let (recommended_command, recommended_public_command_argv) =
+            let (recommended_command, recommended_public_command_argv, _required_inputs) =
                 close_current_task_recommendation_for_follow_up(
                     required_follow_up.as_deref(),
                     &operator,
@@ -644,6 +696,7 @@ pub fn close_current_task(
                     code: None,
                     recommended_command,
                     recommended_public_command_argv,
+                    required_inputs: _required_inputs,
                     rederive_via_workflow_operator: None,
                     required_follow_up,
                     trace_summary: "Task closure remained blocked because the supplied review or verification outcome was not passing.",
@@ -660,6 +713,7 @@ pub fn close_current_task(
                 code: None,
                 recommended_command: None,
                 recommended_public_command_argv: None,
+                required_inputs: Vec::new(),
                 rederive_via_workflow_operator: None,
                 required_follow_up: Some(String::from("run_verification")),
                 trace_summary: "close-current-task failed closed because a passing task review requires verification before closure recording can continue.",

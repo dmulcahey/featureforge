@@ -2,12 +2,15 @@
 //! dispatch-lineage, and execution-started state.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::closure_diagnostics::{
+    push_task_closure_pending_verification_reason_codes_for_run,
+    task_closure_dispatch_lineage_reason_code, task_closure_recording_diagnostic_reason_codes,
+};
+use crate::execution::closure_dispatch::current_review_dispatch_id_if_still_current;
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
 use crate::execution::context::{
     EvidenceAttempt, ExecutionContext, ExecutionEvidence, NO_REPO_FILES_MARKER, NoteState,
@@ -18,27 +21,20 @@ use crate::execution::current_closure_projection::{
     task_current_closure_status, task_current_closure_status_from_authoritative_state,
 };
 use crate::execution::current_truth::{
-    branch_closure_rerecording_assessment,
-    current_final_review_dispatch_id as shared_current_final_review_dispatch_id,
-    current_task_review_dispatch_id as shared_current_task_review_dispatch_id,
-    finish_requires_test_plan_refresh, is_runtime_owned_execution_control_plane_path,
+    branch_closure_rerecording_assessment, finish_requires_test_plan_refresh,
+    is_runtime_owned_execution_control_plane_path,
     late_stage_missing_current_closure_stale_provenance_present as shared_late_stage_missing_current_closure_stale_provenance_present,
     late_stage_missing_task_closure_baseline_bridge_supported, normalized_late_stage_surface,
     path_matches_late_stage_surface,
     stale_reason_codes_for_late_stage_projection as shared_stale_reason_codes_for_late_stage_projection,
 };
-use crate::execution::final_review::{
-    authoritative_strategy_checkpoint_fingerprint_checked, parse_artifact_document,
-};
+use crate::execution::final_review::authoritative_strategy_checkpoint_fingerprint_checked;
 use crate::execution::harness::HarnessPhase;
 use crate::execution::internal_args::{RecordReviewDispatchArgs, ReviewDispatchScopeArg};
-use crate::execution::leases::{
-    StatusAuthoritativeOverlay, load_status_authoritative_overlay_checked,
-};
+use crate::execution::leases::load_status_authoritative_overlay_checked;
 use crate::execution::read_model::{
-    final_review_dispatch_still_current_for_gates, normalize_optional_overlay_value,
-    task_contract_identity_matches_expected, task_scope_structural_review_state_reason,
-    usable_current_branch_closure_identity,
+    normalize_optional_overlay_value, task_contract_identity_matches_expected,
+    task_scope_structural_review_state_reason,
 };
 use crate::execution::semantic_identity::{
     semantic_paths_changed_between_raw_trees, semantic_workspace_snapshot,
@@ -50,7 +46,6 @@ use crate::execution::transitions::{
     load_authoritative_transition_state_relaxed,
 };
 use crate::git::{discover_repository, sha256_hex};
-use crate::paths::harness_authoritative_artifact_path;
 
 pub(crate) fn context_all_task_scopes_closed_by_authority(
     context: &ExecutionContext,
@@ -187,28 +182,7 @@ pub(crate) struct TaskClosureRecordingPrerequisites {
     pub(crate) task: u32,
     pub(crate) dispatch_id: Option<String>,
     pub(crate) blocking_reason_codes: Vec<String>,
-}
-
-pub(crate) fn task_closure_recording_reason_code(reason_code: &str) -> bool {
-    matches!(
-        reason_code,
-        "prior_task_review_dispatch_missing"
-            | "prior_task_review_dispatch_stale"
-            | "prior_task_review_not_green"
-            | "prior_task_verification_missing"
-            | "prior_task_verification_missing_legacy"
-            | "task_review_not_independent"
-            | "task_review_artifact_malformed"
-            | "task_verification_summary_malformed"
-            | "prior_task_current_closure_stale"
-    )
-}
-
-fn task_closure_dispatch_lineage_reason_code(reason_code: &str) -> bool {
-    matches!(
-        reason_code,
-        "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale"
-    )
+    pub(crate) diagnostic_reason_codes: Vec<String>,
 }
 
 fn push_task_closure_recording_reason_code_once(reason_codes: &mut Vec<String>, reason_code: &str) {
@@ -219,53 +193,13 @@ fn push_task_closure_recording_reason_code_once(reason_codes: &mut Vec<String>, 
 
 fn task_closure_recording_blocking_reason_codes(
     task: u32,
-    dispatch_id: Option<&str>,
     current_semantic_reviewed_state_id: Option<&str>,
-    _current_raw_reviewed_state_id: Option<&str>,
-    overlay: Option<&StatusAuthoritativeOverlay>,
     authoritative_state: Option<&AuthoritativeTransitionState>,
 ) -> Vec<String> {
     let mut blocking_reason_codes = Vec::new();
-    let lineage_key = format!("task-{task}");
-    let lineage_record =
-        overlay.and_then(|overlay| overlay.strategy_review_dispatch_lineage.get(&lineage_key));
-    let lineage_dispatch_id = lineage_record
-        .and_then(|record| record.dispatch_id.as_deref())
+    let current_reviewed_state_id = current_semantic_reviewed_state_id
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let lineage_semantic_reviewed_state_id = lineage_record
-        .and_then(|record| record.semantic_reviewed_state_id.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let dispatch_id = dispatch_id.map(str::trim).filter(|value| !value.is_empty());
-    let current_semantic_reviewed_state_id = current_semantic_reviewed_state_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let lineage_reviewed_state_matches = current_semantic_reviewed_state_id
-        .zip(lineage_semantic_reviewed_state_id)
-        .is_some_and(|(current, lineage)| current == lineage);
-    match (dispatch_id, lineage_dispatch_id) {
-        (None, Some(_)) | (Some(_), None) => {
-            push_task_closure_recording_reason_code_once(
-                &mut blocking_reason_codes,
-                "prior_task_review_dispatch_stale",
-            );
-        }
-        (Some(dispatch_id), Some(lineage_dispatch_id)) if dispatch_id != lineage_dispatch_id => {
-            push_task_closure_recording_reason_code_once(
-                &mut blocking_reason_codes,
-                "prior_task_review_dispatch_stale",
-            );
-        }
-        _ => {}
-    }
-    if dispatch_id.is_some() && !lineage_reviewed_state_matches {
-        push_task_closure_recording_reason_code_once(
-            &mut blocking_reason_codes,
-            "prior_task_review_dispatch_stale",
-        );
-    }
-    let current_reviewed_state_id = current_semantic_reviewed_state_id;
     if authoritative_state
         .and_then(|state| state.task_closure_negative_result(task))
         .is_some_and(|negative_result| {
@@ -288,176 +222,6 @@ fn task_closure_recording_blocking_reason_codes(
     blocking_reason_codes
 }
 
-pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
-    context: &ExecutionContext,
-    task: u32,
-    execution_run_id: &str,
-    treat_missing_review_receipts_as_malformed: bool,
-    blocking_reason_codes: &mut Vec<String>,
-) -> Result<(), JsonFailure> {
-    let mut any_review_receipt_present = false;
-    let mut all_review_receipts_valid = true;
-
-    for step_state in context
-        .steps
-        .iter()
-        .filter(|step_state| step_state.task_number == task && step_state.checked)
-    {
-        let review_receipt_path = authoritative_unit_review_receipt_path(
-            context,
-            execution_run_id,
-            task,
-            step_state.step_number,
-        );
-        let review_receipt_metadata = match fs::symlink_metadata(&review_receipt_path) {
-            Ok(metadata) => {
-                any_review_receipt_present = true;
-                metadata
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                all_review_receipts_valid = false;
-                if treat_missing_review_receipts_as_malformed {
-                    push_task_closure_recording_reason_code_once(
-                        blocking_reason_codes,
-                        "task_review_artifact_malformed",
-                    );
-                }
-                continue;
-            }
-            Err(_) => {
-                any_review_receipt_present = true;
-                all_review_receipts_valid = false;
-                push_task_closure_recording_reason_code_once(
-                    blocking_reason_codes,
-                    "task_review_artifact_malformed",
-                );
-                continue;
-            }
-        };
-        if review_receipt_metadata.file_type().is_symlink() || !review_receipt_metadata.is_file() {
-            all_review_receipts_valid = false;
-            push_task_closure_recording_reason_code_once(
-                blocking_reason_codes,
-                "task_review_artifact_malformed",
-            );
-            continue;
-        }
-        let review_document = parse_artifact_document(&review_receipt_path);
-        if review_document.title.as_deref() != Some("# Unit Review Result")
-            || review_document
-                .headers
-                .get("Review Stage")
-                .map(String::as_str)
-                != Some("featureforge:unit-review")
-            || review_document.headers.get("Result").map(String::as_str) != Some("pass")
-            || review_document
-                .headers
-                .get("Generated By")
-                .map(String::as_str)
-                != Some("featureforge:unit-review")
-        {
-            all_review_receipts_valid = false;
-            push_task_closure_recording_reason_code_once(
-                blocking_reason_codes,
-                "task_review_artifact_malformed",
-            );
-            continue;
-        }
-        match review_document
-            .headers
-            .get("Reviewer Provenance")
-            .map(String::as_str)
-        {
-            Some("dedicated-independent") => {}
-            Some(_) => {
-                all_review_receipts_valid = false;
-                push_task_closure_recording_reason_code_once(
-                    blocking_reason_codes,
-                    "task_review_not_independent",
-                );
-            }
-            None => {
-                all_review_receipts_valid = false;
-                push_task_closure_recording_reason_code_once(
-                    blocking_reason_codes,
-                    "task_review_artifact_malformed",
-                );
-            }
-        }
-    }
-
-    if !any_review_receipt_present || !all_review_receipts_valid {
-        return Ok(());
-    }
-
-    let verification_receipt_path =
-        authoritative_task_verification_receipt_path(context, execution_run_id, task);
-    let verification_receipt_metadata = match fs::symlink_metadata(&verification_receipt_path) {
-        Ok(metadata) => Some(metadata),
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            push_task_closure_recording_reason_code_once(
-                blocking_reason_codes,
-                "prior_task_verification_missing",
-            );
-            None
-        }
-        Err(_) => {
-            push_task_closure_recording_reason_code_once(
-                blocking_reason_codes,
-                "task_verification_summary_malformed",
-            );
-            None
-        }
-    };
-    if let Some(verification_receipt_metadata) = verification_receipt_metadata {
-        if verification_receipt_metadata.file_type().is_symlink()
-            || !verification_receipt_metadata.is_file()
-        {
-            push_task_closure_recording_reason_code_once(
-                blocking_reason_codes,
-                "task_verification_summary_malformed",
-            );
-        } else {
-            let verification_document = parse_artifact_document(&verification_receipt_path);
-            let task_header_matches = verification_document
-                .headers
-                .get("Task Number")
-                .and_then(|value| value.trim().parse::<u32>().ok())
-                == Some(task);
-            if verification_document.title.as_deref() != Some("# Task Verification Result")
-                || verification_document
-                    .headers
-                    .get("Result")
-                    .map(String::as_str)
-                    != Some("pass")
-                || verification_document
-                    .headers
-                    .get("Generated By")
-                    .map(String::as_str)
-                    != Some("featureforge:verification-before-completion")
-                || verification_document
-                    .headers
-                    .get("Execution Run ID")
-                    .map(String::as_str)
-                    != Some(execution_run_id)
-                || verification_document
-                    .headers
-                    .get("Source Plan")
-                    .map(String::as_str)
-                    != Some(context.plan_rel.as_str())
-                || !task_header_matches
-            {
-                push_task_closure_recording_reason_code_once(
-                    blocking_reason_codes,
-                    "task_verification_summary_malformed",
-                );
-            }
-        }
-    }
-
-    Ok(())
-}
-
 pub(crate) fn task_closure_negative_result_blocks_current_reviewed_state(
     negative_result_reviewed_state_id: &str,
     current_reviewed_state_id: Option<&str>,
@@ -468,69 +232,10 @@ pub(crate) fn task_closure_negative_result_blocks_current_reviewed_state(
     })
 }
 
-pub(crate) fn current_review_dispatch_id_if_still_current(
-    context: &ExecutionContext,
-    args: &RecordReviewDispatchArgs,
-) -> Result<Option<String>, JsonFailure> {
-    let lineage_dispatch_id = current_review_dispatch_id_from_lineage(context, args)?;
-    Ok(match args.scope {
-        ReviewDispatchScopeArg::Task => lineage_dispatch_id,
-        ReviewDispatchScopeArg::FinalReview => {
-            let Some(dispatch_id) = lineage_dispatch_id else {
-                return Ok(None);
-            };
-            let authoritative_state = load_authoritative_transition_state(context)?;
-            let runtime_state = crate::execution::reducer::reduce_runtime_state(
-                context,
-                authoritative_state.as_ref(),
-                semantic_workspace_snapshot(context)?,
-            )?;
-            final_review_dispatch_still_current_for_gates(
-                runtime_state.gate_snapshot.gate_review.as_ref(),
-                runtime_state.gate_snapshot.gate_finish.as_ref(),
-            )
-            .then_some(dispatch_id)
-        }
-    })
-}
-
-pub(crate) fn current_review_dispatch_id_from_lineage(
-    context: &ExecutionContext,
-    args: &RecordReviewDispatchArgs,
-) -> Result<Option<String>, JsonFailure> {
-    let overlay = load_status_authoritative_overlay_checked(context)?;
-    let Some(overlay) = overlay else {
-        return Ok(None);
-    };
-    let current_task_semantic_reviewed_state_id = semantic_workspace_snapshot(context)
-        .ok()
-        .map(|snapshot| snapshot.semantic_workspace_tree_id);
-    Ok(match args.scope {
-        ReviewDispatchScopeArg::Task => shared_current_task_review_dispatch_id(
-            args.task,
-            args.task
-                .and_then(|task| task_completion_lineage_fingerprint(context, task))
-                .as_deref(),
-            current_task_semantic_reviewed_state_id.as_deref(),
-            None,
-            Some(&overlay),
-        ),
-        ReviewDispatchScopeArg::FinalReview => {
-            let usable_current_branch_closure_id = usable_current_branch_closure_identity(context)
-                .map(|identity| identity.branch_closure_id);
-            shared_current_final_review_dispatch_id(
-                usable_current_branch_closure_id.as_deref(),
-                Some(&overlay),
-            )
-        }
-    })
-}
-
 pub(crate) fn task_closure_recording_prerequisites(
     context: &ExecutionContext,
     task: u32,
 ) -> Result<TaskClosureRecordingPrerequisites, JsonFailure> {
-    let current_lineage_fingerprint = task_completion_lineage_fingerprint(context, task);
     let current_semantic_reviewed_state_id = semantic_workspace_snapshot(context)
         .ok()
         .map(|snapshot| snapshot.semantic_workspace_tree_id);
@@ -541,40 +246,33 @@ pub(crate) fn task_closure_recording_prerequisites(
         scope: ReviewDispatchScopeArg::Task,
         task: Some(task),
     };
-    let dispatch_id = shared_current_task_review_dispatch_id(
-        Some(task),
-        current_lineage_fingerprint.as_deref(),
-        current_semantic_reviewed_state_id.as_deref(),
-        None,
-        overlay.as_ref(),
-    )
-    .or_else(|| {
-        current_review_dispatch_id_if_still_current(context, &dispatch_args)
-            .ok()
-            .flatten()
-    })
-    .or_else(|| {
-        authoritative_state
-            .as_ref()
-            .and_then(|state| state.task_review_dispatch_id(task))
-    });
-    let mut blocking_reason_codes = task_closure_recording_blocking_reason_codes(
+    let dispatch_id = current_review_dispatch_id_if_still_current(context, &dispatch_args)
+        .ok()
+        .flatten();
+    let blocking_reason_codes = task_closure_recording_blocking_reason_codes(
         task,
-        dispatch_id.as_deref(),
         current_semantic_reviewed_state_id.as_deref(),
-        None,
-        overlay.as_ref(),
         authoritative_state.as_ref(),
     );
-    let dispatch_lineage_blocked = blocking_reason_codes
-        .iter()
-        .any(|reason_code| task_closure_dispatch_lineage_reason_code(reason_code));
     let current_positive_task_closure_present = authoritative_state.as_ref().is_some_and(|state| {
         task_current_closure_status_from_authoritative_state(context, task, state)
             .is_ok_and(|status| status == TaskCurrentClosureStatus::Current)
     });
+    let mut diagnostic_reason_codes = if current_positive_task_closure_present {
+        Vec::new()
+    } else {
+        task_closure_recording_diagnostic_reason_codes(
+            task,
+            dispatch_id.as_deref(),
+            current_semantic_reviewed_state_id.as_deref(),
+            overlay.as_ref(),
+        )
+    };
+    let dispatch_lineage_diagnostic = diagnostic_reason_codes
+        .iter()
+        .any(|reason_code| task_closure_dispatch_lineage_reason_code(reason_code));
     if !current_positive_task_closure_present
-        && !dispatch_lineage_blocked
+        && !dispatch_lineage_diagnostic
         && dispatch_id
             .as_deref()
             .is_some_and(|dispatch_id| !dispatch_id.trim().is_empty())
@@ -585,13 +283,14 @@ pub(crate) fn task_closure_recording_prerequisites(
             task,
             execution_run_id.as_str(),
             false,
-            &mut blocking_reason_codes,
+            &mut diagnostic_reason_codes,
         )?;
     }
     Ok(TaskClosureRecordingPrerequisites {
         task,
         dispatch_id,
         blocking_reason_codes,
+        diagnostic_reason_codes,
     })
 }
 
@@ -821,10 +520,7 @@ pub(crate) fn task_closure_baseline_repair_candidate_with_stale_target(
         }
     }
     let prerequisites = task_closure_recording_prerequisites(context, task)?;
-    let mut dispatch_id = prerequisites
-        .dispatch_id
-        .clone()
-        .or_else(|| authoritative_state.task_review_dispatch_id(task));
+    let mut dispatch_id = prerequisites.dispatch_id.clone();
     let next_unchecked_task = context
         .steps
         .iter()
@@ -1442,33 +1138,6 @@ fn fallback_preflight_execution_run_id(
 ) -> Result<Option<String>, JsonFailure> {
     Ok(preflight_acceptance_for_context(context)?
         .map(|acceptance| acceptance.execution_run_id.as_str().to_owned()))
-}
-
-pub(crate) fn authoritative_unit_review_receipt_path(
-    context: &ExecutionContext,
-    execution_run_id: &str,
-    task_number: u32,
-    step_number: u32,
-) -> PathBuf {
-    harness_authoritative_artifact_path(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-        &format!("unit-review-{execution_run_id}-task-{task_number}-step-{step_number}.md"),
-    )
-}
-
-fn authoritative_task_verification_receipt_path(
-    context: &ExecutionContext,
-    execution_run_id: &str,
-    task_number: u32,
-) -> PathBuf {
-    harness_authoritative_artifact_path(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-        &format!("task-verification-{execution_run_id}-task-{task_number}.md"),
-    )
 }
 
 fn task_boundary_error(

@@ -1139,7 +1139,7 @@ impl AuthoritativeTransitionState {
                     .ok_or_else(|| {
                         JsonFailure::new(
                             FailureClass::ExecutionStateNotReady,
-                            "record-review-dispatch final-review scope requires a current branch closure.",
+                            "final-review dispatch recording requires a current branch closure.",
                         )
                     })?;
                 self.upsert_final_review_dispatch_lineage(
@@ -4043,15 +4043,6 @@ impl AuthoritativeTransitionState {
             &self.state_payload,
             "finish_review_gate_pass_branch_closure_id",
         )
-    }
-
-    pub(crate) fn task_review_dispatch_id(&self, task: u32) -> Option<String> {
-        let payload = self
-            .state_payload
-            .get("strategy_review_dispatch_lineage")
-            .and_then(Value::as_object)?
-            .get(&format!("task-{task}"))?;
-        json_string(payload, "dispatch_id")
     }
 
     pub(crate) fn append_superseded_task_closure_ids<'a>(

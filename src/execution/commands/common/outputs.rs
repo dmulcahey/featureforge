@@ -1,4 +1,5 @@
 use super::*;
+use crate::execution::command_eligibility::PublicCommandInputRequirement;
 
 pub(in crate::execution::commands) const TASK_CLOSURE_RECORDED_TRACE: &str =
     "Recorded or refreshed the current task closure from authoritative review state.";
@@ -21,6 +22,8 @@ pub struct CloseCurrentTaskOutput {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -107,6 +110,7 @@ pub(in crate::execution::commands) fn close_current_task_already_current_output(
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         required_follow_up: None,
         blocking_scope: None,
@@ -184,6 +188,8 @@ pub struct RecordBranchClosureOutput {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
     pub superseded_branch_closure_ids: Vec<String>,
@@ -196,7 +202,8 @@ pub struct RecordBranchClosureOutput {
 pub struct AdvanceLateStageOutput {
     pub action: String,
     pub stage_path: String,
-    pub delegated_primitive: String,
+    pub intent: String,
+    pub operation: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch_closure_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -208,6 +215,8 @@ pub struct AdvanceLateStageOutput {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -226,6 +235,8 @@ pub struct RecordQaOutput {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -244,7 +255,7 @@ pub(in crate::execution::commands) struct CurrentFinalReviewAuthorityCheck<'a> {
 
 pub(in crate::execution::commands) struct EquivalentFinalReviewRerunParams<'a> {
     pub(in crate::execution::commands) stage_path: &'a str,
-    pub(in crate::execution::commands) delegated_primitive: &'a str,
+    pub(in crate::execution::commands) operation: &'a str,
     pub(in crate::execution::commands) dispatch_id: &'a str,
     pub(in crate::execution::commands) reviewer_source: &'a str,
     pub(in crate::execution::commands) reviewer_id: &'a str,
@@ -266,6 +277,7 @@ pub(in crate::execution::commands) struct BlockedCloseCurrentTaskOutputContext<'
     pub(in crate::execution::commands) code: Option<String>,
     pub(in crate::execution::commands) recommended_command: Option<String>,
     pub(in crate::execution::commands) recommended_public_command_argv: Option<Vec<String>>,
+    pub(in crate::execution::commands) required_inputs: Vec<PublicCommandInputRequirement>,
     pub(in crate::execution::commands) rederive_via_workflow_operator: Option<bool>,
     pub(in crate::execution::commands) required_follow_up: Option<String>,
     pub(in crate::execution::commands) trace_summary: &'a str,

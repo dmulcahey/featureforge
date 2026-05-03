@@ -10,6 +10,7 @@ const ROOT = path.resolve(MODULE_DIR, '..');
 const REQUIRED_SOURCE_ARCHIVE_PATHS = [
   'scripts/gen-agent-docs.mjs',
   'scripts/gen-skill-docs.mjs',
+  'scripts/prebuilt-runtime-provenance.mjs',
   'scripts/run-codex-runtime-tests.mjs',
   'scripts/run-internal-runtime-compatibility-tests.sh',
   'scripts/run-public-runtime-flow-tests.sh',

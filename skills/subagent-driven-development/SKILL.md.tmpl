@@ -48,7 +48,7 @@ For each task, enforce this exact order before dispatching the next task:
 4. When remediation churn reaches 3 cycles for the same task, follow runtime cycle-break handling before retry.
 5. After review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`.
 6. Task `N+1` may begin only after Task `N` has a current positive task-closure record; dedicated-independent review loops and verification are required inputs to `close-current-task` and are not separate begin-time authority after closure is current.
-7. Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.
+7. Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator.
 8. Workflow/operator must not report `task_review_dispatch_required` for normal task-boundary closure; task closure routes through `close-current-task`. If workflow/operator reports `final_review_dispatch_required`, keep routing through workflow/operator plus intent-level commands and do not expand the loop into low-level dispatch-lineage management.
 9. No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.
 
@@ -57,20 +57,20 @@ For each task, enforce this exact order before dispatching the next task:
 For the reviewed-closure mental model, read `docs/featureforge/reference/2026-04-01-review-state-reference.md` before dispatching or closing reviewed work. A current reviewed closure matches the current reviewed state. A superseded closure was valid for earlier reviewed work but is no longer authoritative after later reviewed work lands. A stale-unreviewed state means unreviewed edits exist, so the runtime MUST repair review state before recording another closure or late-stage milestone.
 
 `featureforge workflow operator --plan <approved-plan-path>` is the only normal-path routing authority for reviewed-closure and late-stage progression.
-Treat `featureforge workflow operator --plan <approved-plan-path>` as authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_public_command_argv`. Treat `recommended_command` as display-only compatibility text.
+Treat `featureforge workflow operator --plan <approved-plan-path>` as authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs`. Treat `recommended_command` as display-only compatibility text.
 Treat `featureforge plan execution status --plan <approved-plan-path>` as optional diagnostic detail.
 
 When an external task-review or final-review result is already in hand, use `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` to expose recording-ready routes. Do not use that hint for release-readiness, document-release, or QA routing.
 
-Do not reconstruct closure routing from memory or duplicate route tables in this skill. Follow operator-reported `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `recording_context` directly, with these guardrails:
+Do not reconstruct closure routing from memory or duplicate route tables in this skill. Follow operator-reported `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `required_inputs`, and `recording_context` directly, with these guardrails:
 - `task_closure_recording_ready` requires `recording_context.task_number`.
 - `release_readiness_recording_ready` and `release_blocker_resolution_required` require `recording_context.branch_closure_id`.
 - `final_review_recording_ready` requires `recording_context.branch_closure_id`.
 - Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow/operator `recommended_public_command_argv`, follow the argv from workflow/operator.
 - When `phase_detail=task_closure_recording_ready`, replay is already complete enough for closure refresh; run `close-current-task` and do not reopen the same step again.
 - When workflow/operator reports `review_state_status` as stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
-- After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` before any additional recording commands. Do not shell-parse or whitespace-split `recommended_command`.
-- The returned `recommended_public_command_argv` is authoritative for the immediate reroute; `recommended_command` is only the human-readable rendering of the same route.
+- After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` when present before any additional recording commands. If argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun the route owner. Do not shell-parse or whitespace-split `recommended_command`.
+- The returned `recommended_public_command_argv` is authoritative for the immediate reroute only when present; `recommended_command` is only the human-readable rendering of the same route.
 - Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required.
 - Keep compatibility/debug-only runtime primitives out of the normal path unless explicitly debugging a compatibility boundary.
 - Hidden compatibility/debug command entrypoints are removed from the public CLI; normal routing must use public commands only.
@@ -81,7 +81,7 @@ Do not reconstruct closure routing from memory or duplicate route tables in this
 - MUST NOT use the internal task-closure recording service boundary directly.
 - MUST use `close-current-task` for task closure.
 
-Late-stage aggregate command coverage:
+Late-stage aggregate input shapes:
 - `featureforge plan execution advance-late-stage --plan <approved-plan-path>`
 - `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>`
 - `featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>`

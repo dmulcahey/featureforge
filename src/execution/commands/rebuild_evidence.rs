@@ -8,7 +8,7 @@ pub fn rebuild_evidence(
     if request.max_jobs > 1 {
         return Err(JsonFailure::new(
             FailureClass::InvalidCommandInput,
-            "max_jobs_parallel_unsupported: rebuild-evidence currently supports only --max-jobs 1.",
+            "max_jobs_parallel_unsupported: projection rebuild currently supports only --max-jobs 1.",
         ));
     }
     let started_at = Instant::now();

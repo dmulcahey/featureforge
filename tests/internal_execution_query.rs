@@ -23,7 +23,7 @@ use featureforge::execution::query::{
 };
 use internal_only_direct_helpers::internal_runtime_direct;
 use runtime_support::execution_runtime;
-use serde_json::Value;
+use serde_json::{Value, json};
 use workflow_support::{
     init_repo, install_full_contract_ready_artifacts,
     write_current_pass_plan_fidelity_review_artifact,
@@ -31,6 +31,46 @@ use workflow_support::{
 
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+fn assert_task_closure_required_inputs(surface: &Value, task: u32) {
+    assert!(surface["recommended_command"].is_null(), "{surface}");
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "{surface}"
+    );
+    assert_eq!(
+        surface["recording_context"]["task_number"],
+        Value::from(task),
+        "{surface}"
+    );
+    assert_eq!(
+        surface["required_inputs"],
+        json!([
+            {
+                "kind": "enum",
+                "name": "review_result",
+                "values": ["pass", "fail"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "review_summary_file"
+            },
+            {
+                "kind": "enum",
+                "name": "verification_result",
+                "values": ["pass", "fail", "not-run"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "verification_summary_file",
+                "required_when": "verification_result!=not-run"
+            }
+        ]),
+        "{surface}"
+    );
+}
 const TASK_BOUNDARY_BLOCKED_PLAN_SOURCE: &str = r#"# Runtime Integration Hardening Implementation Plan
 
 **Workflow State:** Engineering Approved
@@ -464,11 +504,10 @@ fn internal_only_compatibility_routing_external_review_ready_without_dispatch_li
     assert_eq!(routing.phase_detail, "task_closure_recording_ready");
     assert_eq!(routing.next_action, "close current task");
     assert!(
-        routing.recommended_command.as_deref().is_some_and(
-            |command| command.contains("featureforge plan execution close-current-task --plan")
-        ),
-        "external-review-ready routing without dispatch lineage should keep a runnable close-current-task command",
+        routing.recommended_command.is_none(),
+        "external-review-ready routing without dispatch lineage should omit executable command text until required inputs are supplied",
     );
+    assert_task_closure_required_inputs(&operator, 1);
     assert!(
         routing
             .blocking_reason_codes
@@ -480,7 +519,7 @@ fn internal_only_compatibility_routing_external_review_ready_without_dispatch_li
         routing
             .recommended_command
             .as_deref()
-            .is_some_and(|command| !command.contains(concat!("record", "-review-dispatch"))),
+            .is_none_or(|command| !command.contains(concat!("record", "-review-dispatch"))),
         "external-review-ready task-boundary routing should not require hidden dispatch helpers",
     );
     assert_routing_parity_with_operator_json(&routing, &operator);

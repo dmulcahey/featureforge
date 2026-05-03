@@ -127,14 +127,32 @@ pub(in crate::execution::commands) fn status_with_shared_routing_or_context(
     plan: &Path,
     fallback_context: &ExecutionContext,
 ) -> Result<PlanExecutionStatus, JsonFailure> {
-    let unsanitized_post_status =
-        public_status_from_context_with_shared_routing(runtime, fallback_context, false).ok();
+    status_with_shared_routing_or_context_with_external_review(
+        runtime,
+        plan,
+        fallback_context,
+        false,
+    )
+}
+
+pub(in crate::execution::commands) fn status_with_shared_routing_or_context_with_external_review(
+    runtime: &ExecutionRuntime,
+    plan: &Path,
+    fallback_context: &ExecutionContext,
+    external_review_result_ready: bool,
+) -> Result<PlanExecutionStatus, JsonFailure> {
+    let unsanitized_post_status = public_status_from_context_with_shared_routing(
+        runtime,
+        fallback_context,
+        external_review_result_ready,
+    )
+    .ok();
     if let Some(status) = unsanitized_post_status.as_ref() {
         enforce_post_mutation_shared_status_invariants(status)?;
     }
     let args = StatusArgs {
         plan: plan.to_path_buf(),
-        external_review_result_ready: false,
+        external_review_result_ready,
     };
     match runtime.status(&args) {
         Ok(status) => {
@@ -175,7 +193,7 @@ pub(in crate::execution::commands) fn status_with_shared_routing_or_context(
                 let fallback_status = public_status_from_context_with_shared_routing(
                     runtime,
                     fallback_context,
-                    false,
+                    external_review_result_ready,
                 )?;
                 enforce_post_mutation_status_invariants(
                     fallback_context,
@@ -394,7 +412,7 @@ pub(in crate::execution::commands) fn execute_rebuild_candidate_projection_only(
         return target;
     }
     let projection_only_message = String::from(
-        "projection_only: rebuild-evidence reports stale projection candidates without mutating runtime projections; run materialize-projections for explicit projection materialization or replay stale execution with reopen/begin/complete when execution work must be rerun.",
+        "projection_only: projection rebuild reports stale projection candidates without mutating runtime projections; run materialize-projections for explicit projection materialization or replay stale execution with reopen/begin/complete when execution work must be rerun.",
     );
     if request.skip_manual_fallback {
         target.status = String::from("failed");

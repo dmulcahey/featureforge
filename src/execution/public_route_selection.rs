@@ -3,9 +3,8 @@ use crate::execution::command_eligibility::PublicAdvanceLateStageMode;
 use crate::execution::harness::HarnessPhase;
 use crate::execution::next_action::{
     NextActionDecision, NextActionKind, advance_late_stage_public_command,
-    close_current_task_public_command, exact_execution_command_from_decision,
-    exact_public_command_from_decision, public_next_action_text,
-    repair_review_state_public_command,
+    close_current_task_public_command, execution_command_route_target_from_decision,
+    public_command_from_decision, public_next_action_text, repair_review_state_public_command,
 };
 use crate::execution::phase;
 use crate::execution::query::{
@@ -114,24 +113,24 @@ fn shared_next_action_seed_from_precomputed_decision(
             && status.active_task.is_some()
             && status.active_step.is_some());
     if decision_requires_exact_execution_command {
-        let exact_execution_command =
-            exact_execution_command_from_decision(status, &decision, inputs.plan_path);
+        let execution_route_target =
+            execution_command_route_target_from_decision(status, &decision, inputs.plan_path);
         if decision_requires_exact_execution_command
             && inputs.require_exact_execution_command
-            && exact_execution_command.is_none()
+            && execution_route_target.is_none()
         {
             return Ok(None);
         }
-        if let Some(exact_execution_command) = exact_execution_command {
+        if let Some(execution_route_target) = execution_route_target {
             execution_command_context = Some(ExecutionRoutingExecutionCommandContext {
-                command_kind: String::from(exact_execution_command.command_kind),
-                task_number: Some(exact_execution_command.task_number),
-                step_id: exact_execution_command.step_id,
+                command_kind: String::from(execution_route_target.command_kind),
+                task_number: Some(execution_route_target.task_number),
+                step_id: execution_route_target.step_id,
             });
             recommended_public_command =
-                exact_public_command_from_decision(status, &decision, inputs.plan_path);
+                public_command_from_decision(status, &decision, inputs.plan_path);
             if decision.kind == NextActionKind::Reopen {
-                blocking_task = Some(exact_execution_command.task_number);
+                blocking_task = Some(execution_route_target.task_number);
             }
         }
     }
@@ -204,7 +203,7 @@ fn shared_next_action_seed_from_precomputed_decision(
         });
         recommended_public_command = Some(advance_late_stage_public_command(
             inputs.plan_path,
-            PublicAdvanceLateStageMode::FinalReviewResultTemplate,
+            PublicAdvanceLateStageMode::FinalReview,
         ));
         next_action = String::from("advance late stage");
     } else if matches!(

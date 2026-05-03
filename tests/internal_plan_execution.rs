@@ -23,8 +23,8 @@ use featureforge::execution::authority::{
     write_authoritative_worktree_lease_artifact,
 };
 use featureforge::execution::command_eligibility::{
-    MutationEligibilitySource, PublicCommandKind, PublicMutationKind, PublicMutationRequest,
-    decide_public_mutation,
+    MutationEligibilitySource, PublicCommand, PublicCommandKind, PublicMutationKind,
+    PublicMutationRequest, PublicTransferMode, decide_public_mutation,
 };
 use featureforge::execution::final_review::resolve_release_base_branch;
 use featureforge::execution::follow_up::execution_step_repair_target_id;
@@ -73,6 +73,106 @@ type HarnessStateFixtureInput<'a> = (
 
 const FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT: &str =
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn assert_task_closure_required_inputs(surface: &Value, task: u32) {
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "task-closure routes require review/verification inputs and must not emit executable argv: {surface}"
+    );
+    assert!(
+        surface["recommended_command"].is_null(),
+        "task-closure routes should expose typed inputs instead of a placeholder command: {surface}"
+    );
+    let task_target = surface["recording_context"]["task_number"]
+        .as_u64()
+        .or_else(|| surface["blocking_task"].as_u64());
+    assert_eq!(
+        task_target,
+        Some(u64::from(task)),
+        "task-closure route should keep the task in structured route metadata: {surface}"
+    );
+    assert_eq!(
+        surface["required_inputs"],
+        json!([
+            {
+                "kind": "enum",
+                "name": "review_result",
+                "values": ["pass", "fail"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "review_summary_file"
+            },
+            {
+                "kind": "enum",
+                "name": "verification_result",
+                "values": ["pass", "fail", "not-run"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "verification_summary_file",
+                "required_when": "verification_result!=not-run"
+            }
+        ]),
+        "task-closure route should expose typed missing inputs: {surface}"
+    );
+}
+
+fn record_task_closure_with_fixture_inputs(
+    repo: &Path,
+    state: &Path,
+    task: u32,
+    label: &str,
+) -> Value {
+    let safe_label: String = label
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let review_summary_path = repo.join(format!("task-{task}-{safe_label}-review-summary.md"));
+    let verification_summary_path =
+        repo.join(format!("task-{task}-{safe_label}-verification-summary.md"));
+    write_file(
+        &review_summary_path,
+        &format!("Task {task} fixture independent review passed for {label}.\n"),
+    );
+    write_file(
+        &verification_summary_path,
+        &format!("Task {task} fixture verification passed for {label}.\n"),
+    );
+    let task_arg = task.to_string();
+    run_rust_json(
+        repo,
+        state,
+        &[
+            "close-current-task",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            task_arg.as_str(),
+            "--review-result",
+            "pass",
+            "--review-summary-file",
+            review_summary_path
+                .to_str()
+                .expect("review summary path should be utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary_path
+                .to_str()
+                .expect("verification summary path should be utf-8"),
+        ],
+        label,
+    )
+}
 
 macro_rules! write_harness_state_fixture {
     ($repo:expr, $state:expr, $harness_phase:expr, $active_contract_path:expr, $active_contract_fingerprint:expr, $required_evaluator_kinds:expr, $pending_evaluator_kinds:expr, $handoff_required:expr $(,)?) => {{
@@ -3432,6 +3532,169 @@ fn internal_only_compatibility_mutation_oracle_allows_explicit_repair_reopen_tar
         decision.source,
         Some(MutationEligibilitySource::ExplicitRepairTarget)
     );
+}
+
+#[test]
+fn internal_only_compatibility_mutation_oracle_rejects_external_wait_before_repair_targets() {
+    let (repo_dir, state_dir) = init_repo("mutation-oracle-external-wait-targets");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    complete_task_1_step_1_for_mutation_oracle_fixture(repo, state);
+    let runtime = execution_runtime(repo, state);
+    let mut status = runtime
+        .status(&plan_status_args(PLAN_REL))
+        .expect("status should load for external wait oracle coverage");
+    status.execution_command_context = None;
+    status.phase_detail = String::from("final_review_outcome_pending");
+    status.state_kind = String::from("waiting_external_input");
+    status.external_wait_state = Some(String::from("waiting_for_external_review_result"));
+    let stale_repair_command = PublicCommand::RepairReviewState {
+        plan: String::from(PLAN_REL),
+    };
+    status.recommended_command = Some(stale_repair_command.to_display_command());
+    status.recommended_public_command = Some(stale_repair_command);
+
+    let repair_decision = decide_public_mutation(
+        &status,
+        &PublicMutationRequest {
+            kind: PublicMutationKind::RepairReviewState,
+            task: None,
+            step: None,
+            expect_execution_fingerprint: None,
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "repair-review-state",
+        },
+    );
+    assert!(!repair_decision.allowed, "got {repair_decision:?}");
+    assert_eq!(
+        repair_decision.reason_code,
+        "mutation_waiting_external_input"
+    );
+
+    let advance_decision = decide_public_mutation(
+        &status,
+        &PublicMutationRequest {
+            kind: PublicMutationKind::AdvanceLateStage,
+            task: None,
+            step: None,
+            expect_execution_fingerprint: None,
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "advance-late-stage",
+        },
+    );
+    assert!(!advance_decision.allowed, "got {advance_decision:?}");
+    assert_eq!(
+        advance_decision.reason_code,
+        "mutation_waiting_external_input"
+    );
+
+    status.public_repair_targets = vec![
+        PublicRepairTarget {
+            command_kind: String::from("repair-review-state"),
+            task: None,
+            step: None,
+            reason_code: String::from("test_waiting_external_repair_target"),
+            source_record_id: Some(String::from("test-source")),
+            expires_when_fingerprint_changes: true,
+        },
+        PublicRepairTarget {
+            command_kind: String::from("advance-late-stage"),
+            task: None,
+            step: None,
+            reason_code: String::from("test_waiting_external_late_stage_target"),
+            source_record_id: Some(String::from("test-source")),
+            expires_when_fingerprint_changes: true,
+        },
+    ];
+
+    let targeted_repair_decision = decide_public_mutation(
+        &status,
+        &PublicMutationRequest {
+            kind: PublicMutationKind::RepairReviewState,
+            task: None,
+            step: None,
+            expect_execution_fingerprint: None,
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "repair-review-state",
+        },
+    );
+    assert!(
+        !targeted_repair_decision.allowed,
+        "got {targeted_repair_decision:?}"
+    );
+    assert_eq!(
+        targeted_repair_decision.reason_code,
+        "mutation_waiting_external_input"
+    );
+
+    let targeted_advance_decision = decide_public_mutation(
+        &status,
+        &PublicMutationRequest {
+            kind: PublicMutationKind::AdvanceLateStage,
+            task: None,
+            step: None,
+            expect_execution_fingerprint: None,
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "advance-late-stage",
+        },
+    );
+    assert!(
+        !targeted_advance_decision.allowed,
+        "got {targeted_advance_decision:?}"
+    );
+    assert_eq!(
+        targeted_advance_decision.reason_code,
+        "mutation_waiting_external_input"
+    );
+}
+
+#[test]
+fn internal_only_compatibility_mutation_oracle_accepts_concrete_handoff_required_input_scope() {
+    let (repo_dir, state_dir) = init_repo("mutation-oracle-handoff-required-scope");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    complete_task_1_step_1_for_mutation_oracle_fixture(repo, state);
+    let runtime = execution_runtime(repo, state);
+    let mut status = runtime
+        .status(&plan_status_args(PLAN_REL))
+        .expect("status should load for handoff scope oracle coverage");
+    status.execution_command_context = None;
+    status.recommended_public_command = Some(PublicCommand::TransferHandoff {
+        plan: String::from(PLAN_REL),
+        scope: String::from("task|branch"),
+    });
+
+    let allowed = decide_public_mutation(
+        &status,
+        &PublicMutationRequest {
+            kind: PublicMutationKind::Transfer,
+            task: None,
+            step: None,
+            expect_execution_fingerprint: None,
+            transfer_mode: Some(PublicTransferMode::WorkflowHandoff),
+            transfer_scope: Some(String::from("task")),
+            command_name: "transfer",
+        },
+    );
+    assert!(allowed.allowed, "got {allowed:?}");
+
+    let rejected = decide_public_mutation(
+        &status,
+        &PublicMutationRequest {
+            kind: PublicMutationKind::Transfer,
+            task: None,
+            step: None,
+            expect_execution_fingerprint: None,
+            transfer_mode: Some(PublicTransferMode::WorkflowHandoff),
+            transfer_scope: Some(String::from("team")),
+            command_name: "transfer",
+        },
+    );
+    assert!(!rejected.allowed, "got {rejected:?}");
 }
 
 #[test]
@@ -7117,20 +7380,7 @@ fn internal_only_compatibility_task_boundary_status_reports_prior_task_verificat
         Value::from("stale_unreviewed"),
         "status should not regress into stale-unreviewed review-state routing once a current task closure exists, got {status_before_task2}"
     );
-    assert!(
-        status_before_task2["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.starts_with(&format!(
-                "featureforge plan execution close-current-task --plan {} --task 1",
-                PLAN_REL
-            ))),
-        "status should surface close-current-task so the mutation guard can return the exact verification follow-up, got {status_before_task2}"
-    );
-    assert_eq!(
-        status_before_task2["recording_context"]["task_number"],
-        Value::from(1),
-        "status should surface task-closure recording context for the missing-baseline bridge"
-    );
+    assert_task_closure_required_inputs(&status_before_task2, 1);
 }
 
 #[test]
@@ -7531,13 +7781,7 @@ fn internal_only_compatibility_task_boundary_repair_review_state_routes_malforme
         Value::from("task_closure_recording_ready"),
         "repair-review-state should surface close-current-task as the next action after clearing malformed current-closure state"
     );
-    let recommended_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("repair-review-state should return a concrete closure-recording command");
-    assert!(
-        recommended_command.contains("close-current-task"),
-        "repair-review-state should route directly to close-current-task after malformed current-closure cleanup, got {recommended_command:?}"
-    );
+    assert_task_closure_required_inputs(&repair_json, 1);
     assert!(
         repair_json["actions_performed"]
             .as_array()
@@ -7548,8 +7792,8 @@ fn internal_only_compatibility_task_boundary_repair_review_state_routes_malforme
     );
     assert_eq!(
         repair_json["authoritative_next_action"],
-        Value::from(recommended_command),
-        "repair-review-state authoritative_next_action should exactly match the surfaced close-current-task command"
+        Value::Null,
+        "repair-review-state authoritative_next_action should not serialize a placeholder close-current-task command"
     );
 }
 
@@ -7768,12 +8012,7 @@ fn internal_only_compatibility_task_boundary_status_requires_execution_reentry_w
         Value::from("task_closure_recording_ready"),
         "repair-review-state should hand off to close-current-task after repairing invalid reviewed-surface provenance"
     );
-    assert!(
-        repair_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("close-current-task")),
-        "repair-review-state should return close-current-task as the immediate command after current-closure cleanup, got {repair_json}"
-    );
+    assert_task_closure_required_inputs(&repair_json, 1);
     assert!(
         repair_json["actions_performed"]
             .as_array()
@@ -7839,17 +8078,7 @@ fn internal_only_compatibility_task_boundary_repair_review_state_restores_recove
         Value::Null,
         "json: {repair_json}"
     );
-    let recommended_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("repair-review-state should return a concrete recommended command");
-    assert!(
-        recommended_command.starts_with("featureforge plan execution close-current-task --plan"),
-        "repair-review-state should route directly to close-current-task when restored overlays reveal a closure-recording-ready baseline, got {recommended_command:?}"
-    );
-    assert!(
-        recommended_command.contains("--task 1"),
-        "repair-review-state should keep Task 1 as the closure-recording target after restoring stale overlays, got {recommended_command:?}"
-    );
+    assert_task_closure_required_inputs(&repair_json, 1);
     assert!(
         repair_json["actions_performed"]
             .as_array()
@@ -7950,12 +8179,7 @@ fn internal_only_compatibility_task_boundary_status_requires_repair_when_current
         Value::from("task_closure_recording_ready"),
         "repair-review-state should route to close-current-task after clearing invalid execution-run provenance"
     );
-    assert!(
-        repair_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("close-current-task")),
-        "repair-review-state should return close-current-task as the immediate command after current-closure provenance cleanup, got {repair_json}"
-    );
+    assert_task_closure_required_inputs(&repair_json, 1);
     assert!(
         repair_json["actions_performed"]
             .as_array()
@@ -8011,13 +8235,7 @@ fn internal_only_compatibility_task_boundary_repair_review_state_clears_stale_cu
         Value::from(Vec::<Value>::new()),
         "repair-review-state should report the post-clear current task-closure set, got {repair_json}"
     );
-    let recommended_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("repair-review-state should return a concrete close-current-task command");
-    assert!(
-        recommended_command.contains("featureforge plan execution close-current-task --plan"),
-        "repair-review-state should return close-current-task as the immediate command after stale current-closure cleanup, got {recommended_command:?}"
-    );
+    assert_task_closure_required_inputs(&repair_json, 1);
 
     let harness_state_json =
         read_authoritative_harness_state(repo, state, "stale current-closure repair coverage");
@@ -17110,12 +17328,7 @@ fn internal_only_compatibility_runtime_remediation_fs03_compiled_cli_dispatch_ta
         status_blocked["next_action"],
         Value::from("close current task")
     );
-    assert!(
-        status_blocked["recommended_command"].as_str().is_some_and(
-            |command| command.contains("featureforge plan execution close-current-task --plan")
-        ),
-        "FS-03 route should expose a close-current-task command target before redispatch, got {status_blocked}"
-    );
+    assert_task_closure_required_inputs(&status_blocked, 1);
     assert_eq!(status_blocked["blocking_task"], Value::from(1_u64));
 
     let accepted_dispatch = internal_only_runtime_review_dispatch_authority_json(
@@ -18019,20 +18232,12 @@ fn internal_only_compatibility_fs17_close_current_task_converges_after_truthful_
         Value::from("task_closure_recording_ready"),
         "FS-17 truthful replay convergence should route through task_closure_recording_ready: {repair_json:?}"
     );
-    let repair_recommended_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("FS-17 repair should expose a recommended close-current-task command")
-        .to_owned();
-    assert!(
-        repair_recommended_command.contains("close-current-task")
-            && repair_recommended_command.contains("--task 1"),
-        "FS-17 repair should route to close-current-task --task 1, got {repair_recommended_command}"
-    );
+    assert_task_closure_required_inputs(&repair_json, 1);
     runtime_management_commands += 1;
-    let close_json = run_recommended_command_json(
+    let close_json = record_task_closure_with_fixture_inputs(
         repo,
         state,
-        &repair_recommended_command,
+        1,
         "FS-17 run repair-review-state recommended close-current-task command",
     );
     assert!(
@@ -18112,89 +18317,100 @@ fn internal_only_compatibility_fs18_begin_unblocks_next_task_after_cycle_break_t
         ],
         "FS-18 repair-review-state should route cycle-break fixture to close-current-task",
     );
-    let mut close_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("FS-18 repair should expose recommended command")
-        .to_owned();
-    if close_command.contains("reopen") && close_command.contains("--task 1 --step 2") {
-        let reopened = run_recommended_command_json(
+    let close_json = if let Some(close_command) = repair_json["recommended_command"].as_str() {
+        let close_command = close_command.to_owned();
+        if close_command.contains("reopen") && close_command.contains("--task 1 --step 2") {
+            let reopened = run_recommended_command_json(
+                repo,
+                state,
+                &close_command,
+                "FS-18 run repair-recommended reopen before truthful replay reclose",
+            );
+            let resumed = run_rust_json(
+                repo,
+                state,
+                &[
+                    "begin",
+                    "--plan",
+                    PLAN_REL,
+                    "--task",
+                    "1",
+                    "--step",
+                    "2",
+                    "--execution-mode",
+                    "featureforge:executing-plans",
+                    "--expect-execution-fingerprint",
+                    reopened["execution_fingerprint"]
+                        .as_str()
+                        .expect("FS-18 reopen should expose execution fingerprint before begin"),
+                ],
+                "FS-18 begin reopened Task 1 Step 2 for truthful replay completion",
+            );
+            run_rust_json(
+                repo,
+                state,
+                &[
+                    "complete",
+                    "--plan",
+                    PLAN_REL,
+                    "--task",
+                    "1",
+                    "--step",
+                    "2",
+                    "--source",
+                    "featureforge:executing-plans",
+                    "--claim",
+                    "FS-18 truthful replay completion for cycle-break bound task.",
+                    "--file",
+                    "README.md",
+                    "--manual-verify-summary",
+                    "FS-18 truthful replay completion for cycle-break bound task.",
+                    "--expect-execution-fingerprint",
+                    resumed["execution_fingerprint"]
+                        .as_str()
+                        .expect("FS-18 resumed begin should expose execution fingerprint"),
+                ],
+                "FS-18 complete reopened Task 1 Step 2 before cycle-break closure refresh",
+            );
+            let post_replay_repair = run_rust_json(
+                repo,
+                state,
+                &[
+                    "repair-review-state",
+                    "--plan",
+                    PLAN_REL,
+                    "--external-review-result-ready",
+                ],
+                "FS-18 repair-review-state after truthful replay completion",
+            );
+            assert_task_closure_required_inputs(&post_replay_repair, 1);
+            record_task_closure_with_fixture_inputs(
+                repo,
+                state,
+                1,
+                "FS-18 run close-current-task after cycle-break task replay",
+            )
+        } else {
+            assert!(
+                close_command.contains("close-current-task") && close_command.contains("--task 1"),
+                "FS-18 repair should route Task 1 reclosure through close-current-task, got {close_command}"
+            );
+            run_recommended_command_json(
+                repo,
+                state,
+                &close_command,
+                "FS-18 run close-current-task after cycle-break task replay",
+            )
+        }
+    } else {
+        assert_task_closure_required_inputs(&repair_json, 1);
+        record_task_closure_with_fixture_inputs(
             repo,
             state,
-            &close_command,
-            "FS-18 run repair-recommended reopen before truthful replay reclose",
-        );
-        let resumed = run_rust_json(
-            repo,
-            state,
-            &[
-                "begin",
-                "--plan",
-                PLAN_REL,
-                "--task",
-                "1",
-                "--step",
-                "2",
-                "--execution-mode",
-                "featureforge:executing-plans",
-                "--expect-execution-fingerprint",
-                reopened["execution_fingerprint"]
-                    .as_str()
-                    .expect("FS-18 reopen should expose execution fingerprint before begin"),
-            ],
-            "FS-18 begin reopened Task 1 Step 2 for truthful replay completion",
-        );
-        run_rust_json(
-            repo,
-            state,
-            &[
-                "complete",
-                "--plan",
-                PLAN_REL,
-                "--task",
-                "1",
-                "--step",
-                "2",
-                "--source",
-                "featureforge:executing-plans",
-                "--claim",
-                "FS-18 truthful replay completion for cycle-break bound task.",
-                "--file",
-                "README.md",
-                "--manual-verify-summary",
-                "FS-18 truthful replay completion for cycle-break bound task.",
-                "--expect-execution-fingerprint",
-                resumed["execution_fingerprint"]
-                    .as_str()
-                    .expect("FS-18 resumed begin should expose execution fingerprint"),
-            ],
-            "FS-18 complete reopened Task 1 Step 2 before cycle-break closure refresh",
-        );
-        let post_replay_repair = run_rust_json(
-            repo,
-            state,
-            &[
-                "repair-review-state",
-                "--plan",
-                PLAN_REL,
-                "--external-review-result-ready",
-            ],
-            "FS-18 repair-review-state after truthful replay completion",
-        );
-        close_command = post_replay_repair["recommended_command"]
-            .as_str()
-            .expect("FS-18 repair after truthful replay should expose close-current-task command")
-            .to_owned();
-    }
-    assert!(
-        close_command.contains("close-current-task") && close_command.contains("--task 1"),
-        "FS-18 repair should route Task 1 reclosure through close-current-task, got {close_command}"
-    );
-    let close_json = run_recommended_command_json(
-        repo,
-        state,
-        &close_command,
-        "FS-18 run close-current-task after cycle-break task replay",
-    );
+            1,
+            "FS-18 run close-current-task after cycle-break task replay",
+        )
+    };
     assert!(
         matches!(
             close_json["action"].as_str(),
@@ -18291,14 +18507,7 @@ fn internal_only_compatibility_fs22_repair_review_state_does_not_clear_dispatch_
         Value::Null,
         "FS-22 bridge-first repair should not carry execution_reentry follow-up"
     );
-    let recommended_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("FS-22 repair should expose a concrete close-current-task command");
-    assert!(
-        recommended_command.contains("close-current-task")
-            && recommended_command.contains("--task 1"),
-        "FS-22 repair should route directly to close-current-task --task 1, got {recommended_command}"
-    );
+    assert_task_closure_required_inputs(&repair_json, 1);
     let actions = repair_json["actions_performed"]
         .as_array()
         .expect("FS-22 repair should expose actions_performed");
@@ -18597,7 +18806,8 @@ fn internal_only_compatibility_record_review_dispatch_final_review_scope_rejects
     assert!(
         failure["message"]
             .as_str()
-            .is_some_and(|message| message.contains("--scope final-review does not accept --task")),
+            .is_some_and(|message| message
+                .contains("final-review dispatch recording does not accept --task")),
         "final-review scope rejection should explain unsupported task field usage: {failure}"
     );
     assert_eq!(
@@ -18774,8 +18984,9 @@ fn internal_only_compatibility_record_review_dispatch_final_review_scope_require
             .is_some_and(
                 |diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["message"]
                     .as_str()
-                    .is_some_and(|message| message
-                        .contains("requires a completed-plan final-review dispatch target")))
+                    .is_some_and(
+                        |message| message.contains("requires a completed-plan dispatch target")
+                    ))
             ),
         "bound final-review dispatch should return the shared blocked contract until the plan is actually complete: {blocked}"
     );
@@ -21242,8 +21453,7 @@ fn internal_only_compatibility_rebuild_evidence_json_schema() {
 
     let expected = format!(
         concat!(
-            "{{\"session_root\":{},\"dry_run\":false,\"filter\":{{\"all\":true,\"tasks\":[],\"steps\":[],\"include_open\":false,\"skip_manual_fallback\":false,\"continue_on_error\":false,\"max_jobs\":1,\"no_output\":false,\"json\":true}},\"scope\":\"all\",\"counts\":{{\"planned\":1,\"rebuilt\":0,\"manual\":1,\"failed\":0,\"noop\":0}},\"duration_ms\":{},\"targets\":[{{\"task_id\":1,\"step_id\":1,\"target_kind\":\"stale_completed_attempt\",\"pre_invalidation_reason\":\"files_proven_drifted\",\"status\":\"manual_required\",\"verify_mode\":\"command\",\"verify_command\":\"printf rebuilt\",\"attempt_id_before\":\"1:1:1\",\"attempt_id_after\":null,\"verification_hash\":null,\"error\":\"projection_only: rebuild",
-            "-evidence reports stale projection candidates without mutating runtime projections; run materialize-projections for explicit projection materialization or replay stale execution with reopen/begin/complete when execution work must be rerun.\",\"failure_class\":\"manual_required\"}}]}}\n"
+            "{{\"session_root\":{},\"dry_run\":false,\"filter\":{{\"all\":true,\"tasks\":[],\"steps\":[],\"include_open\":false,\"skip_manual_fallback\":false,\"continue_on_error\":false,\"max_jobs\":1,\"no_output\":false,\"json\":true}},\"scope\":\"all\",\"counts\":{{\"planned\":1,\"rebuilt\":0,\"manual\":1,\"failed\":0,\"noop\":0}},\"duration_ms\":{},\"targets\":[{{\"task_id\":1,\"step_id\":1,\"target_kind\":\"stale_completed_attempt\",\"pre_invalidation_reason\":\"files_proven_drifted\",\"status\":\"manual_required\",\"verify_mode\":\"command\",\"verify_command\":\"printf rebuilt\",\"attempt_id_before\":\"1:1:1\",\"attempt_id_after\":null,\"verification_hash\":null,\"error\":\"projection_only: projection rebuild reports stale projection candidates without mutating runtime projections; run materialize-projections for explicit projection materialization or replay stale execution with reopen/begin/complete when execution work must be rerun.\",\"failure_class\":\"manual_required\"}}]}}\n"
         ),
         serde_json::to_string(
             json["session_root"]
@@ -21287,10 +21497,7 @@ fn internal_only_compatibility_rebuild_evidence_text_failure_output() {
         assert_eq!(output.status.code(), Some(1), "stderr:\n{stderr}");
         assert_eq!(
             stderr,
-            format!(
-                "error error_class=\"InvalidCommandInput\" message=\"max_jobs_parallel_unsupported: {} currently supports only --max-jobs 1.\"\n",
-                concat!("rebuild", "-evidence")
-            ),
+            "error error_class=\"InvalidCommandInput\" message=\"max_jobs_parallel_unsupported: projection rebuild currently supports only --max-jobs 1.\"\n",
             "stderr:\n{stderr}"
         );
     }
@@ -28369,9 +28576,10 @@ fn internal_only_compatibility_late_stage_recording_equivalent_reruns_keep_direc
         advance_release["stage_path"],
         Value::from("release_readiness")
     );
+    assert_eq!(advance_release["intent"], Value::from("advance_late_stage"));
     assert_eq!(
-        advance_release["delegated_primitive"],
-        Value::from(concat!("record", "-release-readiness"))
+        advance_release["operation"],
+        Value::from("record_release_readiness_outcome")
     );
     assert!(advance_release["code"].is_null());
     assert!(advance_release["recommended_command"].is_null());
@@ -28427,9 +28635,10 @@ fn internal_only_compatibility_late_stage_recording_equivalent_reruns_keep_direc
     );
     assert_eq!(advance_final["action"], Value::from("already_current"));
     assert_eq!(advance_final["stage_path"], Value::from("final_review"));
+    assert_eq!(advance_final["intent"], Value::from("advance_late_stage"));
     assert_eq!(
-        advance_final["delegated_primitive"],
-        Value::from(concat!("record", "-final-review"))
+        advance_final["operation"],
+        Value::from("record_final_review_outcome")
     );
     assert!(advance_final["code"].is_null());
     assert!(advance_final["recommended_command"].is_null());
@@ -29130,9 +29339,10 @@ fn internal_only_compatibility_late_stage_final_review_recording_does_not_requir
     );
     assert_eq!(result["action"], Value::from("already_current"));
     assert_eq!(result["stage_path"], Value::from("final_review"));
+    assert_eq!(result["intent"], Value::from("advance_late_stage"));
     assert_eq!(
-        result["delegated_primitive"],
-        Value::from(concat!("record", "-final-review"))
+        result["operation"],
+        Value::from("record_final_review_outcome")
     );
     assert!(result["code"].is_null());
     assert!(result["recommended_command"].is_null());

@@ -783,7 +783,7 @@ fn invoke_recommended_public_command_for_context(
 ) -> Value {
     assert_public_json_excludes_hidden_tokens(operator_json, context);
     let command_parts = public_recommended_command_argv(operator_json, context);
-    let args = concrete_public_command_args(cli.repo, &command_parts, context);
+    let args = command_parts[1..].to_vec();
     let args_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     let output = cli.json(&args_refs, context);
     assert_public_json_excludes_hidden_tokens(&output, context);
@@ -822,16 +822,41 @@ fn public_recommended_command_argv(value: &Value, context: &str) -> Vec<String> 
 }
 
 fn assert_public_argv_has_no_display_only_tokens(command_parts: &[String], context: &str) {
+    const DISPLAY_ONLY_DENYLIST: &[&str] = &[
+        "<approved-plan-path>",
+        "when verification ran",
+        "<path>",
+        "<reason>",
+        "<claim>",
+        "<summary>",
+        "<source>",
+        "<id>",
+        "pass|fail",
+        "pass|fail|not-run",
+        "ready|blocked",
+        "task|branch",
+    ];
     for part in command_parts {
-        assert!(
-            !part.contains('[') && !part.contains(']'),
-            "{context}: recommended argv must not include human optional-syntax markers, got {command_parts:?}"
-        );
-        assert!(
-            !matches!(part.as_str(), "when" | "verification" | "ran" | "ran]"),
-            "{context}: recommended argv must not include human prose tokens, got {command_parts:?}"
-        );
+        for denied in DISPLAY_ONLY_DENYLIST {
+            assert!(
+                part != denied,
+                "{context}: recommended argv must not include display-only token `{denied}`, got {command_parts:?}"
+            );
+            assert!(
+                part.split_once('=')
+                    .is_none_or(|(_, value)| value != *denied),
+                "{context}: recommended argv must not include display-only token assignment `{denied}`, got {command_parts:?}"
+            );
+        }
     }
+    assert!(
+        !command_parts.windows(3).any(|window| {
+            (window[0] == "[when" || window[0] == "when")
+                && window[1] == "verification"
+                && (window[2] == "ran]" || window[2] == "ran")
+        }),
+        "{context}: recommended argv must not include display-only optional prose tokens, got {command_parts:?}"
+    );
 }
 
 fn assert_recommended_public_command_targets_task(
@@ -840,15 +865,48 @@ fn assert_recommended_public_command_targets_task(
     expected_task: u32,
     context: &str,
 ) {
-    let command_parts = public_recommended_command_argv(value, context);
-    assert_recommended_public_command_parts_include(&command_parts, expected_command, context);
-    let expected_task_arg = expected_task.to_string();
-    assert!(
-        command_parts
-            .windows(2)
-            .any(|window| window[0] == "--task" && window[1] == expected_task_arg),
-        "{context}: recommended argv should target Task {expected_task}, got {command_parts:?}"
-    );
+    match value.get("recommended_public_command_argv") {
+        Some(argv) if argv.is_array() => {
+            let command_parts = public_recommended_command_argv(value, context);
+            assert_recommended_public_command_parts_include(
+                &command_parts,
+                expected_command,
+                context,
+            );
+            let expected_task_arg = expected_task.to_string();
+            assert!(
+                command_parts
+                    .windows(2)
+                    .any(|window| window[0] == "--task" && window[1] == expected_task_arg),
+                "{context}: recommended argv should target Task {expected_task}, got {command_parts:?}"
+            );
+            return;
+        }
+        Some(argv) if argv.is_null() => {}
+        None => {}
+        Some(argv) => {
+            panic!(
+                "{context}: recommended_public_command_argv must be executable argv, null, or absent; got {argv}: {value}"
+            )
+        }
+    }
+
+    assert_required_inputs_present(value, context);
+    assert_public_route_targets_task(value, expected_task, context);
+    match expected_command {
+        "close-current-task" => {
+            assert_close_current_task_required_inputs(value, context);
+            let exposes_close_intent = value["next_action"] == "close current task"
+                || value["phase_detail"] == "task_closure_recording_ready";
+            assert!(
+                exposes_close_intent,
+                "{context}: argv-absent route should still expose close-current-task intent: {value}"
+            );
+        }
+        command => {
+            panic!("{context}: unsupported argv-absent expected command `{command}`: {value}")
+        }
+    }
 }
 
 fn assert_recommended_public_command_parts_include(
@@ -880,155 +938,124 @@ fn assert_public_command_budget(label: &str, observed: usize, max: usize) {
     );
 }
 
-fn concrete_public_command_args(
-    repo: &Path,
-    command_parts: &[String],
-    context: &str,
-) -> Vec<String> {
-    let mut args = command_parts[1..].to_vec();
-    if command_parts.get(1).is_some_and(|part| part == "plan")
-        && command_parts.get(2).is_some_and(|part| part == "execution")
-        && command_parts
-            .get(3)
-            .is_some_and(|part| part == "close-current-task")
-        && command_parts
-            .iter()
-            .any(|part| part.contains('<') || part.contains("pass|fail"))
-    {
-        let plan = command_parts
-            .windows(2)
-            .find(|window| window[0] == "--plan")
-            .map(|window| window[1].clone())
-            .expect("close-current-task recommendation should include --plan");
-        let task = command_parts
-            .windows(2)
-            .find(|window| window[0] == "--task")
-            .map(|window| window[1].clone())
-            .unwrap_or_else(|| String::from("1"));
-        let review_summary = write_recommended_summary_file(
-            repo,
-            "docs/task-recommended-review-summary.md",
-            &format!("Recommended close-current-task review passed for {context}.\n"),
-        );
-        let verification_summary = write_recommended_summary_file(
-            repo,
-            "docs/task-recommended-verification-summary.md",
-            &format!("Recommended close-current-task verification passed for {context}.\n"),
-        );
-        let mut filled_args = command_parts[1..].to_vec();
-        if !filled_args
-            .windows(2)
-            .any(|window| window[0] == "--task" && window[1] == task)
-        {
-            filled_args.extend([String::from("--task"), task]);
-        }
-        fill_public_argv_template_value(&mut filled_args, "--review-result", "pass|fail", "pass");
-        fill_public_argv_template_value(
-            &mut filled_args,
-            "--review-summary-file",
-            "<path>",
-            &review_summary,
-        );
-        fill_public_argv_template_value(
-            &mut filled_args,
-            "--verification-result",
-            "pass|fail|not-run",
-            "pass",
-        );
-        fill_public_argv_template_value(
-            &mut filled_args,
-            "--verification-summary-file",
-            "<path>",
-            &verification_summary,
-        );
-        assert!(
-            !filled_args
-                .iter()
-                .any(|part| part.contains('<') || part.contains('|')),
-            "{context}: filled close-current-task argv should be executable without template tokens, got {filled_args:?}"
-        );
-        assert!(
-            filled_args
-                .windows(2)
-                .any(|window| window[0] == "--plan" && window[1] == plan),
-            "{context}: filled close-current-task argv should preserve advertised plan target, got {filled_args:?}"
-        );
-        args = filled_args;
-    }
-    if command_parts.get(1).is_some_and(|part| part == "plan")
-        && command_parts.get(2).is_some_and(|part| part == "execution")
-        && command_parts.get(3).is_some_and(|part| part == "reopen")
-        && command_parts
-            .iter()
-            .any(|part| part.contains('<') || part == "<reason>")
-    {
-        let plan = command_parts
-            .windows(2)
-            .find(|window| window[0] == "--plan")
-            .map(|window| window[1].clone())
-            .expect("reopen recommendation should include --plan");
-        let task = command_parts
-            .windows(2)
-            .find(|window| window[0] == "--task")
-            .map(|window| window[1].clone())
-            .expect("reopen recommendation should include --task");
-        let step = command_parts
-            .windows(2)
-            .find(|window| window[0] == "--step")
-            .map(|window| window[1].clone())
-            .expect("reopen recommendation should include --step");
-        let fingerprint = command_parts
-            .windows(2)
-            .find(|window| window[0] == "--expect-execution-fingerprint")
-            .map(|window| window[1].clone())
-            .expect("reopen recommendation should include --expect-execution-fingerprint");
-        args = vec![
-            String::from("plan"),
-            String::from("execution"),
-            String::from("reopen"),
-            String::from("--plan"),
-            plan,
-            String::from("--task"),
-            task,
-            String::from("--step"),
-            step,
-            String::from("--source"),
-            String::from("featureforge:executing-plans"),
-            String::from("--reason"),
-            format!("Recommended reopen executed for {context}."),
-            String::from("--expect-execution-fingerprint"),
-            fingerprint,
-        ];
-    }
+fn assert_required_inputs_present<'a>(value: &'a Value, context: &str) -> &'a [Value] {
+    let required_inputs = value["required_inputs"].as_array().unwrap_or_else(|| {
+        panic!("{context}: argv-absent route should expose required_inputs: {value}")
+    });
     assert!(
-        args.iter()
-            .all(|arg| !arg.contains('<') && !arg.contains("pass|fail")),
-        "{context}: recommended command contains unresolved placeholders: {command_parts:?}"
+        !required_inputs.is_empty(),
+        "{context}: argv-absent route should explain missing inputs: {value}"
     );
-    args
+    required_inputs
 }
 
-fn fill_public_argv_template_value(
-    args: &mut [String],
-    flag: &str,
-    placeholder: &str,
-    replacement: &str,
+fn assert_close_current_task_required_inputs(value: &Value, context: &str) {
+    let required_inputs = assert_required_inputs_present(value, context);
+    let names = required_inputs
+        .iter()
+        .map(|input| input["name"].as_str().unwrap_or("<missing-name>"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        names,
+        BTreeSet::from([
+            "review_result",
+            "review_summary_file",
+            "verification_result",
+            "verification_summary_file"
+        ]),
+        "{context}: close-current-task should expose exactly the typed review and verification inputs: {value}"
+    );
+    assert_required_enum_input(
+        required_inputs,
+        "review_result",
+        &["pass", "fail"],
+        context,
+        value,
+    );
+    assert_required_path_input(required_inputs, "review_summary_file", None, context, value);
+    assert_required_enum_input(
+        required_inputs,
+        "verification_result",
+        &["pass", "fail", "not-run"],
+        context,
+        value,
+    );
+    assert_required_path_input(
+        required_inputs,
+        "verification_summary_file",
+        Some("verification_result!=not-run"),
+        context,
+        value,
+    );
+}
+
+fn assert_required_enum_input(
+    required_inputs: &[Value],
+    name: &str,
+    expected_values: &[&str],
+    context: &str,
+    route: &Value,
 ) {
-    for index in 1..args.len() {
-        if args[index - 1] == flag && args[index] == placeholder {
-            args[index] = replacement.to_owned();
-            return;
-        }
-    }
-    panic!("recommended argv should include `{flag} {placeholder}`, got {args:?}");
+    let input = required_input_by_name(required_inputs, name, context, route);
+    assert_eq!(
+        input["kind"], "enum",
+        "{context}: required input `{name}` should be enum typed: {route}"
+    );
+    let values = input["values"].as_array().unwrap_or_else(|| {
+        panic!("{context}: required enum input `{name}` should expose values: {route}")
+    });
+    let actual_values = values
+        .iter()
+        .map(|value| {
+            value.as_str().unwrap_or_else(|| {
+                panic!("{context}: required enum input `{name}` values should be strings: {route}")
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_values, expected_values,
+        "{context}: required enum input `{name}` should expose exact allowed values: {route}"
+    );
 }
 
-fn write_recommended_summary_file(repo: &Path, rel: &str, contents: &str) -> String {
-    let path = repo.join(rel);
-    write_file(&path, contents);
-    path.to_str()
-        .expect("recommended summary path should be utf-8")
-        .to_owned()
+fn assert_required_path_input(
+    required_inputs: &[Value],
+    name: &str,
+    required_when: Option<&str>,
+    context: &str,
+    route: &Value,
+) {
+    let input = required_input_by_name(required_inputs, name, context, route);
+    assert_eq!(
+        input["kind"], "path",
+        "{context}: required input `{name}` should be path typed: {route}"
+    );
+    assert_eq!(
+        input["must_exist"], true,
+        "{context}: required path input `{name}` should require an existing file: {route}"
+    );
+    match required_when {
+        Some(expected) => assert_eq!(
+            input["required_when"], expected,
+            "{context}: conditional path input `{name}` should expose its condition: {route}"
+        ),
+        None => assert!(
+            input.get("required_when").is_none(),
+            "{context}: unconditional path input `{name}` should not expose required_when: {route}"
+        ),
+    }
+}
+
+fn required_input_by_name<'a>(
+    required_inputs: &'a [Value],
+    name: &str,
+    context: &str,
+    route: &Value,
+) -> &'a Value {
+    required_inputs
+        .iter()
+        .find(|input| input["name"] == name)
+        .unwrap_or_else(|| panic!("{context}: required input `{name}` missing: {route}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1598,8 +1625,9 @@ fn complete_task_1_without_closure(cli: &mut PublicCli<'_>, repo: &Path) -> Valu
 }
 
 #[test]
-fn public_replay_recommended_argv_handles_plan_paths_with_spaces() {
-    let spaced_plan_rel = "docs/featureforge/plans/public replay execution plan.md";
+fn public_replay_recommended_argv_handles_plan_paths_with_spaces_and_literal_punctuation() {
+    let spaced_plan_rel =
+        "docs/featureforge/plans/public replay [release]|candidate execution plan.md";
     let (repo_dir, state_dir) = setup_execution_fixture_with_additional_plan(
         "public-replay-recommended-argv-spaces",
         spaced_plan_rel,
@@ -1633,7 +1661,7 @@ fn public_replay_recommended_argv_handles_plan_paths_with_spaces() {
                 .as_str()
                 .expect("initial status should expose execution fingerprint")
         ]),
-        "recommended argv should keep the plan path with spaces as one argv element: {initial_status}"
+        "recommended argv should keep the plan path with spaces and literal template punctuation as one argv element: {initial_status}"
     );
     assert!(
         initial_status["recommended_command"]
@@ -1650,7 +1678,7 @@ fn public_replay_recommended_argv_handles_plan_paths_with_spaces() {
     assert_eq!(
         begin["active_task"],
         json!(1),
-        "argv replay should begin Task 1 even though the plan path contains spaces: {begin}"
+        "argv replay should begin Task 1 even though the plan path contains spaces and literal template punctuation: {begin}"
     );
 }
 
@@ -1963,11 +1991,12 @@ fn public_replay_fs14_missing_closure_baseline_routes_to_close_within_budget() {
         1,
         "FS-14 public replay operator",
     );
-    let close = invoke_recommended_public_command_for_context(
-        &mut cli,
-        &operator,
-        "FS-14 public replay close-current-task",
+    assert_eq!(
+        operator["recommended_public_command_argv"],
+        Value::Null,
+        "FS-14 close-current-task should omit argv until review and verification inputs are supplied: {operator}"
     );
+    let close = close_task_1(&mut cli, repo, "FS-14 public replay close-current-task");
     assert!(
         matches!(
             close["action"].as_str(),
@@ -2110,11 +2139,11 @@ fn public_replay_completed_task_without_closure_routes_to_public_close_once() {
         "public replay close route operator",
     );
     assert_eq!(operator["phase_detail"], "task_closure_recording_ready");
-    assert!(
-        operator["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("close-current-task")),
-        "operator should recommend public close-current-task: {operator}"
+    assert_recommended_public_command_targets_task(
+        &operator,
+        "close-current-task",
+        1,
+        "public replay close route operator",
     );
     assert_json_text_excludes(
         &operator,
@@ -2148,11 +2177,11 @@ fn public_replay_projection_loss_before_current_closure_stays_on_public_close_cu
         "public replay preclosure projection operator",
     );
     assert_eq!(operator["phase_detail"], "task_closure_recording_ready");
-    assert!(
-        operator["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("close-current-task")),
-        "operator should stay on public close-current-task after preclosure projection loss: {operator}"
+    assert_recommended_public_command_targets_task(
+        &operator,
+        "close-current-task",
+        1,
+        "public replay preclosure projection operator",
     );
     assert_json_text_excludes(&operator, "receipt", "preclosure projection operator");
     assert_json_text_excludes(
@@ -2303,11 +2332,11 @@ fn public_replay_current_task_closure_never_reappears_as_stale_after_repair() {
         repair["phase_detail"], "task_closure_recording_ready",
         "repair-review-state should route the completed task to public task closure recording: {repair}"
     );
-    assert!(
-        repair["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("close-current-task")),
-        "repair-review-state should recommend public close-current-task: {repair}"
+    assert_recommended_public_command_targets_task(
+        &repair,
+        "close-current-task",
+        1,
+        "current closure repair repair-review-state",
     );
 
     let repaired_close = close_task_1_with_summary_files(
@@ -2421,18 +2450,13 @@ fn public_replay_recommended_mutations_execute_and_do_not_loop() {
         operator_after_complete["phase_detail"], "task_closure_recording_ready",
         "operator should route completed Task 1 to public close-current-task: {operator_after_complete}"
     );
-    assert!(
-        operator_after_complete["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("close-current-task")),
-        "operator should recommend public close-current-task: {operator_after_complete}"
-    );
-    let close = invoke_recommended_public_command_and_check_progress(
-        &mut cli,
-        &mut loop_detector,
+    assert_recommended_public_command_targets_task(
         &operator_after_complete,
-        "recommended parity close task 1",
+        "close-current-task",
+        1,
+        "recommended parity close operator",
     );
+    let close = close_task_1(&mut cli, repo, "recommended parity close task 1");
     assert!(
         close["action"] == json!("recorded") || close["action"] == json!("already_current"),
         "recommended close-current-task should close or refresh Task 1: {close}"
@@ -2492,21 +2516,18 @@ fn public_replay_stale_current_closure_repair_recommendation_executes_without_lo
         "stale repair parity repair-review-state",
     );
     assert_public_json_excludes_hidden_tokens(&repair, "stale repair parity repair output");
-    let next_recommended = repair["recommended_command"]
-        .as_str()
-        .expect("repair-review-state should return the next concrete public command");
-    assert!(
-        !next_recommended.contains("repair-review-state")
-            || stale_operator["recommended_command"] == repair["recommended_command"],
-        "repair-review-state should progress to a concrete public command or bounded same-command repair route: {repair}"
-    );
-
-    let next = invoke_recommended_public_command_and_check_progress(
-        &mut cli,
-        &mut loop_detector,
+    assert_recommended_public_command_targets_task(
         &repair,
+        "close-current-task",
+        1,
         "stale repair parity next recommended command",
     );
+    let next = close_task_1(
+        &mut cli,
+        repo,
+        "stale repair parity next close-current-task",
+    );
+    loop_detector.observe_after_command(&next, "stale repair parity next close-current-task");
     assert_public_json_excludes_hidden_tokens(&next, "stale repair parity next command output");
 }
 

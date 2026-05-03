@@ -94,9 +94,9 @@ For late-stage phase/action/skill grounding, reference `review/late-stage-preced
 - For terminal whole-diff review, only request a fresh external final review when workflow/operator reports `phase=final_review_pending` with `phase_detail=final_review_dispatch_required`.
 - For terminal whole-diff review, if workflow/operator already reports `phase_detail=final_review_outcome_pending`, do not dispatch a second reviewer; wait for the current final-review result or return to the current execution flow.
 - For terminal whole-diff review, when workflow/operator reports `final_review_dispatch_required`, keep the normal path operator-led and treat low-level dispatch commands as compatibility/debug-only.
-- For terminal whole-diff review, do not route the normal path through `record-review-dispatch`; stay on workflow/operator plus the intent-level commands.
+- For terminal whole-diff review, do not route the normal path through low-level compatibility/debug dispatch primitives; stay on workflow/operator plus the intent-level commands.
 - For terminal whole-diff review, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` after the external review result is ready and require `phase_detail=final_review_recording_ready` before recording final-review outcome.
-- After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`; when it reports `phase_detail=final_review_recording_ready`, execute that response's `recommended_public_command_argv` when present. Treat `recommended_command` as display-only fallback text; the explicit `featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>` shape is only the public fallback shape when argv is absent.
+- After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`; when it reports `phase_detail=final_review_recording_ready`, execute that response's `recommended_public_command_argv` when present. If argv is absent, satisfy the typed `required_inputs` with the concrete reviewer source, reviewer id, result, and summary path, then rerun workflow/operator. Treat `recommended_command` as display-only input-shape text.
 - For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: low-level compatibility/debug dispatch commands are not normal intent-level progression.
 - If operator/status diagnostics surface warning-only compatibility codes such as `legacy_evidence_format`, keep them in review context but do not treat them as blockers while authoritative runtime/operator gate outputs remain non-blocking.
 - Pass the exact approved plan path into the reviewer context. When runtime-owned execution evidence or task-packet context is already available from the current workflow handoff, pass it through as supplemental context; do not make the public flow harvest it manually.
@@ -208,8 +208,8 @@ if [ "$RECORDING_PHASE_DETAIL" != "final_review_recording_ready" ]; then
   echo "Stop and return to execution: workflow/operator did not expose final-review recording readiness."
   exit 1
 fi
-# If RECORDING_READY_JSON includes recommended_public_command_argv, execute that argv exactly. Do not parse recommended_command; it is display-only fallback text.
-# The explicit command below is the public fallback shape when argv is absent and all placeholders have been replaced with actual review values.
+# If RECORDING_READY_JSON includes recommended_public_command_argv, execute that argv exactly. Do not parse recommended_command; it is display-only input-shape text.
+# The explicit command below is an input shape; use it only after all placeholders have been replaced with actual review values.
 "$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "$APPROVED_PLAN_PATH" --reviewer-source fresh-context-subagent --reviewer-id <actual-reviewer-id> --result "$REVIEW_RESULT" --summary-file "$SUMMARY_FILE"
 ```
 

@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::cli::workflow::OperatorArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
-use crate::execution::command_eligibility::recommended_public_command_argv;
+use crate::execution::closure_diagnostics::merge_status_projection_diagnostics;
+use crate::execution::command_eligibility::PublicCommandInputRequirement;
 use crate::execution::harness::EvaluatorKind;
 use crate::execution::phase;
 use crate::execution::query::{
@@ -153,6 +154,8 @@ pub struct WorkflowDoctor {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocking_scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -198,6 +201,8 @@ pub struct WorkflowHandoff {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[schemars(with = "WorkflowOperatorStateKindSchema")]
     pub state_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -249,6 +254,8 @@ pub struct WorkflowOperator {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -312,6 +319,7 @@ struct OperatorContext {
     operator_next_action: String,
     operator_recommended_command: Option<String>,
     operator_recommended_public_command_argv: Option<Vec<String>>,
+    operator_required_inputs: Vec<PublicCommandInputRequirement>,
     operator_base_branch: Option<String>,
     operator_blocking_scope: Option<String>,
     operator_blocking_task: Option<u32>,
@@ -520,6 +528,7 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
         next_step: next_step_text(&context),
         recommended_command: context.operator_recommended_command.clone(),
         recommended_public_command_argv: context.operator_recommended_public_command_argv.clone(),
+        required_inputs: context.operator_required_inputs.clone(),
         blocking_scope: context.operator_blocking_scope.clone(),
         blocking_task: context.operator_blocking_task,
         external_wait_state: context.operator_external_wait_state.clone(),
@@ -601,6 +610,7 @@ fn doctor_gate_review(context: &OperatorContext) -> Option<GateResult> {
             .finish_review_gate_pass_branch_closure_id
             .clone(),
         recommended_command: context.operator_recommended_command.clone(),
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
     })
 }
@@ -841,6 +851,7 @@ fn handoff_from_context(
         next_action: next_action_for_context(&context).to_owned(),
         recommended_command: context.operator_recommended_command.clone(),
         recommended_public_command_argv: context.operator_recommended_public_command_argv.clone(),
+        required_inputs: context.operator_required_inputs.clone(),
         state_kind: context.operator_state_kind.clone(),
         next_public_action: context.operator_next_public_action.clone(),
         blockers: context.operator_blockers.clone(),
@@ -913,6 +924,7 @@ fn operator_from_context(context: OperatorContext, args: &OperatorArgs) -> Workf
         next_action: context.operator_next_action.clone(),
         recommended_command: context.operator_recommended_command.clone(),
         recommended_public_command_argv: context.operator_recommended_public_command_argv.clone(),
+        required_inputs: context.operator_required_inputs.clone(),
         base_branch: context.operator_base_branch.clone(),
         blocking_scope: context.operator_blocking_scope.clone(),
         blocking_task: context.operator_blocking_task,
@@ -1180,7 +1192,7 @@ fn build_context_from_routing(
         review_state_status,
         qa_requirement,
         finish_review_gate_pass_branch_closure_id,
-        recording_context,
+        recording_context: _,
         execution_command_context,
         next_action: _,
         recommended_command: _,
@@ -1193,7 +1205,7 @@ fn build_context_from_routing(
         diagnostic_reason_codes,
         task_review_dispatch_id,
         final_review_dispatch_id,
-        current_branch_closure_id,
+        current_branch_closure_id: _,
         ..
     } = routing;
     let operator_phase = execution_status
@@ -1208,71 +1220,18 @@ fn build_context_from_routing(
         .as_ref()
         .map(|status| status.next_action.clone())
         .unwrap_or_else(|| route_decision.next_action.clone());
-    let operator_recommended_command = execution_status
-        .as_ref()
-        .map(|status| status.recommended_command.clone())
-        .unwrap_or_else(|| route_decision.recommended_command.clone());
-    let operator_recommended_public_command_argv = execution_status
-        .as_ref()
-        .and_then(|status| status.recommended_public_command_argv.clone())
-        .or_else(|| {
-            recommended_public_command_argv(route_decision.recommended_public_command.as_ref())
-        });
-    let status_recording_context = execution_status
-        .as_ref()
-        .and_then(|status| status.recording_context.as_ref());
-    let operator_recording_context = match operator_phase_detail.as_str() {
-        phase::DETAIL_FINAL_REVIEW_RECORDING_READY => {
-            current_branch_closure_id.as_ref().map(|branch_closure_id| {
-                WorkflowOperatorRecordingContext {
-                    task_number: None,
-                    dispatch_id: final_review_dispatch_id.clone(),
-                    branch_closure_id: Some(branch_closure_id.clone()),
-                }
-            })
-        }
-        phase::DETAIL_TASK_CLOSURE_RECORDING_READY => {
-            if let Some(context) = status_recording_context {
-                Some(WorkflowOperatorRecordingContext {
-                    task_number: context.task_number,
-                    dispatch_id: context
-                        .dispatch_id
-                        .clone()
-                        .or(task_review_dispatch_id.clone()),
-                    branch_closure_id: context.branch_closure_id.clone(),
-                })
-            } else {
-                recording_context.map(|context| WorkflowOperatorRecordingContext {
-                    task_number: context.task_number,
-                    dispatch_id: context.dispatch_id.or(task_review_dispatch_id.clone()),
-                    branch_closure_id: context.branch_closure_id,
-                })
-            }
-        }
-        phase::DETAIL_RELEASE_READINESS_RECORDING_READY
-        | phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => current_branch_closure_id
+    let operator_recommended_command = route_decision.recommended_command.clone();
+    let operator_recommended_public_command_argv = route_decision.recommended_public_command_argv();
+    let operator_required_inputs = route_decision.required_inputs.clone();
+    let operator_recording_context =
+        route_decision
+            .recording_context
             .as_ref()
-            .map(|branch_closure_id| WorkflowOperatorRecordingContext {
-                task_number: None,
-                dispatch_id: None,
-                branch_closure_id: Some(branch_closure_id.clone()),
-            }),
-        _ => {
-            if let Some(context) = status_recording_context {
-                Some(WorkflowOperatorRecordingContext {
-                    task_number: context.task_number,
-                    dispatch_id: context.dispatch_id.clone(),
-                    branch_closure_id: context.branch_closure_id.clone(),
-                })
-            } else {
-                recording_context.map(|context| WorkflowOperatorRecordingContext {
-                    task_number: context.task_number,
-                    dispatch_id: context.dispatch_id,
-                    branch_closure_id: context.branch_closure_id,
-                })
-            }
-        }
-    };
+            .map(|context| WorkflowOperatorRecordingContext {
+                task_number: context.task_number,
+                dispatch_id: context.dispatch_id.clone(),
+                branch_closure_id: context.branch_closure_id.clone(),
+            });
     let operator_execution_command_context = execution_status
         .as_ref()
         .and_then(|status| status.execution_command_context.as_ref())
@@ -1329,17 +1288,10 @@ fn build_context_from_routing(
         .as_ref()
         .map(|status| status.blocking_reason_codes.clone())
         .unwrap_or(blocking_reason_codes);
-    let mut operator_diagnostic_reason_codes = diagnostic_reason_codes;
-    if let Some(status) = execution_status.as_ref() {
-        for reason_code in &status.projection_diagnostics {
-            if !operator_diagnostic_reason_codes
-                .iter()
-                .any(|existing| existing == reason_code)
-            {
-                operator_diagnostic_reason_codes.push(reason_code.clone());
-            }
-        }
-    }
+    let operator_diagnostic_reason_codes = execution_status
+        .as_ref()
+        .map(|status| merge_status_projection_diagnostics(diagnostic_reason_codes.clone(), status))
+        .unwrap_or(diagnostic_reason_codes);
     if operator_phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         && let Some(task_number) = operator_execution_command_context
             .as_ref()
@@ -1411,6 +1363,7 @@ fn build_context_from_routing(
         operator_next_action,
         operator_recommended_command,
         operator_recommended_public_command_argv,
+        operator_required_inputs,
         operator_base_branch,
         operator_blocking_scope,
         operator_blocking_task,
@@ -1920,6 +1873,7 @@ fn optional_text(value: Option<&str>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::command_eligibility::PublicCommandInputKind;
     use crate::workflow::status::WorkflowRoute;
 
     fn task_boundary_context(
@@ -1961,6 +1915,7 @@ mod tests {
             operator_next_action: String::from("wait for external review result"),
             operator_recommended_command: recommended_command.map(str::to_owned),
             operator_recommended_public_command_argv: None,
+            operator_required_inputs: Vec::new(),
             operator_base_branch: Some(String::from("main")),
             operator_blocking_scope: Some(String::from("task")),
             operator_blocking_task: Some(1),
@@ -2003,10 +1958,15 @@ mod tests {
                 step_id: Some(2),
             }),
             next_action: String::from("continue execution"),
-            recommended_command: Some(String::from(
-                "featureforge plan execution complete --plan docs/featureforge/plans/sample.md --task 1 --step 2 --source featureforge:executing-plans --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint abcdef",
-            )),
+            recommended_command: None,
             recommended_public_command_argv: None,
+            required_inputs: vec![PublicCommandInputRequirement {
+                name: String::from("claim"),
+                kind: PublicCommandInputKind::Text,
+                values: Vec::new(),
+                must_exist: false,
+                required_when: None,
+            }],
             base_branch: Some(String::from("main")),
             blocking_scope: Some(String::from("task")),
             blocking_task: Some(1),

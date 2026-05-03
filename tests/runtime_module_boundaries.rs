@@ -587,6 +587,152 @@ fn command_common_remains_a_facade_over_bounded_domain_modules() {
     }
 }
 
+#[test]
+fn closure_dispatch_authority_is_not_raw_transition_dispatch_fallback() {
+    let closure_dispatch = read_repo_file("src/execution/closure_dispatch.rs");
+    assert!(
+        closure_dispatch.contains("pub(crate) fn current_review_dispatch_id_candidate")
+            && closure_dispatch.contains("pub(crate) fn current_review_dispatch_id_from_lineage")
+            && closure_dispatch.contains("current_review_dispatch_id_if_still_current"),
+        "closure dispatch must own current public dispatch candidate selection through the current-lineage helper"
+    );
+    assert!(
+        closure_dispatch.contains("pub(crate) fn ensure_current_review_dispatch_id")
+            && closure_dispatch.contains("validate_expected_dispatch_id")
+            && closure_dispatch.contains("record_review_dispatch_strategy_checkpoint")
+            && closure_dispatch.contains("ensure_task_dispatch_id_matches")
+            && closure_dispatch.contains("ensure_final_review_dispatch_id_matches")
+            && closure_dispatch.contains("task_dispatch_reviewed_state_status"),
+        "closure dispatch must own current dispatch ensuring, explicit hidden dispatch-id validation, and dispatch authority recording"
+    );
+    let runtime_methods = read_repo_file("src/execution/state/runtime_methods.rs");
+    assert!(
+        !runtime_methods.contains("pub(crate) fn current_review_dispatch_id_candidate"),
+        "runtime_methods must not regain public dispatch candidate selection"
+    );
+    assert!(
+        !runtime_methods.contains("ensure_current_review_dispatch_id_impl")
+            && !runtime_methods.contains("fn validate_expected_dispatch_id")
+            && !runtime_methods.contains("fn record_review_dispatch_strategy_checkpoint"),
+        "runtime_methods must not regain closure dispatch ensure/validation/recording authority"
+    );
+
+    let read_model_support = read_repo_file("src/execution/read_model_support.rs");
+    for forbidden in [
+        "fn current_review_dispatch_id_if_still_current",
+        "fn current_review_dispatch_id_from_lineage",
+        "shared_current_task_review_dispatch_id",
+        "shared_current_final_review_dispatch_id",
+    ] {
+        assert!(
+            !read_model_support.contains(forbidden),
+            "read_model_support.rs must not regain dispatch lookup ownership from closure_dispatch: found `{forbidden}`"
+        );
+    }
+
+    let public_repair_targets = read_repo_file("src/execution/public_repair_targets.rs");
+    assert!(
+        !public_repair_targets.contains("read_model_support::current_review_dispatch_id"),
+        "public repair targets must consume closure_dispatch dispatch authority, not read_model_support"
+    );
+
+    assert!(
+        !repo_root()
+            .join("src/execution/commands/common/dispatch_lineage.rs")
+            .exists(),
+        "command-local dispatch_lineage helpers must not be recreated outside closure_dispatch"
+    );
+
+    for rel in [
+        "src/execution/reducer.rs",
+        "src/execution/public_repair_targets.rs",
+    ] {
+        let source = read_repo_file(rel);
+        assert!(
+            !source.contains("task_review_dispatch_id(task)"),
+            "{rel} must not use raw transition task_review_dispatch_id(task) as public dispatch authority"
+        );
+    }
+}
+
+#[test]
+fn closure_receipt_diagnostics_stay_out_of_public_route_selection() {
+    let closure_diagnostics = read_repo_file("src/execution/closure_diagnostics.rs");
+    assert!(
+        closure_diagnostics.contains("TASK_BOUNDARY_PROJECTION_DIAGNOSTIC_REASON_CODES")
+            && closure_diagnostics.contains("task_boundary_projection_diagnostic_reason_code"),
+        "closure diagnostics must centralize receipt/projection diagnostic classification"
+    );
+    assert!(
+        closure_diagnostics.contains("push_task_closure_pending_verification_reason_codes_for_run")
+            && closure_diagnostics.contains("parse_artifact_document")
+            && closure_diagnostics.contains("authoritative_unit_review_receipt_path")
+            && closure_diagnostics.contains("authoritative_task_verification_receipt_path")
+            && closure_diagnostics.contains("task_closure_recording_diagnostic_reason_codes")
+            && closure_diagnostics.contains("task_closure_recording_status_reason_codes"),
+        "closure diagnostics must own task-boundary receipt parsing and diagnostic classification"
+    );
+    assert!(
+        closure_diagnostics.contains("pub(crate) fn public_task_boundary_decision")
+            && closure_diagnostics.contains("apply_task_boundary_projection_diagnostics")
+            && closure_diagnostics.contains("merge_status_projection_diagnostics")
+            && closure_diagnostics.contains("merge_task_boundary_projection_diagnostics"),
+        "closure diagnostics must own public diagnostic field projection and merge helpers"
+    );
+
+    let read_model_support = read_repo_file("src/execution/read_model_support.rs");
+    assert!(
+        read_model_support.contains("diagnostic_reason_codes")
+            && read_model_support.contains("blocking_reason_codes"),
+        "task closure prerequisites must keep blockers separate from receipt/projection diagnostics"
+    );
+    for forbidden in [
+        "parse_artifact_document",
+        "fn authoritative_unit_review_receipt_path",
+        "fn authoritative_task_verification_receipt_path",
+        "fn task_closure_recording_diagnostic_reason_codes",
+        "fn task_closure_recording_reason_code",
+    ] {
+        assert!(
+            !read_model_support.contains(forbidden),
+            "read_model_support.rs must not regain receipt parsing/path construction owned by closure_diagnostics: found `{forbidden}`"
+        );
+    }
+
+    for rel in [
+        "src/execution/read_model/public_route_projection.rs",
+        "src/execution/router.rs",
+        "src/execution/next_action.rs",
+        "src/workflow/operator.rs",
+    ] {
+        let source = read_repo_file(rel);
+        for forbidden in [
+            "parse_artifact_document",
+            "authoritative_unit_review_receipt_path",
+            "authoritative_task_verification_receipt_path",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{rel} must not parse receipt/projection artifacts while selecting public routes: found `{forbidden}`"
+            );
+        }
+    }
+    let public_route_projection =
+        read_repo_file("src/execution/read_model/public_route_projection.rs");
+    assert!(
+        public_route_projection.contains("apply_task_boundary_projection_diagnostics(status)")
+            && !public_route_projection
+                .contains("public_task_boundary_decision(status).diagnostic_reason_codes"),
+        "public route projection must delegate task-boundary diagnostic projection to closure_diagnostics"
+    );
+    let workflow_operator = read_repo_file("src/workflow/operator.rs");
+    assert!(
+        workflow_operator.contains("merge_status_projection_diagnostics")
+            && !workflow_operator.contains("for reason_code in &status.projection_diagnostics"),
+        "workflow operator must use closure_diagnostics to merge public projection diagnostics"
+    );
+}
+
 #[derive(Clone, Copy)]
 struct FocusedRuntimeModuleLineCap {
     rel: &'static str,
@@ -595,6 +741,16 @@ struct FocusedRuntimeModuleLineCap {
 }
 
 const FOCUSED_RUNTIME_MODULE_LINE_CAPS: &[FocusedRuntimeModuleLineCap] = &[
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/closure_dispatch.rs",
+        max_lines: 780,
+        boundary: "current closure dispatch authority",
+    },
+    FocusedRuntimeModuleLineCap {
+        rel: "src/execution/closure_diagnostics.rs",
+        max_lines: 520,
+        boundary: "artifact/projection diagnostic reason classification",
+    },
     FocusedRuntimeModuleLineCap {
         rel: "src/execution/current_closure_projection.rs",
         max_lines: 450,

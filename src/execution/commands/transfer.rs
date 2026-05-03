@@ -22,6 +22,8 @@ pub struct TransferOutput {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
     pub trace_summary: String,
@@ -244,6 +246,7 @@ fn record_workflow_transfer(
             code: Some(String::from("out_of_phase_requery_required")),
             recommended_command: Some(recommended_command),
             recommended_public_command_argv: Some(recommended_public_command_argv),
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: Some(true),
             trace_summary: String::from(
                 "transfer failed closed because workflow/operator does not currently route to handoff recording.",
@@ -258,6 +261,8 @@ fn record_workflow_transfer(
             });
         let (recommended_command, recommended_public_command_argv) =
             optional_public_command_surfaces(recommended_public_command.as_ref());
+        let required_inputs =
+            required_inputs_for_public_command(recommended_public_command.as_ref());
         return Ok(TransferOutput {
             action: String::from("blocked"),
             scope: scope.to_owned(),
@@ -267,6 +272,7 @@ fn record_workflow_transfer(
             code: None,
             recommended_command,
             recommended_public_command_argv,
+            required_inputs,
             rederive_via_workflow_operator: None,
             trace_summary: String::from(
                 "transfer failed closed because the requested scope does not satisfy the current handoff decision scope.",
@@ -301,6 +307,7 @@ fn record_workflow_transfer(
             code: None,
             recommended_command: None,
             recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
             trace_summary: String::from(
                 "The current handoff decision already has an equivalent recorded workflow transfer checkpoint.",
@@ -318,6 +325,7 @@ fn record_workflow_transfer(
             code: None,
             recommended_command: None,
             recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
             trace_summary: String::from(
                 "A different workflow transfer checkpoint is already current for this handoff decision.",
@@ -342,6 +350,7 @@ fn record_workflow_transfer(
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         trace_summary: String::from(
             "Recorded a runtime-owned workflow transfer checkpoint and cleared the current handoff override.",

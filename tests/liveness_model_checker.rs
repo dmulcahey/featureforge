@@ -111,6 +111,10 @@ struct LivenessPlanExecutionStatus {
     #[serde(default)]
     recommended_command: Option<String>,
     #[serde(default)]
+    recommended_public_command_argv: Option<Vec<String>>,
+    #[serde(default)]
+    required_inputs: Vec<Value>,
+    #[serde(default)]
     blocking_scope: Option<String>,
     #[serde(default)]
     execution_command_context: Option<LivenessExecutionCommandContext>,
@@ -120,6 +124,12 @@ struct LivenessPlanExecutionStatus {
     blocking_task: Option<u32>,
     #[serde(default)]
     resume_task: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct LivenessPublicCommand {
+    argv: Vec<String>,
+    display: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -953,6 +963,13 @@ fn public_edge_satisfies_liveness_contract(
 
 fn materialized_status_command(status: &LivenessPlanExecutionStatus) -> Option<String> {
     status
+        .recommended_public_command_argv
+        .as_ref()
+        .map(|argv| exact_public_argv_display(argv))
+}
+
+fn display_status_command(status: &LivenessPlanExecutionStatus) -> Option<String> {
+    status
         .recommended_command
         .clone()
         .or_else(|| {
@@ -969,83 +986,114 @@ fn materialized_status_command(status: &LivenessPlanExecutionStatus) -> Option<S
         })
 }
 
-fn summary_file(state: &Path, label: &str) -> std::path::PathBuf {
-    let path = state.join(format!("{label}.md"));
-    files_support::write_file(
-        &path,
-        &format!("# {label}\n\nSynthetic liveness summary.\n"),
-    );
-    path
+fn exact_public_argv_display(argv: &[String]) -> String {
+    argv.join(" ")
 }
 
-fn materialize_public_progress_command(
+fn exact_public_command_from_status(
+    status: &LivenessPlanExecutionStatus,
+) -> Option<LivenessPublicCommand> {
+    status
+        .recommended_public_command_argv
+        .as_ref()
+        .map(|argv| LivenessPublicCommand {
+            argv: argv.clone(),
+            display: exact_public_argv_display(argv),
+        })
+}
+
+fn status_missing_public_inputs(status: &LivenessPlanExecutionStatus) -> bool {
+    !status.required_inputs.is_empty()
+}
+
+fn exact_public_progress_command(
     runtime: &ExecutionRuntime,
     status: &LivenessPlanExecutionStatus,
-) -> Option<String> {
-    if let Some(command) = status.recommended_command.as_deref() {
-        return Some(command.to_owned());
+) -> Option<LivenessPublicCommand> {
+    if let Some(command) = exact_public_command_from_status(status) {
+        return Some(command);
     }
-    if let Some(action) = status.next_public_action.as_ref() {
-        return Some(action.command.clone());
-    }
-    if let Some(command) = status
-        .blockers
-        .iter()
-        .find_map(|blocker| blocker.next_public_action.as_ref())
-    {
-        return Some(command.clone());
-    }
-    workflow_operator_recommended_command_real_cli(runtime)
+    workflow_operator_recommended_public_command_real_cli(runtime)
         .ok()
         .flatten()
 }
 
 fn execute_public_progress_edge(
     runtime: &ExecutionRuntime,
-    state: &Path,
+    _state: &Path,
     status: &LivenessPlanExecutionStatus,
 ) -> Result<Option<LivenessPlanExecutionStatus>, String> {
-    let Some(command) = materialize_public_progress_command(runtime, status) else {
+    let Some(command) = exact_public_progress_command(runtime, status) else {
         return Ok(None);
     };
-    execute_materialized_public_command(runtime, state, status, &command)?;
+    execute_exact_public_command(runtime, status, &command.argv)?;
     Ok(Some(status_value(
         runtime,
-        &format!("liveness successor after `{command}`"),
+        &format!("liveness successor after `{}`", command.display),
     )))
 }
 
-fn execute_materialized_public_command(
+fn execute_exact_public_command(
     runtime: &ExecutionRuntime,
-    state: &Path,
     status: &LivenessPlanExecutionStatus,
-    command: &str,
+    argv: &[String],
 ) -> Result<(), String> {
-    let materialized = materialize_public_command_template(state, command);
-    let Some(parts) = shlex::split(&materialized) else {
-        return Err(format!(
-            "public command is not shell-parseable: {materialized}"
-        ));
-    };
-    let words = parts.iter().map(String::as_str).collect::<Vec<_>>();
+    assert_exact_public_argv_is_executable(argv)?;
+    let words = argv.iter().map(String::as_str).collect::<Vec<_>>();
     match words.as_slice() {
         ["featureforge", "workflow", "operator", ..] => {
-            let Some(operator_command) = workflow_operator_recommended_command_real_cli(runtime)?
+            let exact_args = argv[1..].iter().map(String::as_str);
+            let exact_output = run_featureforge_real_cli(
+                runtime,
+                exact_args,
+                &format!(
+                    "liveness exact public edge `{}`",
+                    exact_public_argv_display(argv)
+                ),
+            );
+            if !exact_output.status.success() {
+                return Err(format!(
+                    "workflow operator exact public edge failed: {}\nstdout:\n{}\nstderr:\n{}",
+                    exact_public_argv_display(argv),
+                    String::from_utf8_lossy(&exact_output.stdout),
+                    String::from_utf8_lossy(&exact_output.stderr)
+                ));
+            }
+            let operator_value: Value = serde_json::from_slice(&exact_output.stdout).map_err(
+                |error| {
+                    format!(
+                        "workflow operator exact public edge should emit JSON from exact argv `{}`: {error}\nstdout:\n{}\nstderr:\n{}",
+                        exact_public_argv_display(argv),
+                        String::from_utf8_lossy(&exact_output.stdout),
+                        String::from_utf8_lossy(&exact_output.stderr)
+                    )
+                },
+            )?;
+            let Some(operator_command) = public_command_from_json_value(
+                &operator_value,
+                &format!(
+                    "workflow operator exact public edge `{}`",
+                    exact_public_argv_display(argv)
+                ),
+            )?
             else {
                 return Err(String::from(
-                    "workflow operator public edge did not return a concrete successor command",
+                    "workflow operator public edge did not return a concrete successor argv",
                 ));
             };
-            if is_workflow_operator_command(&operator_command) {
+            if is_workflow_operator_command(&operator_command.display) {
                 return Err(format!(
-                    "workflow operator public edge looped back to itself instead of surfacing a concrete successor: {operator_command}"
+                    "workflow operator public edge looped back to itself instead of surfacing a concrete successor: {}",
+                    operator_command.display
                 ));
             }
             let mut routed_status = status.clone();
-            routed_status.recommended_command = Some(operator_command.clone());
+            routed_status.recommended_command = Some(operator_command.display.clone());
+            routed_status.recommended_public_command_argv = Some(operator_command.argv.clone());
+            routed_status.required_inputs.clear();
             routed_status.next_public_action = None;
             routed_status.blockers.clear();
-            execute_materialized_public_command(runtime, state, &routed_status, &operator_command)
+            execute_exact_public_command(runtime, &routed_status, &operator_command.argv)
         }
         ["featureforge", "plan", "execution", args @ ..] => {
             let output = run_featureforge_real_cli(
@@ -1053,13 +1101,14 @@ fn execute_materialized_public_command(
                 std::iter::once("plan")
                     .chain(std::iter::once("execution"))
                     .chain(args.iter().copied()),
-                &format!("liveness public edge `{materialized}`"),
+                &format!("liveness public edge `{}`", exact_public_argv_display(argv)),
             );
             if output.status.success() {
                 Ok(())
             } else {
                 Err(format!(
-                    "liveness public edge failed: {materialized}\nstatus_phase_detail={}\nstatus_recommended_command={:?}\nstdout:\n{}\nstderr:\n{}",
+                    "liveness public edge failed: {}\nstatus_phase_detail={}\nstatus_recommended_command={:?}\nstdout:\n{}\nstderr:\n{}",
+                    exact_public_argv_display(argv),
                     status.phase_detail,
                     status.recommended_command,
                     String::from_utf8_lossy(&output.stdout),
@@ -1068,14 +1117,15 @@ fn execute_materialized_public_command(
             }
         }
         _ => Err(format!(
-            "liveness public edge is not a supported public FeatureForge command: {materialized}"
+            "liveness public edge is not a supported public FeatureForge command: {}",
+            exact_public_argv_display(argv)
         )),
     }
 }
 
-fn workflow_operator_recommended_command_real_cli(
+fn workflow_operator_recommended_public_command_real_cli(
     runtime: &ExecutionRuntime,
-) -> Result<Option<String>, String> {
+) -> Result<Option<LivenessPublicCommand>, String> {
     let output = run_featureforge_real_cli(
         runtime,
         ["workflow", "operator", "--plan", PLAN_REL, "--json"],
@@ -1090,10 +1140,96 @@ fn workflow_operator_recommended_command_real_cli(
     }
     let value: Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("workflow operator public edge should emit JSON: {error}"))?;
-    Ok(value
-        .get("recommended_command")
-        .and_then(Value::as_str)
-        .map(str::to_owned))
+    public_command_from_json_value(&value, "workflow operator public edge")
+}
+
+fn public_command_from_json_value(
+    value: &Value,
+    context: &str,
+) -> Result<Option<LivenessPublicCommand>, String> {
+    let Some(argv_value) = value
+        .get("recommended_public_command_argv")
+        .filter(|argv| !argv.is_null())
+    else {
+        let has_display_command = value
+            .get("recommended_command")
+            .and_then(Value::as_str)
+            .is_some()
+            || value
+                .get("next_public_action")
+                .and_then(|action| action.get("command"))
+                .and_then(Value::as_str)
+                .is_some()
+            || value
+                .get("blockers")
+                .and_then(Value::as_array)
+                .is_some_and(|blockers| {
+                    blockers.iter().any(|blocker| {
+                        blocker
+                            .get("next_public_action")
+                            .and_then(Value::as_str)
+                            .is_some()
+                    })
+                });
+        if value
+            .get("required_inputs")
+            .and_then(Value::as_array)
+            .is_some_and(|inputs| !inputs.is_empty())
+            || !has_display_command
+        {
+            return Ok(None);
+        }
+        return Err(format!(
+            "{context} exposed a display command without executable argv or required_inputs: {value}"
+        ));
+    };
+    let Some(argv_values) = argv_value.as_array() else {
+        return Err(format!(
+            "{context} recommended_public_command_argv should be an array: {value}"
+        ));
+    };
+    let argv = argv_values
+        .iter()
+        .map(|part| {
+            part.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{context} argv entry should be a string: {value}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_exact_public_argv_is_executable(&argv)?;
+    Ok(Some(LivenessPublicCommand {
+        display: value
+            .get("recommended_command")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| exact_public_argv_display(&argv)),
+        argv,
+    }))
+}
+
+fn assert_exact_public_argv_is_executable(argv: &[String]) -> Result<(), String> {
+    if argv.first().map(String::as_str) != Some("featureforge") {
+        return Err(format!(
+            "recommended_public_command_argv must start with featureforge: {argv:?}"
+        ));
+    }
+    for part in argv {
+        if public_argv_part_has_template_token(part) {
+            return Err(format!(
+                "recommended_public_command_argv must be executable, not templated: {argv:?}"
+            ));
+        }
+    }
+    if argv.windows(3).any(|window| {
+        (window[0] == "[when" || window[0] == "when")
+            && window[1] == "verification"
+            && (window[2] == "ran]" || window[2] == "ran")
+    }) {
+        return Err(format!(
+            "recommended_public_command_argv must be executable, not optional prose: {argv:?}"
+        ));
+    }
+    Ok(())
 }
 
 fn run_featureforge_real_cli<'a>(
@@ -1122,28 +1258,27 @@ fn is_workflow_operator_command(command: &str) -> bool {
     })
 }
 
-fn materialize_public_command_template(state: &Path, command: &str) -> String {
-    let summary = summary_file(state, "liveness-public-edge");
-    materialize_public_command_template_with_summary(command, &summary.to_string_lossy())
-}
-
-fn materialize_public_command_template_with_summary(command: &str, summary: &str) -> String {
-    let mut materialized = command
-        .replace(
-            "[--verification-summary-file <path> when verification ran]",
-            "--verification-summary-file <path>",
-        )
-        .replace("<approved-plan-path>", PLAN_REL)
-        .replace("ready|blocked", "ready")
-        .replace("pass|fail|not-run", "pass")
-        .replace("pass|fail", "pass")
-        .replace("<source>", "human-independent-reviewer")
-        .replace("<id>", "liveness-model-checker")
-        .replace("<path>", summary);
-    if let Some(optional_start) = materialized.find(" [") {
-        materialized.truncate(optional_start);
-    }
-    materialized
+fn public_argv_part_has_template_token(part: &str) -> bool {
+    const DENYLIST: &[&str] = &[
+        "<approved-plan-path>",
+        "when verification ran",
+        "<path>",
+        "<reason>",
+        "<claim>",
+        "<summary>",
+        "<source>",
+        "<id>",
+        "pass|fail",
+        "pass|fail|not-run",
+        "ready|blocked",
+        "task|branch",
+    ];
+    DENYLIST.iter().any(|token| {
+        part == *token
+            || part
+                .split_once('=')
+                .is_some_and(|(_, value)| value == *token)
+    })
 }
 
 fn reopen_target(command: &str) -> Option<(u32, u32)> {
@@ -1361,14 +1496,18 @@ fn command_requires_external_result_input(
     match public_command_kind(command).as_deref() {
         Some("close-current-task") => true,
         Some("advance-late-stage") => {
-            !command.contains("--result")
-                && matches!(
-                    status.phase_detail.as_str(),
-                    "release_readiness_recording_ready"
-                        | "release_blocker_resolution_required"
-                        | "final_review_recording_ready"
-                        | "qa_recording_required"
-                )
+            matches!(
+                status.phase_detail.as_str(),
+                "release_readiness_recording_ready"
+                    | "release_blocker_resolution_required"
+                    | "final_review_recording_ready"
+                    | "qa_recording_required"
+            ) && (!command.contains("--result")
+                || command.contains("ready|blocked")
+                || command.contains("pass|fail")
+                || command.contains("<path>")
+                || command.contains("<source>")
+                || command.contains("<id>"))
         }
         _ => false,
     }
@@ -1438,7 +1577,7 @@ fn is_public_mutation_repeat_guard_command(
 }
 
 fn semantic_public_mutation_key(command: &str) -> String {
-    materialize_public_command_template_with_summary(command, "liveness-public-edge.md")
+    command.to_owned()
 }
 
 fn remember_public_mutation_command(
@@ -1485,6 +1624,7 @@ fn assert_bounded_runtime_management_path_converges(
         if is_diagnostic_status(&current)
             || current.state_kind == "terminal"
             || current.state_kind == "waiting_external_input"
+            || status_missing_public_inputs(&current)
         {
             return;
         }
@@ -1558,6 +1698,7 @@ fn assert_bounded_runtime_management_path_converges(
     if is_diagnostic_status(&current)
         || current.state_kind == "terminal"
         || current.state_kind == "waiting_external_input"
+        || status_missing_public_inputs(&current)
     {
         return;
     }
@@ -1592,6 +1733,9 @@ fn minimal_liveness_status(
     blocking_reason_codes: Vec<String>,
     recommended_command: Option<String>,
 ) -> LivenessPlanExecutionStatus {
+    let recommended_public_command_argv = recommended_command
+        .as_deref()
+        .and_then(exact_argv_for_test_command);
     LivenessPlanExecutionStatus {
         phase_detail: phase_detail.to_owned(),
         review_state_status: String::from("stale_unreviewed"),
@@ -1604,12 +1748,22 @@ fn minimal_liveness_status(
         blockers: Vec::new(),
         next_action: String::from("repair review state"),
         recommended_command,
+        recommended_public_command_argv,
+        required_inputs: Vec::new(),
         blocking_scope: Some(String::from("task")),
         execution_command_context: None,
         active_task: None,
         blocking_task: Some(1),
         resume_task: None,
     }
+}
+
+fn exact_argv_for_test_command(command: &str) -> Option<Vec<String>> {
+    let argv = shlex::split(command)?;
+    (!argv
+        .iter()
+        .any(|part| public_argv_part_has_template_token(part)))
+    .then_some(argv)
 }
 
 #[test]
@@ -1803,21 +1957,30 @@ fn targetless_stale_guard_rejects_fabricated_current_task_targets() {
 }
 
 #[test]
-fn same_current_reopen_guard_uses_effective_public_action_lanes() {
+fn same_current_reopen_guard_uses_exact_public_argv_lanes() {
     let synthetic = SyntheticState {
         completed_tasks: 2,
         ..SyntheticState::base(2)
     };
     let command =
         String::from("featureforge plan execution reopen --plan docs/plan.md --task 2 --step 1");
+    let argv = exact_argv_for_test_command(&command).expect("test reopen command should be exact");
 
-    let mut next_action_status =
+    let mut display_only_next_action =
         minimal_liveness_status("execution_reentry_required", Vec::new(), None);
-    next_action_status.next_public_action = Some(LivenessNextPublicAction {
+    display_only_next_action.next_public_action = Some(LivenessNextPublicAction {
         command: command.clone(),
     });
-    let effective = materialized_status_command(&next_action_status)
-        .expect("next_public_action should be the effective public command");
+    assert!(
+        materialized_status_command(&display_only_next_action).is_none(),
+        "display-only next_public_action must not become an executable public command"
+    );
+
+    let mut exact_next_action =
+        minimal_liveness_status("execution_reentry_required", Vec::new(), None);
+    exact_next_action.recommended_public_command_argv = Some(argv.clone());
+    let effective = materialized_status_command(&exact_next_action)
+        .expect("recommended_public_command_argv should be the effective public command");
     assert_eq!(effective, command);
     assert!(
         std::panic::catch_unwind(|| {
@@ -1831,14 +1994,21 @@ fn same_current_reopen_guard_uses_effective_public_action_lanes() {
         "same-current reopen guard must reject next_public_action reopen loops"
     );
 
-    let mut blocker_status =
+    let mut display_only_blocker =
         minimal_liveness_status("execution_reentry_required", Vec::new(), None);
-    blocker_status.blockers = vec![LivenessBlocker {
+    display_only_blocker.blockers = vec![LivenessBlocker {
         category: String::from("stale"),
         next_public_action: Some(command.clone()),
     }];
-    let effective = materialized_status_command(&blocker_status)
-        .expect("blocker action should be the effective public command");
+    assert!(
+        materialized_status_command(&display_only_blocker).is_none(),
+        "display-only blocker action must not become an executable public command"
+    );
+
+    let mut exact_blocker = minimal_liveness_status("execution_reentry_required", Vec::new(), None);
+    exact_blocker.recommended_public_command_argv = Some(argv);
+    let effective = materialized_status_command(&exact_blocker)
+        .expect("recommended_public_command_argv should be the effective blocker command");
     assert_eq!(effective, command);
     assert!(
         std::panic::catch_unwind(|| {
@@ -2310,6 +2480,11 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                         public_command.is_none(),
                         "waiting states must not expose a public command: {status:?}"
                     );
+                    assert!(
+                        status_missing_public_inputs(&status)
+                            || display_status_command(&status).is_none(),
+                        "waiting states with display-only commands must expose typed required_inputs: {status:?}"
+                    );
                     continue;
                 }
 
@@ -2344,6 +2519,14 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                         !public_output.contains(" reopen ")
                             && !contains_hidden_command_token(&public_output),
                         "current/stale overlap diagnostic must not expose reopen or hidden helper lanes: {status:?}"
+                    );
+                    continue;
+                }
+
+                if status_missing_public_inputs(&status) {
+                    assert!(
+                        public_command.is_none(),
+                        "{label} missing-input states must not expose executable argv: {status:?}"
                     );
                     continue;
                 }

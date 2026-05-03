@@ -97,6 +97,7 @@ fn merge_gate_result_impl(target: &mut GateState, incoming: GateResult, merge_fa
         current_branch_closure_id: _,
         finish_review_gate_pass_branch_closure_id: _,
         recommended_command: _,
+        required_inputs,
         rederive_via_workflow_operator: _,
     } = incoming;
 
@@ -130,6 +131,11 @@ fn merge_gate_result_impl(target: &mut GateState, incoming: GateResult, merge_fa
             .any(|existing| existing.code == diagnostic.code)
         {
             target.diagnostics.push(diagnostic);
+        }
+    }
+    for required_input in required_inputs {
+        if !target.required_inputs.contains(&required_input) {
+            target.required_inputs.push(required_input);
         }
     }
 }

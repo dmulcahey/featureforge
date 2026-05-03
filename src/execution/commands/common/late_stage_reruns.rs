@@ -48,7 +48,7 @@ pub(in crate::execution::commands) fn equivalent_current_release_readiness_rerun
     context: &ExecutionContext,
     current_branch_closure: &CurrentBranchClosureBinding,
     stage_path: &str,
-    delegated_primitive: &str,
+    operation: &str,
     result: &str,
     summary_file: &Path,
 ) -> Result<Option<AdvanceLateStageOutput>, JsonFailure> {
@@ -71,13 +71,15 @@ pub(in crate::execution::commands) fn equivalent_current_release_readiness_rerun
     Ok(Some(AdvanceLateStageOutput {
         action: String::from("already_current"),
         stage_path: stage_path.to_owned(),
-        delegated_primitive: delegated_primitive.to_owned(),
+        intent: String::from("advance_late_stage"),
+        operation: operation.to_owned(),
         branch_closure_id: Some(current_branch_closure.branch_closure_id.clone()),
         dispatch_id: None,
         result: result.to_owned(),
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         required_follow_up: (result == "blocked").then(|| String::from("resolve_release_blocker")),
         trace_summary: String::from(
@@ -127,13 +129,15 @@ pub(in crate::execution::commands) fn equivalent_current_final_review_rerun(
     Ok(Some(AdvanceLateStageOutput {
         action: String::from("already_current"),
         stage_path: params.stage_path.to_owned(),
-        delegated_primitive: params.delegated_primitive.to_owned(),
+        intent: String::from("advance_late_stage"),
+        operation: params.operation.to_owned(),
         branch_closure_id: Some(current_branch_closure.branch_closure_id.clone()),
         dispatch_id: Some(params.dispatch_id.to_owned()),
         result: params.result.to_owned(),
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         required_follow_up: params.required_follow_up,
         trace_summary: String::from(
@@ -196,6 +200,7 @@ pub(in crate::execution::commands) fn equivalent_current_browser_qa_rerun(
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         required_follow_up,
         trace_summary: String::from(

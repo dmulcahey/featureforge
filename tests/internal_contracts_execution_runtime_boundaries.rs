@@ -241,6 +241,45 @@ Task 1 -> Task 2 -> Task 3 -> Task 4 -> Task 5 -> Task 6
 - [ ] **Step 1: Execute task 6 baseline step**
 "#;
 
+fn assert_task_closure_required_inputs(surface: &Value, task: u32) {
+    assert!(surface["recommended_command"].is_null(), "{surface}");
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "{surface}"
+    );
+    let task_target = surface["recording_context"]["task_number"]
+        .as_u64()
+        .or_else(|| surface["blocking_task"].as_u64());
+    assert_eq!(task_target, Some(u64::from(task)), "{surface}");
+    assert_eq!(
+        surface["required_inputs"],
+        json!([
+            {
+                "kind": "enum",
+                "name": "review_result",
+                "values": ["pass", "fail"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "review_summary_file"
+            },
+            {
+                "kind": "enum",
+                "name": "verification_result",
+                "values": ["pass", "fail", "not-run"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "verification_summary_file",
+                "required_when": "verification_result!=not-run"
+            }
+        ]),
+        "{surface}"
+    );
+}
+
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     let mut command_args = vec!["plan", "execution"];
     command_args.extend_from_slice(args);
@@ -261,6 +300,52 @@ fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &s
     );
     serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
+}
+
+fn record_task_closure_with_fixture_inputs(
+    repo: &Path,
+    state: &Path,
+    task: u32,
+    context: &str,
+) -> Value {
+    let review_summary_path = repo.join(format!("boundary-task-{task}-review-summary.md"));
+    let verification_summary_path =
+        repo.join(format!("boundary-task-{task}-verification-summary.md"));
+    let task_arg = task.to_string();
+    fs::write(
+        &review_summary_path,
+        format!("Review summary supplied as concrete input for {context}.\n"),
+    )
+    .expect("task closure review summary fixture should be writable");
+    fs::write(
+        &verification_summary_path,
+        format!("Verification summary supplied as concrete input for {context}.\n"),
+    )
+    .expect("task closure verification summary fixture should be writable");
+    run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "close-current-task",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            &task_arg,
+            "--review-result",
+            "pass",
+            "--review-summary-file",
+            review_summary_path
+                .to_str()
+                .expect("review summary path should stay utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary_path
+                .to_str()
+                .expect("verification summary path should stay utf-8"),
+        ],
+        context,
+    )
 }
 
 fn materialize_state_dir_projections(
@@ -371,65 +456,16 @@ fn run_recommended_plan_execution_command(
         command_parts[2], "execution",
         "{context} recommended command must route through `plan execution`, got {recommended_command}"
     );
-    let command_args = if command_parts
-        .get(3)
-        .is_some_and(|command| *command == "close-current-task")
-        && (recommended_command.contains("pass|fail") || recommended_command.contains("<path>"))
-    {
-        let plan = command_parts
-            .windows(2)
-            .find(|window| window[0] == "--plan")
-            .map(|window| window[1])
-            .unwrap_or(PLAN_REL);
-        let task = command_parts
-            .windows(2)
-            .find(|window| window[0] == "--task")
-            .map(|window| window[1])
-            .unwrap_or("1");
-        let summary_path = repo.join("boundary-close-current-task-review-summary.md");
-        let verification_summary_path =
-            repo.join("boundary-close-current-task-verification-summary.md");
-        fs::write(
-            &summary_path,
-            format!("Close-current-task command generated from shared template for {context}.\n"),
-        )
-        .expect("close-current-task template follow-up should write deterministic review summary");
-        fs::write(
-            &verification_summary_path,
-            format!("Verification summary generated from shared template for {context}.\n"),
-        )
-        .expect(
-            "close-current-task template follow-up should write deterministic verification summary",
-        );
-        vec![
-            String::from("plan"),
-            String::from("execution"),
-            String::from("close-current-task"),
-            String::from("--plan"),
-            plan.to_owned(),
-            String::from("--task"),
-            task.to_owned(),
-            String::from("--review-result"),
-            String::from("pass"),
-            String::from("--review-summary-file"),
-            summary_path
-                .to_str()
-                .expect("summary path should stay utf-8")
-                .to_owned(),
-            String::from("--verification-result"),
-            String::from("pass"),
-            String::from("--verification-summary-file"),
-            verification_summary_path
-                .to_str()
-                .expect("verification summary path should stay utf-8")
-                .to_owned(),
-        ]
-    } else {
-        command_parts[1..]
+    assert!(
+        command_parts.iter().all(|part| !["<", ">", "|", "[", "]"]
             .iter()
-            .map(|part| (*part).to_owned())
-            .collect::<Vec<_>>()
-    };
+            .any(|token| part.contains(token))),
+        "{context} recommended command must be executable as emitted, got {recommended_command}"
+    );
+    let command_args = command_parts[1..]
+        .iter()
+        .map(|part| (*part).to_owned())
+        .collect::<Vec<_>>();
     let command_args_refs = command_args.iter().map(String::as_str).collect::<Vec<_>>();
     run_featureforge_json(repo, state, &command_args_refs, real_cli, context)
 }
@@ -1208,19 +1244,12 @@ fn internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefe
         Value::from("task_closure_recording_ready"),
         "FS-15 bootstrap task 1 repair-review-state should surface the public closure-recording repair bridge"
     );
-    let repair_task1_command = repair_task1["recommended_command"]
-        .as_str()
-        .expect("FS-15 bootstrap task 1 repair-review-state should expose a follow-up command");
-    assert!(
-        repair_task1_command.contains("close-current-task"),
-        "FS-15 bootstrap task 1 repair-review-state should route through close-current-task, got {repair_task1_command}"
-    );
-    let close_task1 = run_recommended_plan_execution_command(
+    assert_task_closure_required_inputs(&repair_task1, 1);
+    let close_task1 = record_task_closure_with_fixture_inputs(
         repo,
         state,
-        repair_task1_command,
-        true,
-        "FS-15 bootstrap task 1 repair-review-state follow-up",
+        1,
+        "FS-15 bootstrap task 1 concrete task-closure follow-up",
     );
     assert_eq!(
         close_task1["action"],
@@ -1355,50 +1384,51 @@ fn internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefe
         Value::from(2_u64),
         "FS-15 should always target the earliest unresolved stale boundary (Task 2)"
     );
-    let recommended_command = operator_real["recommended_command"]
-        .as_str()
-        .expect("FS-15 compiled-cli operator should expose a routed command");
-    assert!(
-        recommended_command.contains("--task 2"),
-        "FS-15 compiled-cli operator should route to Task 2 while it is the earliest stale boundary, got {recommended_command}",
-    );
-    assert!(
-        !recommended_command.contains("--task 6"),
-        "FS-15 compiled-cli operator must not route to Task 6 while Task 2 is stale, got {recommended_command}",
-    );
-    if operator_real["execution_command_context"]["command_kind"].as_str() == Some("reopen") {
+    if let Some(recommended_command) = operator_real["recommended_command"].as_str() {
+        assert!(
+            recommended_command.contains("--task 2"),
+            "FS-15 compiled-cli operator should route to Task 2 while it is the earliest stale boundary, got {recommended_command}",
+        );
+        assert!(
+            !recommended_command.contains("--task 6"),
+            "FS-15 compiled-cli operator must not route to Task 6 while Task 2 is stale, got {recommended_command}",
+        );
         assert_eq!(
             operator_real["execution_command_context"]["task_number"],
             Value::from(2_u64),
-            "FS-15 reopen command context should target Task 2"
+            "FS-15 executable command context should target Task 2"
         );
-        assert_eq!(
-            operator_real["execution_command_context"]["step_id"],
-            Value::from(1_u64),
-            "FS-15 reopen command context should target Step 1"
+        if operator_real["execution_command_context"]["command_kind"].as_str() == Some("reopen") {
+            assert_eq!(
+                operator_real["execution_command_context"]["step_id"],
+                Value::from(1_u64),
+                "FS-15 reopen command context should target Step 1"
+            );
+            assert!(
+                recommended_command.contains("--step 1"),
+                "FS-15 reopen routing should keep Step 1 targeted, got {recommended_command}"
+            );
+        }
+        let operator_follow_up = run_recommended_plan_execution_command(
+            repo,
+            state,
+            recommended_command,
+            true,
+            "FS-15 compiled-cli operator recommended command follow-up parity",
         );
-        assert!(
-            recommended_command.contains("--step 1"),
-            "FS-15 reopen routing should keep Step 1 targeted, got {recommended_command}"
+        assert_follow_up_blocker_parity_with_operator(
+            &operator_real,
+            &operator_follow_up,
+            "FS-15 command-follow parity",
         );
     } else {
-        assert!(
-            recommended_command.contains("close-current-task"),
-            "FS-15 non-reopen route should stay in closure-recording lane for Task 2, got {recommended_command}"
+        assert_eq!(
+            operator_real["execution_command_context"]["command_kind"],
+            Value::from("close_current_task"),
+            "FS-15 missing-input route should stay in closure-recording lane for Task 2"
         );
+        assert_task_closure_required_inputs(&operator_real, 2);
     }
-    let operator_follow_up = run_recommended_plan_execution_command(
-        repo,
-        state,
-        recommended_command,
-        true,
-        "FS-15 compiled-cli operator recommended command follow-up parity",
-    );
-    assert_follow_up_blocker_parity_with_operator(
-        &operator_real,
-        &operator_follow_up,
-        "FS-15 command-follow parity",
-    );
 }
 
 #[test]

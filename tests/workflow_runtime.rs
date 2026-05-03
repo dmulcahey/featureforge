@@ -78,6 +78,107 @@ const FULL_CONTRACT_READY_SPEC_FIXTURE_REL: &str =
 const FULL_CONTRACT_READY_PLAN_FIXTURE_REL: &str =
     "plans/2026-03-22-runtime-integration-hardening.md";
 
+fn assert_task_closure_required_inputs(surface: &Value, task: u32) {
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "task-closure routes require external review/verification inputs and must not emit executable argv: {surface}"
+    );
+    assert!(
+        surface["recommended_command"].is_null(),
+        "task-closure routes should expose typed inputs instead of a placeholder command: {surface}"
+    );
+    let task_target = surface["recording_context"]["task_number"]
+        .as_u64()
+        .or_else(|| surface["blocking_task"].as_u64());
+    assert_eq!(
+        task_target,
+        Some(u64::from(task)),
+        "task-closure routes should keep the task in structured route metadata: {surface}"
+    );
+    assert_eq!(
+        surface["required_inputs"],
+        json!([
+            {
+                "kind": "enum",
+                "name": "review_result",
+                "values": ["pass", "fail"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "review_summary_file"
+            },
+            {
+                "kind": "enum",
+                "name": "verification_result",
+                "values": ["pass", "fail", "not-run"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "verification_summary_file",
+                "required_when": "verification_result!=not-run"
+            }
+        ]),
+        "task-closure routes should expose typed missing inputs: {surface}"
+    );
+}
+
+fn record_task_closure_with_fixture_inputs(
+    repo: &Path,
+    state: &Path,
+    plan_rel: &str,
+    task: u32,
+    label: &str,
+) -> Value {
+    let safe_label: String = label
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let review_summary_path = repo.join(format!("task-{task}-{safe_label}-review-summary.md"));
+    let verification_summary_path =
+        repo.join(format!("task-{task}-{safe_label}-verification-summary.md"));
+    write_file(
+        &review_summary_path,
+        &format!("Task {task} fixture independent review passed for {label}.\n"),
+    );
+    write_file(
+        &verification_summary_path,
+        &format!("Task {task} fixture verification passed for {label}.\n"),
+    );
+    let task_arg = task.to_string();
+    run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "close-current-task",
+            "--plan",
+            plan_rel,
+            "--task",
+            task_arg.as_str(),
+            "--review-result",
+            "pass",
+            "--review-summary-file",
+            review_summary_path
+                .to_str()
+                .expect("review summary path should be utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary_path
+                .to_str()
+                .expect("verification summary path should be utf-8"),
+        ],
+        label,
+    )
+}
+
 fn workflow_doctor_json(
     runtime: &featureforge::execution::state::ExecutionRuntime,
     context: &str,
@@ -2767,6 +2868,25 @@ fn workflow_plan_fidelity_record_command_is_not_public_cli() {
     let repo = repo_dir.path();
     let state = state_dir.path();
 
+    let help_output = run_featureforge_real_cli(
+        repo,
+        state,
+        &["workflow", "--help"],
+        "workflow help should describe only public workflow commands",
+    );
+    assert!(
+        help_output.status.success(),
+        "workflow help should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        help_output.status,
+        String::from_utf8_lossy(&help_output.stdout),
+        String::from_utf8_lossy(&help_output.stderr)
+    );
+    let help_stdout = String::from_utf8_lossy(&help_output.stdout);
+    assert!(
+        !help_stdout.contains("plan-fidelity"),
+        "workflow help must not expose removed plan-fidelity receipt command:\n{help_stdout}"
+    );
+
     let output = run_featureforge_real_cli(
         repo,
         state,
@@ -2788,6 +2908,15 @@ fn workflow_plan_fidelity_record_command_is_not_public_cli() {
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unrecognized subcommand 'plan-fidelity'"),
+        "removed command should fail at the CLI parse boundary, got stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("example-plan-fidelity.md"),
+        "removed command should not reach artifact-path validation, got stderr:\n{stderr}"
     );
 }
 
@@ -5809,17 +5938,12 @@ fn setup_runtime_fs11_fs15_next_action_fixture(repo: &Path, state: &Path, plan_r
         ],
         "FS-11/FS-15 task 1 repair bridge",
     );
-    let repair_task_1_command = repair_task_1["recommended_command"]
-        .as_str()
-        .expect("FS-11/FS-15 task 1 repair bridge should expose a public follow-up command");
-    assert!(
-        repair_task_1_command.contains("close-current-task"),
-        "FS-11/FS-15 task 1 repair bridge should route through close-current-task, got {repair_task_1_command}"
-    );
-    let close_task_1 = run_recommended_plan_execution_command(
+    assert_task_closure_required_inputs(&repair_task_1, 1);
+    let close_task_1 = record_task_closure_with_fixture_inputs(
         repo,
         state,
-        repair_task_1_command,
+        plan_rel,
+        1,
         "FS-11/FS-15 task 1 repair follow-up",
     );
     assert!(

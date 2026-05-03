@@ -21,7 +21,7 @@ pub(in crate::execution::commands) fn rewrite_branch_final_review_artifacts(
         strategy_checkpoint_fingerprint,
     );
     Err(rebuild_downstream_truth_stale(
-        "append_only_repair_required: rebuild-evidence may not rewrite historical final-review proof in place",
+        "append_only_repair_required: projection rebuild may not rewrite historical final-review proof in place",
     ))
 }
 
@@ -32,7 +32,7 @@ pub(in crate::execution::commands) fn rewrite_branch_head_bound_artifact(
 ) -> Result<(), JsonFailure> {
     let _ = (path, current_head);
     Err(rebuild_downstream_truth_stale(
-        "append_only_repair_required: rebuild-evidence may not rewrite historical head-bound artifacts in place",
+        "append_only_repair_required: projection rebuild may not rewrite historical head-bound artifacts in place",
     ))
 }
 
@@ -44,7 +44,7 @@ pub(in crate::execution::commands) fn rewrite_branch_qa_artifact(
 ) -> Result<(), JsonFailure> {
     let _ = (qa_path, current_head, test_plan_path);
     Err(rebuild_downstream_truth_stale(
-        "append_only_repair_required: rebuild-evidence may not rewrite historical QA artifacts in place",
+        "append_only_repair_required: projection rebuild may not rewrite historical QA artifacts in place",
     ))
 }
 

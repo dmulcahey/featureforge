@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::query::{
     ExecutionRoutingState,
@@ -5,6 +7,8 @@ use crate::execution::query::{
     required_follow_up_from_routing as shared_required_follow_up_from_routing,
 };
 use crate::execution::state::PlanExecutionStatus;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicMutationKind {
@@ -45,9 +49,30 @@ pub enum PublicCommandKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicAdvanceLateStageMode {
     Basic,
-    ReleaseReadinessResultTemplate,
-    QaResultTemplate,
-    FinalReviewResultTemplate,
+    ReleaseReadiness,
+    Qa,
+    FinalReview,
+}
+
+pub(crate) fn public_advance_late_stage_mode_for_phase_detail(
+    phase_detail: &str,
+) -> Option<PublicAdvanceLateStageMode> {
+    match phase_detail {
+        crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS => {
+            Some(PublicAdvanceLateStageMode::Basic)
+        }
+        crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
+        | crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => {
+            Some(PublicAdvanceLateStageMode::ReleaseReadiness)
+        }
+        crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY => {
+            Some(PublicAdvanceLateStageMode::FinalReview)
+        }
+        crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED => {
+            Some(PublicAdvanceLateStageMode::Qa)
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +128,7 @@ pub enum PublicCommand {
     CloseCurrentTask {
         plan: String,
         task: Option<u32>,
-        include_result_template: bool,
+        result_inputs_required: bool,
     },
     AdvanceLateStage {
         plan: String,
@@ -113,6 +138,35 @@ pub enum PublicCommand {
         plan: String,
         scope: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicCommandInvocation {
+    pub argv: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicCommandInputKind {
+    Text,
+    Enum,
+    Path,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PublicCommandInputRequirement {
+    pub name: String,
+    pub kind: PublicCommandInputKind,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub must_exist: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_when: Option<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -367,7 +421,7 @@ impl PublicCommand {
             ] => Some(Self::CloseCurrentTask {
                 plan: (*plan).to_owned(),
                 task: None,
-                include_result_template: false,
+                result_inputs_required: false,
             }),
             [
                 "featureforge",
@@ -384,7 +438,7 @@ impl PublicCommand {
                 Some(Self::CloseCurrentTask {
                     plan: (*plan).to_owned(),
                     task: Some(parse_u32_token(task)?),
-                    include_result_template: !rest.is_empty(),
+                    result_inputs_required: !rest.is_empty(),
                 })
             }
             [
@@ -470,7 +524,7 @@ impl PublicCommand {
                 source,
                 fingerprint,
             } => format!(
-                "featureforge plan execution complete --plan {plan} --task {task} --step {step}{} --claim <claim> --manual-verify-summary <summary>{}",
+                "featureforge plan execution complete --plan {plan} --task {task} --step {step}{}{}; requires claim and verification inputs",
                 optional_flag(" --source ", source.as_deref()),
                 optional_flag(" --expect-execution-fingerprint ", fingerprint.as_deref())
             ),
@@ -481,54 +535,58 @@ impl PublicCommand {
                 source,
                 reason,
                 fingerprint,
-            } => format!(
-                "featureforge plan execution reopen --plan {plan} --task {task} --step {step}{}{}{}",
-                optional_flag(" --source ", source.as_deref()),
-                optional_flag(" --reason ", reason.as_deref()),
-                optional_flag(" --expect-execution-fingerprint ", fingerprint.as_deref())
-            ),
+            } => {
+                let reason_suffix = concrete_optional_value(reason.as_deref())
+                    .map(|reason| format!(" --reason {reason}"))
+                    .unwrap_or_else(|| String::from("; requires reason input"));
+                format!(
+                    "featureforge plan execution reopen --plan {plan} --task {task} --step {step}{}{reason_suffix}{}",
+                    optional_flag(" --source ", source.as_deref()),
+                    optional_flag(" --expect-execution-fingerprint ", fingerprint.as_deref())
+                )
+            }
             Self::TransferRepairStep {
                 plan,
                 task,
                 step,
                 fingerprint,
             } => format!(
-                "featureforge plan execution transfer --plan {plan} --repair-task {task} --repair-step {step}{}",
+                "featureforge plan execution transfer --plan {plan} --repair-task {task} --repair-step {step}{}; requires source and reason inputs",
                 optional_flag(" --expect-execution-fingerprint ", fingerprint.as_deref())
             ),
             Self::TransferHandoff { plan, scope } => {
                 format!(
-                    "featureforge plan execution transfer --plan {plan} --scope {scope} --to <owner> --reason <reason>"
+                    "featureforge plan execution transfer --plan {plan} --scope {scope}; requires owner and reason inputs"
                 )
             }
             Self::CloseCurrentTask {
                 plan,
                 task,
-                include_result_template,
+                result_inputs_required,
             } => {
                 let task_arg =
                     optional_flag(" --task ", task.map(|task| task.to_string()).as_deref());
-                let result_template = if *include_result_template {
-                    " --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
+                let result_requirement = if *result_inputs_required {
+                    "; requires review and verification inputs"
                 } else {
                     ""
                 };
                 format!(
-                    "featureforge plan execution close-current-task --plan {plan}{task_arg}{result_template}"
+                    "featureforge plan execution close-current-task --plan {plan}{task_arg}{result_requirement}"
                 )
             }
             Self::AdvanceLateStage { plan, mode } => match mode {
                 PublicAdvanceLateStageMode::Basic => {
                     format!("featureforge plan execution advance-late-stage --plan {plan}")
                 }
-                PublicAdvanceLateStageMode::ReleaseReadinessResultTemplate => format!(
-                    "featureforge plan execution advance-late-stage --plan {plan} --result ready|blocked --summary-file <path>"
+                PublicAdvanceLateStageMode::ReleaseReadiness => format!(
+                    "featureforge plan execution advance-late-stage --plan {plan}; requires release-readiness result and summary file inputs"
                 ),
-                PublicAdvanceLateStageMode::QaResultTemplate => format!(
-                    "featureforge plan execution advance-late-stage --plan {plan} --result pass|fail --summary-file <path>"
+                PublicAdvanceLateStageMode::Qa => format!(
+                    "featureforge plan execution advance-late-stage --plan {plan}; requires QA result and summary file inputs"
                 ),
-                PublicAdvanceLateStageMode::FinalReviewResultTemplate => format!(
-                    "featureforge plan execution advance-late-stage --plan {plan} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>"
+                PublicAdvanceLateStageMode::FinalReview => format!(
+                    "featureforge plan execution advance-late-stage --plan {plan}; requires final-review reviewer, result, and summary file inputs"
                 ),
             },
             Self::MaterializeProjectionsStateDirOnly { plan, scope } => {
@@ -540,7 +598,10 @@ impl PublicCommand {
         }
     }
 
-    pub fn to_argv(&self) -> Vec<String> {
+    pub fn to_invocation(&self) -> Option<PublicCommandInvocation> {
+        if !self.required_inputs().is_empty() {
+            return None;
+        }
         let mut argv = vec![String::from("featureforge")];
         match self {
             Self::WorkflowOperator {
@@ -588,10 +649,6 @@ impl PublicCommand {
             } => {
                 push_execution_task_step_args(&mut argv, "complete", plan, *task, *step);
                 push_optional_flag(&mut argv, "--source", source.as_deref());
-                push_args(
-                    &mut argv,
-                    ["--claim", "<claim>", "--manual-verify-summary", "<summary>"],
-                );
                 push_optional_flag(
                     &mut argv,
                     "--expect-execution-fingerprint",
@@ -635,12 +692,11 @@ impl PublicCommand {
                 push_args(&mut argv, ["plan", "execution", "transfer", "--plan"]);
                 argv.push(plan.clone());
                 push_arg_value(&mut argv, "--scope", scope.clone());
-                push_args(&mut argv, ["--to", "<owner>", "--reason", "<reason>"]);
             }
             Self::CloseCurrentTask {
                 plan,
                 task,
-                include_result_template,
+                result_inputs_required: _,
             } => {
                 push_args(
                     &mut argv,
@@ -649,21 +705,6 @@ impl PublicCommand {
                 argv.push(plan.clone());
                 if let Some(task) = task {
                     push_arg_value(&mut argv, "--task", task.to_string());
-                }
-                if *include_result_template {
-                    push_args(
-                        &mut argv,
-                        [
-                            "--review-result",
-                            "pass|fail",
-                            "--review-summary-file",
-                            "<path>",
-                            "--verification-result",
-                            "pass|fail|not-run",
-                            "--verification-summary-file",
-                            "<path>",
-                        ],
-                    );
                 }
             }
             Self::AdvanceLateStage { plan, mode } => {
@@ -674,33 +715,9 @@ impl PublicCommand {
                 argv.push(plan.clone());
                 match mode {
                     PublicAdvanceLateStageMode::Basic => {}
-                    PublicAdvanceLateStageMode::ReleaseReadinessResultTemplate => {
-                        push_args(
-                            &mut argv,
-                            ["--result", "ready|blocked", "--summary-file", "<path>"],
-                        );
-                    }
-                    PublicAdvanceLateStageMode::QaResultTemplate => {
-                        push_args(
-                            &mut argv,
-                            ["--result", "pass|fail", "--summary-file", "<path>"],
-                        );
-                    }
-                    PublicAdvanceLateStageMode::FinalReviewResultTemplate => {
-                        push_args(
-                            &mut argv,
-                            [
-                                "--reviewer-source",
-                                "<source>",
-                                "--reviewer-id",
-                                "<id>",
-                                "--result",
-                                "pass|fail",
-                                "--summary-file",
-                                "<path>",
-                            ],
-                        );
-                    }
+                    PublicAdvanceLateStageMode::ReleaseReadiness
+                    | PublicAdvanceLateStageMode::Qa
+                    | PublicAdvanceLateStageMode::FinalReview => {}
                 }
             }
             Self::MaterializeProjectionsStateDirOnly { plan, scope } => {
@@ -712,7 +729,126 @@ impl PublicCommand {
                 push_optional_flag(&mut argv, "--scope", scope.as_deref());
             }
         }
-        argv
+        if public_argv_has_template_tokens(&argv) {
+            return None;
+        }
+        Some(PublicCommandInvocation { argv })
+    }
+
+    pub fn to_argv(&self) -> Vec<String> {
+        self.to_invocation()
+            .expect("public command argv requested for a command with missing inputs")
+            .argv
+    }
+
+    pub fn required_inputs(&self) -> Vec<PublicCommandInputRequirement> {
+        match self {
+            Self::Begin { fingerprint, .. }
+                if concrete_optional_value(fingerprint.as_deref()).is_none() =>
+            {
+                vec![input_text("expect_execution_fingerprint")]
+            }
+            Self::Complete {
+                source,
+                fingerprint,
+                ..
+            } => {
+                let mut inputs = Vec::new();
+                if concrete_optional_value(source.as_deref()).is_none() {
+                    inputs.push(input_execution_source("source"));
+                }
+                inputs.push(input_text("claim"));
+                inputs.push(input_enum(
+                    "verification_mode",
+                    ["manual_summary", "command_result"],
+                ));
+                inputs.push(input_text_when(
+                    "manual_verify_summary",
+                    "verification_mode=manual_summary",
+                ));
+                inputs.push(input_text_when(
+                    "verify_command",
+                    "verification_mode=command_result",
+                ));
+                inputs.push(input_text_when(
+                    "verify_result",
+                    "verification_mode=command_result",
+                ));
+                if concrete_optional_value(fingerprint.as_deref()).is_none() {
+                    inputs.push(input_text("expect_execution_fingerprint"));
+                }
+                inputs
+            }
+            Self::Reopen {
+                source,
+                reason,
+                fingerprint,
+                ..
+            } => {
+                let mut inputs = Vec::new();
+                if concrete_optional_value(source.as_deref()).is_none() {
+                    inputs.push(input_execution_source("source"));
+                }
+                if concrete_optional_value(reason.as_deref()).is_none() {
+                    inputs.push(input_text("reason"));
+                }
+                if concrete_optional_value(fingerprint.as_deref()).is_none() {
+                    inputs.push(input_text("expect_execution_fingerprint"));
+                }
+                inputs
+            }
+            Self::TransferRepairStep { fingerprint, .. } => {
+                let mut inputs = vec![input_execution_source("source"), input_text("reason")];
+                if concrete_optional_value(fingerprint.as_deref()).is_none() {
+                    inputs.push(input_text("expect_execution_fingerprint"));
+                }
+                inputs
+            }
+            Self::TransferHandoff { scope, .. } => {
+                let mut inputs = Vec::new();
+                if concrete_optional_value(Some(scope)).is_none() {
+                    inputs.push(input_enum("scope", ["task", "branch"]));
+                }
+                inputs.push(input_text("owner"));
+                inputs.push(input_text("reason"));
+                inputs
+            }
+            Self::CloseCurrentTask { task: None, .. } => vec![input_text("task")],
+            Self::CloseCurrentTask {
+                result_inputs_required: true,
+                ..
+            } => close_current_task_result_inputs(),
+            Self::AdvanceLateStage { mode, .. } => match mode {
+                PublicAdvanceLateStageMode::Basic => Vec::new(),
+                PublicAdvanceLateStageMode::ReleaseReadiness => vec![
+                    input_enum("result", ["ready", "blocked"]),
+                    input_existing_path("summary_file"),
+                ],
+                PublicAdvanceLateStageMode::Qa => vec![
+                    input_enum("result", ["pass", "fail"]),
+                    input_existing_path("summary_file"),
+                ],
+                PublicAdvanceLateStageMode::FinalReview => vec![
+                    input_enum(
+                        "reviewer_source",
+                        [
+                            "fresh-context-subagent",
+                            "cross-model",
+                            "human-independent-reviewer",
+                        ],
+                    ),
+                    input_text("reviewer_id"),
+                    input_enum("result", ["pass", "fail"]),
+                    input_existing_path("summary_file"),
+                ],
+            },
+            Self::WorkflowOperator { .. }
+            | Self::Status { .. }
+            | Self::RepairReviewState { .. }
+            | Self::Begin { .. }
+            | Self::CloseCurrentTask { .. }
+            | Self::MaterializeProjectionsStateDirOnly { .. } => Vec::new(),
+        }
     }
 
     pub fn to_mutation_request(&self) -> Option<PublicMutationRequest> {
@@ -788,7 +924,7 @@ impl PublicCommand {
                 step: None,
                 expect_execution_fingerprint: None,
                 transfer_mode: Some(PublicTransferMode::WorkflowHandoff),
-                transfer_scope: Some(scope.clone()),
+                transfer_scope: concrete_optional_value(Some(scope)).map(str::to_owned),
                 command_name: "transfer",
             }),
             Self::CloseCurrentTask { task, .. } => Some(PublicMutationRequest {
@@ -819,7 +955,154 @@ impl PublicCommand {
 pub(crate) fn recommended_public_command_argv(
     command: Option<&PublicCommand>,
 ) -> Option<Vec<String>> {
-    command.map(PublicCommand::to_argv)
+    command
+        .and_then(PublicCommand::to_invocation)
+        .map(|invocation| invocation.argv)
+}
+
+pub(crate) fn recommended_public_command_display(
+    command: Option<&PublicCommand>,
+) -> Option<String> {
+    command.and_then(|command| {
+        command
+            .to_invocation()
+            .map(|_| command.to_display_command())
+    })
+}
+
+pub(crate) fn required_inputs_for_public_command(
+    command: Option<&PublicCommand>,
+) -> Vec<PublicCommandInputRequirement> {
+    command
+        .map(PublicCommand::required_inputs)
+        .unwrap_or_default()
+}
+
+pub(crate) fn public_command_recommendation_surfaces(
+    command: Option<&PublicCommand>,
+) -> (
+    Option<String>,
+    Option<Vec<String>>,
+    Vec<PublicCommandInputRequirement>,
+) {
+    (
+        recommended_public_command_display(command),
+        recommended_public_command_argv(command),
+        required_inputs_for_public_command(command),
+    )
+}
+
+pub(crate) fn public_argv_has_template_tokens(argv: &[String]) -> bool {
+    argv.iter()
+        .any(|part| public_argv_part_is_template_token(part))
+        || argv.windows(3).any(matches_optional_verification_phrase)
+}
+
+fn concrete_optional_value(value: Option<&str>) -> Option<&str> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|value| !public_argv_part_is_template_token(value))
+}
+
+fn public_argv_part_is_template_token(part: &str) -> bool {
+    let trimmed = part.trim();
+    is_known_template_token(trimmed)
+        || trimmed
+            .split_once('=')
+            .is_some_and(|(_, value)| is_known_template_token(value.trim()))
+}
+
+fn is_known_template_token(value: &str) -> bool {
+    matches!(
+        value,
+        "<approved-plan-path>"
+            | "<claim>"
+            | "<summary>"
+            | "<owner>"
+            | "<reason>"
+            | "<path>"
+            | "<source>"
+            | "<id>"
+            | "pass|fail"
+            | "pass|fail|not-run"
+            | "ready|blocked"
+            | "task|branch"
+            | "[when verification ran]"
+    )
+}
+
+fn matches_optional_verification_phrase(window: &[String]) -> bool {
+    matches!(
+        window,
+        [first, second, third]
+            if (first == "[when" || first == "when")
+                && second == "verification"
+                && (third == "ran]" || third == "ran")
+    )
+}
+
+fn input_text(name: &str) -> PublicCommandInputRequirement {
+    PublicCommandInputRequirement {
+        name: name.to_owned(),
+        kind: PublicCommandInputKind::Text,
+        values: Vec::new(),
+        must_exist: false,
+        required_when: None,
+    }
+}
+
+fn input_text_when(name: &str, required_when: &str) -> PublicCommandInputRequirement {
+    PublicCommandInputRequirement {
+        required_when: Some(required_when.to_owned()),
+        ..input_text(name)
+    }
+}
+
+fn input_enum<const N: usize>(name: &str, values: [&str; N]) -> PublicCommandInputRequirement {
+    PublicCommandInputRequirement {
+        name: name.to_owned(),
+        kind: PublicCommandInputKind::Enum,
+        values: values.into_iter().map(str::to_owned).collect(),
+        must_exist: false,
+        required_when: None,
+    }
+}
+
+fn input_execution_source(name: &str) -> PublicCommandInputRequirement {
+    input_enum(
+        name,
+        [
+            "featureforge:executing-plans",
+            "featureforge:subagent-driven-development",
+        ],
+    )
+}
+
+fn input_existing_path(name: &str) -> PublicCommandInputRequirement {
+    PublicCommandInputRequirement {
+        name: name.to_owned(),
+        kind: PublicCommandInputKind::Path,
+        values: Vec::new(),
+        must_exist: true,
+        required_when: None,
+    }
+}
+
+fn input_existing_path_when(name: &str, required_when: &str) -> PublicCommandInputRequirement {
+    PublicCommandInputRequirement {
+        required_when: Some(required_when.to_owned()),
+        ..input_existing_path(name)
+    }
+}
+
+fn close_current_task_result_inputs() -> Vec<PublicCommandInputRequirement> {
+    vec![
+        input_enum("review_result", ["pass", "fail"]),
+        input_existing_path("review_summary_file"),
+        input_enum("verification_result", ["pass", "fail", "not-run"]),
+        input_existing_path_when("verification_summary_file", "verification_result!=not-run"),
+    ]
 }
 
 #[cfg(test)]
@@ -914,12 +1197,6 @@ fn parse_close_current_task_flags(tokens: &[&str]) -> Option<()> {
                 let _ = tokens.get(index + 1)?;
                 index += 2;
             }
-            "[--verification-summary-file" => {
-                if tokens.get(index + 1..index + 5)? != ["<path>", "when", "verification", "ran]"] {
-                    return None;
-                }
-                index += 5;
-            }
             _ => return None,
         }
     }
@@ -929,13 +1206,11 @@ fn parse_close_current_task_flags(tokens: &[&str]) -> Option<()> {
 #[cfg(test)]
 fn advance_late_stage_mode_from_flags(flags: &ParsedFlags) -> PublicAdvanceLateStageMode {
     if flags.reviewer_source || flags.reviewer_id {
-        return PublicAdvanceLateStageMode::FinalReviewResultTemplate;
+        return PublicAdvanceLateStageMode::FinalReview;
     }
     match flags.result.as_deref() {
-        Some("ready" | "blocked" | "ready|blocked") => {
-            PublicAdvanceLateStageMode::ReleaseReadinessResultTemplate
-        }
-        Some("pass" | "fail" | "pass|fail") => PublicAdvanceLateStageMode::QaResultTemplate,
+        Some("ready" | "blocked") => PublicAdvanceLateStageMode::ReleaseReadiness,
+        Some("pass" | "fail") => PublicAdvanceLateStageMode::Qa,
         _ => PublicAdvanceLateStageMode::Basic,
     }
 }
@@ -960,22 +1235,31 @@ impl MutationEligibilityDecision {
     }
 }
 
-const HIDDEN_COMMAND_TOKENS: &[&str] = &[
-    "record-pivot",
-    "record-review-dispatch",
-    "gate-review",
-    "gate-finish",
-    "rebuild-evidence",
-    "plan execution internal",
-    "reconcile-review-state",
-    "plan execution preflight",
-    "plan execution recommend",
-    "workflow recommend",
-    "workflow preflight",
-];
+fn hidden_token(parts: &[&str], separator: &str) -> String {
+    parts.join(separator)
+}
+
+pub(crate) fn hidden_command_tokens() -> &'static [String] {
+    static TOKENS: OnceLock<Vec<String>> = OnceLock::new();
+    TOKENS.get_or_init(|| {
+        vec![
+            hidden_token(&["record", "pivot"], "-"),
+            hidden_token(&["record", "review", "dispatch"], "-"),
+            hidden_token(&["gate", "review"], "-"),
+            hidden_token(&["gate", "finish"], "-"),
+            hidden_token(&["rebuild", "evidence"], "-"),
+            hidden_token(&["plan", "execution", "internal"], " "),
+            hidden_token(&["reconcile", "review", "state"], "-"),
+            hidden_token(&["plan", "execution", "preflight"], " "),
+            hidden_token(&["plan", "execution", "recommend"], " "),
+            hidden_token(&["workflow", "recommend"], " "),
+            hidden_token(&["workflow", "preflight"], " "),
+        ]
+    })
+}
 
 pub(crate) fn command_invokes_hidden_lane(command: &str) -> bool {
-    HIDDEN_COMMAND_TOKENS
+    hidden_command_tokens()
         .iter()
         .any(|token| command.contains(token))
 }
@@ -1017,6 +1301,16 @@ pub fn decide_public_mutation(
             "mutation_runtime_reconcile_required",
             format!(
                 "{} cannot mutate while public runtime status requires reconcile; repair-review-state is the only eligible mutation lane.",
+                request.command_name
+            ),
+        );
+    }
+
+    if status_waits_for_external_review_result(status) {
+        return MutationEligibilityDecision::reject(
+            "mutation_waiting_external_input",
+            format!(
+                "{} cannot mutate while public runtime status is waiting for external input.",
                 request.command_name
             ),
         );
@@ -1118,6 +1412,10 @@ pub fn decide_public_mutation(
     )
 }
 
+fn status_waits_for_external_review_result(status: &PlanExecutionStatus) -> bool {
+    status.external_wait_state.as_deref() == Some("waiting_for_external_review_result")
+}
+
 pub(crate) fn public_execution_mutation_is_authorized(
     status: &PlanExecutionStatus,
     command_kind: &str,
@@ -1183,10 +1481,40 @@ pub(crate) fn require_public_mutation(
     } else {
         status.reason_codes.join(",")
     };
+    let public_repair_targets = if status.public_repair_targets.is_empty() {
+        String::from("none")
+    } else {
+        status
+            .public_repair_targets
+            .iter()
+            .map(|target| {
+                format!(
+                    "{}:{:?}:{:?}:{}",
+                    target.command_kind, target.task, target.step, target.reason_code
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let blocking_records = if status.blocking_records.is_empty() {
+        String::from("none")
+    } else {
+        status
+            .blocking_records
+            .iter()
+            .map(|record| {
+                format!(
+                    "{}:{:?}:{}",
+                    record.record_type, record.required_follow_up, record.review_state_status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     Err(JsonFailure::new(
         failure_class,
         format!(
-            "{} failed closed: requested task {task} step {step} is not the exact public route and no explicit repair target is bound. Next public action: {next_public_command}. reason_code={}; phase_detail={}; state_kind={}; runtime_reconcile_required={}; blocked_runtime_bug={}; route_reason_codes=[{reason_codes}]; detail={}",
+            "{} failed closed: requested task {task} step {step} is not the exact public route and no explicit repair target is bound. Next public action: {next_public_command}. reason_code={}; phase_detail={}; state_kind={}; runtime_reconcile_required={}; blocked_runtime_bug={}; route_reason_codes=[{reason_codes}]; public_repair_targets=[{public_repair_targets}]; blocking_records=[{blocking_records}]; detail={}",
             request.command_name,
             decision.reason_code,
             status.phase_detail,
@@ -1255,7 +1583,7 @@ fn public_mutation_requests_match(
     }
     if request.kind == PublicMutationKind::Transfer {
         return route_request.transfer_mode == request.transfer_mode
-            && route_request.transfer_scope == request.transfer_scope
+            && public_transfer_scope_matches(route_request, request)
             && route_request.task == request.task
             && route_request.step == request.step
             && public_mutation_fingerprint_matches(route_request, request);
@@ -1278,6 +1606,21 @@ fn public_mutation_fingerprint_matches(
             route_fingerprint == request_fingerprint
         }
         (None, Some(_)) => false,
+    }
+}
+
+fn public_transfer_scope_matches(
+    route_request: &PublicMutationRequest,
+    request: &PublicMutationRequest,
+) -> bool {
+    match route_request.transfer_mode {
+        Some(PublicTransferMode::WorkflowHandoff) if route_request.transfer_scope.is_none() => {
+            request
+                .transfer_scope
+                .as_deref()
+                .is_some_and(|scope| matches!(scope, "task" | "branch"))
+        }
+        _ => route_request.transfer_scope == request.transfer_scope,
     }
 }
 
@@ -1441,7 +1784,7 @@ mod tests {
             PublicCommand::CloseCurrentTask {
                 plan: String::from("docs/plan.md"),
                 task: Some(1),
-                include_result_template: true,
+                result_inputs_required: true,
             },
             PublicCommand::AdvanceLateStage {
                 plan: String::from("docs/plan.md"),
@@ -1455,10 +1798,21 @@ mod tests {
 
         for command in commands {
             let display = command.to_display_command();
-            let parsed = PublicCommand::parse_display_command(&display)
-                .unwrap_or_else(|| panic!("typed command should parse from `{display}`"));
-            assert_eq!(parsed, command, "round trip failed for `{display}`");
-            assert!(command_is_legal_public_command(&display));
+            if command.to_invocation().is_some() {
+                let parsed = PublicCommand::parse_display_command(&display)
+                    .unwrap_or_else(|| panic!("typed command should parse from `{display}`"));
+                assert_eq!(parsed, command, "round trip failed for `{display}`");
+                assert!(command_is_legal_public_command(&display));
+            } else {
+                assert!(
+                    PublicCommand::parse_display_command(&display).is_none(),
+                    "missing-input display should not parse as an exact public command: `{display}`"
+                );
+                assert!(
+                    !command_is_legal_public_command(&display),
+                    "missing-input display should not be mutation authority: `{display}`"
+                );
+            }
         }
     }
 
@@ -1477,20 +1831,50 @@ mod tests {
 
     #[test]
     fn hidden_and_debug_commands_are_unrepresentable_as_typed_public_commands() {
-        let commands = [
-            "featureforge plan execution record-review-dispatch --plan docs/plan.md --scope task --task 1",
-            "featureforge plan execution gate-review --plan docs/plan.md",
-            "featureforge plan execution gate-finish --plan docs/plan.md",
-            "featureforge plan execution rebuild-evidence --plan docs/plan.md",
-            "featureforge plan execution preflight --plan docs/plan.md",
-            "featureforge plan execution internal record-branch-closure --plan docs/plan.md",
-            "featureforge plan execution recommend --plan docs/plan.md",
-            "featureforge plan execution reconcile-review-state --plan docs/plan.md",
-            "featureforge workflow preflight --plan docs/plan.md",
-            "featureforge workflow recommend --plan docs/plan.md",
+        let commands = vec![
+            format!(
+                "featureforge plan execution {} --plan docs/plan.md --scope task --task 1",
+                ["record", "review", "dispatch"].join("-")
+            ),
+            format!(
+                "featureforge plan execution {} --plan docs/plan.md",
+                ["gate", "review"].join("-")
+            ),
+            format!(
+                "featureforge plan execution {} --plan docs/plan.md",
+                ["gate", "finish"].join("-")
+            ),
+            format!(
+                "featureforge plan execution {} --plan docs/plan.md",
+                ["rebuild", "evidence"].join("-")
+            ),
+            format!(
+                "featureforge {} --plan docs/plan.md",
+                ["plan", "execution", "preflight"].join(" ")
+            ),
+            format!(
+                "featureforge plan execution internal {} --plan docs/plan.md",
+                ["record", "branch", "closure"].join("-")
+            ),
+            format!(
+                "featureforge {} --plan docs/plan.md",
+                ["plan", "execution", "recommend"].join(" ")
+            ),
+            format!(
+                "featureforge plan execution {} --plan docs/plan.md",
+                ["reconcile", "review", "state"].join("-")
+            ),
+            format!(
+                "featureforge {} --plan docs/plan.md",
+                ["workflow", "preflight"].join(" ")
+            ),
+            format!(
+                "featureforge {} --plan docs/plan.md",
+                ["workflow", "recommend"].join(" ")
+            ),
         ];
 
-        for command in commands {
+        for command in &commands {
             assert!(
                 PublicCommand::parse_display_command(command).is_none(),
                 "hidden/debug command must not parse as typed public command: {command}"
@@ -1520,50 +1904,97 @@ mod tests {
     }
 
     #[test]
-    fn close_current_task_public_template_accepts_documented_optional_summary_hint() {
-        let command = "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]";
+    fn close_current_task_public_command_accepts_concrete_result_flags() {
+        let command = "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --review-result pass --review-summary-file review.md --verification-result pass --verification-summary-file verification.md";
 
         assert!(command_is_legal_public_command(command));
         assert_eq!(
             public_mutation_request_from_command(command)
-                .expect("template should map to public close-current-task mutation")
+                .expect("concrete command should map to public close-current-task mutation")
                 .kind,
             PublicMutationKind::CloseCurrentTask
         );
     }
 
     #[test]
-    fn close_current_task_public_argv_omits_human_optional_hint_text() {
+    fn missing_input_commands_do_not_emit_executable_argv() {
         let command = PublicCommand::CloseCurrentTask {
             plan: String::from("docs/plan.md"),
             task: Some(1),
-            include_result_template: true,
+            result_inputs_required: true,
         };
 
         assert_eq!(
             command.to_display_command(),
-            "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
+            "featureforge plan execution close-current-task --plan docs/plan.md --task 1; requires review and verification inputs"
         );
         assert_eq!(
-            command.to_argv(),
+            recommended_public_command_argv(Some(&command)),
+            None,
+            "commands with unresolved result inputs must not emit executable argv"
+        );
+        assert_eq!(
+            required_inputs_for_public_command(Some(&command))
+                .into_iter()
+                .map(|input| input.name)
+                .collect::<Vec<_>>(),
             vec![
-                "featureforge",
-                "plan",
-                "execution",
-                "close-current-task",
-                "--plan",
-                "docs/plan.md",
-                "--task",
-                "1",
-                "--review-result",
-                "pass|fail",
-                "--review-summary-file",
-                "<path>",
-                "--verification-result",
-                "pass|fail|not-run",
-                "--verification-summary-file",
-                "<path>",
+                "review_result",
+                "review_summary_file",
+                "verification_result",
+                "verification_summary_file"
             ]
         );
+    }
+
+    #[test]
+    fn placeholder_handoff_scope_is_typed_required_input_not_argv() {
+        let command = PublicCommand::TransferHandoff {
+            plan: String::from("docs/plan.md"),
+            scope: String::from("task|branch"),
+        };
+
+        assert_eq!(
+            recommended_public_command_argv(Some(&command)),
+            None,
+            "commands with unresolved handoff scope must not emit executable argv"
+        );
+        let required_inputs = required_inputs_for_public_command(Some(&command));
+        assert_eq!(
+            required_inputs
+                .iter()
+                .map(|input| input.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["scope", "owner", "reason"]
+        );
+        assert_eq!(
+            required_inputs[0]
+                .values
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["task", "branch"],
+            "unresolved handoff scope should expose concrete enum values"
+        );
+    }
+
+    #[test]
+    fn bound_argv_allows_literal_template_punctuation_in_plan_paths() {
+        let plan = "docs/featureforge/plans/[release]|candidate plan.md";
+        let argv = recommended_public_command_argv(Some(&PublicCommand::Begin {
+            plan: plan.to_owned(),
+            task: 1,
+            step: 1,
+            execution_mode: Some(String::from("featureforge:executing-plans")),
+            fingerprint: Some(String::from("fingerprint")),
+        }))
+        .expect("fully bound argv should remain executable despite literal path punctuation");
+
+        assert!(
+            argv.windows(2)
+                .any(|window| window[0] == "--plan" && window[1] == plan),
+            "bound plan path should be preserved as a single executable argv element: {argv:?}"
+        );
+        assert!(!public_argv_has_template_tokens(&argv));
     }
 }

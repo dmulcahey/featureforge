@@ -1914,7 +1914,30 @@ fn status_routes_release_readiness_before_final_review_when_release_state_stales
         ),
         "compiled-CLI release-precedence fixture must stay on the document-release lane, got {phase_detail}: {status}"
     );
-    let expected_command =
-        format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}");
-    assert_eq!(status["recommended_command"], Value::from(expected_command));
+    if phase_detail == "release_readiness_recording_ready" {
+        assert_eq!(status["recommended_command"], Value::Null);
+        assert!(status.get("recommended_public_command_argv").is_none());
+        assert_eq!(
+            status["required_inputs"],
+            json!([
+                {
+                    "kind": "enum",
+                    "name": "result",
+                    "values": ["ready", "blocked"]
+                },
+                {
+                    "kind": "path",
+                    "must_exist": true,
+                    "name": "summary_file"
+                }
+            ])
+        );
+    } else {
+        assert_eq!(
+            status["recommended_command"],
+            Value::from(format!(
+                "featureforge plan execution advance-late-stage --plan {PLAN_REL}"
+            ))
+        );
+    }
 }

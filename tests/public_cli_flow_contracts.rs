@@ -35,6 +35,21 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
     );
 
     let router = read_repo_file("src/execution/router.rs");
+    assert!(
+        router.contains("pub(crate) struct PublicRouteDecision"),
+        "public route decisions should be the single serialized public route contract"
+    );
+    assert!(
+        router.contains("pub(crate) invocation: Option<PublicCommandInvocation>"),
+        "route decisions should own the executable argv surface, not leave status/operator to re-render it"
+    );
+    assert!(
+        router
+            .matches("public_command_recommendation_surfaces(command)")
+            .count()
+            == 1,
+        "router should derive display, argv, and required_inputs only through PublicRouteDecision::command_surfaces"
+    );
     for forbidden in [
         "PublicCommand::parse_display_command",
         "public_mutation_request_from_command",
@@ -76,17 +91,58 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
         "close-current-task follow-up routing should use typed public command authority"
     );
 
+    let workflow_operator = read_repo_file("src/workflow/operator.rs");
+    assert!(
+        workflow_operator.contains("route_decision.recommended_public_command_argv()"),
+        "workflow operator should project executable argv from the route decision contract"
+    );
+    for forbidden in [
+        "recommended_public_command_argv(route_decision.recommended_public_command.as_ref())",
+        "required_inputs_for_public_command(route_decision.recommended_public_command.as_ref())",
+    ] {
+        assert!(
+            !workflow_operator.contains(forbidden),
+            "workflow operator must not rebuild route command surfaces independently via `{forbidden}`"
+        );
+    }
+
     let read_model_route_projection =
         read_repo_file("src/execution/read_model/public_route_projection.rs");
-    let route_target_start = read_model_route_projection
-        .find("fn route_exposes_repair_review_state_target")
-        .expect("read model public route projection module should expose repair target projection");
-    let route_target_end = read_model_route_projection[route_target_start..]
-        .find("\nfn should_preserve_local_preflight_route")
+    assert!(
+        read_model_route_projection.contains("route_decision.recommended_public_command_argv()"),
+        "plan execution status should project argv from the route decision contract"
+    );
+    assert!(
+        !read_model_route_projection.contains(
+            "recommended_public_command_argv(status.recommended_public_command.as_ref())"
+        ),
+        "plan execution status must not independently re-render executable argv from typed commands"
+    );
+    assert!(
+        read_model_route_projection.contains(
+            "read_scope.status.public_repair_targets = route_decision.public_repair_targets.clone()"
+        ),
+        "read-model public repair targets should be copied from the route decision contract"
+    );
+    for forbidden in [
+        "project_persisted_public_repair_targets",
+        "status.public_repair_targets.push",
+        "push_public_repair_target_once(status",
+    ] {
+        assert!(
+            !read_model_route_projection.contains(forbidden),
+            "read-model public repair targets must not independently derive route authority via `{forbidden}`"
+        );
+    }
+
+    let route_target_start = router
+        .find("fn public_repair_targets_from_route_decision")
+        .expect("router should derive public repair targets from the route decision contract");
+    let route_target_end = router[route_target_start..]
+        .find("\nfn project_routing_from_runtime_state")
         .map(|offset| route_target_start + offset)
-        .expect("read model public route projection slice should have a stable following helper");
-    let route_target_projection =
-        &read_model_route_projection[route_target_start..route_target_end];
+        .expect("router public repair target slice should have a stable following helper");
+    let route_target_projection = &router[route_target_start..route_target_end];
     for forbidden in [
         "recommended_command",
         "next_public_action",
@@ -100,16 +156,24 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
     }
     assert!(
         route_target_projection.contains(
-            "recommended_public_command_is(status, PublicCommandKind::RepairReviewState)"
+            "route_recommended_public_command_is(route_decision, PublicCommandKind::RepairReviewState)"
         ) && route_target_projection
-            .contains("recommended_public_command_is(status, PublicCommandKind::AdvanceLateStage)"),
-        "read-model public repair target projection should classify typed PublicCommand variants"
+            .contains("route_recommended_public_command_is(route_decision, PublicCommandKind::AdvanceLateStage)"),
+        "route repair target projection should classify typed PublicCommand variants"
+    );
+    assert!(
+        !route_target_projection.contains("phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING"),
+        "waiting final-review routes must not synthesize local public repair targets"
     );
 
     let transfer = read_repo_file("src/execution/commands/transfer.rs");
     assert!(
         transfer.contains("recommended_public_command_argv"),
         "transfer output should expose argv with any follow-up command"
+    );
+    assert!(
+        transfer.contains("required_inputs"),
+        "transfer output should expose typed required_inputs when a follow-up argv is absent"
     );
     assert!(
         transfer.contains("PublicCommand::TransferHandoff"),
@@ -123,6 +187,10 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
     );
 
     let eligibility = read_repo_file("src/execution/command_eligibility.rs");
+    assert!(
+        eligibility.contains("input_enum(\"scope\", [\"task\", \"branch\"])"),
+        "unresolved handoff scope should be modeled as a typed enum input"
+    );
     let route_guard_start = eligibility
         .find("fn route_exposes_public_mutation_request")
         .expect("typed route mutation guard should exist");
@@ -138,6 +206,10 @@ fn typed_public_commands_are_route_authority_before_display_rendering() {
     assert!(
         !route_guard.contains("next_public_action"),
         "mutation guards must not fall back to parsing rendered next_public_action strings"
+    );
+    assert!(
+        eligibility.contains("fn public_transfer_scope_matches"),
+        "mutation guards should satisfy unresolved handoff scope from typed required-input values"
     );
 }
 
@@ -470,6 +542,106 @@ fn production_diagnostics_do_not_route_to_hidden_gates_or_receipt_repair() {
 }
 
 #[test]
+fn advance_late_stage_public_outputs_do_not_expose_low_level_primitives() {
+    let denylist = vec![
+        hidden_literal(&["delegated", "_primitive"]),
+        hidden_literal(&["record", "-branch-closure"]),
+        hidden_literal(&["record", "-release-readiness"]),
+        hidden_literal(&["record", "-final-review"]),
+        hidden_literal(&["record", "-qa"]),
+    ];
+    let files = [
+        "src/execution/commands/advance_late_stage.rs",
+        "src/execution/commands/common/late_stage_reruns.rs",
+        "src/execution/commands/common/operator_outputs.rs",
+        "src/execution/commands/common/outputs.rs",
+        "src/execution/current_truth.rs",
+        "src/execution/projection_renderer.rs",
+    ];
+    let mut violations = Vec::new();
+
+    for rel in files {
+        let source = fs::read_to_string(repo_root().join(rel))
+            .unwrap_or_else(|error| panic!("{rel} should be readable: {error}"));
+        for pattern in &denylist {
+            for (start, _) in source.match_indices(pattern) {
+                violations.push(format!(
+                    "{rel}:{} public advance-late-stage output source must expose intent and operation instead of `{pattern}`",
+                    line_number_for_byte(&source, start)
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public advance-late-stage output must not leak low-level primitive names:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn packaged_binaries_do_not_expose_advance_late_stage_low_level_primitives() {
+    let denylist = vec![
+        hidden_literal(&["delegated", "_primitive"]),
+        hidden_literal(&["record", "-branch-closure"]),
+        hidden_literal(&["record", "-release-readiness"]),
+        hidden_literal(&["record", "-final-review"]),
+        hidden_literal(&["record", "-qa"]),
+    ];
+    let binaries = [
+        "bin/featureforge",
+        "bin/prebuilt/darwin-arm64/featureforge",
+        "bin/prebuilt/windows-x64/featureforge.exe",
+    ];
+    let mut violations = Vec::new();
+
+    for rel in binaries {
+        let contents = fs::read(repo_root().join(rel))
+            .unwrap_or_else(|error| panic!("{rel} should be readable: {error}"));
+        for pattern in &denylist {
+            if contains_bytes(&contents, pattern.as_bytes()) {
+                violations.push(format!(
+                    "{rel}: checked-in packaged runtime must not expose `{pattern}`"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "checked-in packaged runtimes must not leak low-level advance-late-stage primitives:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn active_prompt_and_public_docs_do_not_expose_task4_denied_control_plane_terms() {
+    let denylist = task4_denied_public_control_plane_terms();
+    let mut violations = Vec::new();
+
+    for path in task4_active_public_surface_files() {
+        let rel = repo_relative(&path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
+        for pattern in &denylist {
+            for (start, _) in source.match_indices(pattern) {
+                violations.push(format!(
+                    "{rel}:{} active public/prompt surface must not expose denied control-plane term `{pattern}`",
+                    line_number_for_byte(&source, start)
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "active public/prompt surfaces must not teach stale binary/control-plane terms:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn production_diagnostic_scan_includes_root_and_review_active_docs() {
     let files = production_source_and_active_doc_files()
         .into_iter()
@@ -634,10 +806,21 @@ fn public_replay_command_budget_gates_are_explicit() {
     }
 
     let shell = read_repo_file("tests/workflow_shell_smoke.rs");
+    let fs11_budget_test = shell
+        .split("fn fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers()")
+        .nth(1)
+        .and_then(|source| source.split("\n#[test]").next())
+        .expect("workflow_shell_smoke.rs must keep the FS11 rebase/resume budget test");
     for needle in [
-        "fn fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers()",
         "FS11-REBASE-RESUME-BUDGET",
-        "runtime_management_commands, 3",
+        "runtime_management_commands, 2",
+    ] {
+        assert!(
+            fs11_budget_test.contains(needle),
+            "FS11 rebase/resume budget test must keep the assertion `{needle}`"
+        );
+    }
+    for needle in [
         "fn task_close_happy_path_runtime_management_budget_is_capped()",
         "TASK-CLOSE-BUDGET",
     ] {
@@ -2016,6 +2199,9 @@ fn denied_helper_calls() -> Vec<String> {
         hidden_literal(&["internal_only_workflow_", "pre", "flight_output("]),
         concat!("internal_only_workflow_", "gate_review_output(").to_owned(),
         concat!("internal_only_workflow_", "gate_finish_output(").to_owned(),
+        concat!("concrete_public_", "command_args(").to_owned(),
+        concat!("materialize_public_", "command_template(").to_owned(),
+        concat!("fill_public_argv_", "template_value(").to_owned(),
     ]
 }
 
@@ -2049,6 +2235,38 @@ fn public_diagnostic_forbidden_patterns() -> Vec<String> {
         "restore authoritative unit-review receipt".to_owned(),
         "restore the authoritative unit-review receipt".to_owned(),
     ]
+}
+
+fn task4_denied_public_control_plane_terms() -> Vec<String> {
+    vec![
+        hidden_literal(&["record", "-review-dispatch"]),
+        hidden_literal(&["gate", "-review"]),
+        hidden_literal(&["gate", "-finish"]),
+        hidden_literal(&["rebuild", "-evidence"]),
+        hidden_literal(&["record", "-branch-closure"]),
+        hidden_literal(&["record", "-final-review"]),
+        hidden_literal(&["record", "-qa"]),
+        hidden_literal(&["plan", "_fidelity_receipt"]),
+        hidden_literal(&["plan", "-fidelity-receipt"]),
+        hidden_literal(&["Plan", "-fidelity receipt"]),
+        hidden_literal(&["workflow", " preflight"]),
+        hidden_literal(&["workflow", " recommend"]),
+        hidden_literal(&["plan", " execution preflight"]),
+        hidden_literal(&["plan", " execution recommend"]),
+        hidden_literal(&["execution", "-preflight-acceptance"]),
+    ]
+}
+
+fn task4_active_public_surface_files() -> Vec<PathBuf> {
+    let root = repo_root();
+    let mut files = vec![root.join("AGENTS.md"), root.join("README.md")];
+    collect_files_with_extensions(&root.join("skills"), &["md", "tmpl"], &mut files);
+    collect_files_with_extensions(&root.join("references"), &["md"], &mut files);
+    collect_active_doc_files(&root.join("docs"), &mut files);
+    collect_active_doc_files(&root.join("review"), &mut files);
+    files.sort();
+    files.dedup();
+    files
 }
 
 fn diagnostic_pattern_violations_for_source(
@@ -2217,6 +2435,13 @@ fn line_number_for_byte(source: &str, byte_index: usize) -> usize {
         .filter(|byte| *byte == b'\n')
         .count()
         + 1
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 fn production_source_and_active_doc_files() -> Vec<PathBuf> {

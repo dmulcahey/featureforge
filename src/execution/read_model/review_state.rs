@@ -88,21 +88,7 @@ pub(crate) fn current_task_review_dispatch_id_for_status(
     status: &PlanExecutionStatus,
     overlay: Option<&StatusAuthoritativeOverlay>,
 ) -> Option<String> {
-    let current_task_lineage_fingerprint = status
-        .blocking_task
-        .and_then(|task_number| task_completion_lineage_fingerprint(context, task_number));
-    let current_task_semantic_reviewed_state_id = status.blocking_task.and_then(|_| {
-        semantic_workspace_snapshot(context)
-            .ok()
-            .map(|snapshot| snapshot.semantic_workspace_tree_id)
-    });
-    shared_current_task_review_dispatch_id(
-        status.blocking_task,
-        current_task_lineage_fingerprint.as_deref(),
-        current_task_semantic_reviewed_state_id.as_deref(),
-        None,
-        overlay,
-    )
+    current_task_review_dispatch_id_for_task(context, status.blocking_task, overlay)
 }
 
 pub(crate) fn current_final_review_dispatch_authority_for_context(
@@ -128,22 +114,11 @@ pub(crate) fn current_final_review_dispatch_authority(
     overlay: Option<&StatusAuthoritativeOverlay>,
     authoritative_state: Option<&AuthoritativeTransitionState>,
 ) -> FinalReviewDispatchAuthority {
-    let mut dispatch_id = shared_current_final_review_dispatch_id(
+    let mut dispatch_id = current_final_review_dispatch_id_from_authority(
         usable_current_branch_closure_id,
         overlay,
-    )
-    .or_else(|| {
-        authoritative_state.and_then(|state| {
-            if state.current_final_review_branch_closure_id() != usable_current_branch_closure_id {
-                return None;
-            }
-            state
-                .current_final_review_dispatch_id()
-                .map(str::trim)
-                .filter(|dispatch_id| !dispatch_id.is_empty())
-                .map(ToOwned::to_owned)
-        })
-    });
+        authoritative_state,
+    );
     let current_final_review_record_non_current = authoritative_state.is_some_and(|state| {
         let Some(record_id) = state
             .current_final_review_record_id()

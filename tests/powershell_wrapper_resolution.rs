@@ -114,6 +114,12 @@ fn refresh_prebuilt_scripts_pin_canonical_target_binary_names() {
     );
     assert!(shell_script.contains(DARWIN_ARM64_TARGET));
     assert!(shell_script.contains("featureforge.exe"));
+    assert!(shell_script.contains("prebuilt-runtime-provenance.mjs"));
+    assert!(shell_script.contains("verify \\"));
+    assert!(shell_script.contains("--target \"$TARGET_KEY\""));
     assert!(powershell_script.contains(WINDOWS_X64_TARGET));
     assert!(powershell_script.contains("featureforge.exe"));
+    assert!(powershell_script.contains("prebuilt-runtime-provenance.mjs"));
+    assert!(powershell_script.contains("verify `"));
+    assert!(powershell_script.contains("--target $TargetKey"));
 }

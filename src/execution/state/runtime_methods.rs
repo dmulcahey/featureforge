@@ -1,4 +1,14 @@
 use super::*;
+use crate::execution::closure_dispatch::{
+    ReviewDispatchCycleTarget, ReviewDispatchMutationAction,
+    ensure_review_dispatch_authoritative_bootstrap, record_review_dispatch_strategy_checkpoint,
+    review_dispatch_cycle_target, validate_review_dispatch_request,
+};
+use crate::execution::command_eligibility::{
+    PublicAdvanceLateStageMode, PublicCommand, PublicCommandInputRequirement,
+    recommended_public_command_display,
+};
+use crate::execution::next_action::repair_review_state_public_command;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct RecordReviewDispatchOutput {
@@ -11,6 +21,8 @@ pub struct RecordReviewDispatchOutput {
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
     pub scope: String,
@@ -357,7 +369,7 @@ impl ExecutionRuntime {
         if dispatch_id.is_none() {
             return Err(JsonFailure::new(
                 FailureClass::ExecutionStateNotReady,
-                "record-review-dispatch recorded lineage but could not reload the current dispatch id.",
+                "review-dispatch recording updated lineage but could not reload the current dispatch id.",
             ));
         }
         Ok(RecordReviewDispatchOutput {
@@ -368,6 +380,7 @@ impl ExecutionRuntime {
             diagnostics: gate.diagnostics.clone(),
             code: None,
             recommended_command: None,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
             scope: review_dispatch_scope_label(args.scope),
             action: match action {
@@ -437,22 +450,13 @@ fn required_follow_up_kind_from_routing(routing: &ExecutionRoutingState) -> Opti
     )
 }
 
-fn current_branch_closure_missing_gate_follow_up(
-    routing: Option<&ExecutionRoutingState>,
-) -> FollowUpKind {
-    missing_branch_closure_gate_follow_up(
-        routing.map(|routing| routing.review_state_status.as_str()),
-        routing.and_then(required_follow_up_kind_from_routing),
-    )
-}
-
 fn gate_should_rederive_via_workflow_operator(
     context: &ExecutionContext,
     gate: &GateResult,
     external_review_result_ready: bool,
 ) -> bool {
     gate.allowed
-        || specific_gate_direct_recommended_command(context, gate, external_review_result_ready)
+        || specific_gate_direct_recommendation(context, gate, external_review_result_ready)
             .is_none()
 }
 
@@ -467,61 +471,54 @@ fn specific_gate_reason_is_explicit_direct_follow_up(
     )
 }
 
-fn specific_gate_reason_is_direct_follow_up(
-    context: &ExecutionContext,
-    gate: &GateResult,
-    external_review_result_ready: bool,
-) -> Option<FollowUpKind> {
-    let routing = gate_follow_up_routing_state(context, external_review_result_ready);
-    if let Some(reason) = specific_gate_reason_is_explicit_direct_follow_up(gate, routing.as_ref())
-    {
-        return Some(reason);
-    }
-    if let Some(routing) = routing.as_ref() {
-        if required_follow_up_kind_from_routing(routing) == Some(FollowUpKind::RepairReviewState) {
-            return Some(FollowUpKind::RepairReviewState);
-        }
-        if routing.review_state_status == "missing_current_closure" {
-            return Some(current_branch_closure_missing_gate_follow_up(Some(routing)));
-        }
-    }
-    None
+#[derive(Debug, Clone)]
+struct SpecificGateRecommendation {
+    command: Option<String>,
+    required_inputs: Vec<PublicCommandInputRequirement>,
 }
 
-fn specific_gate_direct_recommended_command(
+impl SpecificGateRecommendation {
+    fn from_route_decision(
+        route_decision: &crate::execution::router::RouteDecision,
+    ) -> Option<Self> {
+        let command = route_decision.recommended_command.clone();
+        let required_inputs = route_decision.required_inputs.clone();
+        (command.is_some() || !required_inputs.is_empty()).then_some(Self {
+            command,
+            required_inputs,
+        })
+    }
+}
+
+fn specific_gate_direct_recommendation(
     context: &ExecutionContext,
     gate: &GateResult,
     external_review_result_ready: bool,
-) -> Option<String> {
+) -> Option<SpecificGateRecommendation> {
     let routing = gate_follow_up_routing_state(context, external_review_result_ready);
-    if let Some(follow_up) =
-        specific_gate_reason_is_explicit_direct_follow_up(gate, routing.as_ref())
-        && let Some(command) = materialized_follow_up_kind_command(
-            follow_up,
-            Path::new(&context.plan_rel),
-            external_review_result_ready,
-        )
+    let explicit_follow_up =
+        specific_gate_reason_is_explicit_direct_follow_up(gate, routing.as_ref());
+    if explicit_follow_up.is_some()
+        && let Some(route_decision) = routing
+            .as_ref()
+            .and_then(|routing| routing.route_decision.as_ref())
     {
-        return Some(command);
+        return SpecificGateRecommendation::from_route_decision(route_decision);
     }
 
     if let Some(route_decision) = routing
         .as_ref()
         .and_then(|routing| routing.route_decision.as_ref())
-        && let Some(command) = route_decision.recommended_command.as_deref()
     {
-        return Some(command.to_owned());
+        return SpecificGateRecommendation::from_route_decision(route_decision);
     }
 
-    specific_gate_reason_is_direct_follow_up(context, gate, external_review_result_ready).and_then(
-        |follow_up| {
-            materialized_follow_up_kind_command(
-                follow_up,
-                Path::new(&context.plan_rel),
-                external_review_result_ready,
-            )
-        },
-    )
+    None
+}
+
+fn set_gate_public_command(gate: &mut GateResult, command: PublicCommand) {
+    gate.recommended_command = recommended_public_command_display(Some(&command));
+    gate.required_inputs = command.required_inputs();
 }
 
 fn apply_out_of_phase_gate_contract(
@@ -529,21 +526,28 @@ fn apply_out_of_phase_gate_contract(
     gate: &mut GateResult,
     external_review_result_ready: bool,
 ) {
-    if let Some(command) = gate_follow_up_routing_state(context, external_review_result_ready)
-        .and_then(|routing| routing.route_decision)
-        .and_then(|decision| decision.recommended_command)
-        .filter(|command| !command.starts_with("featureforge workflow operator --plan "))
+    if let Some(route_decision) =
+        gate_follow_up_routing_state(context, external_review_result_ready)
+            .and_then(|routing| routing.route_decision)
     {
-        gate.code = None;
-        gate.recommended_command = Some(command);
-        gate.rederive_via_workflow_operator = None;
-        return;
+        let required_inputs = route_decision.required_inputs;
+        if let Some(command) = route_decision
+            .recommended_command
+            .filter(|command| !command.starts_with("featureforge workflow operator --plan "))
+        {
+            gate.code = None;
+            gate.recommended_command = Some(command);
+            gate.required_inputs = required_inputs;
+            gate.rederive_via_workflow_operator = None;
+            return;
+        }
     }
     gate.code = Some(String::from("out_of_phase_requery_required"));
     gate.recommended_command = Some(workflow_operator_requery_command(
         Path::new(&context.plan_rel),
         external_review_result_ready,
     ));
+    gate.required_inputs = Vec::new();
     gate.rederive_via_workflow_operator = Some(true);
 }
 
@@ -557,6 +561,7 @@ fn apply_out_of_phase_requery_contract(
         Path::new(&context.plan_rel),
         external_review_result_ready,
     ));
+    gate.required_inputs = Vec::new();
     gate.rederive_via_workflow_operator = Some(true);
 }
 
@@ -568,8 +573,14 @@ fn apply_specific_gate_follow_up_contract(
     if gate.recommended_command.is_some() {
         return;
     }
-    gate.recommended_command =
-        specific_gate_direct_recommended_command(context, gate, external_review_result_ready);
+    if let Some(SpecificGateRecommendation {
+        command,
+        required_inputs,
+    }) = specific_gate_direct_recommendation(context, gate, external_review_result_ready)
+    {
+        gate.recommended_command = command;
+        gate.required_inputs = required_inputs;
+    }
 }
 
 fn record_review_dispatch_blocked_output(
@@ -583,6 +594,7 @@ fn record_review_dispatch_blocked_output(
         diagnostics,
         code,
         recommended_command,
+        required_inputs,
         rederive_via_workflow_operator,
         ..
     } = gate;
@@ -594,6 +606,7 @@ fn record_review_dispatch_blocked_output(
         diagnostics,
         code,
         recommended_command,
+        required_inputs,
         rederive_via_workflow_operator,
         scope: review_dispatch_scope_label(args.scope),
         action: String::from("blocked"),
@@ -615,10 +628,10 @@ pub(crate) fn record_review_dispatch_blocked_output_from_gate(
             )
         })
     {
-        gate.recommended_command = Some(format!(
-            "featureforge plan execution repair-review-state --plan {}",
-            context.plan_rel
-        ));
+        set_gate_public_command(
+            &mut gate,
+            repair_review_state_public_command(&context.plan_rel),
+        );
     } else if matches!(args.scope, ReviewDispatchScopeArg::FinalReview)
         && gate.reason_codes.iter().any(|code| {
             matches!(
@@ -629,21 +642,22 @@ pub(crate) fn record_review_dispatch_blocked_output_from_gate(
             )
         })
     {
-        gate.recommended_command = if gate
+        let mode = if gate
             .reason_codes
             .iter()
             .any(|code| code == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS)
         {
-            Some(format!(
-                "featureforge plan execution advance-late-stage --plan {}",
-                context.plan_rel
-            ))
+            PublicAdvanceLateStageMode::Basic
         } else {
-            Some(format!(
-                "featureforge plan execution advance-late-stage --plan {} --result ready|blocked --summary-file <path>",
-                context.plan_rel
-            ))
+            PublicAdvanceLateStageMode::ReleaseReadiness
         };
+        set_gate_public_command(
+            &mut gate,
+            PublicCommand::AdvanceLateStage {
+                plan: context.plan_rel.clone(),
+                mode,
+            },
+        );
     } else {
         let routing = gate_follow_up_routing_state(context, false);
         let direct_follow_up =
@@ -656,15 +670,16 @@ pub(crate) fn record_review_dispatch_blocked_output_from_gate(
                     .any(|code| code.starts_with("prior_task_"));
         if gate.allowed || direct_follow_up.is_none() || task_scope_prior_task_requires_requery {
             apply_out_of_phase_requery_contract(context, &mut gate, false);
+        } else if let Some(SpecificGateRecommendation {
+            command,
+            required_inputs,
+        }) =
+            specific_gate_direct_recommendation(context, &gate, false)
+        {
+            gate.recommended_command = command;
+            gate.required_inputs = required_inputs;
         } else {
-            gate.recommended_command = match direct_follow_up {
-                Some(follow_up) => materialized_follow_up_kind_command(
-                    follow_up,
-                    Path::new(&context.plan_rel),
-                    false,
-                ),
-                None => None,
-            };
+            apply_out_of_phase_requery_contract(context, &mut gate, false);
         }
     }
     record_review_dispatch_blocked_output(args, gate)
@@ -699,11 +714,6 @@ fn review_dispatch_plan_not_ready_gate(message: String) -> GateResult {
     gate.finish()
 }
 
-enum ReviewDispatchMutationAction {
-    Recorded,
-    AlreadyCurrent,
-}
-
 fn gate_review_command_phase_gate(
     context: &ExecutionContext,
     gate_review: &GateResult,
@@ -722,7 +732,7 @@ fn gate_review_command_phase_gate(
     gate.fail(
         FailureClass::ExecutionStateNotReady,
         "finish_review_gate_already_current",
-        "gate-review is out of phase because the current branch closure already has a fresh persisted finish-review gate checkpoint.",
+        "finish-review checkpoint recording is out of phase because the current branch closure already has a fresh persisted checkpoint.",
         format!(
             "Run `featureforge workflow operator --plan {}` and follow the recommended public next step.",
             context.plan_rel
@@ -731,434 +741,11 @@ fn gate_review_command_phase_gate(
     Some(gate.finish())
 }
 
-pub(crate) fn ensure_current_review_dispatch_id(
-    context: &ExecutionContext,
-    scope: ReviewDispatchScopeArg,
-    task: Option<u32>,
-    expected_dispatch_id: Option<&str>,
-) -> Result<String, JsonFailure> {
-    let args = RecordReviewDispatchArgs {
-        plan: PathBuf::from(context.plan_rel.clone()),
-        scope,
-        task,
-    };
-    let cycle_target = review_dispatch_cycle_target(context);
-    validate_review_dispatch_request(context, &args, cycle_target)?;
-    if let Some(dispatch_id) = current_review_dispatch_id_if_still_current(context, &args)? {
-        validate_expected_dispatch_id(&dispatch_id, expected_dispatch_id, scope, task)?;
-        return Ok(dispatch_id);
-    }
-    if let Some(expected_dispatch_id) = expected_dispatch_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(expected_dispatch_id.to_owned());
-    }
-    ensure_review_dispatch_authoritative_bootstrap(context)?;
-    let action = record_review_dispatch_strategy_checkpoint(context, &args, cycle_target)?;
-    let refreshed = load_execution_context_for_exact_plan(&context.runtime, &args.plan)?;
-    let dispatch_id = match action {
-        ReviewDispatchMutationAction::Recorded => {
-            current_review_dispatch_id_from_lineage(&refreshed, &args)?
-        }
-        ReviewDispatchMutationAction::AlreadyCurrent => {
-            current_review_dispatch_id_if_still_current(&refreshed, &args)?
-        }
-    }
-    .ok_or_else(|| {
-        JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "review-dispatch lineage binding did not yield a current dispatch id.",
-        )
-    })?;
-    validate_expected_dispatch_id(&dispatch_id, expected_dispatch_id, scope, task)?;
-    Ok(dispatch_id)
-}
-
-pub(crate) fn current_review_dispatch_id_candidate(
-    context: &ExecutionContext,
-    scope: ReviewDispatchScopeArg,
-    task: Option<u32>,
-    expected_dispatch_id: Option<&str>,
-) -> Result<Option<String>, JsonFailure> {
-    if let Some(expected_dispatch_id) = expected_dispatch_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(Some(expected_dispatch_id.to_owned()));
-    }
-    let args = RecordReviewDispatchArgs {
-        plan: PathBuf::from(context.plan_rel.clone()),
-        scope,
-        task,
-    };
-    let overlay_dispatch_id = current_review_dispatch_id_if_still_current(context, &args)?;
-    if overlay_dispatch_id.is_some() {
-        return Ok(overlay_dispatch_id);
-    }
-    if matches!(scope, ReviewDispatchScopeArg::Task)
-        && let Some(task) = task
-        && let Some(dispatch_id) = load_authoritative_transition_state(context)?
-            .as_ref()
-            .and_then(|state| state.task_review_dispatch_id(task))
-    {
-        return Ok(Some(dispatch_id));
-    }
-    Ok(None)
-}
-
-fn validate_expected_dispatch_id(
-    actual_dispatch_id: &str,
-    expected_dispatch_id: Option<&str>,
-    scope: ReviewDispatchScopeArg,
-    task: Option<u32>,
-) -> Result<(), JsonFailure> {
-    let Some(expected_dispatch_id) = expected_dispatch_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(());
-    };
-    if actual_dispatch_id.trim() == expected_dispatch_id {
-        return Ok(());
-    }
-    let detail = match scope {
-        ReviewDispatchScopeArg::Task => format!(
-            "close-current-task expected dispatch `{expected_dispatch_id}` for task {}.",
-            task.unwrap_or_default()
-        ),
-        ReviewDispatchScopeArg::FinalReview => {
-            format!("advance-late-stage expected final-review dispatch `{expected_dispatch_id}`.")
-        }
-    };
-    Err(JsonFailure::new(
-        FailureClass::InvalidCommandInput,
-        format!("dispatch_id_mismatch: {detail}"),
-    ))
-}
-
 fn recommendation_execution_context_key(context: &ExecutionContext) -> String {
     let base_branch = context
         .current_release_base_branch()
         .unwrap_or_else(|| String::from("unknown"));
     format!("{}@{}", context.runtime.branch_name, base_branch)
-}
-
-fn record_review_dispatch_strategy_checkpoint_without_claim(
-    context: &ExecutionContext,
-    args: &RecordReviewDispatchArgs,
-    cycle_target: ReviewDispatchCycleTarget,
-) -> Result<ReviewDispatchMutationAction, JsonFailure> {
-    if current_review_dispatch_id_if_still_current(context, args)?.is_some() {
-        return Ok(ReviewDispatchMutationAction::AlreadyCurrent);
-    }
-    let mut authoritative_state = load_authoritative_transition_state(context)?;
-    let Some(authoritative_state) = authoritative_state.as_mut() else {
-        return Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "Authoritative harness state is required before record-review-dispatch can record review-dispatch proof.",
-        ));
-    };
-    let cycle_target = match cycle_target {
-        ReviewDispatchCycleTarget::Bound(_, _)
-            if matches!(args.scope, ReviewDispatchScopeArg::FinalReview)
-                && context.steps.iter().all(|step| step.checked) =>
-        {
-            None
-        }
-        ReviewDispatchCycleTarget::Bound(task, step) => Some((task, step)),
-        ReviewDispatchCycleTarget::UnboundCompletedPlan => None,
-        ReviewDispatchCycleTarget::None => return Ok(ReviewDispatchMutationAction::AlreadyCurrent),
-    };
-    authoritative_state.record_review_dispatch_strategy_checkpoint(
-        context,
-        &context.plan_document.execution_mode,
-        cycle_target,
-    )?;
-    authoritative_state
-        .persist_if_dirty_with_failpoint_and_command(None, "record_review_dispatch")?;
-    Ok(ReviewDispatchMutationAction::Recorded)
-}
-
-fn record_review_dispatch_strategy_checkpoint(
-    context: &ExecutionContext,
-    args: &RecordReviewDispatchArgs,
-    cycle_target: ReviewDispatchCycleTarget,
-) -> Result<ReviewDispatchMutationAction, JsonFailure> {
-    let _ = load_authoritative_transition_state(context)?;
-    let _write_authority = claim_step_write_authority(&context.runtime)?;
-    record_review_dispatch_strategy_checkpoint_without_claim(context, args, cycle_target)
-}
-
-fn ensure_review_dispatch_authoritative_bootstrap(
-    context: &ExecutionContext,
-) -> Result<(), JsonFailure> {
-    if load_authoritative_transition_state(context)?
-        .as_ref()
-        .is_some_and(|state| state.execution_run_id_opt().is_some())
-    {
-        return Ok(());
-    }
-    let acceptance = persist_preflight_acceptance(context)?;
-    ensure_preflight_authoritative_bootstrap_with_existing_authority(
-        &context.runtime,
-        RunIdentitySnapshot {
-            execution_run_id: acceptance.execution_run_id.clone(),
-            source_plan_path: context.plan_rel.clone(),
-            source_plan_revision: context.plan_document.plan_revision,
-        },
-        acceptance.chunk_id,
-    )
-}
-
-#[derive(Clone, Copy)]
-enum ReviewDispatchCycleTarget {
-    Bound(u32, u32),
-    UnboundCompletedPlan,
-    None,
-}
-
-fn validate_review_dispatch_request(
-    context: &ExecutionContext,
-    args: &RecordReviewDispatchArgs,
-    cycle_target: ReviewDispatchCycleTarget,
-) -> Result<(), JsonFailure> {
-    match args.scope {
-        ReviewDispatchScopeArg::Task => {
-            let requested_task = args.task.ok_or_else(|| {
-                JsonFailure::new(
-                    FailureClass::InvalidCommandInput,
-                    "record-review-dispatch --scope task requires --task <n>.",
-                )
-            })?;
-            let observed_task = match cycle_target {
-                ReviewDispatchCycleTarget::Bound(task, _) => task,
-                ReviewDispatchCycleTarget::UnboundCompletedPlan => {
-                    return Err(JsonFailure::new(
-                        FailureClass::InvalidCommandInput,
-                        format!(
-                            "record-review-dispatch --scope task --task {requested_task} is invalid because the approved plan is already at final-review dispatch scope."
-                        ),
-                    ));
-                }
-                ReviewDispatchCycleTarget::None => {
-                    return Err(JsonFailure::new(
-                        FailureClass::ExecutionStateNotReady,
-                        "record-review-dispatch --scope task requires a current task review-dispatch target.",
-                    ));
-                }
-            };
-            if requested_task != observed_task {
-                return Err(JsonFailure::new(
-                    FailureClass::InvalidCommandInput,
-                    format!(
-                        "record-review-dispatch --scope task --task {requested_task} does not match the current task review-dispatch target Task {observed_task} for plan {}.",
-                        context.plan_rel
-                    ),
-                ));
-            }
-            Ok(())
-        }
-        ReviewDispatchScopeArg::FinalReview => {
-            if args.task.is_some() {
-                return Err(JsonFailure::new(
-                    FailureClass::InvalidCommandInput,
-                    "record-review-dispatch --scope final-review does not accept --task.",
-                ));
-            }
-            match cycle_target {
-                ReviewDispatchCycleTarget::UnboundCompletedPlan => Ok(()),
-                ReviewDispatchCycleTarget::Bound(_, _)
-                    if context_all_task_scopes_closed_by_authority(context, None) =>
-                {
-                    Ok(())
-                }
-                ReviewDispatchCycleTarget::Bound(_, _) | ReviewDispatchCycleTarget::None => {
-                    Err(JsonFailure::new(
-                        FailureClass::ExecutionStateNotReady,
-                        "record-review-dispatch --scope final-review requires a completed-plan final-review dispatch target.",
-                    ))
-                }
-            }
-        }
-    }
-}
-
-fn review_dispatch_cycle_target(context: &ExecutionContext) -> ReviewDispatchCycleTarget {
-    if let Some(boundary_target) = review_dispatch_task_boundary_target(context) {
-        return boundary_target;
-    }
-    for state in [
-        NoteState::Active,
-        NoteState::Blocked,
-        NoteState::Interrupted,
-    ] {
-        if let Some(step) = active_step(context, state) {
-            return ReviewDispatchCycleTarget::Bound(step.task_number, step.step_number);
-        }
-    }
-    if context_all_task_scopes_closed_by_authority(context, None) {
-        let overlay = load_status_authoritative_overlay_checked(context)
-            .ok()
-            .and_then(|overlay| overlay);
-        let authoritative_phase = overlay.as_ref().and_then(|overlay| {
-            normalize_optional_overlay_value(overlay.harness_phase.as_deref())
-                .and_then(parse_harness_phase)
-        });
-        if authoritative_phase.is_some_and(is_late_stage_phase)
-            || overlay
-                .as_ref()
-                .is_some_and(has_authoritative_late_stage_progress)
-        {
-            return ReviewDispatchCycleTarget::UnboundCompletedPlan;
-        }
-        if let Some(final_task) = context.tasks_by_number.keys().copied().max() {
-            let final_task_closure_missing = load_authoritative_transition_state(context)
-                .ok()
-                .and_then(|state| state)
-                .and_then(|state| {
-                    (!state.current_task_closure_overlay_needs_restore()).then_some(state)
-                })
-                .and_then(|state| state.raw_current_task_closure_result(final_task))
-                .is_none();
-            if final_task_closure_missing
-                && let Some(final_step) = context
-                    .steps
-                    .iter()
-                    .filter(|step| step.task_number == final_task)
-                    .map(|step| step.step_number)
-                    .max()
-            {
-                return ReviewDispatchCycleTarget::Bound(final_task, final_step);
-            }
-        }
-        return ReviewDispatchCycleTarget::UnboundCompletedPlan;
-    }
-    if let Some(attempt) = context.evidence.attempts.iter().rev().find(|attempt| {
-        context.steps.iter().any(|step| {
-            step.task_number == attempt.task_number && step.step_number == attempt.step_number
-        })
-    }) {
-        return ReviewDispatchCycleTarget::Bound(attempt.task_number, attempt.step_number);
-    }
-    if let Some(step) = context.steps.iter().rev().find(|step| step.checked) {
-        return ReviewDispatchCycleTarget::Bound(step.task_number, step.step_number);
-    }
-    if let Some(step) = context
-        .steps
-        .iter()
-        .find(|step| step.note_state.is_some() && !step.checked)
-    {
-        return ReviewDispatchCycleTarget::Bound(step.task_number, step.step_number);
-    }
-    if !context.evidence.attempts.is_empty()
-        && let Some(attempt) = context.evidence.attempts.last()
-    {
-        return ReviewDispatchCycleTarget::Bound(attempt.task_number, attempt.step_number);
-    }
-    ReviewDispatchCycleTarget::None
-}
-
-fn review_dispatch_task_boundary_target(
-    context: &ExecutionContext,
-) -> Option<ReviewDispatchCycleTarget> {
-    let status = status_from_context(context).ok();
-    let earliest_stale_boundary_task = status
-        .as_ref()
-        .and_then(|status| pre_reducer_earliest_unresolved_stale_task(context, status));
-    if let Some(stale_task) = earliest_stale_boundary_task
-        .filter(|task_number| review_dispatch_boundary_blocked_for_task(context, *task_number))
-    {
-        let step_number = latest_attempted_step_for_task(context, stale_task).or_else(|| {
-            context
-                .steps
-                .iter()
-                .filter(|step| step.task_number == stale_task)
-                .map(|step| step.step_number)
-                .max()
-        })?;
-        return Some(ReviewDispatchCycleTarget::Bound(stale_task, step_number));
-    }
-    if let Some(status) = status.as_ref() {
-        let boundary_reason_present = status.reason_codes.iter().any(|reason_code| {
-            matches!(
-                reason_code.as_str(),
-                "prior_task_current_closure_missing"
-                    | "prior_task_current_closure_stale"
-                    | "prior_task_current_closure_invalid"
-                    | "prior_task_current_closure_reviewed_state_malformed"
-                    | "task_cycle_break_active"
-            )
-        });
-        if boundary_reason_present
-            && let Some(task_number) = status
-                .blocking_task
-                .or(status.resume_task)
-                .or(status.active_task)
-            && review_dispatch_boundary_blocked_for_task(context, task_number)
-        {
-            let step_number =
-                latest_attempted_step_for_task(context, task_number).or_else(|| {
-                    context
-                        .steps
-                        .iter()
-                        .filter(|step| step.task_number == task_number)
-                        .map(|step| step.step_number)
-                        .max()
-                })?;
-            return Some(ReviewDispatchCycleTarget::Bound(task_number, step_number));
-        }
-    }
-    let task_number = status.as_ref().and_then(|status| {
-        context
-            .tasks_by_number
-            .keys()
-            .copied()
-            .filter(|candidate_task| {
-                review_dispatch_boundary_blocked_for_task(context, *candidate_task)
-            })
-            .find(|candidate_task| {
-                task_closure_baseline_repair_candidate_with_stale_target(
-                    context,
-                    status,
-                    *candidate_task,
-                    pre_reducer_earliest_unresolved_stale_task(context, status),
-                )
-                .ok()
-                .flatten()
-                .is_some()
-            })
-    })?;
-    let step_number = latest_attempted_step_for_task(context, task_number).or_else(|| {
-        context
-            .steps
-            .iter()
-            .filter(|step| step.task_number == task_number)
-            .map(|step| step.step_number)
-            .max()
-    })?;
-    Some(ReviewDispatchCycleTarget::Bound(task_number, step_number))
-}
-
-fn review_dispatch_boundary_blocked_for_task(context: &ExecutionContext, task_number: u32) -> bool {
-    task_closure_recording_prerequisites(context, task_number)
-        .ok()
-        .is_some_and(|prerequisites| {
-            prerequisites
-                .dispatch_id
-                .as_deref()
-                .is_none_or(|dispatch_id| dispatch_id.trim().is_empty())
-                || prerequisites
-                    .blocking_reason_codes
-                    .iter()
-                    .any(|reason_code| {
-                        matches!(
-                            reason_code.as_str(),
-                            "prior_task_review_dispatch_missing"
-                                | "prior_task_review_dispatch_stale"
-                        )
-                    })
-        })
 }
 
 fn review_dispatch_gate_from_context(
@@ -1278,7 +865,7 @@ fn final_review_dispatch_gate_from_context(context: &ExecutionContext) -> GateRe
             crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED,
             "Final-review dispatch is blocked because the current branch closure still has a blocked release-readiness result.",
             format!(
-                "Run `featureforge plan execution advance-late-stage --plan {} --result ready|blocked --summary-file <path>` after resolving the release blocker.",
+                "Run `featureforge workflow operator --plan {}` after resolving the release blocker and satisfy the release-readiness `required_inputs` for the returned `advance-late-stage` route.",
                 context.plan_rel
             ),
         );
@@ -1290,7 +877,7 @@ fn final_review_dispatch_gate_from_context(context: &ExecutionContext) -> GateRe
             crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY,
             "Final-review dispatch is blocked because the current branch closure does not yet have a current release-readiness result `ready`.",
             format!(
-                "Run `featureforge plan execution advance-late-stage --plan {} --result ready|blocked --summary-file <path>` before dispatching final review.",
+                "Run `featureforge workflow operator --plan {}` and satisfy the release-readiness `required_inputs` for the returned `advance-late-stage` route before dispatching final review.",
                 context.plan_rel
             ),
         );
@@ -1313,7 +900,7 @@ fn task_review_dispatch_gate_from_context(
             FailureClass::InvalidCommandInput,
             "task_not_found",
             format!(
-                "Task {task_number} does not exist in the approved plan and cannot be used for record-review-dispatch."
+                "Task {task_number} does not exist in the approved plan and cannot be used for review-dispatch recording."
             ),
             "Choose a valid task number from the approved plan.",
         );

@@ -57,7 +57,7 @@ The authoritative public workflow query surface is:
 - `featureforge workflow operator --plan <path>`
 - `featureforge workflow operator --plan <path> --external-review-result-ready` when the caller already has the external task-review or final-review result in hand and needs workflow/operator to surface the matching recording-ready substate
 
-`featureforge plan execution status --plan <path>` is a supporting diagnostic surface. It must consume the same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`. Any disagreement is a runtime bug. `recommended_command` is display-only compatibility text; `recommended_public_command_argv` is the machine-invocation representation.
+`featureforge plan execution status --plan <path>` is a supporting diagnostic surface. It must consume the same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `required_inputs`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`. Any disagreement is a runtime bug. `recommended_command` is display-only compatibility text; `recommended_public_command_argv` is the exact machine-invocation representation when present.
 
 Parity checks must use matching routing inputs. Compare `status --plan <path>` to `workflow operator --plan <path>` for baseline parity, and compare `status --plan <path> --external-review-result-ready` to `workflow operator --plan <path> --external-review-result-ready` when asserting external-review-result-ready recording routes.
 
@@ -66,7 +66,7 @@ Explicit usage rule:
 - agents SHOULD run `featureforge workflow operator --plan <path>` first for normal routing
 - agents SHOULD run `featureforge plan execution status --plan <path>` only when deeper diagnostics are needed
 - when workflow/operator reports stale or missing closure context, agents SHOULD run `featureforge plan execution repair-review-state --plan <path>` directly
-- after `repair-review-state`, the command’s own `recommended_public_command_argv` is authoritative for the immediate reroute; do not shell-parse or whitespace-split `recommended_command`
+- after `repair-review-state`, the command’s own `recommended_public_command_argv` is authoritative for the immediate reroute when present; if argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, rerun the route owner, and do not shell-parse or whitespace-split `recommended_command`
 
 When workflow/operator returns a recording-ready substate, it must surface only the runtime-known ids the current recommended command still needs directly, plus any documented transparency-only identifiers that remain exposed:
 
@@ -89,7 +89,9 @@ When workflow/operator reports `phase=qa_pending` with `phase_detail=test_plan_r
 - `recommended_public_command_argv` and `recommended_command` remain omitted until the current-branch test-plan artifact is refreshed
 - the agent must route through `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before rerunning `featureforge workflow operator --plan <path>` or invoking `advance-late-stage`
 
-| operator intent | preferred aggregate command | lower-level primitive or service boundary |
+The command strings in this table that contain placeholders are input shapes only. Runtime output must use `recommended_public_command_argv` only for fully bound argv; otherwise it exposes `required_inputs` and the caller reruns the route owner after supplying them.
+
+| operator intent | preferred aggregate command or input shape | lower-level primitive or service boundary |
 | --- | --- | --- |
 | request task review | request external review, rerun `featureforge workflow operator --plan <path> --external-review-result-ready`, then follow operator-reported recording-ready closure command | `ReviewDispatchService` compatibility/debug boundary only |
 | close reviewed task work | `featureforge plan execution close-current-task --plan <path> --task <n> --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` | `TaskClosureRecordingService` internal boundary only; not a first-slice public CLI fallback |
@@ -214,7 +216,7 @@ The public workflow contract should be read like this:
 - `phase_detail` says which substate inside the phase is active
 - `review_state_status` says whether current reviewed state is usable
 - `next_action` says what the operator should do next
-- `recommended_public_command_argv` says which exact public command argv vector should run next; `recommended_command` is the display-only rendering for human compatibility
+- `recommended_public_command_argv` says which exact public command argv vector should run next when all inputs are bound; if it is absent, `required_inputs` or `next_action` names what must be supplied before rerunning the route owner; `recommended_command` is the display-only rendering for human compatibility
 
 Supporting query fields that runtime-owned commands rely on:
 

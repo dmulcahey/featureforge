@@ -1,12 +1,13 @@
+use crate::execution::closure_diagnostics::public_task_boundary_decision;
 use crate::execution::command_eligibility::{PublicAdvanceLateStageMode, PublicCommand};
 use crate::execution::current_truth::{
     BranchRerecordingAssessment, BranchRerecordingUnsupportedReason,
     branch_closure_rerecording_assessment_with_authority,
     handoff_decision_scope as shared_handoff_decision_scope,
     late_stage_missing_task_closure_baseline_bridge_supported,
-    negative_result_requires_execution_reentry, public_task_boundary_decision,
-    resolve_actionable_repair_follow_up_for_status, task_boundary_block_reason_code,
-    task_review_result_pending_task, task_review_result_requires_verification_reason_codes,
+    negative_result_requires_execution_reentry, resolve_actionable_repair_follow_up_for_status,
+    task_boundary_block_reason_code, task_review_result_pending_task,
+    task_review_result_requires_verification_reason_codes,
     worktree_drift_escapes_late_stage_surface,
 };
 use crate::execution::harness::{HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
@@ -22,10 +23,11 @@ pub(crate) use crate::execution::repair_target_selection::{
     task_closure_baseline_reentry_target,
 };
 use crate::execution::state::{
-    ExactExecutionCommand, ExecutionContext, PlanExecutionStatus, closure_baseline_candidate_task,
-    execution_reentry_requires_review_state_repair, prerelease_branch_closure_refresh_required,
-    recommended_execution_source, reopen_exact_execution_command_for_task,
-    resolve_exact_execution_command, task_closure_baseline_bridge_ready_for_stale_target,
+    ExecutionCommandRouteTarget, ExecutionContext, PlanExecutionStatus,
+    closure_baseline_candidate_task, execution_reentry_requires_review_state_repair,
+    prerelease_branch_closure_refresh_required, recommended_execution_source,
+    reopen_execution_command_route_target_for_task, resolve_execution_command_route_target,
+    task_closure_baseline_bridge_ready_for_stale_target,
     task_closure_baseline_candidate_can_preempt_stale_target,
     task_closure_baseline_repair_candidate_with_stale_target,
     task_closures_are_non_branch_contributing, task_scope_structural_review_state_reason,
@@ -85,7 +87,7 @@ pub(crate) fn close_current_task_public_command(
     PublicCommand::CloseCurrentTask {
         plan: plan_path.to_owned(),
         task: Some(task_number),
-        include_result_template: true,
+        result_inputs_required: true,
     }
 }
 
@@ -150,7 +152,7 @@ pub(crate) fn reopen_public_command(
         task: task_number,
         step: step_number,
         source: Some(source.to_owned()),
-        reason: Some(String::from("<reason>")),
+        reason: Some(runtime_routed_reopen_reason(task_number, step_number)),
         fingerprint: Some(fingerprint.to_owned()),
     }
 }
@@ -171,6 +173,10 @@ pub(crate) fn reopen_public_command_with_reason(
         reason: Some(reason.to_owned()),
         fingerprint: fingerprint.map(str::to_owned),
     }
+}
+
+fn runtime_routed_reopen_reason(task_number: u32, step_number: u32) -> String {
+    format!("runtime-routed-execution-reentry-task-{task_number}-step-{step_number}")
 }
 
 pub(crate) fn public_next_action_text(decision: &NextActionDecision) -> String {
@@ -491,12 +497,12 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 authority_inputs,
             ));
         }
-        if let Some(exact_decision) = decision_from_exact_execution_command(
+        if let Some(route_target_decision) = decision_from_execution_command_route_target(
             status,
             plan_path,
-            resolve_exact_execution_command(status, plan_path),
+            resolve_execution_command_route_target(status, plan_path),
         ) {
-            return Some(exact_decision);
+            return Some(route_target_decision);
         }
     }
 
@@ -1700,20 +1706,23 @@ fn execution_reentry_decision_for_task(
         );
     }
     if !stale_boundary_route
-        && let Some(exact_command) = resolve_exact_execution_command(status, plan_path)
-        && exact_command.task_number == task_number
-        && let Some(mut exact_decision) =
-            decision_from_exact_execution_command(status, plan_path, Some(exact_command))
+        && let Some(route_target) = resolve_execution_command_route_target(status, plan_path)
+        && route_target.task_number == task_number
+        && let Some(mut route_target_decision) =
+            decision_from_execution_command_route_target(status, plan_path, Some(route_target))
     {
-        exact_decision.blocking_task = exact_decision.blocking_task.or(Some(task_number));
-        if exact_decision.phase_detail != crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS {
-            exact_decision.phase_detail =
+        route_target_decision.blocking_task =
+            route_target_decision.blocking_task.or(Some(task_number));
+        if route_target_decision.phase_detail
+            != crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS
+        {
+            route_target_decision.phase_detail =
                 String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED);
         }
-        return exact_decision;
+        return route_target_decision;
     }
     if let Some(reopen_command) =
-        reopen_exact_execution_command_for_task(context, status, plan_path, task_number)
+        reopen_execution_command_route_target_for_task(context, status, plan_path, task_number)
         && let Some(step_id) = reopen_command.step_id
     {
         return NextActionDecision {
@@ -1749,16 +1758,16 @@ fn execution_reentry_decision_for_task(
     repair_decision
 }
 
-fn decision_from_exact_execution_command(
+fn decision_from_execution_command_route_target(
     status: &PlanExecutionStatus,
     plan_path: &str,
-    exact_command: Option<ExactExecutionCommand>,
+    route_target: Option<ExecutionCommandRouteTarget>,
 ) -> Option<NextActionDecision> {
-    let exact_command = exact_command?;
-    let kind = match exact_command.command_kind {
+    let route_target = route_target?;
+    let kind = match route_target.command_kind {
         "begin" => {
-            if status.resume_task == Some(exact_command.task_number)
-                && status.resume_step == exact_command.step_id
+            if status.resume_task == Some(route_target.task_number)
+                && status.resume_step == route_target.step_id
             {
                 NextActionKind::Resume
             } else {
@@ -1769,11 +1778,11 @@ fn decision_from_exact_execution_command(
         "complete" => NextActionKind::CloseCurrentTask,
         _ => return None,
     };
-    let phase_detail = match exact_command.command_kind {
+    let phase_detail = match route_target.command_kind {
         "complete" => String::from(crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS),
         "begin"
-            if status.resume_task == Some(exact_command.task_number)
-                && status.resume_step == exact_command.step_id
+            if status.resume_task == Some(route_target.task_number)
+                && status.resume_step == route_target.step_id
                 && status.harness_phase == HarnessPhase::Executing
                 && execution_reentry_requires_review_state_repair(None, status) =>
         {
@@ -1797,18 +1806,18 @@ fn decision_from_exact_execution_command(
         phase,
         phase_detail,
         review_state_status: canonical_review_state_status(status),
-        task_number: Some(exact_command.task_number),
-        step_number: exact_command.step_id,
-        blocking_task: if exact_command.command_kind == "reopen" {
-            Some(exact_command.task_number)
+        task_number: Some(route_target.task_number),
+        step_number: route_target.step_id,
+        blocking_task: if route_target.command_kind == "reopen" {
+            Some(route_target.task_number)
         } else {
             status.blocking_task
         },
         blocking_reason_codes: status.reason_codes.clone(),
-        recommended_public_command: public_command_from_exact_execution_command(
+        recommended_public_command: public_command_from_execution_command_route_target(
             status,
             plan_path,
-            &exact_command,
+            &route_target,
         ),
     })
 }
@@ -2182,11 +2191,11 @@ pub(crate) fn canonical_review_state_status(status: &PlanExecutionStatus) -> Str
     String::from("clean")
 }
 
-pub(crate) fn exact_execution_command_from_decision(
+pub(crate) fn execution_command_route_target_from_decision(
     status: &PlanExecutionStatus,
     decision: &NextActionDecision,
     plan_path: &str,
-) -> Option<ExactExecutionCommand> {
+) -> Option<ExecutionCommandRouteTarget> {
     let command_kind = match decision.kind {
         NextActionKind::Begin | NextActionKind::Resume => "begin",
         NextActionKind::Reopen => "reopen",
@@ -2202,17 +2211,15 @@ pub(crate) fn exact_execution_command_from_decision(
     {
         return None;
     }
-    let recommended_command =
-        exact_public_command_from_decision(status, decision, plan_path)?.to_display_command();
-    Some(ExactExecutionCommand {
+    public_command_from_decision(status, decision, plan_path)?;
+    Some(ExecutionCommandRouteTarget {
         command_kind,
         task_number,
         step_id,
-        recommended_command,
     })
 }
 
-pub(crate) fn exact_public_command_from_decision(
+pub(crate) fn public_command_from_decision(
     status: &PlanExecutionStatus,
     decision: &NextActionDecision,
     plan_path: &str,
@@ -2231,7 +2238,7 @@ pub(crate) fn exact_public_command_from_decision(
         .filter(|command| public_command_matches_exact(command, command_kind, task_number, step_id))
         .cloned()
         .or_else(|| {
-            synthesized_exact_execution_public_command(
+            synthesized_execution_public_command(
                 status,
                 plan_path,
                 command_kind,
@@ -2261,31 +2268,31 @@ fn public_command_matches_exact(
     }
 }
 
-fn public_command_from_exact_execution_command(
+fn public_command_from_execution_command_route_target(
     status: &PlanExecutionStatus,
     plan_path: &str,
-    exact_command: &ExactExecutionCommand,
+    route_target: &ExecutionCommandRouteTarget,
 ) -> Option<PublicCommand> {
-    let step_id = exact_command.step_id?;
+    let step_id = route_target.step_id?;
     let execution_source = recommended_execution_source(status.execution_mode.as_str());
-    match exact_command.command_kind {
+    match route_target.command_kind {
         "begin" => Some(begin_public_command(
             plan_path,
-            exact_command.task_number,
+            route_target.task_number,
             step_id,
             None,
             &status.execution_fingerprint,
         )),
         "complete" => Some(complete_public_command(
             plan_path,
-            exact_command.task_number,
+            route_target.task_number,
             step_id,
             execution_source,
             &status.execution_fingerprint,
         )),
         "reopen" => Some(reopen_public_command(
             plan_path,
-            exact_command.task_number,
+            route_target.task_number,
             step_id,
             execution_source,
             &status.execution_fingerprint,
@@ -2294,7 +2301,7 @@ fn public_command_from_exact_execution_command(
     }
 }
 
-fn synthesized_exact_execution_public_command(
+fn synthesized_execution_public_command(
     status: &PlanExecutionStatus,
     plan_path: &str,
     command_kind: &'static str,

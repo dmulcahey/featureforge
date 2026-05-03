@@ -7,7 +7,7 @@ use crate::execution::stale_target_projection::{
 };
 use crate::execution::state::{
     ExecutionContext, GateResult, PlanExecutionStatus, closure_baseline_candidate_task,
-    latest_attempted_step_for_task, resolve_exact_execution_command,
+    latest_attempted_step_for_task, resolve_execution_command_route_target,
     task_closure_baseline_candidate_can_preempt_stale_target,
     task_closure_baseline_repair_candidate_with_stale_target,
 };
@@ -189,11 +189,11 @@ pub(crate) fn execution_reentry_target(
         ));
     }
 
-    let exact_command = resolve_exact_execution_command(status, plan_path);
+    let route_target = resolve_execution_command_route_target(status, plan_path);
     if let (Some(task), Some(step), Some(command)) = (
         status.active_task,
         status.active_step,
-        exact_command.as_ref(),
+        route_target.as_ref(),
     ) && command.command_kind == "complete"
         && command.task_number == task
         && command.step_id == Some(step)
@@ -202,13 +202,13 @@ pub(crate) fn execution_reentry_target(
             task,
             Some(step),
             ExecutionReentryTargetSource::ActiveStep,
-            "active_step_exact_continuation",
+            "active_step_route_continuation",
         ));
     }
     if let (Some(task), Some(step), Some(command)) = (
         status.resume_task,
         status.resume_step,
-        exact_command.as_ref(),
+        route_target.as_ref(),
     ) && command.command_kind == "begin"
         && command.task_number == task
         && command.step_id == Some(step)
@@ -223,7 +223,7 @@ pub(crate) fn execution_reentry_target(
             task,
             Some(step),
             ExecutionReentryTargetSource::ResumeStep,
-            "resume_step_exact_begin",
+            "resume_step_route_begin",
         ));
     }
 
@@ -242,7 +242,7 @@ pub(crate) fn execution_reentry_target(
     {
         return Some(target.into_execution_reentry_target());
     }
-    if let Some(command) = exact_command
+    if let Some(command) = route_target
         && public_execution_mutation_is_authorized(
             status,
             command.command_kind,

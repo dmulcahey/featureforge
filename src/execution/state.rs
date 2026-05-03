@@ -21,6 +21,12 @@ use crate::execution::authority::{
     ensure_preflight_authoritative_bootstrap,
     ensure_preflight_authoritative_bootstrap_with_existing_authority,
 };
+pub(crate) use crate::execution::closure_diagnostics::authoritative_unit_review_receipt_path;
+pub(crate) use crate::execution::closure_dispatch::{
+    ExistingTaskDispatchReviewedStateStatus, current_review_dispatch_id_candidate,
+    current_review_dispatch_id_from_lineage, current_review_dispatch_id_if_still_current,
+    ensure_current_review_dispatch_id, existing_task_dispatch_reviewed_state_status,
+};
 pub use crate::execution::context::{
     EvidenceAttempt, EvidenceFormat, ExecutionContext, ExecutionEvidence, FileProof,
     NO_REPO_FILES_MARKER, NoteState, PacketFingerprintInput, PlanStepState,
@@ -50,7 +56,6 @@ use crate::execution::final_review::{
 };
 use crate::execution::follow_up::{
     FollowUpAliasContext, FollowUpKind, direct_gate_follow_up_from_reason_codes,
-    materialized_follow_up_kind_command, missing_branch_closure_gate_follow_up,
     normalize_follow_up_alias,
 };
 use crate::execution::harness::TopologySelectionContext;
@@ -73,7 +78,7 @@ use crate::execution::observability::REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED
 use crate::execution::query::{ExecutionRoutingState, required_follow_up_from_routing};
 pub use crate::execution::read_model::status_from_context;
 pub(crate) use crate::execution::read_model::{
-    ExactExecutionCommand, ExecutionDerivedTruth, ExecutionReadScope,
+    ExecutionCommandRouteTarget, ExecutionDerivedTruth, ExecutionReadScope,
     ExecutionReentryCurrentTaskClosureTargets, FinalReviewDispatchAuthority,
     apply_public_read_invariants_to_status, apply_shared_routing_projection_to_read_scope,
     apply_shared_routing_projection_to_read_scope_with_routing,
@@ -84,28 +89,24 @@ pub(crate) use crate::execution::read_model::{
     derive_execution_truth_from_authority_with_gates, document_release_pending_phase_detail,
     execution_reentry_current_task_closure_targets_from_stale_tasks,
     execution_reentry_requires_review_state_repair, finish_review_gate_pass_branch_closure_id,
-    has_authoritative_late_stage_progress, is_late_stage_phase, load_execution_read_scope,
-    load_execution_read_scope_for_mutation, missing_derived_review_state_fields,
-    normalize_optional_overlay_value, parse_harness_phase,
-    prerelease_branch_closure_refresh_required, project_persisted_public_repair_targets,
-    recommended_execution_source, reopen_exact_execution_command_for_task,
-    resolve_exact_execution_command, shared_repair_review_state_reroute_decision,
-    status_workspace_state_id, task_scope_review_state_repair_reason,
-    task_scope_structural_review_state_reason, usable_current_branch_closure_identity,
+    load_execution_read_scope, load_execution_read_scope_for_mutation,
+    missing_derived_review_state_fields, normalize_optional_overlay_value,
+    prerelease_branch_closure_refresh_required, recommended_execution_source,
+    reopen_execution_command_route_target_for_task, resolve_execution_command_route_target,
+    shared_repair_review_state_reroute_decision, status_workspace_state_id,
+    task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
+    usable_current_branch_closure_identity,
     usable_current_branch_closure_identity_from_authoritative_state,
     validated_current_branch_closure_identity,
 };
 pub(crate) use crate::execution::read_model_support::{
-    active_step, authoritative_unit_review_receipt_path,
-    context_all_task_scopes_closed_by_authority, current_review_dispatch_id_from_lineage,
-    current_review_dispatch_id_if_still_current, latest_attempt_for_step,
-    latest_attempt_indices_by_step, latest_attempted_step_for_task,
-    latest_completed_attempts_by_file, latest_completed_attempts_by_step,
-    pre_reducer_earliest_unresolved_stale_task, qa_pending_requires_test_plan_refresh,
+    active_step, latest_attempt_for_step, latest_attempt_indices_by_step,
+    latest_attempted_step_for_task, latest_completed_attempts_by_file,
+    latest_completed_attempts_by_step, qa_pending_requires_test_plan_refresh,
     resolve_branch_closure_reviewed_tree_sha, resolve_task_closure_reviewed_tree_sha,
     task_boundary_reason_code_from_message, task_closure_baseline_bridge_ready_for_stale_target,
     task_closure_baseline_candidate_can_preempt_stale_target,
-    task_closure_baseline_repair_candidate_with_stale_target, task_closure_recording_prerequisites,
+    task_closure_baseline_repair_candidate_with_stale_target,
     task_closures_are_non_branch_contributing, task_completion_lineage_fingerprint,
 };
 pub use crate::execution::runtime::{ExecutionRuntime, state_dir};
@@ -203,9 +204,6 @@ use review_gate::{
 pub use runtime_methods::RecordReviewDispatchOutput;
 #[cfg(test)]
 pub(crate) use runtime_methods::record_review_dispatch_blocked_output_from_gate;
-pub(crate) use runtime_methods::{
-    current_review_dispatch_id_candidate, ensure_current_review_dispatch_id,
-};
 use unit_review_truth::{
     UnitReviewReceiptExpectations, approved_unit_contract_fingerprint_for_review,
     enforce_plain_unit_review_truth, enforce_serial_unit_review_truth, is_ancestor_commit,

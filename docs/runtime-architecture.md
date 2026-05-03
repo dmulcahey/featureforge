@@ -57,7 +57,7 @@ create duplicate literals.
 `src/execution/state.rs` is a compatibility facade for execution-state operations.
 Focused state-machine layers live under `src/execution/state/`: command request
 normalization, preflight, runtime methods, review gating, finish gating, artifact
-readiness, unit-review proof artifacts, worktree leases, rebuild-evidence discovery, and repo
+readiness, unit-review proof artifacts, worktree leases, projection-rebuild discovery, and repo
 safety each have their own module. New code belongs in the focused module that owns the
 state-machine decision, not in the facade.
 
@@ -75,9 +75,14 @@ commands before any display string is rendered.
 `recommended_public_command_argv` for machine invocation and may render
 `recommended_command` for human compatibility, but both representations must come from
 the typed public command decision, not from reparsing a hand-written string.
-When both fields are present, consumers invoke `recommended_public_command_argv`
-exactly; `recommended_command` is display-only compatibility text and must not be
-parsed or split to recover argv.
+When `recommended_public_command_argv` is present, consumers invoke it exactly.
+When argv is absent, the route must expose typed `required_inputs` or the
+prerequisite named by `next_action`; consumers satisfy those inputs and rerun the
+operator or status command that owns the route. `recommended_command` is
+display-only compatibility text and must not be parsed or split to recover argv.
+`advance-late-stage` is the public late-stage intent. Its serialized output exposes
+`intent=advance_late_stage`, `stage_path`, and a semantic `operation`; it must not
+publish hidden stage primitive command names as control-plane guidance.
 
 `src/workflow/status.rs` owns non-execution workflow routing such as plan-review gates.
 For implementation entry, `Engineering Approved` is not enough by itself: a current

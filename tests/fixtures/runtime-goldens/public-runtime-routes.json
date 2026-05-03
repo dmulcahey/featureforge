@@ -96,7 +96,7 @@
             "--execution-mode",
             "featureforge:executing-plans",
             "--expect-execution-fingerprint",
-            "<SHA256>"
+            "0000000000000000000000000000000000000000"
           ],
           "release_docs_state": "not_required",
           "repo_state_baseline_head_sha": null,
@@ -175,7 +175,7 @@
             "--execution-mode",
             "featureforge:executing-plans",
             "--expect-execution-fingerprint",
-            "<SHA256>"
+            "0000000000000000000000000000000000000000"
           ],
           "review_state_status": "clean",
           "schema_version": 3,
@@ -292,32 +292,41 @@
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [],
-          "recommended_command": "featureforge plan execution complete --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --source featureforge:executing-plans --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint <SHA256>",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "complete",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "--task",
-            "1",
-            "--step",
-            "1",
-            "--source",
-            "featureforge:executing-plans",
-            "--claim",
-            "<claim>",
-            "--manual-verify-summary",
-            "<summary>",
-            "--expect-execution-fingerprint",
-            "<SHA256>"
-          ],
+          "recommended_command": null,
           "release_docs_state": "not_required",
           "repo_state_baseline_head_sha": null,
           "repo_state_baseline_worktree_fingerprint": null,
           "repo_state_drift_state": "preflight_pending",
           "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "text",
+              "name": "claim"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_mode",
+              "values": [
+                "manual_summary",
+                "command_result"
+              ]
+            },
+            {
+              "kind": "text",
+              "name": "manual_verify_summary",
+              "required_when": "verification_mode=manual_summary"
+            },
+            {
+              "kind": "text",
+              "name": "verify_command",
+              "required_when": "verification_mode=command_result"
+            },
+            {
+              "kind": "text",
+              "name": "verify_result",
+              "required_when": "verification_mode=command_result"
+            }
+          ],
           "reset_policy": "chunk-boundary",
           "resume_step": null,
           "resume_task": null,
@@ -366,26 +375,34 @@
           "projection_mode": "state_dir_only",
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
-          "recommended_command": "featureforge plan execution complete --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --source featureforge:executing-plans --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint <SHA256>",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "complete",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "--task",
-            "1",
-            "--step",
-            "1",
-            "--source",
-            "featureforge:executing-plans",
-            "--claim",
-            "<claim>",
-            "--manual-verify-summary",
-            "<summary>",
-            "--expect-execution-fingerprint",
-            "<SHA256>"
+          "required_inputs": [
+            {
+              "kind": "text",
+              "name": "claim"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_mode",
+              "values": [
+                "manual_summary",
+                "command_result"
+              ]
+            },
+            {
+              "kind": "text",
+              "name": "manual_verify_summary",
+              "required_when": "verification_mode=manual_summary"
+            },
+            {
+              "kind": "text",
+              "name": "verify_command",
+              "required_when": "verification_mode=command_result"
+            },
+            {
+              "kind": "text",
+              "name": "verify_result",
+              "required_when": "verification_mode=command_result"
+            }
           ],
           "review_state_status": "clean",
           "schema_version": 3,
@@ -448,15 +465,6 @@
           "active_step": null,
           "active_task": null,
           "aggregate_evaluation_state": "pending",
-          "blockers": [
-            {
-              "category": "workflow",
-              "details": "Follow the public routing lane for `task_closure_recording_ready`.",
-              "next_public_action": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-              "scope_key": "task-1",
-              "scope_type": "task"
-            }
-          ],
           "blocking_reason_codes": [
             "prior_task_current_closure_missing",
             "task_closure_baseline_repair_candidate"
@@ -500,16 +508,15 @@
           "last_strategy_checkpoint_fingerprint": "<SHA256>",
           "latest_authoritative_sequence": 0,
           "next_action": "close current task",
-          "next_public_action": {
-            "args_template": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-            "command": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-          },
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
           "pending_evaluator_kinds": [],
           "phase": "task_closure_pending",
           "phase_detail": "task_closure_recording_ready",
           "plan_revision": 1,
+          "projection_diagnostics": [
+            "prior_task_review_dispatch_missing"
+          ],
           "projection_mode": "state_dir_only",
           "public_repair_targets": [
             {
@@ -530,27 +537,10 @@
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [
             "prior_task_current_closure_missing",
-            "task_closure_baseline_repair_candidate"
+            "task_closure_baseline_repair_candidate",
+            "prior_task_review_dispatch_missing"
           ],
-          "recommended_command": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "close-current-task",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "--task",
-            "1",
-            "--review-result",
-            "pass|fail",
-            "--review-summary-file",
-            "<path>",
-            "--verification-result",
-            "pass|fail|not-run",
-            "--verification-summary-file",
-            "<path>"
-          ],
+          "recommended_command": null,
           "recording_context": {
             "task_number": 1
           },
@@ -559,6 +549,36 @@
           "repo_state_baseline_worktree_fingerprint": null,
           "repo_state_drift_state": "preflight_pending",
           "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "review_result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "review_summary_file"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_result",
+              "values": [
+                "pass",
+                "fail",
+                "not-run"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "verification_summary_file",
+              "required_when": "verification_result!=not-run"
+            }
+          ],
           "reset_policy": "chunk-boundary",
           "resume_step": null,
           "resume_task": null,
@@ -601,15 +621,6 @@
           "active_step": null,
           "active_task": null,
           "aggregate_evaluation_state": "pending",
-          "blockers": [
-            {
-              "category": "workflow",
-              "details": "Follow the public routing lane for `task_closure_recording_ready`.",
-              "next_public_action": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-              "scope_key": "task-1",
-              "scope_type": "task"
-            }
-          ],
           "blocking_reason_codes": [
             "prior_task_current_closure_missing",
             "task_closure_baseline_repair_candidate"
@@ -653,16 +664,15 @@
           "last_strategy_checkpoint_fingerprint": "<SHA256>",
           "latest_authoritative_sequence": 0,
           "next_action": "close current task",
-          "next_public_action": {
-            "args_template": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-            "command": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-          },
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
           "pending_evaluator_kinds": [],
           "phase": "task_closure_pending",
           "phase_detail": "task_closure_recording_ready",
           "plan_revision": 1,
+          "projection_diagnostics": [
+            "prior_task_review_dispatch_missing"
+          ],
           "projection_mode": "state_dir_only",
           "public_repair_targets": [
             {
@@ -683,27 +693,10 @@
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [
             "prior_task_current_closure_missing",
-            "task_closure_baseline_repair_candidate"
+            "task_closure_baseline_repair_candidate",
+            "prior_task_review_dispatch_missing"
           ],
-          "recommended_command": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "close-current-task",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "--task",
-            "1",
-            "--review-result",
-            "pass|fail",
-            "--review-summary-file",
-            "<path>",
-            "--verification-result",
-            "pass|fail|not-run",
-            "--verification-summary-file",
-            "<path>"
-          ],
+          "recommended_command": null,
           "recording_context": {
             "task_number": 1
           },
@@ -712,6 +705,36 @@
           "repo_state_baseline_worktree_fingerprint": null,
           "repo_state_drift_state": "preflight_pending",
           "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "review_result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "review_summary_file"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_result",
+              "values": [
+                "pass",
+                "fail",
+                "not-run"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "verification_summary_file",
+              "required_when": "verification_result!=not-run"
+            }
+          ],
           "reset_policy": "chunk-boundary",
           "resume_step": null,
           "resume_task": null,
@@ -747,15 +770,6 @@
       },
       "workflow_operator": {
         "json": {
-          "blockers": [
-            {
-              "category": "workflow",
-              "details": "Follow the public routing lane for `task_closure_recording_ready`.",
-              "next_public_action": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-              "scope_key": "task-1",
-              "scope_type": "task"
-            }
-          ],
           "blocking_reason_codes": [
             "prior_task_current_closure_missing",
             "task_closure_baseline_repair_candidate"
@@ -763,38 +777,45 @@
           "blocking_scope": "task",
           "blocking_task": 1,
           "next_action": "close current task",
-          "next_public_action": {
-            "args_template": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-            "command": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-          },
           "phase": "task_closure_pending",
           "phase_detail": "task_closure_recording_ready",
           "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
           "projection_mode": "state_dir_only",
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
-          "recommended_command": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "close-current-task",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "--task",
-            "1",
-            "--review-result",
-            "pass|fail",
-            "--review-summary-file",
-            "<path>",
-            "--verification-result",
-            "pass|fail|not-run",
-            "--verification-summary-file",
-            "<path>"
-          ],
           "recording_context": {
             "task_number": 1
           },
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "review_result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "review_summary_file"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_result",
+              "values": [
+                "pass",
+                "fail",
+                "not-run"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "verification_summary_file",
+              "required_when": "verification_result!=not-run"
+            }
+          ],
           "review_state_status": "clean",
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
@@ -858,15 +879,6 @@
           "active_step": null,
           "active_task": null,
           "aggregate_evaluation_state": "pending",
-          "blockers": [
-            {
-              "category": "workflow",
-              "details": "Follow the public routing lane for `task_closure_recording_ready`.",
-              "next_public_action": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-              "scope_key": "task-1",
-              "scope_type": "task"
-            }
-          ],
           "blocking_reason_codes": [
             "prior_task_current_closure_missing",
             "task_closure_baseline_repair_candidate"
@@ -910,16 +922,15 @@
           "last_strategy_checkpoint_fingerprint": "<SHA256>",
           "latest_authoritative_sequence": 0,
           "next_action": "close current task",
-          "next_public_action": {
-            "args_template": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-            "command": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-          },
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
           "pending_evaluator_kinds": [],
           "phase": "task_closure_pending",
           "phase_detail": "task_closure_recording_ready",
           "plan_revision": 1,
+          "projection_diagnostics": [
+            "prior_task_review_dispatch_missing"
+          ],
           "projection_mode": "state_dir_only",
           "public_repair_targets": [
             {
@@ -940,27 +951,10 @@
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [
             "prior_task_current_closure_missing",
-            "task_closure_baseline_repair_candidate"
+            "task_closure_baseline_repair_candidate",
+            "prior_task_review_dispatch_missing"
           ],
-          "recommended_command": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "close-current-task",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "--task",
-            "1",
-            "--review-result",
-            "pass|fail",
-            "--review-summary-file",
-            "<path>",
-            "--verification-result",
-            "pass|fail|not-run",
-            "--verification-summary-file",
-            "<path>"
-          ],
+          "recommended_command": null,
           "recording_context": {
             "task_number": 1
           },
@@ -969,6 +963,36 @@
           "repo_state_baseline_worktree_fingerprint": null,
           "repo_state_drift_state": "preflight_pending",
           "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "review_result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "review_summary_file"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_result",
+              "values": [
+                "pass",
+                "fail",
+                "not-run"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "verification_summary_file",
+              "required_when": "verification_result!=not-run"
+            }
+          ],
           "reset_policy": "chunk-boundary",
           "resume_step": null,
           "resume_task": null,
@@ -1004,15 +1028,6 @@
       },
       "workflow_operator": {
         "json": {
-          "blockers": [
-            {
-              "category": "workflow",
-              "details": "Follow the public routing lane for `task_closure_recording_ready`.",
-              "next_public_action": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-              "scope_key": "task-1",
-              "scope_type": "task"
-            }
-          ],
           "blocking_reason_codes": [
             "prior_task_current_closure_missing",
             "task_closure_baseline_repair_candidate"
@@ -1020,38 +1035,45 @@
           "blocking_scope": "task",
           "blocking_task": 1,
           "next_action": "close current task",
-          "next_public_action": {
-            "args_template": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-            "command": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-          },
           "phase": "task_closure_pending",
           "phase_detail": "task_closure_recording_ready",
           "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
           "projection_mode": "state_dir_only",
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
-          "recommended_command": "featureforge plan execution close-current-task --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "close-current-task",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "--task",
-            "1",
-            "--review-result",
-            "pass|fail",
-            "--review-summary-file",
-            "<path>",
-            "--verification-result",
-            "pass|fail|not-run",
-            "--verification-summary-file",
-            "<path>"
-          ],
           "recording_context": {
             "task_number": 1
           },
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "review_result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "review_summary_file"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_result",
+              "values": [
+                "pass",
+                "fail",
+                "not-run"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "verification_summary_file",
+              "required_when": "verification_result!=not-run"
+            }
+          ],
           "review_state_status": "clean",
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
@@ -1213,7 +1235,7 @@
             "--step",
             "1",
             "--expect-execution-fingerprint",
-            "<SHA256>"
+            "0000000000000000000000000000000000000000"
           ],
           "release_docs_state": "not_required",
           "repo_state_baseline_head_sha": null,
@@ -1296,7 +1318,7 @@
             "--step",
             "1",
             "--expect-execution-fingerprint",
-            "<SHA256>"
+            "0000000000000000000000000000000000000000"
           ],
           "review_state_status": "clean",
           "schema_version": 3,
@@ -1438,13 +1460,6 @@
           "plan_revision": 1,
           "projection_mode": "state_dir_only",
           "public_repair_targets": [
-            {
-              "command_kind": "reopen",
-              "expires_when_fingerprint_changes": true,
-              "reason_code": "prior_task_current_closure_stale",
-              "source_record_id": "task-closure-<ID>",
-              "task": 1
-            },
             {
               "command_kind": "repair-review-state",
               "expires_when_fingerprint_changes": true,
@@ -2025,7 +2040,7 @@
             "--execution-mode",
             "featureforge:executing-plans",
             "--expect-execution-fingerprint",
-            "<SHA256>"
+            "0000000000000000000000000000000000000000"
           ],
           "release_docs_state": "not_required",
           "repo_state_baseline_head_sha": null,
@@ -2273,7 +2288,7 @@
             "--execution-mode",
             "featureforge:executing-plans",
             "--expect-execution-fingerprint",
-            "<SHA256>"
+            "0000000000000000000000000000000000000000"
           ],
           "release_docs_state": "not_required",
           "repo_state_baseline_head_sha": null,
@@ -2352,7 +2367,7 @@
             "--execution-mode",
             "featureforge:executing-plans",
             "--expect-execution-fingerprint",
-            "<SHA256>"
+            "0000000000000000000000000000000000000000"
           ],
           "review_state_status": "clean",
           "schema_version": 3,
@@ -2421,7 +2436,6 @@
             {
               "category": "late_stage",
               "details": "A current release-readiness result for the active branch closure is required before late-stage progression can continue.",
-              "next_public_action": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
               "record_id": "branch-closure-<ID>",
               "scope_key": "branch-closure-<ID>",
               "scope_type": "branch"
@@ -2487,10 +2501,6 @@
           "last_strategy_checkpoint_fingerprint": "<SHA256>",
           "latest_authoritative_sequence": 0,
           "next_action": "advance late stage",
-          "next_public_action": {
-            "args_template": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md"
-          },
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
           "pending_evaluator_kinds": [],
@@ -2499,13 +2509,6 @@
           "plan_revision": 1,
           "projection_mode": "state_dir_only",
           "public_repair_targets": [
-            {
-              "command_kind": "close-current-task",
-              "expires_when_fingerprint_changes": true,
-              "reason_code": "task_review_dispatch_closure_ready",
-              "source_record_id": "task-review-dispatch:task-1",
-              "task": 1
-            },
             {
               "command_kind": "repair-review-state",
               "expires_when_fingerprint_changes": true,
@@ -2522,15 +2525,7 @@
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [],
-          "recommended_command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "advance-late-stage",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md"
-          ],
+          "recommended_command": null,
           "recording_context": {
             "branch_closure_id": "branch-closure-<ID>"
           },
@@ -2539,6 +2534,21 @@
           "repo_state_baseline_worktree_fingerprint": null,
           "repo_state_drift_state": "preflight_pending",
           "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "result",
+              "values": [
+                "ready",
+                "blocked"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "summary_file"
+            }
+          ],
           "reset_policy": null,
           "resume_step": null,
           "resume_task": null,
@@ -2579,7 +2589,6 @@
             {
               "category": "late_stage",
               "details": "A current release-readiness result for the active branch closure is required before late-stage progression can continue.",
-              "next_public_action": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
               "record_id": "branch-closure-<ID>",
               "scope_key": "branch-closure-<ID>",
               "scope_type": "branch"
@@ -2588,28 +2597,30 @@
           "blocking_reason_codes": [],
           "blocking_scope": "branch",
           "next_action": "advance late stage",
-          "next_public_action": {
-            "args_template": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md"
-          },
           "phase": "document_release_pending",
           "phase_detail": "release_readiness_recording_ready",
           "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
           "projection_mode": "state_dir_only",
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
-          "recommended_command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "advance-late-stage",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md"
-          ],
           "recording_context": {
             "branch_closure_id": "branch-closure-<ID>"
           },
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "result",
+              "values": [
+                "ready",
+                "blocked"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "summary_file"
+            }
+          ],
           "review_state_status": "clean",
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
@@ -2679,7 +2690,7 @@
             {
               "category": "late_stage",
               "details": "A fresh external final review is required before late-stage progression can continue.",
-              "next_public_action": "featureforge workflow operator --plan <approved-plan-path>",
+              "next_public_action": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
               "scope_key": "branch-closure-<ID>",
               "scope_type": "branch"
             }
@@ -2748,8 +2759,8 @@
           "latest_authoritative_sequence": 0,
           "next_action": "request final review",
           "next_public_action": {
-            "args_template": "featureforge workflow operator --plan <approved-plan-path>",
-            "command": "featureforge workflow operator --plan <approved-plan-path>"
+            "args_template": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "command": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md"
           },
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
@@ -2759,13 +2770,6 @@
           "plan_revision": 1,
           "projection_mode": "state_dir_only",
           "public_repair_targets": [
-            {
-              "command_kind": "close-current-task",
-              "expires_when_fingerprint_changes": true,
-              "reason_code": "task_review_dispatch_closure_ready",
-              "source_record_id": "task-review-dispatch:task-1",
-              "task": 1
-            },
             {
               "command_kind": "repair-review-state",
               "expires_when_fingerprint_changes": true,
@@ -2824,7 +2828,7 @@
             {
               "category": "late_stage",
               "details": "A fresh external final review is required before late-stage progression can continue.",
-              "next_public_action": "featureforge workflow operator --plan <approved-plan-path>",
+              "next_public_action": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
               "scope_key": "branch-closure-<ID>",
               "scope_type": "branch"
             }
@@ -2835,8 +2839,8 @@
           "blocking_scope": "branch",
           "next_action": "request final review",
           "next_public_action": {
-            "args_template": "featureforge workflow operator --plan <approved-plan-path>",
-            "command": "featureforge workflow operator --plan <approved-plan-path>"
+            "args_template": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "command": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md"
           },
           "phase": "final_review_pending",
           "phase_detail": "final_review_dispatch_required",
@@ -2970,13 +2974,6 @@
           "plan_revision": 1,
           "projection_mode": "state_dir_only",
           "public_repair_targets": [
-            {
-              "command_kind": "close-current-task",
-              "expires_when_fingerprint_changes": true,
-              "reason_code": "task_review_dispatch_closure_ready",
-              "source_record_id": "task-review-dispatch:task-1",
-              "task": 1
-            },
             {
               "command_kind": "repair-review-state",
               "expires_when_fingerprint_changes": true,
@@ -3120,7 +3117,6 @@
             {
               "category": "late_stage",
               "details": "A current QA result for the active branch closure is required before late-stage progression can continue.",
-              "next_public_action": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md --result pass|fail --summary-file <path>",
               "record_id": "branch-closure-<ID>",
               "scope_key": "branch-closure-<ID>",
               "scope_type": "branch"
@@ -3188,10 +3184,6 @@
           "last_strategy_checkpoint_fingerprint": "<SHA256>",
           "latest_authoritative_sequence": 0,
           "next_action": "run QA",
-          "next_public_action": {
-            "args_template": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md --result pass|fail --summary-file <path>",
-            "command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md --result pass|fail --summary-file <path>"
-          },
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
           "pending_evaluator_kinds": [],
@@ -3200,13 +3192,6 @@
           "plan_revision": 1,
           "projection_mode": "state_dir_only",
           "public_repair_targets": [
-            {
-              "command_kind": "close-current-task",
-              "expires_when_fingerprint_changes": true,
-              "reason_code": "task_review_dispatch_closure_ready",
-              "source_record_id": "task-review-dispatch:task-1",
-              "task": 1
-            },
             {
               "command_kind": "advance-late-stage",
               "expires_when_fingerprint_changes": true,
@@ -3217,24 +3202,27 @@
           "qa_requirement": "required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [],
-          "recommended_command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md --result pass|fail --summary-file <path>",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "advance-late-stage",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "--result",
-            "pass|fail",
-            "--summary-file",
-            "<path>"
-          ],
+          "recommended_command": null,
           "release_docs_state": "fresh",
           "repo_state_baseline_head_sha": null,
           "repo_state_baseline_worktree_fingerprint": null,
           "repo_state_drift_state": "preflight_pending",
           "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "summary_file"
+            }
+          ],
           "reset_policy": null,
           "resume_step": null,
           "resume_task": null,
@@ -3281,7 +3269,6 @@
             {
               "category": "late_stage",
               "details": "A current QA result for the active branch closure is required before late-stage progression can continue.",
-              "next_public_action": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md --result pass|fail --summary-file <path>",
               "record_id": "branch-closure-<ID>",
               "scope_key": "branch-closure-<ID>",
               "scope_type": "branch"
@@ -3291,28 +3278,26 @@
           "blocking_scope": "branch",
           "finish_review_gate_pass_branch_closure_id": "branch-closure-<ID>",
           "next_action": "run QA",
-          "next_public_action": {
-            "args_template": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md --result pass|fail --summary-file <path>",
-            "command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md --result pass|fail --summary-file <path>"
-          },
           "phase": "qa_pending",
           "phase_detail": "qa_recording_required",
           "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
           "projection_mode": "state_dir_only",
           "qa_requirement": "required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
-          "recommended_command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md --result pass|fail --summary-file <path>",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "advance-late-stage",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "--result",
-            "pass|fail",
-            "--summary-file",
-            "<path>"
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "summary_file"
+            }
           ],
           "review_state_status": "clean",
           "schema_version": 3,

@@ -32,13 +32,6 @@ pub(in crate::execution::commands) struct CurrentTaskClosureMaterialization<'a> 
     pub(in crate::execution::commands) superseded_task_closure_ids: &'a [String],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::execution::commands) enum TaskDispatchReviewedStateStatus {
-    Current,
-    MissingReviewedStateBinding,
-    StaleReviewedState,
-}
-
 pub(in crate::execution::commands) fn current_branch_reviewed_state(
     context: &ExecutionContext,
 ) -> Result<BranchReviewedState, JsonFailure> {
@@ -46,7 +39,7 @@ pub(in crate::execution::commands) fn current_branch_reviewed_state(
     let base_branch = context.current_release_base_branch().ok_or_else(|| {
         JsonFailure::new(
             FailureClass::BranchDetectionFailed,
-            "record-branch-closure requires an authoritative base-branch binding.",
+            "advance-late-stage branch-closure recording requires an authoritative base-branch binding.",
         )
     })?;
     let reviewed_state_id = format!("git_tree:{}", context.current_tracked_tree_sha()?);
@@ -182,11 +175,12 @@ pub(in crate::execution::commands) fn blocked_branch_closure_output_for_invalid_
             code: None,
             recommended_command: None,
             recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
             superseded_branch_closure_ids: Vec::new(),
             required_follow_up: Some(String::from("repair_review_state")),
             trace_summary: format!(
-                "record-branch-closure failed closed because {}",
+                "advance-late-stage branch-closure recording failed closed because {}",
                 failure.message
             ),
         }));
@@ -259,6 +253,7 @@ pub(in crate::execution::commands) fn branch_closure_already_current_output(
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         superseded_branch_closure_ids: Vec::new(),
         required_follow_up: None,
@@ -304,6 +299,7 @@ pub(in crate::execution::commands) fn branch_closure_already_current_empty_linea
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         superseded_branch_closure_ids: Vec::new(),
         required_follow_up: None,
@@ -335,7 +331,7 @@ pub(in crate::execution::commands) fn current_branch_task_closure_records(
     if load_authoritative_transition_state(context)?.is_none() {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
-            "record-branch-closure requires authoritative current task-closure state.",
+            "advance-late-stage branch-closure recording requires authoritative current task-closure state.",
         ));
     }
     Ok(still_current_task_closure_records(context)?
@@ -352,7 +348,7 @@ pub(in crate::execution::commands) fn current_task_closure_record_id(
         JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
             format!(
-                "record-branch-closure could not determine still-current task-closure lineage for task {task_number}."
+                "advance-late-stage branch-closure recording could not determine still-current task-closure lineage for task {task_number}."
             ),
         )
     })?;

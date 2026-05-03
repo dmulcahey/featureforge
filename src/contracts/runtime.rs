@@ -1860,7 +1860,7 @@ fn prune_packet_cache(packet_dir: &Path, current_packet: &Path) {
             (entry.path(), modified)
         })
         .collect::<Vec<_>>();
-    packets.sort_by(|left, right| right.1.cmp(&left.1));
+    packets.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
     let current_is_present = packets.iter().any(|(path, _)| path == current_packet);
     let keep_others = if current_is_present {
         limit.saturating_sub(1)

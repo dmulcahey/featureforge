@@ -56,6 +56,162 @@ use workflow_support::{init_repo, workflow_fixture_root};
 const WORKFLOW_FIXTURE_PLAN_REL: &str =
     "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
+fn assert_release_readiness_required_inputs(surface: &Value) {
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "release-readiness routes require external inputs and must not emit executable argv: {surface}"
+    );
+    assert!(
+        surface["recommended_command"].is_null(),
+        "release-readiness routes should expose typed inputs instead of a placeholder recommended_command: {surface}"
+    );
+    assert_eq!(
+        surface["required_inputs"],
+        json!([
+            {
+                "kind": "enum",
+                "name": "result",
+                "values": ["ready", "blocked"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "summary_file"
+            }
+        ]),
+        "release-readiness route should expose typed missing inputs: {surface}"
+    );
+}
+
+fn assert_qa_required_inputs(surface: &Value) {
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "QA routes require external inputs and must not emit executable argv: {surface}"
+    );
+    assert!(
+        surface["recommended_command"].is_null(),
+        "QA routes should expose typed inputs instead of a placeholder recommended_command: {surface}"
+    );
+    assert_eq!(
+        surface["required_inputs"],
+        json!([
+            {
+                "kind": "enum",
+                "name": "result",
+                "values": ["pass", "fail"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "summary_file"
+            }
+        ]),
+        "QA route should expose typed missing inputs: {surface}"
+    );
+}
+
+fn assert_task_closure_required_inputs(surface: &Value, task: u32) {
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "task-closure routes require review/verification inputs and must not emit executable argv: {surface}"
+    );
+    assert!(
+        surface["recommended_command"].is_null(),
+        "task-closure routes should expose typed inputs instead of a placeholder recommended_command: {surface}"
+    );
+    let task_target = surface["recording_context"]["task_number"]
+        .as_u64()
+        .or_else(|| surface["blocking_task"].as_u64());
+    assert_eq!(
+        task_target,
+        Some(u64::from(task)),
+        "task-closure route should keep the task in structured route metadata: {surface}"
+    );
+    assert_eq!(
+        surface["required_inputs"],
+        json!([
+            {
+                "kind": "enum",
+                "name": "review_result",
+                "values": ["pass", "fail"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "review_summary_file"
+            },
+            {
+                "kind": "enum",
+                "name": "verification_result",
+                "values": ["pass", "fail", "not-run"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "verification_summary_file",
+                "required_when": "verification_result!=not-run"
+            }
+        ]),
+        "task-closure route should expose typed missing review/verification inputs: {surface}"
+    );
+}
+
+fn record_task_closure_with_fixture_inputs_real_cli(
+    repo: &Path,
+    state: &Path,
+    plan_rel: &str,
+    task: u32,
+    label: &str,
+) -> Value {
+    let safe_label: String = label
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let review_summary_path = repo.join(format!("task-{task}-{safe_label}-review-summary.md"));
+    let verification_summary_path =
+        repo.join(format!("task-{task}-{safe_label}-verification-summary.md"));
+    write_file(
+        &review_summary_path,
+        &format!("Task {task} fixture independent review passed for {label}.\n"),
+    );
+    write_file(
+        &verification_summary_path,
+        &format!("Task {task} fixture verification passed for {label}.\n"),
+    );
+    let task_arg = task.to_string();
+
+    run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "close-current-task",
+            "--plan",
+            plan_rel,
+            "--task",
+            task_arg.as_str(),
+            "--review-result",
+            "pass",
+            "--review-summary-file",
+            review_summary_path
+                .to_str()
+                .expect("task closure review summary path should be utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary_path
+                .to_str()
+                .expect("task closure verification summary path should be utf-8"),
+        ],
+        label,
+    )
+}
+
 #[derive(Clone)]
 struct WorkflowFixtureTemplate {
     repo_root: PathBuf,
@@ -177,16 +333,8 @@ fn assert_task_closure_recording_route(route: &Value, plan_rel: &str, task: u32)
         route["state_kind"], "actionable_public_command",
         "json: {route}"
     );
-    assert!(
-        route["recommended_command"]
-            .as_str()
-            .is_some_and(|command| {
-                command.starts_with("featureforge plan execution close-current-task --plan")
-                    && command.contains(plan_rel)
-                    && command.contains(&format!("--task {task}"))
-            }),
-        "task-closure route should expose close-current-task for task {task}, got {route}"
-    );
+    assert_eq!(route["plan_path"], plan_rel, "json: {route}");
+    assert_task_closure_required_inputs(route, task);
 }
 
 fn assert_parity_probe_budget(scenario_id: &str, consumed_probe_commands: usize, max: usize) {
@@ -2056,18 +2204,10 @@ fn internal_only_write_dispatched_branch_review_artifact(
 }
 
 fn install_cutover_check_baseline(repo: &Path) {
-    write_repo_file(
-        repo,
-        "bin/featureforge",
-        "#!/usr/bin/env bash\nprintf 'featureforge test runtime\\n'\n",
-    );
+    let darwin_runtime = "#!/usr/bin/env bash\nprintf 'darwin runtime\\n'\n";
+    write_canonical_prebuilt_layout(repo, "1.0.0", darwin_runtime, "windows runtime\n");
+    write_repo_file(repo, "bin/featureforge", darwin_runtime);
     make_executable(&repo.join("bin/featureforge"));
-    write_canonical_prebuilt_layout(
-        repo,
-        "1.0.0",
-        "#!/usr/bin/env bash\nprintf 'darwin runtime\\n'\n",
-        "windows runtime\n",
-    );
 }
 
 fn git_add_all(repo: &Path) {
@@ -3417,12 +3557,7 @@ fn plan_execution_status_routes_closure_baseline_candidate_when_clean_execution_
     );
     assert_eq!(status["phase_detail"], "task_closure_recording_ready");
     assert_eq!(status["next_action"], "close current task");
-    assert!(
-        status["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("close-current-task")),
-        "status should recommend close-current-task when closure-baseline repair is the next action, got {status}"
-    );
+    assert_task_closure_required_inputs(&status, 1);
 }
 
 #[test]
@@ -3753,16 +3888,7 @@ fn completed_plan_invalid_current_task_closure_routes_status_operator_and_repair
         "json: {repair_json}"
     );
     assert_eq!(repair_json["phase_detail"], "task_closure_recording_ready");
-    assert!(
-        repair_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| {
-                command.starts_with(&format!(
-                    "featureforge plan execution close-current-task --plan {plan_rel} --task 1"
-                ))
-            }),
-        "repair-review-state should return the authoritative close-current-task target after removing invalid current task-closure provenance, got {repair_json}"
-    );
+    assert_task_closure_required_inputs(&repair_json, 1);
 }
 
 #[test]
@@ -4100,12 +4226,7 @@ fn workflow_operator_routes_document_release_pending_to_advance_late_stage_after
         "branch-release-closure"
     );
     assert_eq!(operator_json["next_action"], "advance late stage");
-    assert_eq!(
-        operator_json["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_rel}"
-        ))
-    );
+    assert_release_readiness_required_inputs(&operator_json);
 }
 
 #[test]
@@ -4484,12 +4605,7 @@ fn workflow_status_and_operator_rederive_late_stage_after_execution_exhausts() {
         "release_readiness_recording_ready"
     );
     assert_eq!(status_json["review_state_status"], "clean");
-    assert_eq!(
-        status_json["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_rel}"
-        ))
-    );
+    assert_release_readiness_required_inputs(&status_json);
 
     let operator_json = run_featureforge_with_env_json(
         repo,
@@ -4507,12 +4623,7 @@ fn workflow_status_and_operator_rederive_late_stage_after_execution_exhausts() {
         "release_readiness_recording_ready"
     );
     assert_eq!(operator_json["review_state_status"], "clean");
-    assert_eq!(
-        operator_json["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_rel}"
-        ))
-    );
+    assert_release_readiness_required_inputs(&operator_json);
 }
 
 #[test]
@@ -4808,13 +4919,7 @@ fn workflow_operator_routes_blocked_release_readiness_to_resolution() {
         "branch-release-closure"
     );
     assert_eq!(operator_json["next_action"], "resolve release blocker");
-    assert_eq!(
-        operator_json["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_rel}"
-        )),
-        "workflow operator should keep blocked release readiness on the public advance-late-stage lane, got {operator_json}"
-    );
+    assert_release_readiness_required_inputs(&operator_json);
 }
 
 #[test]
@@ -4839,12 +4944,7 @@ fn workflow_operator_routes_qa_pending_to_record_qa() {
     assert_eq!(operator_json["review_state_status"], "clean");
     assert_eq!(operator_json["qa_requirement"], "required");
     assert_eq!(operator_json["next_action"], "run QA");
-    assert_eq!(
-        operator_json["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_rel} --result pass|fail --summary-file <path>"
-        ))
-    );
+    assert_qa_required_inputs(&operator_json);
 }
 
 #[test]
@@ -4879,12 +4979,7 @@ fn workflow_operator_ignores_manual_test_plan_generator_change_for_routing() {
     assert_eq!(operator_json["review_state_status"], "clean");
     assert_eq!(operator_json["qa_requirement"], "required");
     assert_eq!(operator_json["next_action"], "run QA");
-    assert_eq!(
-        operator_json["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_rel} --result pass|fail --summary-file <path>"
-        ))
-    );
+    assert_qa_required_inputs(&operator_json);
 }
 
 #[test]
@@ -4916,12 +5011,7 @@ fn plan_execution_status_surfaces_test_plan_refresh_and_public_routing_fields() 
     assert_eq!(status_json["harness_phase"], "qa_pending");
     assert_eq!(status_json["phase_detail"], "qa_recording_required");
     assert_eq!(status_json["next_action"], "run QA");
-    assert_eq!(
-        status_json["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_rel} --result pass|fail --summary-file <path>"
-        ))
-    );
+    assert_qa_required_inputs(&status_json);
     assert_eq!(status_json["qa_requirement"], "required");
     assert!(status_json.get("follow_up_override").is_none());
     assert!(status_json.get("recording_context").is_none());
@@ -5740,12 +5830,7 @@ fn workflow_operator_routes_missing_release_readiness_overlay_to_document_releas
     assert_eq!(operator_json["phase"], "document_release_pending");
     assert_eq!(operator_json["review_state_status"], "clean");
     assert_eq!(operator_json["next_action"], "advance late stage");
-    assert_eq!(
-        operator_json["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_rel}"
-        ))
-    );
+    assert_release_readiness_required_inputs(&operator_json);
     assert_public_route_parity(&operator_json, &status_json, None);
 }
 
@@ -6444,53 +6529,13 @@ fn task_close_happy_path_runtime_management_budget_is_capped() {
         ],
         "task-close budget fixture workflow operator after external review ready",
     );
-    let routed_command = operator_ready["recommended_command"]
-        .as_str()
-        .expect("task-close budget fixture should expose a routed command");
-    assert_no_hidden_helper_commands_used(&[routed_command.to_owned()]);
-    assert!(
-        routed_command.starts_with(&format!(
-            "featureforge plan execution close-current-task --plan {plan_rel}"
-        )),
-        "task-close budget fixture operator should route directly to close-current-task, got {operator_ready}"
-    );
-    assert!(
-        routed_command.contains("--task 1"),
-        "task-close budget fixture operator should target Task 1 for the budgeted close-current-task route, got {operator_ready}"
-    );
-    let review_summary_path = repo.join("task-close-budget-review-summary.md");
-    let verification_summary_path = repo.join("task-close-budget-verification-summary.md");
-    write_file(
-        &review_summary_path,
-        "Task close budget fixture independent review passed.\n",
-    );
-    write_file(
-        &verification_summary_path,
-        "Task close budget fixture verification passed.\n",
-    );
+    assert_task_closure_required_inputs(&operator_ready, 1);
     runtime_management_commands += 1; // close-current-task
-    let close_json = run_plan_execution_json_real_cli(
+    let close_json = record_task_closure_with_fixture_inputs_real_cli(
         repo,
         state,
-        &[
-            "close-current-task",
-            "--plan",
-            plan_rel,
-            "--task",
-            "1",
-            "--review-result",
-            "pass",
-            "--review-summary-file",
-            review_summary_path
-                .to_str()
-                .expect("task-close budget review summary path should be utf-8"),
-            "--verification-result",
-            "pass",
-            "--verification-summary-file",
-            verification_summary_path
-                .to_str()
-                .expect("task-close budget verification summary path should be utf-8"),
-        ],
+        plan_rel,
+        1,
         "task-close budget fixture close-current-task",
     );
     assert_eq!(
@@ -6536,20 +6581,7 @@ fn task_close_internal_dispatch_runtime_management_budget_is_capped() {
         ],
         "task-close internal-dispatch budget fixture workflow operator after external review ready",
     );
-    let routed_command = operator_ready["recommended_command"]
-        .as_str()
-        .expect("task-close internal-dispatch budget fixture should expose a routed command");
-    assert_no_hidden_helper_commands_used(&[routed_command.to_owned()]);
-    assert!(
-        routed_command.starts_with(&format!(
-            "featureforge plan execution close-current-task --plan {plan_rel}"
-        )),
-        "task-close internal-dispatch budget operator should route directly to close-current-task, got {operator_ready}"
-    );
-    assert!(
-        routed_command.contains("--task 1"),
-        "task-close internal-dispatch budget operator should target Task 1 for the budgeted close-current-task route, got {operator_ready}"
-    );
+    assert_task_closure_required_inputs(&operator_ready, 1);
 
     runtime_management_commands += 1; // close-current-task
     let close_json = run_plan_execution_json_real_cli(
@@ -6628,14 +6660,7 @@ fn fs14_recovery_to_close_current_task_uses_only_public_intent_commands() {
         Value::from("task_closure_recording_ready"),
         "FS-14 shell-smoke operator should surface task_closure_recording_ready for missing closure baseline recovery: {operator_ready}"
     );
-    let routed_command = operator_ready["recommended_command"]
-        .as_str()
-        .expect("FS-14 shell-smoke should expose operator recommended command");
-    assert_no_hidden_helper_commands_used(&[routed_command.to_owned()]);
-    assert!(
-        routed_command.contains("featureforge plan execution close-current-task --plan"),
-        "FS-14 shell-smoke operator should route directly to close-current-task, got {routed_command}"
-    );
+    assert_task_closure_required_inputs(&operator_ready, 1);
 
     let review_summary_path = repo.join("fs14-review-summary.md");
     let verification_summary_path = repo.join("fs14-verification-summary.md");
@@ -6960,18 +6985,12 @@ fn fs21_resume_task_is_suppressed_when_earlier_closure_bridge_preempts_it() {
     );
     assert!(status_json["resume_task"].is_null());
     assert!(status_json["resume_step"].is_null());
-    let status_command = status_json["recommended_command"]
-        .as_str()
-        .expect("FS-21 status should expose recommended command");
-    assert!(
-        status_command.contains("close-current-task") && status_command.contains("--task 1"),
-        "FS-21 status should recommend close-current-task --task 1, got {status_command}"
-    );
+    assert_task_closure_required_inputs(&status_json, 1);
     assert_eq!(
-        operator_json["recommended_command"],
-        Value::from(status_command.to_owned()),
-        "FS-21 operator and status should agree on the same close-current-task command when resume is preempted"
+        operator_json["recommended_command"], status_json["recommended_command"],
+        "FS-21 operator and status should agree on missing-input command absence when resume is preempted"
     );
+    assert_task_closure_required_inputs(&operator_json, 1);
 }
 
 #[test]
@@ -7032,14 +7051,7 @@ fn fs11_operator_and_begin_target_parity_after_rebase_resume() {
     let operator_recommended = operator_real["recommended_command"]
         .as_str()
         .expect("FS-11 shell-smoke operator should expose recommended command");
-    let repair_recommended = repair_json["recommended_command"]
-        .as_str()
-        .expect("FS-11 shell-smoke repair-review-state should expose recommended command");
-    assert!(
-        repair_recommended.contains("featureforge plan execution close-current-task --plan ")
-            && repair_recommended.contains("--task 2"),
-        "FS-11 shell-smoke repair-review-state should progress to a concrete Task 2 close-current-task command, got {repair_recommended}"
-    );
+    assert_task_closure_required_inputs(&repair_json, 2);
     assert_no_hidden_helper_commands_used(&[operator_recommended.to_owned()]);
     let operator_follow_up_output = run_recommended_plan_execution_command_output_real_cli(
         repo,
@@ -7067,6 +7079,10 @@ fn fs11_operator_and_begin_target_parity_after_rebase_resume() {
             operator_follow_up_json["required_follow_up"].is_null(),
             "json: {operator_follow_up_json:?}"
         );
+        if operator_follow_up_json["phase_detail"].as_str() == Some("task_closure_recording_ready")
+        {
+            assert_task_closure_required_inputs(&operator_follow_up_json, 2);
+        }
         let follow_up_task = operator_follow_up_json["task_number"]
             .as_u64()
             .or_else(|| operator_follow_up_json["blocking_task"].as_u64());
@@ -7154,41 +7170,7 @@ fn fs11_repair_output_matches_following_public_command_without_hidden_helper() {
         Value::from("blocked"),
         "FS-11 repair follow-up fixture should return a concrete blocker before recovery commands run"
     );
-    let recommended_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("FS-11 repair follow-up fixture should expose a recommended command")
-        .to_owned();
-    assert_no_hidden_helper_commands_used(std::slice::from_ref(&recommended_command));
-    let placeholder_bearing_close_current_task = recommended_command.contains("close-current-task")
-        && (recommended_command.contains("pass|fail") || recommended_command.contains("<path>"));
-    if placeholder_bearing_close_current_task {
-        return;
-    }
-
-    let follow_up_output = run_recommended_plan_execution_command_output_real_cli(
-        repo,
-        state,
-        &recommended_command,
-        "FS-11 repair follow-up should execute or fail closed via the recommended public command",
-    );
-    let follow_up_payload = if follow_up_output.stdout.is_empty() {
-        &follow_up_output.stderr
-    } else {
-        &follow_up_output.stdout
-    };
-    let follow_up_json: Value = serde_json::from_slice(follow_up_payload).unwrap_or_else(|error| {
-        panic!("FS-11 repair follow-up should return valid json payload: {error}")
-    });
-    assert!(
-        follow_up_output.status.success(),
-        "FS-11 repair follow-up command must be directly runnable, got {follow_up_json:?}"
-    );
-    if follow_up_json["action"].as_str() == Some("blocked") {
-        assert_eq!(
-            follow_up_json["required_follow_up"], repair_json["required_follow_up"],
-            "FS-11 repair follow-up command should either progress immediately or return the same blocker contract"
-        );
-    }
+    assert_task_closure_required_inputs(&repair_json, 2);
 }
 
 #[test]
@@ -7236,75 +7218,8 @@ fn fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers() {
         &["repair-review-state", "--plan", plan_rel],
         "FS-11 rebase/resume budget repair-review-state",
     );
-    let recommended_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("FS-11 rebase/resume budget should expose repair recommended command")
-        .to_owned();
-    assert_no_hidden_helper_commands_used(std::slice::from_ref(&recommended_command));
-    assert!(
-        recommended_command.contains("featureforge plan execution close-current-task --plan ")
-            && recommended_command.contains("--task 2"),
-        "FS-11 rebase/resume budget should progress to a concrete Task 2 close-current-task command after repair-review-state runs, got {recommended_command}"
-    );
-    let placeholder_bearing_close_current_task =
-        recommended_command.contains("pass|fail") || recommended_command.contains("<path>");
-    if placeholder_bearing_close_current_task {
-        assert_runtime_management_budget(
-            "FS11-REBASE-RESUME-BUDGET",
-            runtime_management_commands,
-            2,
-        );
-        return;
-    }
-
-    runtime_management_commands += 1;
-    let follow_up_output = run_recommended_plan_execution_command_output_real_cli(
-        repo,
-        state,
-        &recommended_command,
-        "FS-11 rebase/resume budget recommended recovery command",
-    );
-    let follow_up_payload = if follow_up_output.stdout.is_empty() {
-        &follow_up_output.stderr
-    } else {
-        &follow_up_output.stdout
-    };
-    let follow_up_json: Value = serde_json::from_slice(follow_up_payload).unwrap_or_else(|error| {
-        panic!("FS-11 rebase/resume budget follow-up should return valid json payload: {error}")
-    });
-    assert!(
-        follow_up_output.status.success(),
-        "FS-11 rebase/resume budget recommended follow-up command must be directly runnable, got {follow_up_json:?}"
-    );
-    assert_ne!(
-        follow_up_json["action"],
-        Value::from("blocked"),
-        "FS-11 rebase/resume budget must reach real work within three runtime-management commands; command 3 cannot remain blocked: {follow_up_json:?}"
-    );
-    let status_after_recovery = run_plan_execution_json_real_cli(
-        repo,
-        state,
-        &["status", "--plan", plan_rel],
-        "FS-11 rebase/resume budget status after command 3",
-    );
-    let resumed_task_2 = (status_after_recovery["active_task"].as_u64() == Some(2_u64)
-        && status_after_recovery["active_step"].as_u64() == Some(1_u64))
-        || (status_after_recovery["resume_task"].as_u64() == Some(2_u64)
-            && status_after_recovery["resume_step"].as_u64() == Some(1_u64));
-    assert!(
-        resumed_task_2,
-        "FS-11 rebase/resume budget should resume real Task 2 work after three commands, got {status_after_recovery:?}"
-    );
-    if status_after_recovery["phase_detail"].as_str() == Some("execution_reentry_required") {
-        let follow_up = status_after_recovery["recommended_command"]
-            .as_str()
-            .expect("FS-11 rebase/resume budget should still expose a concrete follow-up command");
-        assert!(
-            follow_up.contains("plan execution begin") && follow_up.contains("--task 2 --step 1"),
-            "FS-11 rebase/resume budget must keep routing concrete Task 2 work when execution_reentry_required remains projected, got {status_after_recovery:?}"
-        );
-    }
-    assert_runtime_management_budget("FS11-REBASE-RESUME-BUDGET", runtime_management_commands, 3);
+    assert_task_closure_required_inputs(&repair_json, 2);
+    assert_runtime_management_budget("FS11-REBASE-RESUME-BUDGET", runtime_management_commands, 2);
 }
 
 #[test]
@@ -7662,7 +7577,8 @@ fn stale_release_refresh_runtime_management_budget_is_capped_before_new_review_s
     );
     assert_eq!(release_json["action"], Value::from("recorded"));
     routed_commands.push(format!(
-        "featureforge plan execution advance-late-stage --plan {plan_rel}"
+        "featureforge plan execution advance-late-stage --plan {plan_rel} --result ready --summary-file {}",
+        release_summary_path.display()
     ));
 
     runtime_management_commands += 1;

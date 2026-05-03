@@ -815,6 +815,12 @@
           },
           "type": "array"
         },
+        "required_inputs": {
+          "items": {
+            "$ref": "#/$defs/PublicCommandInputRequirement"
+          },
+          "type": "array"
+        },
         "reset_policy": {
           "anyOf": [
             {
@@ -1128,6 +1134,44 @@
         "verified_spec_reference_fidelity",
         "reason_codes",
         "diagnostics"
+      ],
+      "type": "object"
+    },
+    "PublicCommandInputKind": {
+      "enum": [
+        "text",
+        "enum",
+        "path"
+      ],
+      "type": "string"
+    },
+    "PublicCommandInputRequirement": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/PublicCommandInputKind"
+        },
+        "must_exist": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required_when": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
       ],
       "type": "object"
     },
@@ -1691,6 +1735,12 @@
     },
     "recommended_skill": {
       "type": "string"
+    },
+    "required_inputs": {
+      "items": {
+        "$ref": "#/$defs/PublicCommandInputRequirement"
+      },
+      "type": "array"
     },
     "review_state_status": {
       "type": "string"

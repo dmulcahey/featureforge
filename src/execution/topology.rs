@@ -553,7 +553,7 @@ pub(crate) fn new_preflight_acceptance(
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     let seed = format!(
-        "execution-preflight-acceptance\n{}\n{}\n{}\n{}\n{}\n{}\n",
+        "execution-readiness-acceptance\n{}\n{}\n{}\n{}\n{}\n{}\n",
         context.runtime.repo_slug,
         context.runtime.branch_name,
         context.plan_rel,

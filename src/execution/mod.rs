@@ -8,6 +8,8 @@
 use std::path::Path;
 
 pub mod authority;
+pub(crate) mod closure_diagnostics;
+pub(crate) mod closure_dispatch;
 pub mod closure_graph;
 pub mod command_eligibility;
 pub(crate) mod command_model;
@@ -32,6 +34,7 @@ pub mod next_action;
 pub mod observability;
 pub mod phase;
 pub mod projection_renderer;
+pub(crate) mod public_repair_targets;
 pub(crate) mod public_route_selection;
 pub mod query;
 pub mod read_model;

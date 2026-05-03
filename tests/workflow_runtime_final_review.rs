@@ -839,20 +839,52 @@ fn document_release_precedes_final_review_after_release_truth_stales() {
         status_json["next_action"],
         Value::from("advance late stage")
     );
-    let expected_command =
-        format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}");
-    assert_eq!(
-        status_json["recommended_command"],
-        Value::from(expected_command.clone())
-    );
-    assert_eq!(
-        operator_json["recommended_command"],
-        Value::from(expected_command.clone())
-    );
-    assert_eq!(
-        handoff_json["recommended_command"],
-        Value::from(expected_command)
-    );
+    if phase_detail == "release_readiness_recording_ready" {
+        assert_eq!(status_json["recommended_command"], Value::Null);
+        assert_eq!(operator_json["recommended_command"], Value::Null);
+        assert_eq!(handoff_json["recommended_command"], Value::Null);
+        let required_inputs = json!([
+            {
+                "kind": "enum",
+                "name": "result",
+                "values": ["ready", "blocked"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "summary_file"
+            }
+        ]);
+        assert!(status_json.get("recommended_public_command_argv").is_none());
+        assert!(
+            operator_json
+                .get("recommended_public_command_argv")
+                .is_none()
+        );
+        assert!(
+            handoff_json
+                .get("recommended_public_command_argv")
+                .is_none()
+        );
+        assert_eq!(status_json["required_inputs"], required_inputs);
+        assert_eq!(operator_json["required_inputs"], required_inputs);
+        assert_eq!(handoff_json["required_inputs"], required_inputs);
+    } else {
+        let expected_command =
+            format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}");
+        assert_eq!(
+            status_json["recommended_command"],
+            Value::from(expected_command.clone())
+        );
+        assert_eq!(
+            operator_json["recommended_command"],
+            Value::from(expected_command.clone())
+        );
+        assert_eq!(
+            handoff_json["recommended_command"],
+            Value::from(expected_command)
+        );
+    }
 }
 
 #[test]

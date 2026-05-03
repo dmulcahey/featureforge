@@ -5,7 +5,7 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::command_eligibility::PublicCommand;
+use crate::execution::command_eligibility::{PublicCommand, PublicCommandInputRequirement};
 use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, ChunkingStrategy, DownstreamFreshnessState,
     EvaluationVerdict, EvaluatorKind, EvaluatorPolicyName, ExecutionRunId, HarnessPhase,
@@ -248,6 +248,8 @@ pub struct PlanExecutionStatus {
     pub recommended_public_command: Option<PublicCommand>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     pub recommended_command: Option<String>,
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
     pub reason_codes: Vec<String>,
@@ -291,6 +293,8 @@ pub struct GateResult {
     pub current_branch_closure_id: Option<String>,
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rederive_via_workflow_operator: Option<bool>,
 }
@@ -315,6 +319,7 @@ pub struct GateState {
     pub current_branch_closure_id: Option<String>,
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
     pub recommended_command: Option<String>,
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     pub rederive_via_workflow_operator: Option<bool>,
 }
 
@@ -333,6 +338,7 @@ impl Default for GateState {
             current_branch_closure_id: None,
             finish_review_gate_pass_branch_closure_id: None,
             recommended_command: None,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
         }
     }
@@ -354,6 +360,7 @@ impl GateState {
             finish_review_gate_pass_branch_closure_id: result
                 .finish_review_gate_pass_branch_closure_id,
             recommended_command: result.recommended_command,
+            required_inputs: result.required_inputs,
             rederive_via_workflow_operator: result.rederive_via_workflow_operator,
         }
     }
@@ -408,6 +415,7 @@ impl GateState {
             finish_review_gate_pass_branch_closure_id: self
                 .finish_review_gate_pass_branch_closure_id,
             recommended_command: self.recommended_command,
+            required_inputs: self.required_inputs,
             rederive_via_workflow_operator: self.rederive_via_workflow_operator,
         }
     }

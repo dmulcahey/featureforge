@@ -107,7 +107,7 @@ pub(in crate::execution::commands) fn optional_public_command_surfaces(
     command: Option<&PublicCommand>,
 ) -> (Option<String>, Option<Vec<String>>) {
     (
-        command.map(PublicCommand::to_display_command),
+        recommended_public_command_display(command),
         recommended_public_command_argv(command),
     )
 }
@@ -138,12 +138,23 @@ pub(in crate::execution::commands) struct CloseCurrentTaskFollowUpRecommendation
     pub(in crate::execution::commands) required_follow_up: Option<String>,
     pub(in crate::execution::commands) recommended_command: Option<String>,
     pub(in crate::execution::commands) recommended_public_command_argv: Option<Vec<String>>,
+    pub(in crate::execution::commands) required_inputs: Vec<PublicCommandInputRequirement>,
 }
 
 fn close_current_task_public_command_surfaces(
     command: Option<&PublicCommand>,
-) -> (Option<String>, Option<Vec<String>>) {
-    optional_public_command_surfaces(command)
+) -> (
+    Option<String>,
+    Option<Vec<String>>,
+    Vec<PublicCommandInputRequirement>,
+) {
+    let (recommended_command, recommended_public_command_argv) =
+        optional_public_command_surfaces(command);
+    (
+        recommended_command,
+        recommended_public_command_argv,
+        required_inputs_for_public_command(command),
+    )
 }
 
 pub(in crate::execution::commands) fn close_current_task_command_matches_follow_up(
@@ -179,7 +190,11 @@ pub(in crate::execution::commands) fn close_current_task_command_matches_follow_
 pub(in crate::execution::commands) fn close_current_task_recommendation_for_follow_up(
     required_follow_up: Option<&str>,
     operator: &ExecutionRoutingState,
-) -> (Option<String>, Option<Vec<String>>) {
+) -> (
+    Option<String>,
+    Option<Vec<String>>,
+    Vec<PublicCommandInputRequirement>,
+) {
     let recommended_public_command = required_follow_up.and_then(|follow_up| {
         operator
             .recommended_public_command
@@ -195,12 +210,13 @@ pub(in crate::execution::commands) fn close_current_task_follow_up_and_command(
     operator: &ExecutionRoutingState,
 ) -> CloseCurrentTaskFollowUpRecommendation {
     let required_follow_up = close_current_task_required_follow_up(operator);
-    let (recommended_command, recommended_public_command_argv) =
+    let (recommended_command, recommended_public_command_argv, required_inputs) =
         close_current_task_recommendation_for_follow_up(required_follow_up.as_deref(), operator);
     CloseCurrentTaskFollowUpRecommendation {
         required_follow_up,
         recommended_command,
         recommended_public_command_argv,
+        required_inputs,
     }
 }
 
@@ -235,6 +251,7 @@ pub(in crate::execution::commands) fn blocked_close_current_task_output_from_ope
             code: None,
             recommended_command: follow_up.recommended_command,
             recommended_public_command_argv: follow_up.recommended_public_command_argv,
+            required_inputs: follow_up.required_inputs,
             rederive_via_workflow_operator: None,
             required_follow_up: follow_up.required_follow_up,
             blocking_scope: None,
@@ -258,6 +275,7 @@ pub(in crate::execution::commands) fn blocked_close_current_task_output(
         code,
         recommended_command,
         recommended_public_command_argv,
+        required_inputs,
         rederive_via_workflow_operator,
         required_follow_up,
         trace_summary,
@@ -273,6 +291,7 @@ pub(in crate::execution::commands) fn blocked_close_current_task_output(
         code,
         recommended_command,
         recommended_public_command_argv,
+        required_inputs,
         rederive_via_workflow_operator,
         required_follow_up,
         blocking_scope: None,
@@ -296,6 +315,7 @@ pub(in crate::execution::commands) fn shared_out_of_phase_record_branch_closure_
         code: Some(String::from("out_of_phase_requery_required")),
         recommended_command: Some(recommended_command),
         recommended_public_command_argv: Some(recommended_public_command_argv),
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: Some(true),
         superseded_branch_closure_ids: Vec::new(),
         required_follow_up: None,
@@ -309,7 +329,7 @@ pub(in crate::execution::commands) fn shared_out_of_phase_advance_late_stage_out
 ) -> AdvanceLateStageOutput {
     let AdvanceLateStageOutputContext {
         stage_path,
-        delegated_primitive,
+        operation,
         branch_closure_id,
         dispatch_id,
         result,
@@ -321,13 +341,15 @@ pub(in crate::execution::commands) fn shared_out_of_phase_advance_late_stage_out
     AdvanceLateStageOutput {
         action: String::from("blocked"),
         stage_path: stage_path.to_owned(),
-        delegated_primitive: delegated_primitive.to_owned(),
+        intent: String::from("advance_late_stage"),
+        operation: operation.to_owned(),
         branch_closure_id,
         dispatch_id,
         result: result.to_owned(),
         code: Some(String::from("out_of_phase_requery_required")),
         recommended_command: Some(recommended_command),
         recommended_public_command_argv: Some(recommended_public_command_argv),
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: Some(true),
         required_follow_up: None,
         trace_summary: trace_summary.to_owned(),
@@ -336,7 +358,7 @@ pub(in crate::execution::commands) fn shared_out_of_phase_advance_late_stage_out
 
 pub(in crate::execution::commands) struct AdvanceLateStageOutputContext<'a> {
     pub(in crate::execution::commands) stage_path: &'a str,
-    pub(in crate::execution::commands) delegated_primitive: &'a str,
+    pub(in crate::execution::commands) operation: &'a str,
     pub(in crate::execution::commands) branch_closure_id: Option<String>,
     pub(in crate::execution::commands) dispatch_id: Option<String>,
     pub(in crate::execution::commands) result: &'a str,
@@ -352,7 +374,7 @@ pub(in crate::execution::commands) fn advance_late_stage_follow_up_or_requery_ou
 ) -> AdvanceLateStageOutput {
     let AdvanceLateStageOutputContext {
         stage_path,
-        delegated_primitive,
+        operation,
         branch_closure_id,
         dispatch_id,
         result,
@@ -369,7 +391,7 @@ pub(in crate::execution::commands) fn advance_late_stage_follow_up_or_requery_ou
                 plan,
                 AdvanceLateStageOutputContext {
                     stage_path,
-                    delegated_primitive,
+                    operation,
                     branch_closure_id,
                     dispatch_id,
                     result,
@@ -381,13 +403,15 @@ pub(in crate::execution::commands) fn advance_late_stage_follow_up_or_requery_ou
         return AdvanceLateStageOutput {
             action: String::from("blocked"),
             stage_path: stage_path.to_owned(),
-            delegated_primitive: delegated_primitive.to_owned(),
+            intent: String::from("advance_late_stage"),
+            operation: operation.to_owned(),
             branch_closure_id,
             dispatch_id,
             result: result.to_owned(),
             code: None,
             recommended_command: None,
             recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
             required_follow_up: Some(required_follow_up),
             trace_summary: trace_summary.to_owned(),
@@ -397,7 +421,7 @@ pub(in crate::execution::commands) fn advance_late_stage_follow_up_or_requery_ou
         plan,
         AdvanceLateStageOutputContext {
             stage_path,
-            delegated_primitive,
+            operation,
             branch_closure_id,
             dispatch_id,
             result,
@@ -414,7 +438,7 @@ pub(in crate::execution::commands) fn release_readiness_follow_up_or_requery_out
 ) -> AdvanceLateStageOutput {
     let AdvanceLateStageOutputContext {
         stage_path,
-        delegated_primitive,
+        operation,
         branch_closure_id,
         dispatch_id,
         result,
@@ -425,13 +449,15 @@ pub(in crate::execution::commands) fn release_readiness_follow_up_or_requery_out
         return AdvanceLateStageOutput {
             action: String::from("blocked"),
             stage_path: stage_path.to_owned(),
-            delegated_primitive: delegated_primitive.to_owned(),
+            intent: String::from("advance_late_stage"),
+            operation: operation.to_owned(),
             branch_closure_id,
             dispatch_id,
             result: result.to_owned(),
             code: None,
             recommended_command: None,
             recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
             required_follow_up: Some(required_follow_up),
             trace_summary: trace_summary.to_owned(),
@@ -441,7 +467,7 @@ pub(in crate::execution::commands) fn release_readiness_follow_up_or_requery_out
         plan,
         AdvanceLateStageOutputContext {
             stage_path,
-            delegated_primitive,
+            operation,
             branch_closure_id,
             dispatch_id,
             result,

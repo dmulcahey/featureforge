@@ -9,7 +9,7 @@ use bin_support::compiled_featureforge_path;
 use featureforge::git::discover_slug_identity;
 use featureforge::paths::harness_state_path;
 use process_support::run;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -109,6 +109,56 @@ fn assert_parity_probe_budget(scenario_id: &str, consumed_probe_commands: usize,
         consumed_probe_commands <= max,
         "scenario {scenario_id} exceeded parity-probe command target: consumed {consumed_probe_commands}, target {max}"
     );
+}
+
+fn assert_task_closure_required_inputs(surface: &Value, context: &str) {
+    let required_inputs = json!([
+        {
+            "kind": "enum",
+            "name": "review_result",
+            "values": ["pass", "fail"]
+        },
+        {
+            "kind": "path",
+            "must_exist": true,
+            "name": "review_summary_file"
+        },
+        {
+            "kind": "enum",
+            "name": "verification_result",
+            "values": ["pass", "fail", "not-run"]
+        },
+        {
+            "kind": "path",
+            "must_exist": true,
+            "name": "verification_summary_file",
+            "required_when": "verification_result!=not-run"
+        }
+    ]);
+    assert_eq!(
+        surface["recommended_command"],
+        Value::Null,
+        "{context} should not expose a placeholder command: {surface}"
+    );
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "{context} should not expose machine argv while task-closure input is missing: {surface}"
+    );
+    assert_eq!(
+        surface["required_inputs"], required_inputs,
+        "{context} should expose typed task-closure inputs: {surface}"
+    );
+    if surface.get("next_public_action").is_some() {
+        assert_eq!(
+            surface["next_public_action"]["command"],
+            Value::Null,
+            "{context} next_public_action should not expose a placeholder command: {surface}"
+        );
+        assert_eq!(
+            surface["next_public_action"]["required_inputs"], required_inputs,
+            "{context} next_public_action should carry typed task-closure inputs: {surface}"
+        );
+    }
 }
 
 fn run_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
@@ -503,14 +553,7 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
     );
     assert_eq!(repair["action"], Value::from("blocked"), "json: {repair}");
     assert_eq!(repair["required_follow_up"], Value::Null, "json: {repair}");
-    assert!(
-        repair["recommended_command"]
-            .as_str()
-            .is_some_and(|command| {
-                command.contains("featureforge plan execution close-current-task --plan")
-            }),
-        "repair should expose an executable close-current-task command after clearing stale reroute state: {repair}",
-    );
+    assert_task_closure_required_inputs(&repair, "FS-09 repair after stale reroute cleanup");
 
     let operator = run_featureforge_json(
         repo,
@@ -531,21 +574,8 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
         Value::from("task_closure_recording_ready")
     );
     assert_eq!(operator["next_action"], Value::from("close current task"));
-    assert!(
-        operator["recommended_command"]
-            .as_str()
-            .is_some_and(|command| {
-                command.contains("featureforge plan execution close-current-task --plan")
-            }),
-        "workflow operator should expose the executable close-current-task command after repair: {operator}"
-    );
-
-    assert!(
-        operator["next_public_action"]["command"]
-            .as_str()
-            .is_some_and(
-                |command| command.contains("featureforge plan execution close-current-task")
-            ),
-        "workflow operator should surface the post-repair task-closure blocker through next_public_action"
+    assert_task_closure_required_inputs(
+        &operator,
+        "FS-09 workflow operator after stale reroute cleanup",
     );
 }

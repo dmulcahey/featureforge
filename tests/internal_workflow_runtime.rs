@@ -81,6 +81,116 @@ const FULL_CONTRACT_READY_SPEC_FIXTURE_REL: &str =
 const FULL_CONTRACT_READY_PLAN_FIXTURE_REL: &str =
     "plans/2026-03-22-runtime-integration-hardening.md";
 
+fn assert_task_closure_required_inputs(surface: &Value, task: u32) {
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "task-closure routes require external review/verification inputs and must not emit executable argv: {surface}"
+    );
+    assert!(
+        surface["recommended_command"].is_null(),
+        "task-closure routes should expose typed inputs instead of a placeholder command: {surface}"
+    );
+    let task_target = surface["recording_context"]["task_number"]
+        .as_u64()
+        .or_else(|| surface["route"]["recording_context"]["task_number"].as_u64())
+        .or_else(|| surface["execution_status"]["recording_context"]["task_number"].as_u64())
+        .or_else(|| surface["blocking_task"].as_u64())
+        .or_else(|| surface["execution_status"]["blocking_task"].as_u64())
+        .or_else(|| surface["route"]["blocking_task"].as_u64());
+    assert_eq!(
+        task_target,
+        Some(u64::from(task)),
+        "task-closure route should keep the task in structured route metadata: {surface}"
+    );
+    let required_inputs = surface
+        .get("required_inputs")
+        .or_else(|| surface["execution_status"].get("required_inputs"))
+        .or_else(|| surface["route"].get("required_inputs"))
+        .unwrap_or(&Value::Null);
+    assert_eq!(
+        required_inputs,
+        &json!([
+            {
+                "kind": "enum",
+                "name": "review_result",
+                "values": ["pass", "fail"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "review_summary_file"
+            },
+            {
+                "kind": "enum",
+                "name": "verification_result",
+                "values": ["pass", "fail", "not-run"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "verification_summary_file",
+                "required_when": "verification_result!=not-run"
+            }
+        ]),
+        "task-closure routes should expose typed missing inputs: {surface}"
+    );
+}
+
+fn record_task_closure_with_fixture_inputs(
+    repo: &Path,
+    state: &Path,
+    plan_rel: &str,
+    task: u32,
+    label: &str,
+) -> Value {
+    let safe_label: String = label
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let review_summary_path = repo.join(format!("task-{task}-{safe_label}-review-summary.md"));
+    let verification_summary_path =
+        repo.join(format!("task-{task}-{safe_label}-verification-summary.md"));
+    write_file(
+        &review_summary_path,
+        &format!("Task {task} fixture independent review passed for {label}.\n"),
+    );
+    write_file(
+        &verification_summary_path,
+        &format!("Task {task} fixture verification passed for {label}.\n"),
+    );
+    let task_arg = task.to_string();
+    run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "close-current-task",
+            "--plan",
+            plan_rel,
+            "--task",
+            task_arg.as_str(),
+            "--review-result",
+            "pass",
+            "--review-summary-file",
+            review_summary_path
+                .to_str()
+                .expect("review summary path should be utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary_path
+                .to_str()
+                .expect("verification summary path should be utf-8"),
+        ],
+        label,
+    )
+}
+
 fn workflow_doctor_json(
     runtime: &featureforge::execution::state::ExecutionRuntime,
     context: &str,
@@ -410,21 +520,6 @@ fn run_recommended_plan_execution_command(
         state,
         recommended_command,
         false,
-        context,
-    )
-}
-
-fn run_recommended_plan_execution_command_real_cli(
-    repo: &Path,
-    state: &Path,
-    recommended_command: &str,
-    context: &str,
-) -> Value {
-    run_recommended_plan_execution_command_with_mode(
-        repo,
-        state,
-        recommended_command,
-        true,
         context,
     )
 }
@@ -1141,6 +1236,64 @@ fn internal_only_compatibility_read_surface_invariant_sanitizes_hidden_command_o
                     .any(|code| code == "recommended_command_hidden_or_debug")
             }),
         "routing sanitizer should attach hidden-command invariant evidence: {routing_json}"
+    );
+}
+
+#[test]
+fn internal_only_compatibility_repair_review_state_rebinds_route_after_read_invariant_projection() {
+    let (repo_dir, state_dir) = init_repo("repair-review-state-read-invariant-route-rebind");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+
+    let repair_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &[
+                "plan",
+                "execution",
+                "repair-review-state",
+                "--plan",
+                plan_rel,
+            ],
+            &[(
+                "FEATUREFORGE_PLAN_EXECUTION_READ_INVARIANT_TEST_INJECTION",
+                "hidden_recommended_command",
+            )],
+            "repair-review-state read invariant route rebind",
+        ),
+        "repair-review-state read invariant route rebind",
+    );
+
+    assert_eq!(
+        repair_json["phase_detail"], "blocked_runtime_bug",
+        "repair-review-state must use the invariant-adjusted route instead of stale pre-invariant surfaces: {repair_json}"
+    );
+    assert!(
+        repair_json["recommended_command"].is_null(),
+        "repair-review-state must not expose stale pre-invariant commands after route rebinding: {repair_json}"
+    );
+    assert!(
+        repair_json["recommended_public_command_argv"].is_null(),
+        "repair-review-state must not expose stale pre-invariant argv after route rebinding: {repair_json}"
+    );
+    assert!(
+        repair_json["required_inputs"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "blocked runtime-bug route should not inherit stale required inputs: {repair_json}"
+    );
+    assert!(
+        repair_json["blocking_reason_codes"]
+            .as_array()
+            .is_some_and(|codes| {
+                codes
+                    .iter()
+                    .any(|code| code == "recommended_command_hidden_or_debug")
+            }),
+        "repair-review-state must carry invariant evidence from the rebound route: {repair_json}"
     );
 }
 
@@ -4954,9 +5107,14 @@ Task 1 -> Task 2
     assert_eq!(handoff_json["phase"], expected_phase);
     assert_eq!(handoff_json["next_action"], "close current task");
     assert_eq!(handoff_json["state_kind"], "actionable_public_command");
-    assert_eq!(
-        handoff_json["next_public_action"]["command"],
-        handoff_json["recommended_command"]
+    assert!(
+        handoff_json["next_public_action"].is_null()
+            || handoff_json["next_public_action"]["command"].is_null(),
+        "task-closure handoff should not expose a command until required inputs are supplied: {handoff_json:?}"
+    );
+    assert!(
+        handoff_json["recommended_command"].is_null(),
+        "task-closure handoff should not expose a placeholder command: {handoff_json:?}"
     );
     assert_eq!(
         handoff_json["recommended_skill"],
@@ -4967,8 +5125,7 @@ Task 1 -> Task 2
             .as_str()
             .is_some_and(|reason| {
                 reason.contains("Task 1 closure is ready to record/refresh")
-                    && reason.contains("Follow the routed command")
-                    && reason.contains("close-current-task")
+                    && reason.contains("Record or refresh Task 1 closure now")
             }),
         "workflow handoff should surface task-boundary closure-recording guidance, got {handoff_json:?}"
     );
@@ -5167,10 +5324,8 @@ Task 1 -> Task 2
         "workflow phase json should follow the shared task-closure route even when harness reason codes are forged, got {phase_json:?}"
     );
     assert!(
-        phase_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("close-current-task")),
-        "workflow phase json should expose the shared close-current-task command instead of honoring forged dispatch-only reason codes, got {phase_json:?}"
+        phase_json["recommended_command"].is_null(),
+        "workflow phase json should not expose placeholder close-current-task command text, got {phase_json:?}"
     );
     assert!(
         phase_json["next_step"]
@@ -5183,12 +5338,7 @@ Task 1 -> Task 2
         Value::from("close current task"),
         "workflow doctor should follow the shared task-closure route even when harness reason codes are forged, got {doctor_json:?}"
     );
-    assert!(
-        doctor_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("close-current-task")),
-        "workflow doctor should expose the shared close-current-task command instead of honoring forged dispatch-only reason codes, got {doctor_json:?}"
-    );
+    assert_task_closure_required_inputs(&doctor_json, 1);
     assert!(
         doctor_json["next_step"]
             .as_str()
@@ -7166,33 +7316,10 @@ fn internal_only_compatibility_runtime_remediation_fs04_repair_returns_route_con
     );
     assert_eq!(
         repair_json["recommended_command"], operator_json["recommended_command"],
-        "FS-04 repair and operator must expose the same concrete command target"
+        "FS-04 repair and operator must agree that no executable command is available until review/verification inputs are supplied"
     );
-    let recommended_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("FS-04 repair output should expose recommended command");
-    assert!(
-        recommended_command.starts_with("featureforge plan execution close-current-task --plan "),
-        "FS-04 closure-baseline route should stay on close-current-task guidance, got {recommended_command}"
-    );
-    let routed_follow_up = run_recommended_plan_execution_command(
-        repo,
-        state,
-        recommended_command,
-        "FS-04 run operator-recommended command directly",
-    );
-    assert_follow_up_blocker_parity_with_operator(
-        &operator_json,
-        &routed_follow_up,
-        "FS-04 command-follow parity",
-    );
-    assert!(
-        matches!(
-            routed_follow_up["action"].as_str(),
-            Some("recorded" | "already_current")
-        ),
-        "FS-04 routed command must be immediately runnable when repair reports already_current, got {routed_follow_up:?}"
-    );
+    assert_task_closure_required_inputs(&operator_json, 1);
+    assert_task_closure_required_inputs(&repair_json, 1);
 }
 
 #[test]
@@ -7281,37 +7408,8 @@ fn internal_only_compatibility_runtime_remediation_fs08_resume_overlay_does_not_
         status_reason_codes, expected_reason_codes,
         "FS-08 status should expose the exact stale-blocker reason-code set for this fixture"
     );
-    let recommended_command = operator_json["recommended_command"]
-        .as_str()
-        .expect("FS-08 operator should expose recommended command");
-    assert!(
-        recommended_command.starts_with("featureforge plan execution close-current-task --plan "),
-        "FS-08 operator should expose a runnable plan-execution command, got {recommended_command}"
-    );
-    assert!(
-        recommended_command.contains("--task 1"),
-        "FS-08 operator should route stale-blocker recovery to Task 1 close-current-task, got {recommended_command}"
-    );
-    let routed_follow_up = run_recommended_plan_execution_command(
-        repo,
-        state,
-        recommended_command,
-        "FS-08 run operator-routed command directly",
-    );
-    assert_follow_up_blocker_parity_with_operator(
-        &operator_json,
-        &routed_follow_up,
-        "FS-08 command-follow parity",
-    );
-    if routed_follow_up["action"].as_str() != Some("blocked") {
-        assert!(
-            matches!(
-                routed_follow_up["action"].as_str(),
-                Some("recorded" | "already_current")
-            ),
-            "FS-08 routed command should either record closure or remain already_current, got {routed_follow_up:?}"
-        );
-    }
+    assert_task_closure_required_inputs(&operator_json, 1);
+    assert_task_closure_required_inputs(&status_json, 1);
 }
 
 #[test]
@@ -7376,33 +7474,10 @@ fn internal_only_compatibility_runtime_remediation_fs04_compiled_cli_repair_retu
     );
     assert_eq!(
         repair_json["recommended_command"], operator_json["recommended_command"],
-        "FS-04 compiled-cli repair and operator must expose the same concrete command target"
+        "FS-04 compiled-cli repair and operator must agree that no executable command is available until review/verification inputs are supplied"
     );
-    let recommended_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("FS-04 compiled-cli repair should expose recommended command");
-    assert!(
-        recommended_command.starts_with("featureforge plan execution close-current-task --plan "),
-        "FS-04 compiled-cli closure-baseline route should stay on close-current-task guidance, got {recommended_command}"
-    );
-    let routed_follow_up = run_recommended_plan_execution_command_real_cli(
-        repo,
-        state,
-        recommended_command,
-        "FS-04 run compiled-cli operator-recommended command directly",
-    );
-    assert_follow_up_blocker_parity_with_operator(
-        &operator_json,
-        &routed_follow_up,
-        "FS-04 compiled-cli command-follow parity",
-    );
-    assert!(
-        matches!(
-            routed_follow_up["action"].as_str(),
-            Some("recorded" | "already_current")
-        ),
-        "FS-04 compiled-cli routed command must be immediately runnable when repair reports already_current, got {routed_follow_up:?}"
-    );
+    assert_task_closure_required_inputs(&operator_json, 1);
+    assert_task_closure_required_inputs(&repair_json, 1);
 }
 
 #[test]
@@ -7490,37 +7565,8 @@ fn internal_only_compatibility_runtime_remediation_fs08_compiled_cli_resume_over
         status_reason_codes, expected_reason_codes,
         "FS-08 compiled-cli status should expose the exact stale-blocker reason-code set for this fixture"
     );
-    let recommended_command = operator_json["recommended_command"]
-        .as_str()
-        .expect("FS-08 compiled-cli operator should expose recommended command");
-    assert!(
-        recommended_command.starts_with("featureforge plan execution close-current-task --plan "),
-        "FS-08 compiled-cli operator should expose a runnable plan-execution command, got {recommended_command}"
-    );
-    assert!(
-        recommended_command.contains("--task 1"),
-        "FS-08 compiled-cli operator should route stale-blocker recovery to Task 1 close-current-task, got {recommended_command}"
-    );
-    let routed_follow_up = run_recommended_plan_execution_command_real_cli(
-        repo,
-        state,
-        recommended_command,
-        "FS-08 run compiled-cli operator-routed command directly",
-    );
-    assert_follow_up_blocker_parity_with_operator(
-        &operator_json,
-        &routed_follow_up,
-        "FS-08 compiled-cli command-follow parity",
-    );
-    if routed_follow_up["action"].as_str() != Some("blocked") {
-        assert!(
-            matches!(
-                routed_follow_up["action"].as_str(),
-                Some("recorded" | "already_current")
-            ),
-            "FS-08 compiled-cli routed command should either record closure or remain already_current, got {routed_follow_up:?}"
-        );
-    }
+    assert_task_closure_required_inputs(&operator_json, 1);
+    assert_task_closure_required_inputs(&status_json, 1);
 }
 
 fn setup_runtime_fs11_fs15_next_action_fixture(repo: &Path, state: &Path, plan_rel: &str) {
@@ -7592,17 +7638,12 @@ fn setup_runtime_fs11_fs15_next_action_fixture(repo: &Path, state: &Path, plan_r
         ],
         "FS-11/FS-15 task 1 repair bridge",
     );
-    let repair_task_1_command = repair_task_1["recommended_command"]
-        .as_str()
-        .expect("FS-11/FS-15 task 1 repair bridge should expose a public follow-up command");
-    assert!(
-        repair_task_1_command.contains("close-current-task"),
-        "FS-11/FS-15 task 1 repair bridge should route through close-current-task, got {repair_task_1_command}"
-    );
-    let close_task_1 = run_recommended_plan_execution_command(
+    assert_task_closure_required_inputs(&repair_task_1, 1);
+    let close_task_1 = record_task_closure_with_fixture_inputs(
         repo,
         state,
-        repair_task_1_command,
+        plan_rel,
+        1,
         "FS-11/FS-15 task 1 repair follow-up",
     );
     assert!(
@@ -7922,13 +7963,7 @@ fn internal_only_compatibility_runtime_remediation_fs14_missing_task_closure_bas
         Value::from("close current task"),
         "FS-14 operator should route to close-current-task instead of execution reentry"
     );
-    let recommended_command = operator_json["recommended_command"]
-        .as_str()
-        .expect("FS-14 operator should expose recommended close-current-task command");
-    assert!(
-        recommended_command.contains("close-current-task"),
-        "FS-14 operator should recommend close-current-task, got {recommended_command}"
-    );
+    assert_task_closure_required_inputs(&operator_json, 1);
     let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
@@ -7947,32 +7982,9 @@ fn internal_only_compatibility_runtime_remediation_fs14_missing_task_closure_bas
         "FS-14 synthetic baseline bridge should be typed as baseline_bridge instead of masquerading as a closure-graph stale target: {status_json:?}"
     );
     assert!(
-        !recommended_command.contains(concat!("pre", "flight"))
-            && !recommended_command.contains(concat!("record", "-review-dispatch"))
-            && !recommended_command.contains(concat!("gate", "-review"))
-            && !recommended_command.contains(concat!("rebuild", "-evidence")),
-        "FS-14 normal recovery should not require hidden helper commands, got {recommended_command}"
+        operator_json["recommended_command"].is_null(),
+        "FS-14 normal recovery should not surface hidden helper or placeholder commands: {operator_json}"
     );
-    let close_json = run_recommended_plan_execution_command(
-        repo,
-        state,
-        recommended_command,
-        "FS-14 execute workflow/operator routed command target directly",
-    );
-    assert_follow_up_blocker_parity_with_operator(
-        &operator_json,
-        &close_json,
-        "FS-14 command-follow parity",
-    );
-    if close_json["action"].as_str() != Some("blocked") {
-        assert!(
-            matches!(
-                close_json["action"].as_str(),
-                Some("recorded" | "already_current")
-            ),
-            "FS-14 command-follow parity should let close-current-task record or preserve a current closure baseline, got {close_json:?}"
-        );
-    }
 }
 
 #[test]
@@ -8006,14 +8018,7 @@ fn internal_only_compatibility_runtime_remediation_fs14_repair_routes_missing_ta
         Value::from("task_closure_recording_ready"),
         "FS-14 repair parity fixture should expose task_closure_recording_ready in workflow/operator"
     );
-    let operator_command = operator_json["recommended_command"]
-        .as_str()
-        .expect("FS-14 repair parity fixture should expose workflow/operator command")
-        .to_owned();
-    assert!(
-        operator_command.contains("close-current-task"),
-        "FS-14 repair parity workflow/operator should recommend close-current-task, got {operator_command}"
-    );
+    assert_task_closure_required_inputs(&operator_json, 1);
 
     let repair_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
@@ -8042,34 +8047,15 @@ fn internal_only_compatibility_runtime_remediation_fs14_repair_routes_missing_ta
         "FS-14 repair parity fixture should avoid execution-reentry follow-up when closure recording is the next action"
     );
     assert_eq!(
-        repair_json["recommended_command"],
-        Value::from(operator_command.clone()),
-        "FS-14 repair parity fixture should expose the same public command target as workflow/operator"
+        repair_json["recommended_command"], operator_json["recommended_command"],
+        "FS-14 repair parity fixture should agree with workflow/operator that required inputs are needed before a command is executable"
     );
     assert_eq!(
         repair_json["authoritative_next_action"],
-        Value::from(operator_command.clone()),
-        "FS-14 repair parity fixture should mirror workflow/operator through authoritative_next_action"
+        Value::Null,
+        "FS-14 repair parity fixture should not serialize a placeholder authoritative action"
     );
-    let routed_follow_up = run_recommended_plan_execution_command(
-        repo,
-        state,
-        &operator_command,
-        "FS-14 repair parity run workflow/operator-surfaced command target",
-    );
-    if routed_follow_up["action"].as_str() == Some("blocked") {
-        assert_follow_up_blocker_parity_with_operator(
-            &operator_json,
-            &routed_follow_up,
-            "FS-14 repair command-follow parity",
-        );
-    } else {
-        let action = routed_follow_up["action"].as_str();
-        assert!(
-            action == Some("recorded") || action == Some("already_current"),
-            "FS-14 repair command-follow parity should either record closure state or stay already current, got {routed_follow_up:?}"
-        );
-    }
+    assert_task_closure_required_inputs(&repair_json, 1);
 }
 
 #[test]
@@ -8101,14 +8087,7 @@ fn internal_only_compatibility_runtime_remediation_fs14_operator_repair_parity_w
         Value::from("task_closure_recording_ready"),
         "FS-14 no-external-ready parity should route directly to task_closure_recording_ready"
     );
-    let operator_command = operator_json["recommended_command"]
-        .as_str()
-        .expect("FS-14 no-external-ready parity should expose workflow/operator command")
-        .to_owned();
-    assert!(
-        operator_command.contains("close-current-task"),
-        "FS-14 no-external-ready parity should recommend close-current-task, got {operator_command}"
-    );
+    assert_task_closure_required_inputs(&operator_json, 1);
 
     let repair_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
@@ -8132,34 +8111,15 @@ fn internal_only_compatibility_runtime_remediation_fs14_operator_repair_parity_w
         "FS-14 no-external-ready repair parity should not regress to execution reentry"
     );
     assert_eq!(
-        repair_json["recommended_command"],
-        Value::from(operator_command.clone()),
-        "FS-14 no-external-ready repair parity should expose the same public command as workflow/operator"
+        repair_json["recommended_command"], operator_json["recommended_command"],
+        "FS-14 no-external-ready repair parity should agree with workflow/operator that required inputs are needed before a command is executable"
     );
     assert_eq!(
         repair_json["authoritative_next_action"],
-        Value::from(operator_command.clone()),
-        "FS-14 no-external-ready repair parity should mirror workflow/operator through authoritative_next_action"
+        Value::Null,
+        "FS-14 no-external-ready repair parity should not serialize a placeholder authoritative action"
     );
-    let routed_follow_up = run_recommended_plan_execution_command(
-        repo,
-        state,
-        &operator_command,
-        "FS-14 no-external-ready repair parity run workflow/operator-surfaced command target",
-    );
-    if routed_follow_up["action"].as_str() == Some("blocked") {
-        assert_follow_up_blocker_parity_with_operator(
-            &operator_json,
-            &routed_follow_up,
-            "FS-14 no-external-ready repair command-follow parity",
-        );
-    } else {
-        let action = routed_follow_up["action"].as_str();
-        assert!(
-            action == Some("recorded") || action == Some("already_current"),
-            "FS-14 no-external-ready command-follow parity should either record closure state or stay already current, got {routed_follow_up:?}"
-        );
-    }
+    assert_task_closure_required_inputs(&repair_json, 1);
 }
 
 #[test]
@@ -8212,14 +8172,7 @@ fn internal_only_compatibility_fs17_stale_unreviewed_truthful_replay_promotes_to
         Value::from("task_closure_recording_ready"),
         "FS-17 truthful replay recovery must route to task_closure_recording_ready instead of generic execution reentry: {status_json:?}"
     );
-    let recommended_command = status_json["recommended_command"]
-        .as_str()
-        .expect("FS-17 status should expose a concrete closure-recording command");
-    assert!(
-        recommended_command.contains("close-current-task")
-            && recommended_command.contains("--task 1"),
-        "FS-17 truthful replay recovery must route through close-current-task --task 1, got {recommended_command}"
-    );
+    assert_task_closure_required_inputs(&status_json, 1);
     assert_ne!(
         status_json["phase_detail"],
         Value::from("execution_reentry_required"),
@@ -8511,23 +8464,17 @@ fn internal_only_compatibility_fs21_operator_status_and_exact_command_all_agree_
     );
     assert!(status_json["resume_task"].is_null());
     assert!(status_json["resume_step"].is_null());
-    let operator_command = operator_json["recommended_command"]
-        .as_str()
-        .expect("FS-21 operator should expose recommended command")
-        .to_owned();
-    assert!(
-        operator_command.contains("close-current-task") && operator_command.contains("--task 1"),
-        "FS-21 operator should route to close-current-task --task 1 when bridge preempts resume, got {operator_command}"
-    );
+    assert_task_closure_required_inputs(&operator_json, 1);
+    assert_task_closure_required_inputs(&status_json, 1);
     assert_eq!(
         repair_json["phase_detail"],
         Value::from("task_closure_recording_ready")
     );
     assert_eq!(
-        repair_json["recommended_command"],
-        Value::from(operator_command),
-        "FS-21 operator/status/repair surfaces must agree on the exact closure-recording command"
+        repair_json["recommended_command"], operator_json["recommended_command"],
+        "FS-21 operator/status/repair surfaces must agree on missing-input command absence"
     );
+    assert_task_closure_required_inputs(&repair_json, 1);
 }
 
 #[test]
@@ -8558,14 +8505,7 @@ fn internal_only_compatibility_fs22_repair_review_state_prefers_non_destructive_
         Value::Null,
         "FS-22 closure bridge lane must not keep an execution_reentry follow-up"
     );
-    let recommended_command = repair_json["recommended_command"]
-        .as_str()
-        .expect("FS-22 repair should expose recommended closure-recording command");
-    assert!(
-        recommended_command.contains("close-current-task")
-            && recommended_command.contains("--task 1"),
-        "FS-22 repair should route directly to close-current-task --task 1, got {recommended_command}"
-    );
+    assert_task_closure_required_inputs(&repair_json, 1);
     let actions = repair_json["actions_performed"]
         .as_array()
         .expect("FS-22 repair should expose actions_performed array");

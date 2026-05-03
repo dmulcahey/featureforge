@@ -1669,10 +1669,8 @@ fn dependency_neighbors(
     let mut neighbors = Vec::new();
     let last_col = grid[row].len().saturating_sub(1);
     match ch {
-        '|' => {
-            if row + 1 < grid.len() && is_dependency_connector(grid[row + 1][col]) {
-                neighbors.push((row + 1, col));
-            }
+        '|' if row + 1 < grid.len() && is_dependency_connector(grid[row + 1][col]) => {
+            neighbors.push((row + 1, col));
         }
         '-' => {
             if col > 0 && is_dependency_connector(grid[row][col - 1]) {
@@ -1693,15 +1691,11 @@ fn dependency_neighbors(
                 neighbors.push((row, col + 1));
             }
         }
-        'v' => {
-            if row + 1 < grid.len() && is_dependency_connector(grid[row + 1][col]) {
-                neighbors.push((row + 1, col));
-            }
+        'v' if row + 1 < grid.len() && is_dependency_connector(grid[row + 1][col]) => {
+            neighbors.push((row + 1, col));
         }
-        '>' => {
-            if col < last_col && is_dependency_connector(grid[row][col + 1]) {
-                neighbors.push((row, col + 1));
-            }
+        '>' if col < last_col && is_dependency_connector(grid[row][col + 1]) => {
+            neighbors.push((row, col + 1));
         }
         _ => {}
     }

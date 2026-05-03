@@ -22,11 +22,50 @@ use featureforge::execution::query::{
 };
 use featureforge::paths::harness_state_path;
 use runtime_support::execution_runtime;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 use workflow_support::{init_repo, install_full_contract_ready_artifacts};
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+fn assert_task_closure_required_inputs(surface: &Value, task: u32) {
+    assert!(surface["recommended_command"].is_null(), "{surface}");
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "{surface}"
+    );
+    let task_target = surface["recording_context"]["task_number"]
+        .as_u64()
+        .or_else(|| surface["blocking_task"].as_u64());
+    assert_eq!(task_target, Some(u64::from(task)), "{surface}");
+    assert_eq!(
+        surface["required_inputs"],
+        json!([
+            {
+                "kind": "enum",
+                "name": "review_result",
+                "values": ["pass", "fail"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "review_summary_file"
+            },
+            {
+                "kind": "enum",
+                "name": "verification_result",
+                "values": ["pass", "fail", "not-run"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "verification_summary_file",
+                "required_when": "verification_result!=not-run"
+            }
+        ]),
+        "{surface}"
+    );
+}
 const TASK_BOUNDARY_BLOCKED_PLAN_SOURCE: &str = r#"# Runtime Integration Hardening Implementation Plan
 
 **Workflow State:** Engineering Approved
@@ -192,151 +231,6 @@ fn parse_json_output(output: &Output, context: &str) -> Value {
                 String::from_utf8_lossy(&output.stderr)
             )
         })
-}
-
-fn run_recommended_plan_execution_command(
-    repo: &Path,
-    state: &Path,
-    recommended_command: &str,
-    real_cli: bool,
-    context: &str,
-) -> Value {
-    let command_parts = recommended_command.split_whitespace().collect::<Vec<_>>();
-    assert!(
-        command_parts.len() >= 4,
-        "{context} should expose a full featureforge plan-execution command, got {recommended_command}"
-    );
-    assert_eq!(
-        command_parts[0], "featureforge",
-        "{context} recommended command must start with featureforge, got {recommended_command}"
-    );
-    assert_eq!(
-        command_parts[1], "plan",
-        "{context} recommended command must route through `plan execution`, got {recommended_command}"
-    );
-    assert_eq!(
-        command_parts[2], "execution",
-        "{context} recommended command must route through `plan execution`, got {recommended_command}"
-    );
-    let command_args = if command_parts
-        .get(3)
-        .is_some_and(|command| *command == "close-current-task")
-        && (recommended_command.contains("pass|fail") || recommended_command.contains("<path>"))
-    {
-        let plan = command_parts
-            .windows(2)
-            .find(|window| window[0] == "--plan")
-            .map(|window| window[1])
-            .unwrap_or(PLAN_REL);
-        let task = command_parts
-            .windows(2)
-            .find(|window| window[0] == "--task")
-            .map(|window| window[1])
-            .unwrap_or("1");
-        let summary_path = repo.join("boundary-close-current-task-review-summary.md");
-        let verification_summary_path =
-            repo.join("boundary-close-current-task-verification-summary.md");
-        fs::write(
-            &summary_path,
-            format!("Close-current-task command generated from shared template for {context}.\n"),
-        )
-        .expect("close-current-task template follow-up should write deterministic review summary");
-        fs::write(
-            &verification_summary_path,
-            format!("Verification summary generated from shared template for {context}.\n"),
-        )
-        .expect(
-            "close-current-task template follow-up should write deterministic verification summary",
-        );
-        vec![
-            String::from("plan"),
-            String::from("execution"),
-            String::from("close-current-task"),
-            String::from("--plan"),
-            plan.to_owned(),
-            String::from("--task"),
-            task.to_owned(),
-            String::from("--review-result"),
-            String::from("pass"),
-            String::from("--review-summary-file"),
-            summary_path
-                .to_str()
-                .expect("summary path should stay utf-8")
-                .to_owned(),
-            String::from("--verification-result"),
-            String::from("pass"),
-            String::from("--verification-summary-file"),
-            verification_summary_path
-                .to_str()
-                .expect("verification summary path should stay utf-8")
-                .to_owned(),
-        ]
-    } else {
-        command_parts[1..]
-            .iter()
-            .map(|part| (*part).to_owned())
-            .collect::<Vec<_>>()
-    };
-    let command_args_refs = command_args.iter().map(String::as_str).collect::<Vec<_>>();
-    run_featureforge_json(repo, state, &command_args_refs, real_cli, context)
-}
-
-fn assert_follow_up_blocker_parity_with_operator(
-    operator: &Value,
-    follow_up: &Value,
-    context: &str,
-) {
-    if follow_up["action"].as_str() != Some("blocked") {
-        return;
-    }
-    let follow_up_blocking_reason_codes = follow_up
-        .get("blocking_reason_codes")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| {
-            panic!(
-                "{context} blocked follow-up must include blocking_reason_codes metadata: {follow_up:?}"
-            )
-        });
-    let operator_blocking_reason_codes = operator
-        .get("blocking_reason_codes")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| {
-            panic!(
-                "{context} operator route must include blocking_reason_codes metadata for blocked parity checks: {operator:?}"
-            )
-        });
-    assert!(
-        !follow_up_blocking_reason_codes.is_empty(),
-        "{context} blocked follow-up must keep a non-empty blocker reason-code set",
-    );
-    assert!(
-        !operator_blocking_reason_codes.is_empty(),
-        "{context} operator route must keep a non-empty blocker reason-code set for blocked parity checks",
-    );
-    assert_eq!(
-        follow_up["blocking_scope"], operator["blocking_scope"],
-        "{context} blocked follow-up must preserve operator blocking scope"
-    );
-    assert_eq!(
-        follow_up["blocking_task"], operator["blocking_task"],
-        "{context} blocked follow-up must preserve operator blocking task"
-    );
-    assert_eq!(
-        follow_up["blocking_reason_codes"], operator["blocking_reason_codes"],
-        "{context} blocked follow-up must preserve operator blocker reason-code set"
-    );
-    if !follow_up["blocking_step"].is_null() || !operator["blocking_step"].is_null() {
-        assert_eq!(
-            follow_up["blocking_step"], operator["blocking_step"],
-            "{context} blocked follow-up must preserve operator blocking step"
-        );
-    }
-    if !follow_up["authoritative_next_action"].is_null() {
-        assert_eq!(
-            follow_up["authoritative_next_action"], operator["recommended_command"],
-            "{context} blocked follow-up authoritative next action must mirror workflow operator"
-        );
-    }
 }
 
 fn authoritative_harness_state_path(repo: &Path, state: &Path) -> PathBuf {
@@ -1345,19 +1239,19 @@ fn reconcile_review_state_threads_external_review_ready_through_routing_requerie
 
 #[test]
 fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
-    let runtime_methods_source =
-        fs::read_to_string(repo_root().join("src/execution/state/runtime_methods.rs"))
-            .expect("execution runtime methods source should be readable");
+    let closure_dispatch_source =
+        fs::read_to_string(repo_root().join("src/execution/closure_dispatch.rs"))
+            .expect("execution closure dispatch source should be readable");
     let review_gate_source =
         fs::read_to_string(repo_root().join("src/execution/state/review_gate.rs"))
             .expect("execution review gate source should be readable");
-    let dispatch_start = runtime_methods_source
+    let dispatch_start = closure_dispatch_source
         .find("fn record_review_dispatch_strategy_checkpoint(")
-        .expect("runtime_methods.rs should keep record_review_dispatch_strategy_checkpoint");
-    let dispatch_end = runtime_methods_source[dispatch_start..]
-        .find("fn ensure_review_dispatch_authoritative_bootstrap(")
+        .expect("closure_dispatch.rs should keep record_review_dispatch_strategy_checkpoint");
+    let dispatch_end = closure_dispatch_source[dispatch_start..]
+        .find("pub(crate) fn existing_task_dispatch_reviewed_state_status(")
         .map(|offset| dispatch_start + offset)
-        .expect("runtime_methods.rs should keep ensure_review_dispatch_authoritative_bootstrap");
+        .expect("closure_dispatch.rs should keep existing_task_dispatch_reviewed_state_status");
     let checkpoint_start = review_gate_source
         .find("fn persist_finish_review_gate_pass_checkpoint(")
         .expect("review_gate.rs should keep persist_finish_review_gate_pass_checkpoint");
@@ -1365,7 +1259,7 @@ fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
         .find("fn gate_review_from_context_internal(")
         .map(|offset| checkpoint_start + offset)
         .expect("review_gate.rs should keep gate_review_from_context_internal");
-    let dispatch_source = &runtime_methods_source[dispatch_start..dispatch_end];
+    let dispatch_source = &closure_dispatch_source[dispatch_start..dispatch_end];
     let checkpoint_source = &review_gate_source[checkpoint_start..checkpoint_end];
 
     assert!(
@@ -1416,31 +1310,12 @@ fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
         routing.next_action, "close current task",
         "FS-04 shared-action contract should expose the exact shared next action"
     );
-    let recommended_command = routing
-        .recommended_command
-        .as_deref()
-        .expect("FS-04 shared-action contract should expose the exact recommended command");
     assert!(
-        recommended_command.starts_with("featureforge plan execution close-current-task --plan "),
-        "FS-04 shared-action contract should route through close-current-task, got {recommended_command}"
+        routing.recommended_command.is_none(),
+        "FS-04 shared-action contract should omit executable command text until review/verification inputs are supplied"
     );
-    assert!(
-        recommended_command.contains("--task 1"),
-        "FS-04 shared-action contract should stay pinned to Task 1, got {recommended_command}"
-    );
+    assert_task_closure_required_inputs(&operator, 1);
     assert_routing_parity_with_operator_json(&routing, &operator);
-    let routed_follow_up = run_recommended_plan_execution_command(
-        repo,
-        state,
-        recommended_command,
-        true,
-        "FS-04 shared-action routed-command parity",
-    );
-    assert_follow_up_blocker_parity_with_operator(
-        &operator,
-        &routed_follow_up,
-        "FS-04 shared-action routed-command parity",
-    );
 
     let query_source = fs::read_to_string(repo_root().join("src/execution/query.rs"))
         .expect("execution query source should be readable");
@@ -1505,9 +1380,9 @@ fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
         .find("fn specific_gate_reason_is_explicit_direct_follow_up(")
         .expect("runtime_methods.rs should keep specific_gate_reason_is_explicit_direct_follow_up");
     let explicit_end = runtime_methods_source[explicit_start..]
-        .find("fn specific_gate_reason_is_direct_follow_up(")
+        .find("struct SpecificGateRecommendation")
         .map(|offset| explicit_start + offset)
-        .expect("runtime_methods.rs should keep specific_gate_reason_is_direct_follow_up");
+        .expect("runtime_methods.rs should render direct gate surfaces through SpecificGateRecommendation");
     let explicit_source = &runtime_methods_source[explicit_start..explicit_end];
     assert!(
         !explicit_source.contains("reason_code_indicates_stale_unreviewed"),
@@ -1516,6 +1391,20 @@ fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
     assert!(
         !explicit_source.contains("current_branch_closure_id_missing"),
         "gate follow-up compatibility fallback must not hardcode current_branch_closure_id_missing into a direct branch-closure recommendation",
+    );
+    let direct_recommendation_start = runtime_methods_source
+        .find("fn specific_gate_direct_recommendation(")
+        .expect("runtime_methods.rs should keep specific_gate_direct_recommendation");
+    let direct_recommendation_end = runtime_methods_source[direct_recommendation_start..]
+        .find("fn set_gate_public_command(")
+        .map(|offset| direct_recommendation_start + offset)
+        .expect("runtime_methods.rs should keep set_gate_public_command");
+    let direct_recommendation_source =
+        &runtime_methods_source[direct_recommendation_start..direct_recommendation_end];
+    assert!(
+        direct_recommendation_source.contains("SpecificGateRecommendation::from_route_decision")
+            && !direct_recommendation_source.contains("materialized_follow_up_kind_command"),
+        "gate follow-up output must preserve router-owned route surfaces instead of synthesizing fallback commands"
     );
 }
 
@@ -1603,33 +1492,8 @@ fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct
             real_cli,
             &format!("FS-04 {label} repair-review-state route visibility"),
         );
-        let recommended_command = repair["recommended_command"]
-            .as_str()
-            .expect("FS-04 repair output should expose recommended command");
-        assert!(
-            recommended_command
-                .starts_with("featureforge plan execution close-current-task --plan "),
-            "FS-04 closure-baseline route should keep repair/operator on close-current-task guidance, got {recommended_command}"
-        );
-        let routed_follow_up = run_recommended_plan_execution_command(
-            repo,
-            state,
-            recommended_command,
-            real_cli,
-            &format!("FS-04 {label} routed-command parity"),
-        );
-        assert_follow_up_blocker_parity_with_operator(
-            &operator,
-            &routed_follow_up,
-            &format!("FS-04 {label} routed-command parity"),
-        );
-        assert!(
-            matches!(
-                routed_follow_up["action"].as_str(),
-                Some("recorded" | "already_current")
-            ),
-            "FS-04 {label} routed command must be immediately runnable when repair reports already_current, got {routed_follow_up:?}"
-        );
+        assert_task_closure_required_inputs(&operator, 1);
+        assert_task_closure_required_inputs(&repair, 1);
         (operator, repair)
     };
 
@@ -1655,11 +1519,11 @@ fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct
     );
     assert_eq!(
         operator_real["recommended_command"], repair_real["recommended_command"],
-        "FS-04 compiled-cli repair output should keep operator and repair on the exact same shared command target"
+        "FS-04 compiled-cli repair output should agree with operator on missing-input command absence"
     );
     assert_eq!(
         operator_direct["recommended_command"], repair_direct["recommended_command"],
-        "FS-04 direct repair output should keep operator and repair on the exact same shared command target"
+        "FS-04 direct repair output should agree with operator on missing-input command absence"
     );
     assert_eq!(
         repair_real["action"],
@@ -1724,24 +1588,11 @@ fn runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_fl
         );
         assert_eq!(
             routed["recommended_command"], operator["recommended_command"],
-            "FS-04 {label} repair and operator should expose the same command target before command-follow parity checks"
+            "FS-04 {label} repair and operator should agree on missing-input command absence"
         );
-        let recommended_command = routed["recommended_command"]
-            .as_str()
-            .expect("FS-04 routed output should expose recommended_command text");
-        let routed_follow_up = run_recommended_plan_execution_command(
-            repo,
-            state,
-            recommended_command,
-            real_cli,
-            &format!("FS-04 {label} routed-command parity"),
-        );
-        assert_follow_up_blocker_parity_with_operator(
-            &operator,
-            &routed_follow_up,
-            &format!("FS-04 {label} routed-command parity"),
-        );
-        results.push((label, routed, routed_follow_up));
+        assert_task_closure_required_inputs(&operator, 1);
+        assert_task_closure_required_inputs(&routed, 1);
+        results.push((label, routed));
     }
 
     assert_eq!(results[0].1["action"], results[1].1["action"]);
@@ -1750,26 +1601,8 @@ fn runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_fl
         results[1].1["required_follow_up"]
     );
     assert_eq!(
-        results[0].2["action"], results[1].2["action"],
-        "FS-04 direct and compiled-cli routed-command actions should stay aligned"
-    );
-    let direct_recommended = results[0].1["recommended_command"]
-        .as_str()
-        .expect("FS-04 direct route should expose recommended_command text");
-    let compiled_recommended = results[1].1["recommended_command"]
-        .as_str()
-        .expect("FS-04 compiled-cli route should expose recommended_command text");
-    let normalized_recommended_command = |command: &str| {
-        command
-            .split(" --expect-execution-fingerprint ")
-            .next()
-            .unwrap_or(command)
-            .to_owned()
-    };
-    assert_eq!(
-        normalized_recommended_command(direct_recommended),
-        normalized_recommended_command(compiled_recommended),
-        "FS-04 direct and compiled-cli routes should stay command-shape aligned even when per-fixture execution fingerprints differ"
+        results[0].1["recommended_command"], results[1].1["recommended_command"],
+        "FS-04 direct and compiled-cli routes should stay aligned on missing-input command absence"
     );
 }
 
@@ -1822,9 +1655,8 @@ fn runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direc
         operator_reason_codes, expected_reason_codes,
         "FS-08 operator should expose the exact stale-blocker reason-code set for this fixture"
     );
-    let operator_recommended = operator_real["recommended_command"]
-        .as_str()
-        .expect("FS-08 operator should expose a recommended command");
+    assert_task_closure_required_inputs(&operator_real, 1);
+    assert_task_closure_required_inputs(&operator_direct, 1);
 
     let status_direct = run_featureforge_json(
         repo,
@@ -1863,56 +1695,8 @@ fn runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direc
         status_reason_codes, expected_reason_codes,
         "FS-08 status should expose the exact stale-blocker reason-code set for this fixture"
     );
-    let (direct_repo_dir, direct_state_dir) =
-        init_repo("contracts-boundary-runtime-remediation-fs08-direct-follow-up");
-    let direct_repo = direct_repo_dir.path();
-    let direct_state = direct_state_dir.path();
-    setup_fs08_stale_blocker_fixture(direct_repo, direct_state);
-    let direct_operator_follow_up = run_recommended_plan_execution_command(
-        direct_repo,
-        direct_state,
-        operator_recommended,
-        false,
-        "FS-08 direct operator recommended command follow-up parity",
-    );
-    assert!(
-        direct_operator_follow_up["action"].as_str().is_some(),
-        "FS-08 direct follow-up command should return an action payload"
-    );
-    assert_follow_up_blocker_parity_with_operator(
-        &operator_direct,
-        &direct_operator_follow_up,
-        "FS-08 direct command-follow parity",
-    );
-    let (compiled_repo_dir, compiled_state_dir) =
-        init_repo("contracts-boundary-runtime-remediation-fs08-compiled-follow-up");
-    let compiled_repo = compiled_repo_dir.path();
-    let compiled_state = compiled_state_dir.path();
-    setup_fs08_stale_blocker_fixture(compiled_repo, compiled_state);
-    let operator_follow_up = run_recommended_plan_execution_command(
-        compiled_repo,
-        compiled_state,
-        operator_recommended,
-        true,
-        "FS-08 compiled-cli operator recommended command follow-up parity",
-    );
-    assert_follow_up_blocker_parity_with_operator(
-        &operator_real,
-        &operator_follow_up,
-        "FS-08 command-follow parity",
-    );
-    assert!(
-        operator_follow_up["action"].as_str().is_some(),
-        "FS-08 follow-up command should return an action payload"
-    );
-    assert!(
-        operator_recommended.starts_with("featureforge plan execution close-current-task --plan "),
-        "FS-08 closure-baseline route should recommend close-current-task in direct and compiled-cli surfaces, got {operator_recommended}"
-    );
-    assert!(
-        operator_recommended.contains("--task 1"),
-        "FS-08 closure-baseline route should remain pinned to Task 1, got {operator_recommended}"
-    );
+    assert_task_closure_required_inputs(&status_real, 1);
+    assert_task_closure_required_inputs(&status_direct, 1);
 }
 
 #[test]
@@ -2141,6 +1925,19 @@ fn status_and_operator_share_state_taxonomy_and_semantic_identity_fields() {
                 command.starts_with("featureforge "),
                 "next_public_action command should be a public featureforge command: {command}"
             );
+            assert!(
+                !command.contains("<approved-plan-path>"),
+                "next_public_action command is route authority and must bind the concrete plan path: {command}"
+            );
+            if let Some(args_template) = next_public_action
+                .get("args_template")
+                .and_then(Value::as_str)
+            {
+                assert!(
+                    !args_template.contains("<approved-plan-path>"),
+                    "next_public_action args_template is route authority and must bind the concrete plan path: {args_template}"
+                );
+            }
         }
     }
 

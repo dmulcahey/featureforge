@@ -172,6 +172,44 @@
       ],
       "type": "string"
     },
+    "PublicCommandInputKind": {
+      "enum": [
+        "text",
+        "enum",
+        "path"
+      ],
+      "type": "string"
+    },
+    "PublicCommandInputRequirement": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/PublicCommandInputKind"
+        },
+        "must_exist": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required_when": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
     "PublicExecutionCommandContext": {
       "additionalProperties": false,
       "properties": {
@@ -983,6 +1021,12 @@
     "required_evaluator_kinds": {
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
+      },
+      "type": "array"
+    },
+    "required_inputs": {
+      "items": {
+        "$ref": "#/$defs/PublicCommandInputRequirement"
       },
       "type": "array"
     },

@@ -295,7 +295,7 @@ compiled-CLI rejection coverage:
 ```bash
 rg -n "runtime-owned receipt|receipt records|receipt-ready|Dedicated Reviewer Receipt Contract" README.md docs skills agents tests
 rg -n "Invoke `featureforge:plan-fidelity-review`\\." skills/writing-plans tests
-rg -n "record-review-dispatch|rebuild-evidence|gate-review|gate-finish|record-branch-closure|record-release-readiness|record-final-review|record-qa|preflight" tests
+cargo test --test public_cli_flow_contracts -- public_test_files_do_not_use_internal_helpers_or_hidden_commands
 ```
 
 The public replay suite (`tests/public_replay_churn.rs`) is part of the
@@ -376,8 +376,7 @@ When checked-in prebuilt artifacts are part of the change, refresh and verify th
 ```bash
 FEATUREFORGE_PREBUILT_TARGET=darwin-arm64 scripts/refresh-prebuilt-runtime.sh
 PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc FEATUREFORGE_PREBUILT_TARGET=windows-x64 FEATUREFORGE_PREBUILT_RUST_TARGET=x86_64-pc-windows-gnu scripts/refresh-prebuilt-runtime.sh
-cp target/aarch64-apple-darwin/release/featureforge bin/featureforge
-chmod +x bin/featureforge
+node scripts/prebuilt-runtime-provenance.mjs verify --repo-root .
 ```
 
 If Homebrew `cargo`/`rustc` shadow rustup-managed toolchains on `PATH`, put the rustup toolchain shims first before running the Windows GNU refresh command so the installed `x86_64-pc-windows-gnu` standard library can be found. The GNU cross-build also expects `x86_64-w64-mingw32-gcc` to be available on `PATH`.

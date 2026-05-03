@@ -19,7 +19,7 @@ pub fn record_branch_closure(
     let Some(authoritative_state) = authoritative_state.as_mut() else {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
-            "record-branch-closure requires authoritative harness state.",
+            "advance-late-stage branch-closure recording requires authoritative harness state.",
         ));
     };
     if let Some(output) = branch_closure_already_current_empty_lineage_exemption_output(
@@ -67,18 +67,19 @@ pub fn record_branch_closure(
                 code: None,
                 recommended_command: None,
                 recommended_public_command_argv: None,
+                required_inputs: Vec::new(),
                 rederive_via_workflow_operator: None,
                 superseded_branch_closure_ids: Vec::new(),
                 required_follow_up: Some(String::from("repair_review_state")),
                 trace_summary: String::from(
-                    "record-branch-closure failed closed because workflow/operator requires review-state repair before branch-closure recording can proceed.",
+                    "advance-late-stage branch-closure recording failed closed because workflow/operator requires review-state repair before branch-closure recording can proceed.",
                 ),
             });
         } else if operator.review_state_status == "clean" {
             return Ok(shared_out_of_phase_record_branch_closure_output(
                 &args.plan,
                 current_authoritative_branch_closure_id(&context)?,
-                "record-branch-closure failed closed because the current phase must be re-derived through workflow/operator before branch-closure recording can proceed.",
+                "advance-late-stage branch-closure recording failed closed because the current phase must be re-derived through workflow/operator before branch-closure recording can proceed.",
             ));
         } else {
             return Ok(RecordBranchClosureOutput {
@@ -87,11 +88,12 @@ pub fn record_branch_closure(
                 code: None,
                 recommended_command: None,
                 recommended_public_command_argv: None,
+                required_inputs: Vec::new(),
                 rederive_via_workflow_operator: None,
                 superseded_branch_closure_ids: Vec::new(),
                 required_follow_up: blocked_follow_up_for_operator(&operator),
                 trace_summary: String::from(
-                    "record-branch-closure failed closed because workflow/operator did not expose branch_closure_recording_required_for_release_readiness.",
+                    "advance-late-stage branch-closure recording failed closed because workflow/operator did not expose branch_closure_recording_required_for_release_readiness.",
                 ),
             });
         }
@@ -100,13 +102,13 @@ pub fn record_branch_closure(
         if !rerecording_assessment.supported {
             let trace_summary = match rerecording_assessment.unsupported_reason {
                 Some(BranchRerecordingUnsupportedReason::MissingTaskClosureBaseline) => {
-                    "record-branch-closure failed closed because no still-current task-closure baseline remains for authoritative branch re-recording."
+                    "advance-late-stage branch-closure recording failed closed because no still-current task-closure baseline remains for authoritative branch re-recording."
                 }
                 Some(BranchRerecordingUnsupportedReason::LateStageSurfaceNotDeclared) => {
-                    "record-branch-closure failed closed because the approved plan does not declare Late-Stage Surface metadata, so post-closure repo drift cannot be classified as trusted late-stage-only."
+                    "advance-late-stage branch-closure recording failed closed because the approved plan does not declare Late-Stage Surface metadata, so post-closure repo drift cannot be classified as trusted late-stage-only."
                 }
                 Some(BranchRerecordingUnsupportedReason::DriftEscapesLateStageSurface) | None => {
-                    "record-branch-closure failed closed because branch drift escaped the trusted Late-Stage Surface."
+                    "advance-late-stage branch-closure recording failed closed because branch drift escaped the trusted Late-Stage Surface."
                 }
             };
             return Ok(RecordBranchClosureOutput {
@@ -115,6 +117,7 @@ pub fn record_branch_closure(
                 code: None,
                 recommended_command: None,
                 recommended_public_command_argv: None,
+                required_inputs: Vec::new(),
                 rederive_via_workflow_operator: None,
                 superseded_branch_closure_ids: Vec::new(),
                 required_follow_up: Some(String::from("repair_review_state")),
@@ -157,11 +160,12 @@ pub fn record_branch_closure(
             code: None,
             recommended_command: None,
             recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
             superseded_branch_closure_ids: Vec::new(),
             required_follow_up: Some(String::from("repair_review_state")),
             trace_summary: String::from(
-                "record-branch-closure failed closed because no authoritative still-current task-closure provenance remains for the requested branch surface.",
+                "advance-late-stage branch-closure recording failed closed because no authoritative still-current task-closure provenance remains for the requested branch surface.",
             ),
         });
     }
@@ -224,6 +228,7 @@ pub fn record_branch_closure(
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         superseded_branch_closure_ids,
         required_follow_up: None,
@@ -250,12 +255,12 @@ pub fn record_release_readiness(
     let Some(current_branch_closure_id) = current_branch_closure_id else {
         let params = AdvanceLateStageOutputContext {
             stage_path: "release_readiness",
-            delegated_primitive: "record-release-readiness",
+            operation: "record_release_readiness_outcome",
             branch_closure_id: Some(args.branch_closure_id.clone()),
             dispatch_id: None,
             result: args.result.as_str(),
             external_review_result_ready: false,
-            trace_summary: "record-release-readiness failed closed because no authoritative current branch closure is available.",
+            trace_summary: "advance-late-stage release-readiness recording failed closed because no authoritative current branch closure is available.",
         };
         if let Ok(operator) = current_workflow_operator(runtime, &args.plan, false) {
             return Ok(release_readiness_follow_up_or_requery_output(
@@ -271,12 +276,12 @@ pub fn record_release_readiness(
             &args.plan,
             AdvanceLateStageOutputContext {
                 stage_path: "release_readiness",
-                delegated_primitive: "record-release-readiness",
+                operation: "record_release_readiness_outcome",
                 branch_closure_id: Some(args.branch_closure_id.clone()),
                 dispatch_id: None,
                 result: args.result.as_str(),
                 external_review_result_ready: false,
-                trace_summary: "record-release-readiness failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
+                trace_summary: "advance-late-stage release-readiness recording failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
             },
         ));
     }
@@ -313,12 +318,12 @@ pub fn record_final_review(
             &args.plan,
             AdvanceLateStageOutputContext {
                 stage_path: "final_review",
-                delegated_primitive: "record-final-review",
+                operation: "record_final_review_outcome",
                 branch_closure_id: Some(args.branch_closure_id.clone()),
                 dispatch_id: Some(args.dispatch_id.clone()),
                 result: args.result.as_str(),
                 external_review_result_ready: true,
-                trace_summary: "record-final-review failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                trace_summary: "advance-late-stage final-review recording failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
             },
         ));
     }
@@ -381,10 +386,11 @@ pub fn record_qa(
             code: Some(String::from("out_of_phase_requery_required")),
             recommended_command,
             recommended_public_command_argv,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: Some(true),
             required_follow_up: None,
             trace_summary: String::from(
-                "record-qa failed closed because workflow/operator requires a fresh current-branch test plan before QA recording can proceed.",
+                "advance-late-stage QA recording failed closed because workflow/operator requires a fresh current-branch test plan before QA recording can proceed.",
             ),
         });
     }
@@ -402,10 +408,11 @@ pub fn record_qa(
             code: Some(String::from("out_of_phase_requery_required")),
             recommended_command,
             recommended_public_command_argv,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: Some(true),
             required_follow_up: None,
             trace_summary: String::from(
-                "record-qa failed closed because workflow/operator must be requeried before QA recording can proceed.",
+                "advance-late-stage QA recording failed closed because workflow/operator must be requeried before QA recording can proceed.",
             ),
         });
     }
@@ -420,10 +427,11 @@ pub fn record_qa(
             code: Some(String::from("out_of_phase_requery_required")),
             recommended_command,
             recommended_public_command_argv,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: Some(true),
             required_follow_up: None,
             trace_summary: String::from(
-                "record-qa failed closed because workflow/operator must be requeried before QA recording can proceed.",
+                "advance-late-stage QA recording failed closed because workflow/operator must be requeried before QA recording can proceed.",
             ),
         });
     }
@@ -440,10 +448,11 @@ pub fn record_qa(
                 code: Some(String::from("out_of_phase_requery_required")),
                 recommended_command,
                 recommended_public_command_argv,
+                required_inputs: Vec::new(),
                 rederive_via_workflow_operator: Some(true),
                 required_follow_up: None,
                 trace_summary: String::from(
-                    "record-qa failed closed because the current phase must be re-derived through workflow/operator before QA recording can proceed.",
+                    "advance-late-stage QA recording failed closed because the current phase must be re-derived through workflow/operator before QA recording can proceed.",
                 ),
             });
         }
@@ -454,10 +463,11 @@ pub fn record_qa(
             code: None,
             recommended_command: None,
             recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
             required_follow_up,
             trace_summary: String::from(
-                "record-qa failed closed because workflow/operator did not expose qa_recording_required for the current branch closure.",
+                "advance-late-stage QA recording failed closed because workflow/operator did not expose qa_recording_required for the current branch closure.",
             ),
         });
     }
@@ -493,22 +503,23 @@ pub fn record_qa(
                 code: Some(String::from("out_of_phase_requery_required")),
                 recommended_command,
                 recommended_public_command_argv,
+                required_inputs: Vec::new(),
                 rederive_via_workflow_operator: Some(true),
                 required_follow_up: None,
                 trace_summary: String::from(
-                    "record-qa failed closed because the current phase is out of band for QA recording; reroute through workflow/operator.",
+                    "advance-late-stage QA recording failed closed because the current phase is out of band for QA recording; reroute through workflow/operator.",
                 ),
             });
         }
     }
     let current_branch_closure =
-        authoritative_current_branch_closure_binding(&context, "record-qa")?;
+        authoritative_current_branch_closure_binding(&context, "advance-late-stage QA recording")?;
     let branch_closure_id = current_branch_closure.branch_closure_id.clone();
     let mut authoritative_state = load_authoritative_transition_state(&context)?;
     let Some(authoritative_state) = authoritative_state.as_mut() else {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
-            "record-qa requires authoritative harness state.",
+            "advance-late-stage QA recording requires authoritative harness state.",
         ));
     };
     let provided_summary_hash = optional_summary_hash(&args.summary_file);
@@ -529,10 +540,11 @@ pub fn record_qa(
                 code: None,
                 recommended_command: None,
                 recommended_public_command_argv: None,
+                required_inputs: Vec::new(),
                 rederive_via_workflow_operator: None,
                 required_follow_up: None,
                 trace_summary: String::from(
-                    "record-qa failed closed because the current branch closure already has a conflicting recorded browser QA outcome.",
+                    "advance-late-stage QA recording failed closed because the current branch closure already has a conflicting recorded browser QA outcome.",
                 ),
             });
         }
@@ -542,7 +554,7 @@ pub fn record_qa(
         .ok_or_else(|| {
             JsonFailure::new(
                 FailureClass::ExecutionStateNotReady,
-                "record-qa requires a current final-review record id.",
+                "advance-late-stage QA recording requires a current final-review record id.",
             )
         })?;
     let test_plan_path = if let Some(path) = current_authoritative_test_plan_path_from_qa_record(
@@ -568,10 +580,11 @@ pub fn record_qa(
                     code: Some(String::from("out_of_phase_requery_required")),
                     recommended_command,
                     recommended_public_command_argv,
+                    required_inputs: Vec::new(),
                     rederive_via_workflow_operator: Some(true),
                     required_follow_up: None,
                     trace_summary: String::from(
-                        "record-qa failed closed because workflow/operator must refresh the current test plan before QA recording can proceed.",
+                        "advance-late-stage QA recording failed closed because workflow/operator must refresh the current test plan before QA recording can proceed.",
                     ),
                 });
             }
@@ -585,7 +598,7 @@ pub fn record_qa(
     let base_branch = context.current_release_base_branch().ok_or_else(|| {
         JsonFailure::new(
             FailureClass::QaArtifactNotFresh,
-            "record-qa requires a resolvable base branch.",
+            "advance-late-stage QA recording requires a resolvable base branch.",
         )
     })?;
     let qa_source = render_qa_artifact(
@@ -739,6 +752,7 @@ pub fn record_qa(
         code,
         recommended_command,
         recommended_public_command_argv,
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator,
         required_follow_up,
         trace_summary,
@@ -752,7 +766,6 @@ pub(super) fn advance_late_stage_impl(
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     ensure_public_intent_preflight_ready(&context, "advance-late-stage")?;
     require_preflight_acceptance(&context)?;
-    let status = status_with_shared_routing_or_context(runtime, &args.plan, &context)?;
     let supplied_result_label = advance_late_stage_result_label(args.result);
     let current_branch_closure = current_authoritative_branch_closure_binding_optional(&context)?;
     let branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
@@ -769,6 +782,12 @@ pub(super) fn advance_late_stage_impl(
             .is_some_and(|operator| {
                 operator.phase == crate::execution::phase::PHASE_FINAL_REVIEW_PENDING
             }));
+    let status = status_with_shared_routing_or_context_with_external_review(
+        runtime,
+        &args.plan,
+        &context,
+        final_review_recording_requested,
+    )?;
     if final_review_recording_requested {
         let _write_authority = claim_step_write_authority(runtime)?;
         if args.branch_closure_id.is_some() {
@@ -804,7 +823,7 @@ pub(super) fn advance_late_stage_impl(
             _ => {
                 return Err(JsonFailure::new(
                     FailureClass::InvalidCommandInput,
-                    "final_review_result_invalid: final-review advance-late-stage requires --result pass|fail.",
+                    "final_review_result_invalid: final-review advance-late-stage requires --result pass or fail.",
                 ));
             }
         };
@@ -833,12 +852,12 @@ pub(super) fn advance_late_stage_impl(
                     &args.plan,
                     AdvanceLateStageOutputContext {
                         stage_path: "final_review",
-                        delegated_primitive: "record-final-review",
+                        operation: "record_final_review_outcome",
                         branch_closure_id: branch_closure_id.clone(),
                         dispatch_id: None,
                         result,
                         external_review_result_ready: true,
-                        trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                        trace_summary: "advance-late-stage final-review recording failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                     },
                 ));
             }
@@ -861,7 +880,7 @@ pub(super) fn advance_late_stage_impl(
                 current_branch_closure,
                 EquivalentFinalReviewRerunParams {
                     stage_path: "final_review",
-                    delegated_primitive: "record-final-review",
+                    operation: "record_final_review_outcome",
                     dispatch_id: candidate_dispatch_id
                         .as_deref()
                         .expect("candidate dispatch id should exist when marked current"),
@@ -889,12 +908,12 @@ pub(super) fn advance_late_stage_impl(
                 false,
                 AdvanceLateStageOutputContext {
                     stage_path: "final_review",
-                    delegated_primitive: "record-final-review",
+                    operation: "record_final_review_outcome",
                     branch_closure_id: branch_closure_id.clone(),
                     dispatch_id: None,
                     result,
                     external_review_result_ready: true,
-                    trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                    trace_summary: "advance-late-stage final-review recording failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                 },
             ));
         }
@@ -924,12 +943,12 @@ pub(super) fn advance_late_stage_impl(
                     &args.plan,
                     AdvanceLateStageOutputContext {
                         stage_path: "final_review",
-                        delegated_primitive: "record-final-review",
+                        operation: "record_final_review_outcome",
                         branch_closure_id: branch_closure_id.clone(),
                         dispatch_id: Some(dispatch_id.clone()),
                         result,
                         external_review_result_ready: true,
-                        trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                        trace_summary: "advance-late-stage final-review recording failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                     },
                 ));
             }
@@ -951,7 +970,7 @@ pub(super) fn advance_late_stage_impl(
                     current_branch_closure,
                     EquivalentFinalReviewRerunParams {
                         stage_path: "final_review",
-                        delegated_primitive: "record-final-review",
+                        operation: "record_final_review_outcome",
                         dispatch_id: &dispatch_id,
                         reviewer_source,
                         reviewer_id,
@@ -971,18 +990,18 @@ pub(super) fn advance_late_stage_impl(
                 dispatch_current,
                 AdvanceLateStageOutputContext {
                     stage_path: "final_review",
-                    delegated_primitive: "record-final-review",
+                    operation: "record_final_review_outcome",
                     branch_closure_id: branch_closure_id.clone(),
                     dispatch_id: Some(dispatch_id.clone()),
                     result,
                     external_review_result_ready: true,
-                    trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                    trace_summary: "advance-late-stage final-review recording failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                 },
             ));
         }
         let current_branch_closure = authoritative_current_branch_closure_binding(
             &context,
-            "advance-late-stage final-review",
+            "advance-late-stage final-review recording",
         )?;
         let branch_closure_id = current_branch_closure.branch_closure_id.clone();
         ensure_final_review_dispatch_id_matches(&context, &dispatch_id)?;
@@ -1036,25 +1055,27 @@ pub(super) fn advance_late_stage_impl(
                             &args.plan,
                             AdvanceLateStageOutputContext {
                                 stage_path: "final_review",
-                                delegated_primitive: "record-final-review",
+                                operation: "record_final_review_outcome",
                                 branch_closure_id: Some(branch_closure_id),
                                 dispatch_id: Some(dispatch_id.clone()),
                                 result,
                                 external_review_result_ready: true,
-                                trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                                trace_summary: "advance-late-stage final-review recording failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                             },
                         ));
                     }
                     return Ok(AdvanceLateStageOutput {
                         action: String::from("already_current"),
                         stage_path: String::from("final_review"),
-                        delegated_primitive: String::from("record-final-review"),
+                        intent: String::from("advance_late_stage"),
+                        operation: String::from("record_final_review_outcome"),
                         branch_closure_id: Some(branch_closure_id),
                         dispatch_id: Some(dispatch_id.clone()),
                         result: result.to_owned(),
                         code: None,
                         recommended_command: None,
                         recommended_public_command_argv: None,
+                        required_inputs: Vec::new(),
                         rederive_via_workflow_operator: None,
                         required_follow_up: (result == "fail")
                             .then(|| {
@@ -1075,29 +1096,31 @@ pub(super) fn advance_late_stage_impl(
                     &args.plan,
                     AdvanceLateStageOutputContext {
                         stage_path: "final_review",
-                        delegated_primitive: "record-final-review",
+                        operation: "record_final_review_outcome",
                         branch_closure_id: Some(branch_closure_id.clone()),
                         dispatch_id: Some(dispatch_id.clone()),
                         result,
                         external_review_result_ready: true,
-                        trace_summary: "advance-late-stage failed closed because the current final-review record is no longer authoritative and workflow/operator must re-derive the next safe step.",
+                        trace_summary: "advance-late-stage final-review recording failed closed because the current final-review record is no longer authoritative and workflow/operator must re-derive the next safe step.",
                     },
                 ));
             } else {
                 return Ok(AdvanceLateStageOutput {
                     action: String::from("blocked"),
                     stage_path: String::from("final_review"),
-                    delegated_primitive: String::from("record-final-review"),
+                    intent: String::from("advance_late_stage"),
+                    operation: String::from("record_final_review_outcome"),
                     branch_closure_id: Some(branch_closure_id),
                     dispatch_id: Some(dispatch_id.clone()),
                     result: result.to_owned(),
                     code: None,
                     recommended_command: None,
                     recommended_public_command_argv: None,
+                    required_inputs: Vec::new(),
                     rederive_via_workflow_operator: None,
                     required_follow_up: None,
                     trace_summary: String::from(
-                        "advance-late-stage failed closed because the current branch closure already has a conflicting recorded final-review outcome for this dispatch lineage.",
+                        "advance-late-stage final-review recording failed closed because the current branch closure already has a conflicting recorded final-review outcome for this dispatch lineage.",
                     ),
                 });
             }
@@ -1124,7 +1147,7 @@ pub(super) fn advance_late_stage_impl(
             .ok_or_else(|| {
                 JsonFailure::new(
                     FailureClass::ExecutionStateNotReady,
-                    "advance-late-stage final-review requires a current release-readiness record id.",
+                    "advance-late-stage final-review recording requires a current release-readiness record id.",
                 )
             })?;
         persist_final_review_record(
@@ -1197,13 +1220,15 @@ pub(super) fn advance_late_stage_impl(
         return Ok(AdvanceLateStageOutput {
             action: String::from("recorded"),
             stage_path: String::from("final_review"),
-            delegated_primitive: String::from("record-final-review"),
+            intent: String::from("advance_late_stage"),
+            operation: String::from("record_final_review_outcome"),
             branch_closure_id: Some(branch_closure_id),
             dispatch_id: Some(dispatch_id.clone()),
             result: result.to_owned(),
             code,
             recommended_command,
             recommended_public_command_argv,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator,
             required_follow_up,
             trace_summary,
@@ -1226,12 +1251,12 @@ pub(super) fn advance_late_stage_impl(
                 &args.plan,
                 AdvanceLateStageOutputContext {
                     stage_path: "release_readiness",
-                    delegated_primitive: "record-release-readiness",
+                    operation: "record_release_readiness_outcome",
                     branch_closure_id: branch_closure_id.clone(),
                     dispatch_id: None,
                     result: supplied_result_label,
                     external_review_result_ready: false,
-                    trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
+                    trace_summary: "advance-late-stage release-readiness recording failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
                 },
             ));
         }
@@ -1245,12 +1270,12 @@ pub(super) fn advance_late_stage_impl(
                 &args.plan,
                 AdvanceLateStageOutputContext {
                     stage_path: "release_readiness",
-                    delegated_primitive: "record-release-readiness",
+                    operation: "record_release_readiness_outcome",
                     branch_closure_id: branch_closure_id.clone(),
                     dispatch_id: None,
                     result: supplied_result_label,
                     external_review_result_ready: false,
-                    trace_summary: "advance-late-stage failed closed because branch-closure recording is required before release-readiness arguments are valid.",
+                    trace_summary: "advance-late-stage release-readiness recording failed closed because branch-closure recording is required before release-readiness arguments are valid.",
                 },
             ));
         }
@@ -1264,13 +1289,15 @@ pub(super) fn advance_late_stage_impl(
         return Ok(AdvanceLateStageOutput {
             action: output.action,
             stage_path: String::from("branch_closure"),
-            delegated_primitive: String::from("record-branch-closure"),
+            intent: String::from("advance_late_stage"),
+            operation: String::from("capture_branch_closure_state"),
             branch_closure_id: output.branch_closure_id,
             dispatch_id: None,
             result: String::from("recorded"),
             code: output.code,
             recommended_command: output.recommended_command,
             recommended_public_command_argv: output.recommended_public_command_argv,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: output.rederive_via_workflow_operator,
             required_follow_up: output.required_follow_up,
             trace_summary: output.trace_summary,
@@ -1286,7 +1313,7 @@ pub(super) fn advance_late_stage_impl(
             _ => {
                 return Err(JsonFailure::new(
                     FailureClass::InvalidCommandInput,
-                    "qa_result_invalid: QA advance-late-stage requires --result pass|fail.",
+                    "qa_result_invalid: QA advance-late-stage requires --result pass or fail.",
                 ));
             }
         };
@@ -1303,13 +1330,15 @@ pub(super) fn advance_late_stage_impl(
         return Ok(AdvanceLateStageOutput {
             action: output.action,
             stage_path: String::from("browser_qa"),
-            delegated_primitive: String::from("record-qa"),
+            intent: String::from("advance_late_stage"),
+            operation: String::from("record_qa_outcome"),
             branch_closure_id: Some(output.branch_closure_id),
             dispatch_id: None,
             result: output.result,
             code: output.code,
             recommended_command: output.recommended_command,
             recommended_public_command_argv: output.recommended_public_command_argv,
+            required_inputs: Vec::new(),
             rederive_via_workflow_operator: output.rederive_via_workflow_operator,
             required_follow_up: output.required_follow_up,
             trace_summary: output.trace_summary,
@@ -1321,7 +1350,7 @@ pub(super) fn advance_late_stage_impl(
         _ => {
             return Err(JsonFailure::new(
                 FailureClass::InvalidCommandInput,
-                "release_readiness_result_invalid: release-readiness advance-late-stage requires --result ready|blocked.",
+                "release_readiness_result_invalid: release-readiness advance-late-stage requires --result ready or blocked.",
             ));
         }
     };
@@ -1340,7 +1369,7 @@ pub(super) fn advance_late_stage_impl(
                 &context,
                 current_branch_closure,
                 "release_readiness",
-                "record-release-readiness",
+                "record_release_readiness_outcome",
                 result,
                 summary_file,
             )?
@@ -1367,12 +1396,12 @@ pub(super) fn advance_late_stage_impl(
             &args.plan,
             AdvanceLateStageOutputContext {
                 stage_path: "release_readiness",
-                delegated_primitive: "record-release-readiness",
+                operation: "record_release_readiness_outcome",
                 branch_closure_id: branch_closure_id.clone(),
                 dispatch_id: None,
                 result,
                 external_review_result_ready: false,
-                trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
+                trace_summary: "advance-late-stage release-readiness recording failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
             },
         ));
     }
@@ -1381,7 +1410,7 @@ pub(super) fn advance_late_stage_impl(
     let normalized_summary_hash = summary_hash(&summary);
     let current_branch_closure = authoritative_current_branch_closure_binding(
         &context,
-        "advance-late-stage release-readiness",
+        "advance-late-stage release-readiness recording",
     )?;
     let branch_closure_id = current_branch_closure.branch_closure_id.clone();
     let reviewed_state_id = current_branch_closure.reviewed_state_id.clone();
@@ -1403,13 +1432,15 @@ pub(super) fn advance_late_stage_impl(
             return Ok(AdvanceLateStageOutput {
                 action: String::from("already_current"),
                 stage_path: String::from("release_readiness"),
-                delegated_primitive: String::from("record-release-readiness"),
+                intent: String::from("advance_late_stage"),
+                operation: String::from("record_release_readiness_outcome"),
                 branch_closure_id: Some(branch_closure_id),
                 dispatch_id: None,
                 result: result.to_owned(),
                 code: None,
                 recommended_command: None,
                 recommended_public_command_argv: None,
+                required_inputs: Vec::new(),
                 rederive_via_workflow_operator: None,
                 required_follow_up: (result == "blocked")
                     .then(|| String::from("resolve_release_blocker")),
@@ -1422,17 +1453,19 @@ pub(super) fn advance_late_stage_impl(
             return Ok(AdvanceLateStageOutput {
                 action: String::from("blocked"),
                 stage_path: String::from("release_readiness"),
-                delegated_primitive: String::from("record-release-readiness"),
+                intent: String::from("advance_late_stage"),
+                operation: String::from("record_release_readiness_outcome"),
                 branch_closure_id: Some(branch_closure_id),
                 dispatch_id: None,
                 result: result.to_owned(),
                 code: None,
                 recommended_command: None,
                 recommended_public_command_argv: None,
+                required_inputs: Vec::new(),
                 rederive_via_workflow_operator: None,
                 required_follow_up: None,
                 trace_summary: String::from(
-                    "advance-late-stage failed closed because the current branch closure already has a conflicting recorded release-readiness outcome.",
+                    "advance-late-stage release-readiness recording failed closed because the current branch closure already has a conflicting recorded release-readiness outcome.",
                 ),
             });
         }
@@ -1440,7 +1473,7 @@ pub(super) fn advance_late_stage_impl(
     let base_branch = context.current_release_base_branch().ok_or_else(|| {
         JsonFailure::new(
             FailureClass::ReleaseArtifactNotFresh,
-            "advance-late-stage release-readiness requires a resolvable base branch.",
+            "advance-late-stage release-readiness recording requires a resolvable base branch.",
         )
     })?;
     let release_source = render_release_readiness_artifact(
@@ -1481,13 +1514,15 @@ pub(super) fn advance_late_stage_impl(
     Ok(AdvanceLateStageOutput {
         action: String::from("recorded"),
         stage_path: String::from("release_readiness"),
-        delegated_primitive: String::from("record-release-readiness"),
+        intent: String::from("advance_late_stage"),
+        operation: String::from("record_release_readiness_outcome"),
         branch_closure_id: Some(branch_closure_id),
         dispatch_id: None,
         result: result.to_owned(),
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         required_follow_up: (result == "blocked").then(|| String::from("resolve_release_blocker")),
         trace_summary: String::from(

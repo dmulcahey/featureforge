@@ -711,6 +711,42 @@ fn assert_capture_recommends(capture: &Value, command_fragment: &str, context: &
     );
 }
 
+fn assert_capture_requires_task_closure_inputs(capture: &Value, context: &str) {
+    assert!(
+        capture
+            .pointer("/json/recommended_command")
+            .is_none_or(Value::is_null),
+        "{context} should not expose a placeholder task-closure command: {capture}"
+    );
+    assert_eq!(
+        capture.pointer("/json/required_inputs"),
+        Some(&json!([
+            {
+                "kind": "enum",
+                "name": "review_result",
+                "values": ["pass", "fail"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "review_summary_file"
+            },
+            {
+                "kind": "enum",
+                "name": "verification_result",
+                "values": ["pass", "fail", "not-run"]
+            },
+            {
+                "kind": "path",
+                "must_exist": true,
+                "name": "verification_summary_file",
+                "required_when": "verification_result!=not-run"
+            }
+        ])),
+        "{context} should expose typed task-closure inputs: {capture}"
+    );
+}
+
 fn collect_execution_progress_scenarios(scenarios: &mut Vec<Value>) {
     let (repo_dir, state_dir) = init_repo("runtime-golden-progress");
     let repo = repo_dir.path();
@@ -799,9 +835,8 @@ fn collect_execution_progress_scenarios(scenarios: &mut Vec<Value>) {
         "task_closure_recording_ready",
         "task closure operator",
     );
-    assert_capture_recommends(
+    assert_capture_requires_task_closure_inputs(
         &task_closure_ready["workflow_operator"],
-        "close-current-task",
         "task closure operator",
     );
     scenarios.push(task_closure_ready);
@@ -1084,12 +1119,45 @@ fn normalize_value(value: Value, repo: &Path, state: &Path) -> Value {
             entries.sort_by(|(left, _), (right, _)| left.cmp(right));
             let mut normalized = Map::new();
             for (key, value) in entries {
-                normalized.insert(key, normalize_value(value, repo, state));
+                let normalized_value = if key == "recommended_public_command_argv" {
+                    normalize_public_argv_value(value)
+                } else {
+                    normalize_value(value, repo, state)
+                };
+                normalized.insert(key, normalized_value);
             }
             Value::Object(normalized)
         }
         value => value,
     }
+}
+
+fn normalize_public_argv_value(value: Value) -> Value {
+    match value {
+        Value::String(value) => Value::String(normalize_public_argv_string(&value)),
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(normalize_public_argv_value)
+                .collect(),
+        ),
+        Value::Object(object) => Value::Object(
+            object
+                .into_iter()
+                .map(|(key, value)| (key, normalize_public_argv_value(value)))
+                .collect(),
+        ),
+        value => value,
+    }
+}
+
+fn normalize_public_argv_string(value: &str) -> String {
+    let normalized = replace_hex_runs(
+        value,
+        64,
+        "0000000000000000000000000000000000000000000000000000000000000000",
+    );
+    replace_hex_runs(&normalized, 40, "0000000000000000000000000000000000000000")
 }
 
 fn normalize_string(value: &str, repo: &Path, state: &Path) -> String {

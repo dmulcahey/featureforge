@@ -323,9 +323,9 @@ Check the git log for this branch. If prior commits suggest a previous review cy
 
 Before presenting the final execution preflight handoff, if `$_FEATUREFORGE_BIN` is available, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`.
 
-- Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_public_command_argv` as authoritative for public routing. `recommended_command` is display-only compatibility text.
+- Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs` as authoritative for public routing. `recommended_command` is display-only compatibility text.
 - If workflow/operator returns `phase` `executing`, present the normal execution preflight handoff below.
-- If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of reopening execution preflight.
+- If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` when present instead of reopening execution preflight; when argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.
 - `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail only; do not let it override workflow/operator routing.
 - Only fall back to manual artifact inspection if the helper is unavailable or fails.
 - Present the runtime-selected execution owner skill as the default path with the approved plan path.
