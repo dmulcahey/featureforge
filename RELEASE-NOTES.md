@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.10.1 - 2026-05-03
+
 - harden the public runtime cutover so `Engineering Approved` plans require a
   current passing plan-fidelity gate before implementation routing, public
   replay tests use only compiled CLI helpers, reviewer recursion prevention
@@ -22,6 +24,8 @@
   and fail-closed routing law top-level, preserve reviewer-recursion prevention
   as prompt-only reviewer guidance, and package extended examples in companion
   references instead of duplicating them across active skills
+- refresh the checked-in repo runtime binary and darwin/windows prebuilt
+  artifacts for `1.10.1`
 
 ## v1.10.0 - 2026-04-25
 
