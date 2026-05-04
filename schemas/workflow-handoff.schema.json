@@ -1455,7 +1455,8 @@
         "actionable_public_command",
         "waiting_external_input",
         "terminal",
-        "blocked_runtime_bug"
+        "blocked_runtime_bug",
+        "runtime_reconcile_required"
       ],
       "type": "string"
     },
@@ -1538,7 +1539,8 @@
         "actionable_public_command",
         "waiting_external_input",
         "terminal",
-        "blocked_runtime_bug"
+        "blocked_runtime_bug",
+        "runtime_reconcile_required"
       ],
       "type": "string"
     },

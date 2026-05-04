@@ -5,7 +5,10 @@ use crate::execution::command_eligibility::{
     public_argv_has_template_tokens, recommended_public_command_argv,
     required_inputs_for_public_command,
 };
-use crate::execution::next_action::reopen_public_command_with_reason;
+use crate::execution::next_action::{
+    NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED, diagnostic_next_action_for_route,
+    reopen_public_command_with_reason,
+};
 use crate::execution::reentry_reconcile::{
     TARGETLESS_STALE_RECONCILE_PHASE_DETAIL, TARGETLESS_STALE_RECONCILE_REASON_CODE,
     TargetlessStaleReconcile,
@@ -366,11 +369,19 @@ fn convert_status_to_runtime_reconcile_or_bug(
     } else {
         status.phase_detail =
             String::from(crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED);
+        status.state_kind =
+            String::from(crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED);
     }
-    status.next_action = String::from("repair review state / reenter execution");
     status.recommended_public_command = None;
     status.recommended_public_command_argv = None;
     status.required_inputs.clear();
+    status.next_action = diagnostic_next_action_for_route(
+        &status.state_kind,
+        &status.phase_detail,
+        status.recommended_public_command_argv.is_some(),
+        !status.required_inputs.is_empty(),
+    )
+    .unwrap_or_else(|| String::from(NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED));
     status.recommended_command = None;
     status.execution_command_context = None;
     status.execution_reentry_target_source = None;
@@ -437,7 +448,6 @@ fn inject_targetless_stale_unreviewed(status: &mut PlanExecutionStatus) {
     status.phase = Some(String::from(crate::execution::phase::PHASE_EXECUTING));
     status.harness_phase = crate::execution::harness::HarnessPhase::Executing;
     status.phase_detail = String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL);
-    status.next_action = String::from("repair review state / reenter execution");
     status.state_kind = String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL);
     status.current_branch_closure_id = None;
     status.finish_review_gate_pass_branch_closure_id = None;
@@ -452,6 +462,13 @@ fn inject_targetless_stale_unreviewed(status: &mut PlanExecutionStatus) {
     status.recommended_public_command = None;
     status.recommended_public_command_argv = None;
     status.required_inputs.clear();
+    status.next_action = diagnostic_next_action_for_route(
+        &status.state_kind,
+        &status.phase_detail,
+        status.recommended_public_command_argv.is_some(),
+        !status.required_inputs.is_empty(),
+    )
+    .unwrap_or_else(|| String::from(NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED));
     status.recommended_command = None;
     status.next_public_action = None;
     status.blockers.clear();

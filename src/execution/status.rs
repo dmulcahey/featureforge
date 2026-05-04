@@ -14,8 +14,7 @@ use crate::execution::harness::{
 use crate::execution::phase::{
     DETAIL_FINAL_REVIEW_RECORDING_READY, DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED,
     DETAIL_RELEASE_READINESS_RECORDING_READY, DETAIL_TASK_CLOSURE_RECORDING_READY, PHASE_EXECUTING,
-    PUBLIC_STATUS_PHASE_VALUES, RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
-    RECORDING_CONTEXT_PHASE_DETAILS,
+    PUBLIC_STATUS_PHASE_VALUES, RECORDING_CONTEXT_PHASE_DETAILS,
 };
 use crate::execution::public_command_types::RecommendedPublicCommandArgv;
 use crate::execution::router::{
@@ -61,6 +60,7 @@ enum StateKindSchema {
     WaitingExternalInput,
     Terminal,
     BlockedRuntimeBug,
+    RuntimeReconcileRequired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -253,6 +253,7 @@ pub struct PlanExecutionStatus {
     pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
     pub reason_codes: Vec<String>,
@@ -662,11 +663,6 @@ fn tighten_plan_execution_phase_bound_recording_context_contracts(
         PHASE_EXECUTING,
         "execution_command_context",
     )?;
-    append_phase_detail_field_omitted_only_in_lanes(
-        schema_json,
-        "recommended_command",
-        RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
-    )?;
     Ok(())
 }
 
@@ -862,48 +858,6 @@ fn append_phase_field_forbidden_outside_const_phase(
             "not": {
                 "required": [guarded_field]
             }
-        }
-    }));
-    Ok(())
-}
-
-fn append_phase_detail_field_omitted_only_in_lanes(
-    schema_json: &mut serde_json::Value,
-    field: &str,
-    omission_allowed_phase_details: &[&str],
-) -> Result<(), JsonFailure> {
-    let all_of = schema_json
-        .as_object_mut()
-        .ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::EvidenceWriteFailed,
-                "Generated plan execution schema root should be an object.",
-            )
-        })?
-        .entry("allOf")
-        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
-        .as_array_mut()
-        .ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::EvidenceWriteFailed,
-                "Generated plan execution schema allOf should be an array.",
-            )
-        })?;
-    all_of.push(serde_json::json!({
-        "if": {
-            "properties": {
-                "phase_detail": {
-                    "enum": omission_allowed_phase_details
-                }
-            }
-        },
-        "then": {
-            "not": {
-                "required": [field]
-            }
-        },
-        "else": {
-            "required": [field]
         }
     }));
     Ok(())

@@ -11442,6 +11442,7 @@ fn internal_only_compatibility_workflow_operator_keeps_execution_scope_when_resu
     );
     assert_eq!(status_json["harness_phase"], "executing");
     assert_eq!(status_json["phase_detail"], "runtime_reconcile_required");
+    assert_eq!(status_json["next_action"], "runtime diagnostic required");
     assert_eq!(
         status_json["review_state_status"], "stale_unreviewed",
         "json: {status_json}"
@@ -11477,6 +11478,17 @@ fn internal_only_compatibility_workflow_operator_keeps_execution_scope_when_resu
         status_json["recommended_command"],
         Value::Null,
         "targetless stale status must not recommend repair when no authoritative target exists: {status_json}"
+    );
+    assert_eq!(
+        status_json["recommended_public_command_argv"],
+        Value::Null,
+        "targetless stale status must not expose executable argv when no authoritative target exists: {status_json}"
+    );
+    assert!(
+        status_json["required_inputs"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "targetless stale status must not expose typed inputs for a diagnostic-only route: {status_json}"
     );
     for (command, args) in [
         (
@@ -11577,6 +11589,7 @@ fn internal_only_compatibility_workflow_operator_keeps_execution_scope_when_resu
     );
     assert_eq!(operator_json["phase"], "executing");
     assert_eq!(operator_json["phase_detail"], "runtime_reconcile_required");
+    assert_eq!(operator_json["next_action"], "runtime diagnostic required");
     assert_eq!(operator_json["review_state_status"], "stale_unreviewed");
     assert!(
         operator_json["execution_command_context"].is_null(),
@@ -11586,6 +11599,17 @@ fn internal_only_compatibility_workflow_operator_keeps_execution_scope_when_resu
         operator_json["recommended_command"],
         Value::Null,
         "targetless stale operator must not recommend repair when no authoritative target exists: {operator_json}"
+    );
+    assert_eq!(
+        operator_json["recommended_public_command_argv"],
+        Value::Null,
+        "targetless stale operator must not expose executable argv when no authoritative target exists: {operator_json}"
+    );
+    assert!(
+        operator_json["required_inputs"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "targetless stale operator must not expose typed inputs for a diagnostic-only route: {operator_json}"
     );
     assert!(
         operator_json["blocking_reason_codes"]
@@ -11598,7 +11622,7 @@ fn internal_only_compatibility_workflow_operator_keeps_execution_scope_when_resu
     assert!(
         operator_json["blockers"]
             .as_array()
-            .is_some_and(|blockers| blockers
+            .is_none_or(|blockers| blockers
                 .iter()
                 .all(|blocker| blocker["next_public_action"].is_null())),
         "targetless stale operator blockers must not synthesize a repair or reopen action: {operator_json}"
@@ -11631,9 +11655,14 @@ fn internal_only_compatibility_workflow_operator_keeps_execution_scope_when_resu
     let routing_json =
         serde_json::to_value(&routing).expect("targetless stale routing should serialize");
     assert_eq!(routing_json["phase_detail"], "runtime_reconcile_required");
+    assert_eq!(routing_json["next_action"], "runtime diagnostic required");
     assert_eq!(
         routing_json["execution_status"]["phase_detail"],
         "runtime_reconcile_required"
+    );
+    assert_eq!(
+        routing_json["execution_status"]["next_action"],
+        "runtime diagnostic required"
     );
     assert_eq!(
         routing_json["recommended_command"],
@@ -11658,6 +11687,7 @@ fn internal_only_compatibility_workflow_operator_keeps_execution_scope_when_resu
         "repair-review-state should preserve targetless stale reconcile diagnostics after mutation requery",
     );
     assert_eq!(repair_json["phase_detail"], "runtime_reconcile_required");
+    assert_eq!(repair_json["next_action"], "runtime diagnostic required");
     assert_eq!(
         repair_json["recommended_command"],
         Value::Null,
@@ -11686,6 +11716,10 @@ fn internal_only_compatibility_workflow_operator_keeps_execution_scope_when_resu
     assert_eq!(
         status_after_repair["phase_detail"],
         "runtime_reconcile_required"
+    );
+    assert_eq!(
+        status_after_repair["next_action"],
+        "runtime diagnostic required"
     );
     assert_eq!(
         status_after_repair["review_state_status"],

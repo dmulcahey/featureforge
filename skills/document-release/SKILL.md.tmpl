@@ -199,7 +199,7 @@ For workflow-routed implementation work, the derived companion artifact above is
 
 - workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.
 - For reviewed-closure late-stage routing, use the workflow/operator input shape `featureforge workflow operator --plan <approved-plan-path>` with the concrete plan; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv`. `recommended_command` is display-only compatibility text.
-- If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.
+- If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.
 - Confirm the current `phase_detail` before recording release-readiness.
 - If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path>` with the concrete plan and rerun workflow/operator.
 - When workflow/operator reports `phase_detail=release_readiness_recording_ready`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` only after substituting concrete values.

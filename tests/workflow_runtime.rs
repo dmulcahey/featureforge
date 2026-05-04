@@ -976,7 +976,14 @@ fn read_surface_invariant_blocks_current_stale_overlap_on_public_status_and_oper
     );
     assert_eq!(status_json["state_kind"], "blocked_runtime_bug");
     assert_eq!(status_json["phase_detail"], "blocked_runtime_bug");
+    assert_eq!(status_json["next_action"], "runtime diagnostic required");
     assert!(status_json["recommended_command"].is_null());
+    assert!(status_json["recommended_public_command_argv"].is_null());
+    assert!(
+        status_json["required_inputs"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+    );
     assert!(status_json["execution_command_context"].is_null());
     let overlap_id = status_json["current_task_closures"][0]["closure_record_id"]
         .as_str()
@@ -1010,7 +1017,14 @@ fn read_surface_invariant_blocks_current_stale_overlap_on_public_status_and_oper
     );
     assert_eq!(operator_json["state_kind"], "blocked_runtime_bug");
     assert_eq!(operator_json["phase_detail"], "blocked_runtime_bug");
+    assert_eq!(operator_json["next_action"], "runtime diagnostic required");
     assert!(operator_json["recommended_command"].is_null());
+    assert!(operator_json["recommended_public_command_argv"].is_null());
+    assert!(
+        operator_json["required_inputs"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+    );
     assert!(operator_json["execution_command_context"].is_null());
     assert!(
         operator_json["blocking_reason_codes"]
@@ -1046,7 +1060,9 @@ fn read_surface_invariant_blocks_hidden_commands_on_public_status_and_operator()
         "public status hidden-command invariant injection",
     );
     assert_eq!(status_json["state_kind"], "blocked_runtime_bug");
+    assert_eq!(status_json["next_action"], "runtime diagnostic required");
     assert!(status_json["recommended_command"].is_null());
+    assert!(status_json["recommended_public_command_argv"].is_null());
     assert!(
         status_json["blocking_reason_codes"]
             .as_array()
@@ -1067,7 +1083,9 @@ fn read_surface_invariant_blocks_hidden_commands_on_public_status_and_operator()
         "public operator hidden-command invariant injection",
     );
     assert_eq!(operator_json["state_kind"], "blocked_runtime_bug");
+    assert_eq!(operator_json["next_action"], "runtime diagnostic required");
     assert!(operator_json["recommended_command"].is_null());
+    assert!(operator_json["recommended_public_command_argv"].is_null());
     assert!(
         operator_json["blocking_reason_codes"]
             .as_array()

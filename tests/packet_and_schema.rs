@@ -568,71 +568,6 @@ fn assert_phase_field_field_forbidden_outside_const_phase(
     }
 }
 
-fn assert_phase_detail_field_omitted_only_in_lanes(
-    schema: &Value,
-    field: &str,
-    omission_phase_details: &[&str],
-    issues: &mut Vec<String>,
-) {
-    let Some(conditions) = schema.get("allOf").and_then(Value::as_array) else {
-        issues.push(String::from(
-            "schema is missing top-level `allOf` phase-bound conditions",
-        ));
-        return;
-    };
-
-    let expected_omission_lanes: BTreeSet<String> = omission_phase_details
-        .iter()
-        .map(|value| (*value).to_owned())
-        .collect();
-    let Some(condition) = conditions.iter().find(|condition| {
-        let actual_omission_lanes: BTreeSet<String> = condition
-            .pointer("/if/properties/phase_detail/enum")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect();
-        actual_omission_lanes == expected_omission_lanes
-    }) else {
-        issues.push(format!(
-            "schema is missing phase_detail omission-lane contract for `{field}` in {expected_omission_lanes:?}"
-        ));
-        return;
-    };
-
-    let actual_then_required: BTreeSet<String> = condition
-        .pointer("/then/not/required")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect();
-    let expected_then_required = BTreeSet::from([field.to_owned()]);
-    if actual_then_required != expected_then_required {
-        issues.push(format!(
-            "omission-lane contract for `{field}` has then/not/required {actual_then_required:?}, expected {expected_then_required:?}"
-        ));
-    }
-
-    let actual_else_required: BTreeSet<String> = condition
-        .pointer("/else/required")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect();
-    let expected_else_required = BTreeSet::from([field.to_owned()]);
-    if actual_else_required != expected_else_required {
-        issues.push(format!(
-            "omission-lane contract for `{field}` has else/required {actual_else_required:?}, expected {expected_else_required:?}"
-        ));
-    }
-}
-
 fn assert_schema_pointer_value(
     schema: &Value,
     pointer: &str,
@@ -667,6 +602,90 @@ fn collect_string_field_values(value: &Value, field: &str, values: &mut BTreeSet
         }
         _ => {}
     }
+}
+
+fn schema_all_of_field_requirement_conditions(schema: &Value, field: &str) -> Vec<usize> {
+    schema
+        .get("allOf")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, condition)| {
+            let field_is_referenced = [
+                "/then/required",
+                "/then/not/required",
+                "/else/required",
+                "/else/not/required",
+            ]
+            .iter()
+            .any(|pointer| {
+                condition
+                    .pointer(pointer)
+                    .and_then(Value::as_array)
+                    .is_some_and(|required| required.iter().any(|candidate| candidate == field))
+            });
+            field_is_referenced.then_some(index)
+        })
+        .collect()
+}
+
+fn collect_public_argv_arrays<'a>(
+    value: &'a Value,
+    path: &mut Vec<String>,
+    out: &mut Vec<(String, &'a Vec<Value>)>,
+) {
+    match value {
+        Value::Object(object) => {
+            if let Some(argv) = object
+                .get("recommended_public_command_argv")
+                .and_then(Value::as_array)
+            {
+                out.push((path.join("."), argv));
+            }
+            for (key, nested) in object {
+                path.push(key.clone());
+                collect_public_argv_arrays(nested, path, out);
+                path.pop();
+            }
+        }
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                path.push(format!("[{index}]"));
+                collect_public_argv_arrays(item, path, out);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn public_fixture_argv_template_token(part: &str) -> Option<&'static str> {
+    // Boundary fixture scan: this intentionally checks serialized public JSON
+    // independently of the production helper so fixture drift cannot mask a
+    // route-authority regression.
+    const DENIED_SUBSTRINGS: &[&str] = &[
+        "<",
+        ">",
+        "pass|fail",
+        "pass|fail|not-run",
+        "ready|blocked",
+        "task|branch",
+        "[when verification ran]",
+        "when verification ran",
+    ];
+    DENIED_SUBSTRINGS
+        .iter()
+        .copied()
+        .find(|denied| part.contains(denied))
+}
+
+fn public_fixture_argv_has_split_optional_prose(parts: &[String]) -> bool {
+    parts.windows(3).any(|window| {
+        (window[0] == "[when" || window[0] == "when")
+            && window[1] == "verification"
+            && (window[2] == "ran]" || window[2] == "ran")
+    })
 }
 
 fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
@@ -1108,12 +1127,6 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
         "harness_phase",
         phase::PHASE_EXECUTING,
         "execution_command_context",
-        &mut issues,
-    );
-    assert_phase_detail_field_omitted_only_in_lanes(
-        &schema,
-        "recommended_command",
-        phase::RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
         &mut issues,
     );
     check_types!(
@@ -1647,6 +1660,79 @@ fn runtime_golden_phase_details_are_declared_by_public_schemas() {
 }
 
 #[test]
+fn runtime_golden_state_kinds_are_declared_by_public_schemas() {
+    let schemas_dir = unique_temp_dir("public-state-kind-schema-coverage");
+    write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
+    write_plan_execution_schema(&schemas_dir).expect("plan execution schema should write");
+
+    let plan_schema: Value = serde_json::from_str(
+        &fs::read_to_string(schemas_dir.join("plan-execution-status.schema.json"))
+            .expect("generated plan execution schema should read"),
+    )
+    .expect("generated plan execution schema should parse");
+    let operator_schema: Value = serde_json::from_str(
+        &fs::read_to_string(schemas_dir.join("workflow-operator.schema.json"))
+            .expect("generated workflow operator schema should read"),
+    )
+    .expect("generated workflow operator schema should parse");
+    let handoff_schema: Value = serde_json::from_str(
+        &fs::read_to_string(schemas_dir.join("workflow-handoff.schema.json"))
+            .expect("generated workflow handoff schema should read"),
+    )
+    .expect("generated workflow handoff schema should parse");
+
+    let mut emitted_state_kinds = BTreeSet::new();
+    let golden_routes: Value = serde_json::from_str(
+        &fs::read_to_string(repo_fixture_path(
+            "tests/fixtures/runtime-goldens/public-runtime-routes.json",
+        ))
+        .expect("public runtime route golden should read"),
+    )
+    .expect("public runtime route golden should parse");
+    collect_string_field_values(&golden_routes, "state_kind", &mut emitted_state_kinds);
+    assert!(
+        emitted_state_kinds.contains(phase::DETAIL_RUNTIME_RECONCILE_REQUIRED),
+        "public runtime route golden should exercise {} state_kind",
+        phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+    );
+
+    let plan_state_kinds =
+        schema_enum_set(&plan_schema, &schema_properties(&plan_schema)["state_kind"])
+            .expect("plan execution state_kind schema should expose an enum");
+    let operator_state_kinds = schema_enum_set(
+        &operator_schema,
+        operator_schema
+            .pointer("/$defs/WorkflowOperatorStateKindSchema")
+            .expect("workflow operator state_kind schema should exist"),
+    )
+    .expect("workflow operator state_kind schema should expose an enum");
+    let handoff_state_kinds = schema_enum_set(
+        &handoff_schema,
+        &schema_properties(&handoff_schema)["state_kind"],
+    )
+    .expect("workflow handoff state_kind schema should expose an enum");
+
+    let missing_from_plan: BTreeSet<_> = emitted_state_kinds
+        .difference(&plan_state_kinds)
+        .cloned()
+        .collect();
+    let missing_from_operator: BTreeSet<_> = emitted_state_kinds
+        .difference(&operator_state_kinds)
+        .cloned()
+        .collect();
+    let missing_from_handoff: BTreeSet<_> = emitted_state_kinds
+        .difference(&handoff_state_kinds)
+        .cloned()
+        .collect();
+    assert!(
+        missing_from_plan.is_empty()
+            && missing_from_operator.is_empty()
+            && missing_from_handoff.is_empty(),
+        "public runtime route golden state_kind values must be declared by public schemas; plan missing {missing_from_plan:?}, operator missing {missing_from_operator:?}, handoff missing {missing_from_handoff:?}"
+    );
+}
+
+#[test]
 fn runtime_golden_next_actions_are_declared_by_public_schemas() {
     let schemas_dir = unique_temp_dir("public-next-action-schema-coverage");
     write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
@@ -1712,6 +1798,91 @@ fn runtime_golden_next_actions_are_declared_by_public_schemas() {
 }
 
 #[test]
+fn runtime_golden_actionless_routes_match_optional_recommended_command_schema() {
+    let schemas_dir = unique_temp_dir("public-actionless-route-schema-coverage");
+    write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
+    write_plan_execution_schema(&schemas_dir).expect("plan execution schema should write");
+
+    let plan_schema: Value = serde_json::from_str(
+        &fs::read_to_string(schemas_dir.join("plan-execution-status.schema.json"))
+            .expect("generated plan execution schema should read"),
+    )
+    .expect("generated plan execution schema should parse");
+    let operator_schema: Value = serde_json::from_str(
+        &fs::read_to_string(schemas_dir.join("workflow-operator.schema.json"))
+            .expect("generated workflow operator schema should read"),
+    )
+    .expect("generated workflow operator schema should parse");
+    let schema_conditions = [
+        (
+            "plan_execution_status",
+            schema_all_of_field_requirement_conditions(&plan_schema, "recommended_command"),
+        ),
+        (
+            "workflow_operator",
+            schema_all_of_field_requirement_conditions(&operator_schema, "recommended_command"),
+        ),
+    ];
+    for (surface, conditions) in &schema_conditions {
+        assert!(
+            conditions.is_empty(),
+            "{surface} schema must not make display-only recommended_command required or forbidden by route phase; conditions={conditions:?}"
+        );
+    }
+
+    let golden_routes: Value = serde_json::from_str(
+        &fs::read_to_string(repo_fixture_path(
+            "tests/fixtures/runtime-goldens/public-runtime-routes.json",
+        ))
+        .expect("public runtime route golden should read"),
+    )
+    .expect("public runtime route golden should parse");
+
+    let scenarios = golden_routes
+        .get("scenarios")
+        .and_then(Value::as_array)
+        .expect("public runtime route golden should expose scenarios");
+    let mut violations = Vec::new();
+    for scenario in scenarios {
+        let label = scenario
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or("<unlabeled>");
+        for (surface, _) in &schema_conditions {
+            let Some(route) = scenario
+                .get(*surface)
+                .and_then(|surface| surface.get("json"))
+            else {
+                continue;
+            };
+            let Some(phase_detail) = route.get("phase_detail").and_then(Value::as_str) else {
+                violations.push(format!("{label}:{surface} missing phase_detail"));
+                continue;
+            };
+            let recommended_command = route.get("recommended_command");
+            if recommended_command.is_some_and(Value::is_null) {
+                violations.push(format!(
+                    "{label}:{surface} phase_detail={phase_detail} must omit absent recommended_command instead of serializing null"
+                ));
+            }
+            if let Some(command) = recommended_command
+                && !command.is_string()
+                && !command.is_null()
+            {
+                violations.push(format!(
+                    "{label}:{surface} phase_detail={phase_detail} recommended_command must be a string when present, got {recommended_command:?}"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public runtime route goldens must match optional recommended_command schema semantics: {violations:?}"
+    );
+}
+
+#[test]
 fn runtime_golden_preflight_routes_are_actionable_or_explicitly_input_bound() {
     let golden_routes: Value = serde_json::from_str(
         &fs::read_to_string(repo_fixture_path(
@@ -1762,6 +1933,227 @@ fn runtime_golden_preflight_routes_are_actionable_or_explicitly_input_bound() {
     assert!(
         violations.is_empty(),
         "public preflight routes must expose exact argv or typed required_inputs; violations: {violations:?}"
+    );
+}
+
+#[test]
+fn runtime_golden_public_argvs_are_executable_not_templates() {
+    let golden_routes: Value = serde_json::from_str(
+        &fs::read_to_string(repo_fixture_path(
+            "tests/fixtures/runtime-goldens/public-runtime-routes.json",
+        ))
+        .expect("public runtime route golden should read"),
+    )
+    .expect("public runtime route golden should parse");
+
+    let mut argv_arrays = Vec::new();
+    collect_public_argv_arrays(
+        &golden_routes,
+        &mut vec![String::from("public-runtime-routes")],
+        &mut argv_arrays,
+    );
+    assert!(
+        !argv_arrays.is_empty(),
+        "public runtime route golden should exercise executable argv surfaces"
+    );
+
+    let mut violations = Vec::new();
+    for (path, argv_values) in argv_arrays {
+        if argv_values.is_empty() {
+            violations.push(format!("{path}: argv array must not be empty"));
+            continue;
+        }
+        let argv = argv_values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("{path}: argv entry should be a string: {value}"))
+            })
+            .collect::<Result<Vec<_>, _>>();
+        let argv = match argv {
+            Ok(argv) => argv,
+            Err(violation) => {
+                violations.push(violation);
+                continue;
+            }
+        };
+        if argv.first().map(String::as_str) != Some("featureforge") {
+            violations.push(format!(
+                "{path}: public argv must be directly executable via featureforge: {argv:?}"
+            ));
+        }
+        for part in &argv {
+            if let Some(denied) = public_fixture_argv_template_token(part) {
+                violations.push(format!(
+                    "{path}: public argv contains template/prose token `{denied}` in {argv:?}"
+                ));
+            }
+        }
+        if public_fixture_argv_has_split_optional_prose(&argv) {
+            violations.push(format!(
+                "{path}: public argv contains split optional prose tokens: {argv:?}"
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public runtime route goldens must contain executable-or-absent argv, never templates: {violations:?}"
+    );
+}
+
+#[test]
+fn public_flow_tests_do_not_materialize_public_argv_templates() {
+    let public_flow_files = [
+        "tests/public_replay_churn.rs",
+        "tests/liveness_model_checker.rs",
+    ];
+    let forbidden_helpers = [
+        concat!("concrete_public_command", "_args"),
+        concat!("materialize_public_command", "_template"),
+        concat!("fill_public_argv", "_template"),
+        concat!("patch_public", "_argv"),
+        concat!("substitute_public", "_argv"),
+    ];
+    let mut violations = Vec::new();
+    for rel_path in public_flow_files {
+        let content = fs::read_to_string(repo_fixture_path(rel_path))
+            .unwrap_or_else(|error| panic!("{rel_path} should read: {error}"));
+        for helper in forbidden_helpers {
+            if content.contains(helper) {
+                violations.push(format!("{rel_path}: contains `{helper}`"));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public-flow tests must execute exact public argv or assert typed inputs, not materialize templates: {violations:?}"
+    );
+}
+
+#[test]
+fn runtime_golden_diagnostic_routes_do_not_publish_reentry_next_action() {
+    let golden_routes: Value = serde_json::from_str(
+        &fs::read_to_string(repo_fixture_path(
+            "tests/fixtures/runtime-goldens/public-runtime-routes.json",
+        ))
+        .expect("public runtime route golden should read"),
+    )
+    .expect("public runtime route golden should parse");
+
+    let scenarios = golden_routes
+        .get("scenarios")
+        .and_then(Value::as_array)
+        .expect("public runtime route golden should expose scenarios");
+    let mut violations = Vec::new();
+    for scenario in scenarios {
+        let label = scenario
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or("<unlabeled>");
+        for surface in ["plan_execution_status", "workflow_operator"] {
+            let Some(route) = scenario
+                .get(surface)
+                .and_then(|surface| surface.get("json"))
+            else {
+                continue;
+            };
+            let state_kind = route.get("state_kind").and_then(Value::as_str);
+            let phase_detail = route.get("phase_detail").and_then(Value::as_str);
+            let diagnostic = matches!(
+                state_kind,
+                Some(phase::DETAIL_RUNTIME_RECONCILE_REQUIRED)
+                    | Some(phase::DETAIL_BLOCKED_RUNTIME_BUG)
+            ) || matches!(
+                phase_detail,
+                Some(phase::DETAIL_RUNTIME_RECONCILE_REQUIRED)
+                    | Some(phase::DETAIL_BLOCKED_RUNTIME_BUG)
+            );
+            if !diagnostic {
+                continue;
+            }
+            let has_executable_argv = route
+                .get("recommended_public_command_argv")
+                .and_then(Value::as_array)
+                .is_some_and(|argv| !argv.is_empty());
+            let has_required_inputs = route
+                .get("required_inputs")
+                .and_then(Value::as_array)
+                .is_some_and(|inputs| !inputs.is_empty());
+            if has_executable_argv || has_required_inputs {
+                continue;
+            }
+            if route.get("next_action").and_then(Value::as_str)
+                != Some("runtime diagnostic required")
+            {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route next_action={:?}",
+                    route.get("next_action")
+                ));
+            }
+            if !route
+                .get("recommended_public_command_argv")
+                .is_none_or(Value::is_null)
+            {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed argv={:?}",
+                    route.get("recommended_public_command_argv")
+                ));
+            }
+            if !route.get("required_follow_up").is_none_or(Value::is_null) {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed required_follow_up={:?}",
+                    route.get("required_follow_up")
+                ));
+            }
+            if !route.get("next_public_action").is_none_or(Value::is_null) {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed next_public_action={:?}",
+                    route.get("next_public_action")
+                ));
+            }
+            if route
+                .get("public_repair_targets")
+                .and_then(Value::as_array)
+                .is_some_and(|targets| !targets.is_empty())
+            {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed public_repair_targets={:?}",
+                    route.get("public_repair_targets")
+                ));
+            }
+            if route
+                .get("blockers")
+                .and_then(Value::as_array)
+                .is_some_and(|blockers| !blockers.is_empty())
+            {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed blockers={:?}",
+                    route.get("blockers")
+                ));
+            }
+            if route
+                .get("blockers")
+                .and_then(Value::as_array)
+                .is_some_and(|blockers| {
+                    blockers.iter().any(|blocker| {
+                        !blocker.get("next_public_action").is_none_or(Value::is_null)
+                    })
+                })
+            {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed blocker next_public_action"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public diagnostic-only routes must not publish reentry wording or mutation follow-up: {violations:?}"
     );
 }
 
@@ -1971,12 +2363,6 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
         "phase",
         phase::PHASE_EXECUTING,
         "execution_command_context",
-        &mut issues,
-    );
-    assert_phase_detail_field_omitted_only_in_lanes(
-        &generated_operator_json,
-        "recommended_command",
-        phase::RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
         &mut issues,
     );
     assert!(

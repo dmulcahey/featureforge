@@ -405,7 +405,8 @@
         "actionable_public_command",
         "waiting_external_input",
         "terminal",
-        "blocked_runtime_bug"
+        "blocked_runtime_bug",
+        "runtime_reconcile_required"
       ],
       "type": "string"
     },
@@ -577,36 +578,6 @@
           "harness_phase": {
             "const": "executing"
           }
-        }
-      }
-    },
-    {
-      "else": {
-        "required": [
-          "recommended_command"
-        ]
-      },
-      "if": {
-        "properties": {
-          "phase_detail": {
-            "enum": [
-              "task_review_result_pending",
-              "execution_in_progress",
-              "runtime_reconcile_required",
-              "finish_review_gate_ready",
-              "finish_completion_gate_ready",
-              "final_review_dispatch_required",
-              "final_review_outcome_pending",
-              "test_plan_refresh_required"
-            ]
-          }
-        }
-      },
-      "then": {
-        "not": {
-          "required": [
-            "recommended_command"
-          ]
         }
       }
     }

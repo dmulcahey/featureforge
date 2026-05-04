@@ -1204,14 +1204,49 @@ fn assert_json_text_excludes(value: &Value, needle: &str, context: &str) {
 }
 
 fn assert_targetless_stale_public_surface(value: &Value, context: &str) {
-    assert!(
-        value["phase_detail"] == json!("runtime_reconcile_required")
-            || value["phase_detail"] == json!("blocked_runtime_bug"),
-        "{context} should expose a runtime diagnostic route: {value}"
+    assert_eq!(
+        value["phase_detail"],
+        json!("runtime_reconcile_required"),
+        "{context} should expose a runtime reconcile diagnostic route: {value}"
+    );
+    assert_eq!(
+        value["state_kind"],
+        json!("runtime_reconcile_required"),
+        "{context} should classify targetless stale reconcile as runtime_reconcile_required: {value}"
+    );
+    assert_eq!(
+        value["next_action"], "runtime diagnostic required",
+        "{context} diagnostic-only route must not publish reentry wording: {value}"
     );
     assert!(
         value.get("recommended_command").is_none_or(Value::is_null),
         "{context} must not recommend a mutation command: {value}"
+    );
+    assert!(
+        value
+            .get("recommended_public_command_argv")
+            .is_none_or(Value::is_null),
+        "{context} must not expose executable argv when no authoritative target exists: {value}"
+    );
+    assert!(
+        value["required_inputs"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "{context} must not expose typed inputs for diagnostic-only targetless stale state: {value}"
+    );
+    assert!(
+        value.get("next_public_action").is_none_or(Value::is_null),
+        "{context} must not expose a next public action for diagnostic-only targetless stale state: {value}"
+    );
+    assert!(
+        value["public_repair_targets"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "{context} must not expose public repair targets for diagnostic-only targetless stale state: {value}"
+    );
+    assert!(
+        value["blockers"].as_array().is_none_or(Vec::is_empty),
+        "{context} must not expose route blockers for diagnostic-only targetless stale state: {value}"
     );
     assert!(
         value
@@ -1254,6 +1289,10 @@ fn assert_hidden_recommended_command_is_blocked(value: &Value, context: &str) {
     assert_eq!(
         value["state_kind"], "blocked_runtime_bug",
         "{context} should fail closed as a blocked runtime bug: {value}"
+    );
+    assert_eq!(
+        value["next_action"], "runtime diagnostic required",
+        "{context} blocked runtime bug must publish diagnostic next_action: {value}"
     );
     assert!(
         value.get("recommended_command").is_none_or(Value::is_null),
@@ -2901,6 +2940,103 @@ fn public_replay_targetless_stale_state_does_not_fabricate_current_scope() {
         "public replay targetless stale operator",
     );
     assert_targetless_stale_public_surface(&operator_json, "targetless stale operator");
+}
+
+#[test]
+fn public_replay_real_targetless_stale_reconcile_emits_runtime_reconcile_state_kind() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-real-targetless-stale");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+
+    let status_before_task_1 = status(&mut cli, "targetless stale setup status before task 1");
+    let begin_task_1 = begin_task(
+        &mut cli,
+        1,
+        status_before_task_1["execution_fingerprint"]
+            .as_str()
+            .expect("status before task 1 should expose execution fingerprint"),
+        "targetless stale setup begin task 1",
+    );
+    append_repo_file(
+        repo,
+        "docs/public-replay-output.md",
+        "Task 1 changed before targetless stale setup.",
+    );
+    complete_task_1(
+        &mut cli,
+        begin_task_1["execution_fingerprint"]
+            .as_str()
+            .expect("begin task 1 should expose execution fingerprint"),
+        "targetless stale setup complete task 1",
+    );
+    close_task_1(&mut cli, repo, "targetless stale setup close task 1");
+
+    let status_before_task_2 = status(&mut cli, "targetless stale setup status before task 2");
+    let begin_task_2 = begin_task(
+        &mut cli,
+        2,
+        status_before_task_2["execution_fingerprint"]
+            .as_str()
+            .expect("status before task 2 should expose execution fingerprint"),
+        "targetless stale setup begin task 2",
+    );
+    append_repo_file(
+        repo,
+        "docs/public-replay-followup.md",
+        "Task 2 changed before targetless stale setup.",
+    );
+    complete_task_for_plan(
+        &mut cli,
+        EXEC_PLAN_REL,
+        2,
+        1,
+        "docs/public-replay-followup.md",
+        begin_task_2["execution_fingerprint"]
+            .as_str()
+            .expect("begin task 2 should expose execution fingerprint"),
+        "targetless stale setup complete task 2",
+    );
+    update_state_fields(
+        repo,
+        state,
+        &[
+            (
+                "current_open_step_state",
+                json!({
+                    "task": 2,
+                    "step": 1,
+                    "note_state": "Interrupted",
+                    "note_summary": "Public replay targetless stale reconcile must remain diagnostic-only.",
+                    "source_plan_path": EXEC_PLAN_REL,
+                    "source_plan_revision": 1,
+                    "authoritative_sequence": 1
+                }),
+            ),
+            ("harness_phase", json!("document_release_pending")),
+            ("current_branch_closure_id", Value::Null),
+            ("current_branch_closure_reviewed_state_id", Value::Null),
+        ],
+    );
+
+    let status_json = status(
+        &mut cli,
+        "public replay real targetless stale status without injection",
+    );
+    assert_targetless_stale_public_surface(
+        &status_json,
+        "real targetless stale status without injection",
+    );
+
+    let operator_json = workflow_operator(
+        &mut cli,
+        EXEC_PLAN_REL,
+        "public replay real targetless stale operator without injection",
+    );
+    assert_targetless_stale_public_surface(
+        &operator_json,
+        "real targetless stale operator without injection",
+    );
 }
 
 #[test]

@@ -21,18 +21,28 @@ mod workflow_support;
 
 use dir_tree_support::copy_dir_recursive;
 use executable_support::make_executable;
+use featureforge::contracts::harness::{
+    WorktreeLease, WorktreeLeaseState, read_execution_contract,
+};
 use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
 use featureforge::contracts::spec::parse_spec_file;
+use featureforge::execution::authority::{
+    persist_active_worktree_lease_index, write_authoritative_worktree_lease_artifact,
+};
 use featureforge::execution::final_review::resolve_release_base_branch;
 use featureforge::execution::follow_up::execution_step_repair_target_id;
+use featureforge::execution::harness::{
+    ChunkId, ExecutionRunId, RunIdentitySnapshot, WorktreeLeaseBindingSnapshot,
+};
 use featureforge::execution::semantic_identity::{
     branch_definition_identity_for_context, task_definition_identity_for_task,
 };
 use featureforge::execution::state::{
     current_head_sha as runtime_current_head_sha,
-    current_tracked_tree_sha as runtime_current_tracked_tree_sha, load_execution_context,
+    current_tracked_tree_sha as runtime_current_tracked_tree_sha, hash_contract_plan,
+    load_execution_context,
 };
-use featureforge::git::discover_slug_identity;
+use featureforge::git::{discover_repository, discover_slug_identity};
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
 };
@@ -337,6 +347,43 @@ fn assert_task_closure_recording_route(route: &Value, plan_rel: &str, task: u32)
     assert_task_closure_required_inputs(route, task);
 }
 
+fn assert_repair_review_state_route(route: &Value, plan_rel: &str, context: &str) {
+    assert_eq!(
+        route["next_action"], "repair review state / reenter execution",
+        "{context}: route should require public repair-review-state: {route}"
+    );
+    assert_eq!(
+        route["recommended_public_command_argv"],
+        json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "repair-review-state",
+            "--plan",
+            plan_rel
+        ]),
+        "{context}: route should expose exact public repair-review-state argv: {route}"
+    );
+    if route
+        .get("execution_command_context")
+        .is_some_and(|value| !value.is_null())
+    {
+        assert_eq!(
+            route["execution_command_context"]["command_kind"], "repair-review-state",
+            "{context}: non-null command context should match repair-review-state: {route}"
+        );
+    }
+}
+
+fn assert_no_worktree_lease_reason(route: &Value, context: &str) {
+    let route_text = serde_json::to_string(route)
+        .unwrap_or_else(|error| panic!("{context} should serialize for reason scan: {error}"));
+    assert!(
+        !route_text.contains("worktree_lease_"),
+        "{context} should not retain a worktree lease blocker after public repair: {route_text}"
+    );
+}
+
 fn assert_parity_probe_budget(scenario_id: &str, consumed_probe_commands: usize, max: usize) {
     assert!(
         consumed_probe_commands <= max,
@@ -387,6 +434,44 @@ fn assert_no_stale_dispatch_public_replay_hidden_terms(route: &Value, context: &
             !contains_hidden_parts(&route_text, hidden),
             "{context} must not expose hidden stale-dispatch replay term `{}` in {route_text}",
             hidden.join("")
+        );
+    }
+}
+
+fn assert_no_worktree_lease_manual_receipt_repair_terms(route: &Value, context: &str) {
+    let route_text = serde_json::to_string(route).unwrap_or_else(|error| {
+        panic!("{context} should serialize for worktree lease public-flow scan: {error}")
+    });
+    let route_text_lower = route_text.to_ascii_lowercase();
+    let hidden_command_tokens = [
+        &["record", "-review-dispatch"][..],
+        &["gate", "-review"],
+        &["gate", "-finish"],
+        &["rebuild", "-evidence"],
+    ];
+    for forbidden in hidden_command_tokens {
+        assert!(
+            !contains_hidden_parts(&route_text, forbidden),
+            "{context} must not expose hidden helper `{}`: {route_text}",
+            forbidden.join("")
+        );
+    }
+    for forbidden in [
+        "manual receipt repair",
+        "manually repair receipt",
+        "manually edit receipt",
+        "repair receipt",
+        "write receipt",
+        "record receipt",
+        "unit-review receipt",
+        "authoritative unit-review",
+        "runtime-owned receipt",
+        "receipt artifact",
+        "receipt-repair",
+    ] {
+        assert!(
+            !route_text_lower.contains(forbidden),
+            "{context} must not expose public worktree-lease receipt wording `{forbidden}`: {route_text}"
         );
     }
 }
@@ -989,6 +1074,29 @@ fn sha256_hex(contents: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(contents);
     format!("{:x}", hasher.finalize())
+}
+
+fn commit_object_fingerprint(repo: &Path, commit_sha: &str) -> String {
+    let repository =
+        discover_repository(repo).expect("commit fingerprint helper should discover repo");
+    let object_id = gix::hash::ObjectId::from_hex(commit_sha.as_bytes())
+        .expect("commit fingerprint helper should parse commit object id");
+    let commit = repository
+        .find_commit(object_id)
+        .expect("commit fingerprint helper should load commit object");
+    sha256_hex(commit.data.as_slice())
+}
+
+fn canonical_worktree_lease_fingerprint(lease: &Value) -> String {
+    let mut lease = lease.clone();
+    lease
+        .as_object_mut()
+        .expect("worktree lease fixture should be a JSON object")
+        .remove("lease_fingerprint");
+    sha256_hex(
+        &serde_json::to_vec(&lease)
+            .expect("worktree lease fixture should serialize for fingerprint"),
+    )
 }
 
 fn repo_slug(repo: &Path, _state_dir: &Path) -> String {
@@ -1898,6 +2006,601 @@ fn task_contract_identity(
     task_definition_identity_for_task(&context, task_number)
         .expect("workflow_shell_smoke task semantic identity fixture should compute")
         .unwrap_or_else(|| format!("task-contract-fixture-{task_number}"))
+}
+
+fn current_worktree_lease_execution_context_key(
+    execution_run_id: &str,
+    execution_unit_id: &str,
+    source_plan_path: &str,
+    source_plan_revision: u32,
+    authoritative_integration_branch: &str,
+    reviewed_checkpoint_commit_sha: &str,
+) -> String {
+    sha256_hex(
+        format!(
+            "run={execution_run_id}\nunit={execution_unit_id}\nplan={source_plan_path}\nplan_revision={source_plan_revision}\nbranch={authoritative_integration_branch}\nreviewed_checkpoint={reviewed_checkpoint_commit_sha}\n"
+        )
+        .as_bytes(),
+    )
+}
+
+fn approved_unit_contract_fingerprint_for_review(
+    active_contract_fingerprint: &str,
+    approved_task_packet_fingerprint: &str,
+    execution_unit_id: &str,
+) -> String {
+    sha256_hex(
+        format!(
+            "approved-unit-contract:{active_contract_fingerprint}:{approved_task_packet_fingerprint}:{execution_unit_id}"
+        )
+        .as_bytes(),
+    )
+}
+
+fn ensure_authoritative_active_contract_for_current_execution(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+) -> (String, String) {
+    let mut authoritative_state = authoritative_harness_state(repo, state_dir);
+    if let (Some(active_contract_path), Some(active_contract_fingerprint)) = (
+        authoritative_state["active_contract_path"].as_str(),
+        authoritative_state["active_contract_fingerprint"].as_str(),
+    ) {
+        return (
+            active_contract_path.to_owned(),
+            active_contract_fingerprint.to_owned(),
+        );
+    }
+
+    let context = semantic_execution_context(repo, state_dir, plan_rel);
+    let packet_fingerprints = context
+        .evidence
+        .attempts
+        .iter()
+        .filter(|attempt| attempt.status == "Completed")
+        .filter_map(|attempt| attempt.packet_fingerprint.as_deref())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert!(
+        !packet_fingerprints.is_empty(),
+        "active contract fixture should have completed packet fingerprints"
+    );
+    let packet_lines = packet_fingerprints
+        .iter()
+        .map(|fingerprint| format!("- `{fingerprint}`"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let covered_step_lines = context
+        .evidence
+        .attempts
+        .iter()
+        .filter(|attempt| attempt.status == "Completed")
+        .map(|attempt| {
+            format!(
+                "- Task {} Step {}",
+                attempt.task_number, attempt.step_number
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let requirement_lines = context
+        .plan_document
+        .tasks
+        .iter()
+        .flat_map(|task| task.spec_coverage.iter().map(String::as_str))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|requirement| format!("- {requirement}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let source_plan_fingerprint = hash_contract_plan(&context.plan_source);
+    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
+    let contract_template = format!(
+        r#"# Execution Contract
+
+**Contract Version:** 1
+**Authoritative Sequence:** 9000
+**Source Plan Path:** `{plan_rel}`
+**Source Plan Revision:** {}
+**Source Plan Fingerprint:** `{source_plan_fingerprint}`
+**Source Spec Path:** `{}`
+**Source Spec Revision:** {}
+**Source Spec Fingerprint:** `{source_spec_fingerprint}`
+**Source Task Packet Fingerprints:**
+{packet_lines}
+**Chunk ID:** chunk-1
+**Chunking Strategy:** single_chunk
+**Covered Steps:**
+{covered_step_lines}
+**Requirement IDs:**
+{requirement_lines}
+**Criteria:**
+### Criterion 1
+**Criterion ID:** criterion-1
+**Title:** Preserve active approved-plan scope
+**Description:** Contract fixture stays within the approved plan scope.
+**Requirement IDs:**
+{requirement_lines}
+**Covered Steps:**
+{covered_step_lines}
+**Verifier Types:**
+- spec_compliance
+**Threshold:** all
+**Notes:** Fixture criterion for worktree lease routing validation.
+
+**Non Goals:**
+- none
+
+**Verifiers:**
+- spec_compliance
+
+**Evidence Requirements:**
+[]
+
+**Retry Budget:** 1
+**Pivot Threshold:** 1
+**Reset Policy:** none
+**Generated By:** featureforge:executing-plans
+**Generated At:** 2026-03-27T12:00:00Z
+**Contract Fingerprint:** __CONTRACT_FINGERPRINT__
+"#,
+        context.plan_document.plan_revision,
+        context.plan_document.source_spec_path,
+        context.plan_document.source_spec_revision,
+    );
+    let active_contract_fingerprint = sha256_hex(
+        contract_template
+            .replace("__CONTRACT_FINGERPRINT__", "")
+            .as_bytes(),
+    );
+    let active_contract_source =
+        contract_template.replace("__CONTRACT_FINGERPRINT__", &active_contract_fingerprint);
+    let active_contract_file = format!("contract-{active_contract_fingerprint}.md");
+    let active_contract_path = harness_authoritative_artifact_path(
+        state_dir,
+        &repo_slug(repo, state_dir),
+        &current_branch_name(repo),
+        &active_contract_file,
+    );
+    write_file(&active_contract_path, &active_contract_source);
+    authoritative_state
+        .as_object_mut()
+        .expect("authoritative state should remain an object")
+        .extend([
+            (
+                String::from("active_contract_path"),
+                Value::from(active_contract_file.clone()),
+            ),
+            (
+                String::from("active_contract_fingerprint"),
+                Value::from(active_contract_fingerprint.clone()),
+            ),
+            (
+                String::from("required_evaluator_kinds"),
+                json!(["spec_compliance"]),
+            ),
+            (String::from("completed_evaluator_kinds"), json!([])),
+            (String::from("pending_evaluator_kinds"), json!([])),
+            (
+                String::from("aggregate_evaluation_state"),
+                Value::from("pending"),
+            ),
+        ]);
+    write_authoritative_harness_state(repo, state_dir, &authoritative_state);
+    (active_contract_file, active_contract_fingerprint)
+}
+
+fn task_packet_fingerprint_for_step(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    task: u32,
+    step: u32,
+) -> String {
+    let context = semantic_execution_context(repo, state_dir, plan_rel);
+    let task_definition_identity = task_definition_identity_for_task(&context, task)
+        .expect("worktree lease fixture should compute task packet identity")
+        .expect("worktree lease fixture task should exist for packet identity");
+    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
+    let payload = format!(
+        "plan_path={plan_path}\nplan_revision={plan_revision}\ntask_definition_identity={task_definition_identity}\nsource_spec_path={source_spec_path}\nsource_spec_revision={source_spec_revision}\nsource_spec_fingerprint={source_spec_fingerprint}\ntask_number={task}\nstep_number={step}\n",
+        plan_path = context.plan_rel,
+        plan_revision = context.plan_document.plan_revision,
+        source_spec_path = context.plan_document.source_spec_path,
+        source_spec_revision = context.plan_document.source_spec_revision,
+    );
+    sha256_hex(payload.as_bytes())
+}
+
+fn write_authoritative_active_contract_for_steps(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    covered_steps: &[(u32, u32)],
+) -> (String, String) {
+    let context = semantic_execution_context(repo, state_dir, plan_rel);
+    let packet_fingerprints = covered_steps
+        .iter()
+        .map(|(task, step)| {
+            task_packet_fingerprint_for_step(repo, state_dir, plan_rel, *task, *step)
+        })
+        .collect::<Vec<_>>();
+    let packet_lines = packet_fingerprints
+        .iter()
+        .map(|fingerprint| format!("- `{fingerprint}`"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let covered_step_lines = covered_steps
+        .iter()
+        .map(|(task, step)| format!("- Task {task} Step {step}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let requirement_lines = context
+        .plan_document
+        .tasks
+        .iter()
+        .flat_map(|task| task.spec_coverage.iter().map(String::as_str))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|requirement| format!("- {requirement}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let source_plan_fingerprint = hash_contract_plan(&context.plan_source);
+    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
+    let contract_template = format!(
+        r#"# Execution Contract
+
+**Contract Version:** 1
+**Authoritative Sequence:** 9001
+**Source Plan Path:** `{plan_rel}`
+**Source Plan Revision:** {}
+**Source Plan Fingerprint:** `{source_plan_fingerprint}`
+**Source Spec Path:** `{}`
+**Source Spec Revision:** {}
+**Source Spec Fingerprint:** `{source_spec_fingerprint}`
+**Source Task Packet Fingerprints:**
+{packet_lines}
+**Chunk ID:** chunk-1
+**Chunking Strategy:** single_chunk
+**Covered Steps:**
+{covered_step_lines}
+**Requirement IDs:**
+{requirement_lines}
+**Criteria:**
+### Criterion 1
+**Criterion ID:** criterion-1
+**Title:** Preserve active approved-plan scope
+**Description:** Contract fixture stays within the approved plan scope.
+**Requirement IDs:**
+{requirement_lines}
+**Covered Steps:**
+{covered_step_lines}
+**Verifier Types:**
+- spec_compliance
+**Threshold:** all
+**Notes:** Fixture criterion for task-scoped worktree lease routing validation.
+
+**Non Goals:**
+- none
+
+**Verifiers:**
+- spec_compliance
+
+**Evidence Requirements:**
+[]
+
+**Retry Budget:** 1
+**Pivot Threshold:** 1
+**Reset Policy:** none
+**Generated By:** featureforge:executing-plans
+**Generated At:** 2026-03-27T12:00:00Z
+**Contract Fingerprint:** __CONTRACT_FINGERPRINT__
+"#,
+        context.plan_document.plan_revision,
+        context.plan_document.source_spec_path,
+        context.plan_document.source_spec_revision,
+    );
+    let active_contract_fingerprint = sha256_hex(
+        contract_template
+            .replace("__CONTRACT_FINGERPRINT__", "")
+            .as_bytes(),
+    );
+    let active_contract_source =
+        contract_template.replace("__CONTRACT_FINGERPRINT__", &active_contract_fingerprint);
+    let active_contract_file = format!("contract-{active_contract_fingerprint}.md");
+    let active_contract_path = harness_authoritative_artifact_path(
+        state_dir,
+        &repo_slug(repo, state_dir),
+        &current_branch_name(repo),
+        &active_contract_file,
+    );
+    write_file(&active_contract_path, &active_contract_source);
+    update_authoritative_harness_state(
+        repo,
+        state_dir,
+        &[
+            (
+                "active_contract_path",
+                Value::from(active_contract_file.clone()),
+            ),
+            (
+                "active_contract_fingerprint",
+                Value::from(active_contract_fingerprint.clone()),
+            ),
+            ("required_evaluator_kinds", json!(["spec_compliance"])),
+            ("completed_evaluator_kinds", json!([])),
+            ("pending_evaluator_kinds", json!([])),
+            ("aggregate_evaluation_state", Value::from("pending")),
+        ],
+    );
+    (active_contract_file, active_contract_fingerprint)
+}
+
+fn seed_cleaned_worktree_lease_missing_review_binding(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    tamper_lease_proof: bool,
+) -> String {
+    seed_worktree_lease_missing_review_binding(
+        repo,
+        state_dir,
+        plan_rel,
+        WorktreeLeaseState::Cleaned,
+        "cleaned",
+        tamper_lease_proof,
+    )
+}
+
+#[derive(Clone)]
+struct SeededWorktreeLeaseMissingReviewBinding {
+    lease_fingerprint: String,
+    binding: WorktreeLeaseBindingSnapshot,
+}
+
+fn seed_open_worktree_lease_missing_review_binding(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+) -> String {
+    seed_worktree_lease_missing_review_binding(
+        repo,
+        state_dir,
+        plan_rel,
+        WorktreeLeaseState::Open,
+        "open",
+        false,
+    )
+}
+
+fn seed_worktree_lease_missing_review_binding(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    lease_state: WorktreeLeaseState,
+    cleanup_state: &str,
+    tamper_lease_proof: bool,
+) -> String {
+    let (run_identity, chunk_id, seeded) = write_worktree_lease_missing_review_binding(
+        repo,
+        state_dir,
+        plan_rel,
+        WorktreeLeaseFixtureInput {
+            task: 1,
+            step: 1,
+            execution_unit_id: "unit-public-lease-review-binding",
+            worktree_label: "public-lease-review-binding",
+            lease_state,
+            cleanup_state,
+            tamper_lease_proof,
+        },
+    );
+    let runtime = discover_execution_runtime(
+        repo,
+        state_dir,
+        "missing worktree lease review binding fixture",
+    );
+    persist_active_worktree_lease_index(
+        &runtime,
+        run_identity,
+        chunk_id,
+        vec![seeded.lease_fingerprint.clone()],
+        vec![seeded.binding],
+    )
+    .expect("worktree lease fixture should persist missing review binding index");
+    seeded.lease_fingerprint
+}
+
+struct WorktreeLeaseFixtureInput<'a> {
+    task: u32,
+    step: u32,
+    execution_unit_id: &'a str,
+    worktree_label: &'a str,
+    lease_state: WorktreeLeaseState,
+    cleanup_state: &'a str,
+    tamper_lease_proof: bool,
+}
+
+fn write_worktree_lease_missing_review_binding(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    input: WorktreeLeaseFixtureInput<'_>,
+) -> (
+    RunIdentitySnapshot,
+    ChunkId,
+    SeededWorktreeLeaseMissingReviewBinding,
+) {
+    let status = run_plan_execution_json_real_cli(
+        repo,
+        state_dir,
+        &["status", "--plan", plan_rel],
+        "status before seeding missing worktree lease review binding",
+    );
+    let execution_run_id = status["execution_run_id"]
+        .as_str()
+        .expect("worktree lease fixture status should expose execution_run_id")
+        .to_owned();
+    let plan_revision = status["plan_revision"]
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .expect("worktree lease fixture status should expose numeric plan_revision");
+    let (active_contract_file, active_contract_fingerprint) =
+        ensure_authoritative_active_contract_for_current_execution(repo, state_dir, plan_rel);
+    let authoritative_state = authoritative_harness_state(repo, state_dir);
+    let chunk_id = authoritative_state["chunk_id"]
+        .as_str()
+        .or_else(|| status["chunk_id"].as_str())
+        .expect("worktree lease fixture should expose chunk_id")
+        .to_owned();
+    let active_contract_path = harness_authoritative_artifact_path(
+        state_dir,
+        &repo_slug(repo, state_dir),
+        &current_branch_name(repo),
+        &active_contract_file,
+    );
+    let active_contract = read_execution_contract(&active_contract_path)
+        .expect("worktree lease fixture active contract should parse");
+    assert_eq!(
+        active_contract.contract_fingerprint, active_contract_fingerprint,
+        "worktree lease fixture should bind the active contract fingerprint"
+    );
+    let approved_task_packet_fingerprint =
+        task_packet_fingerprint_for_step(repo, state_dir, plan_rel, input.task, input.step);
+    assert!(
+        active_contract
+            .source_task_packet_fingerprints
+            .iter()
+            .any(|fingerprint| fingerprint == &approved_task_packet_fingerprint),
+        "worktree lease fixture active contract should bind task {} step {} packet {}",
+        input.task,
+        input.step,
+        approved_task_packet_fingerprint
+    );
+
+    let current_head = current_head_sha(repo);
+    let baseline_worktree_fingerprint = sha256_hex(
+        format!(
+            "worktree-lease-review-binding-baseline:{execution_run_id}:{}:{current_head}",
+            input.execution_unit_id
+        )
+        .as_bytes(),
+    );
+    update_authoritative_harness_state(
+        repo,
+        state_dir,
+        &[
+            (
+                "repo_state_baseline_head_sha",
+                Value::from(current_head.clone()),
+            ),
+            (
+                "repo_state_baseline_worktree_fingerprint",
+                Value::from(baseline_worktree_fingerprint.clone()),
+            ),
+        ],
+    );
+
+    let terminal_lease = matches!(
+        input.lease_state,
+        WorktreeLeaseState::Reconciled | WorktreeLeaseState::Cleaned
+    );
+    let reviewed_checkpoint_commit_sha =
+        (!matches!(input.lease_state, WorktreeLeaseState::Open)).then(|| current_head.clone());
+    let reconcile_result_commit_sha = terminal_lease.then(|| current_head.clone());
+    let reconcile_result_proof_fingerprint = terminal_lease.then(|| {
+        if input.tamper_lease_proof {
+            sha256_hex(b"tampered-worktree-lease-proof")
+        } else {
+            commit_object_fingerprint(repo, &current_head)
+        }
+    });
+    let execution_context_key = current_worktree_lease_execution_context_key(
+        &execution_run_id,
+        input.execution_unit_id,
+        plan_rel,
+        plan_revision,
+        &current_branch_name(repo),
+        reviewed_checkpoint_commit_sha.as_deref().unwrap_or("open"),
+    );
+    let mut lease_payload = json!({
+        "lease_version": 1,
+        "authoritative_sequence": 10_000,
+        "execution_run_id": execution_run_id,
+        "execution_context_key": execution_context_key,
+        "source_plan_path": plan_rel,
+        "source_plan_revision": plan_revision,
+        "execution_unit_id": input.execution_unit_id,
+        "source_branch": current_branch_name(repo),
+        "authoritative_integration_branch": current_branch_name(repo),
+        "worktree_path": state_dir.join("worktrees").join(input.worktree_label).display().to_string(),
+        "repo_state_baseline_head_sha": current_head,
+        "repo_state_baseline_worktree_fingerprint": baseline_worktree_fingerprint,
+        "lease_state": input.lease_state,
+        "cleanup_state": input.cleanup_state,
+        "reviewed_checkpoint_commit_sha": reviewed_checkpoint_commit_sha,
+        "reconcile_result_commit_sha": reconcile_result_commit_sha,
+        "reconcile_result_proof_fingerprint": reconcile_result_proof_fingerprint,
+        "reconcile_mode": "identity_preserving",
+        "generated_by": "featureforge:executing-plans",
+        "generated_at": "2026-03-27T12:00:00Z",
+        "lease_fingerprint": "",
+    });
+    let lease_fingerprint = canonical_worktree_lease_fingerprint(&lease_payload);
+    lease_payload
+        .as_object_mut()
+        .expect("worktree lease fixture should remain an object")
+        .insert(
+            String::from("lease_fingerprint"),
+            Value::from(lease_fingerprint.clone()),
+        );
+    let lease: WorktreeLease =
+        serde_json::from_value(lease_payload).expect("worktree lease fixture should deserialize");
+    let runtime = discover_execution_runtime(
+        repo,
+        state_dir,
+        "missing worktree lease review binding fixture",
+    );
+    let lease_path = write_authoritative_worktree_lease_artifact(&runtime, &lease)
+        .expect("worktree lease fixture should publish authoritative lease");
+    (
+        RunIdentitySnapshot {
+            execution_run_id: ExecutionRunId::new(execution_run_id.clone()),
+            source_plan_path: plan_rel.to_owned(),
+            source_plan_revision: plan_revision,
+        },
+        ChunkId::new(chunk_id),
+        SeededWorktreeLeaseMissingReviewBinding {
+            lease_fingerprint: lease_fingerprint.clone(),
+            binding: WorktreeLeaseBindingSnapshot {
+                execution_run_id,
+                lease_fingerprint: lease_fingerprint.clone(),
+                lease_artifact_path: lease_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .expect("worktree lease artifact should have utf-8 file name")
+                    .to_owned(),
+                execution_context_key: Some(lease.execution_context_key.clone()),
+                approved_task_packet_fingerprint: Some(approved_task_packet_fingerprint.clone()),
+                approved_unit_contract_fingerprint: Some(
+                    approved_unit_contract_fingerprint_for_review(
+                        &active_contract_fingerprint,
+                        &approved_task_packet_fingerprint,
+                        input.execution_unit_id,
+                    ),
+                ),
+                reconcile_result_proof_fingerprint: lease
+                    .reconcile_result_proof_fingerprint
+                    .clone(),
+                reviewed_checkpoint_commit_sha: lease.reviewed_checkpoint_commit_sha.clone(),
+                reconcile_result_commit_sha: lease.reconcile_result_commit_sha.clone(),
+                reconcile_mode: Some(String::from("identity_preserving")),
+                review_receipt_fingerprint: None,
+                review_receipt_artifact_path: None,
+            },
+        },
+    )
 }
 
 fn branch_contract_identity(
@@ -6579,6 +7282,443 @@ fn task_close_happy_path_runtime_management_budget_is_capped() {
         "task-close budget fixture close-current-task should record a closure, got {close_json:?}"
     );
     assert_runtime_management_budget("TASK-CLOSE-BUDGET", runtime_management_commands, 2);
+}
+
+#[test]
+fn public_task_closure_unblocks_missing_worktree_lease_review_binding() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("public-worktree-lease-missing-review-binding");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
+    let closure_lease_fingerprint =
+        seed_cleaned_worktree_lease_missing_review_binding(repo, state, plan_rel, false);
+
+    let operator_ready = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "workflow operator for missing worktree lease review binding",
+    );
+    assert_task_closure_recording_route(&operator_ready, plan_rel, 1);
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &operator_ready,
+        "workflow operator for missing worktree lease review binding",
+    );
+
+    let status_ready = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for missing worktree lease review binding",
+    );
+    assert_public_route_parity(&operator_ready, &status_ready, None);
+    assert_eq!(status_ready["phase"], "task_closure_pending");
+    assert_eq!(
+        status_ready["phase_detail"], "task_closure_recording_ready",
+        "json: {status_ready}"
+    );
+    assert_task_closure_required_inputs(&status_ready, 1);
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &status_ready,
+        "plan execution status for missing worktree lease review binding",
+    );
+
+    let close_json = record_task_closure_with_fixture_inputs_real_cli(
+        repo,
+        state,
+        plan_rel,
+        1,
+        "missing-worktree-lease-review-binding",
+    );
+    assert_eq!(
+        close_json["action"],
+        Value::from("recorded"),
+        "public close-current-task should record and release the repairable missing lease review binding: lease={closure_lease_fingerprint}, output={close_json}"
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &close_json,
+        "close-current-task for missing worktree lease review binding",
+    );
+
+    let operator_after = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "workflow operator after missing worktree lease review binding closure",
+    );
+    assert_repair_review_state_route(
+        &operator_after,
+        plan_rel,
+        "workflow operator after missing worktree lease review binding closure",
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &operator_after,
+        "workflow operator after missing worktree lease review binding closure",
+    );
+
+    let status_after = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status after missing worktree lease review binding closure",
+    );
+    assert_public_route_parity(&operator_after, &status_after, None);
+    assert_repair_review_state_route(
+        &status_after,
+        plan_rel,
+        "plan execution status after missing worktree lease review binding closure",
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &status_after,
+        "plan execution status after missing worktree lease review binding closure",
+    );
+
+    let repair_json = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["repair-review-state", "--plan", plan_rel],
+        "repair-review-state releases already-current missing worktree lease review binding",
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &repair_json,
+        "repair-review-state releases already-current missing worktree lease review binding",
+    );
+    let operator_after_repair = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "workflow operator after repair-review-state releases already-current missing worktree lease review binding",
+    );
+    assert_no_worktree_lease_reason(
+        &operator_after_repair,
+        "workflow operator after repair-review-state releases already-current missing worktree lease review binding",
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &operator_after_repair,
+        "workflow operator after repair-review-state releases already-current missing worktree lease review binding",
+    );
+    assert_ne!(
+        operator_after_repair["execution_command_context"]["command_kind"],
+        Value::from("repair-review-state"),
+        "repair-review-state should release the repairable lease binding instead of looping: lease={closure_lease_fingerprint}, route={operator_after_repair}"
+    );
+}
+
+#[test]
+fn public_worktree_lease_canonical_artifact_without_release_marker_fails_closed() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("public-worktree-lease-unindexed-canonical-artifact");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
+
+    let close_json = record_task_closure_with_fixture_inputs_real_cli(
+        repo,
+        state,
+        plan_rel,
+        1,
+        "unindexed-worktree-lease-canonical-artifact",
+    );
+    assert_eq!(
+        close_json["action"],
+        Value::from("recorded"),
+        "public close-current-task should record before unindexed canonical lease artifact scan: {close_json}"
+    );
+    let lease_fingerprint =
+        seed_cleaned_worktree_lease_missing_review_binding(repo, state, plan_rel, false);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("active_worktree_lease_fingerprints", json!([])),
+            ("active_worktree_lease_bindings", json!([])),
+            ("released_worktree_lease_records", json!([])),
+        ],
+    );
+
+    let operator_after = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "workflow operator with unindexed canonical worktree lease artifact",
+    );
+    let operator_text = serde_json::to_string(&operator_after)
+        .expect("unindexed canonical lease operator output should serialize");
+    assert!(
+        operator_text.contains("worktree_lease_authoritative_binding_missing"),
+        "canonical current-run lease artifact without an explicit runtime release marker must fail closed instead of being ignored: lease={lease_fingerprint}, route={operator_after}"
+    );
+    assert_repair_review_state_route(
+        &operator_after,
+        plan_rel,
+        "workflow operator with unindexed canonical worktree lease artifact",
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &operator_after,
+        "workflow operator with unindexed canonical worktree lease artifact",
+    );
+}
+
+#[test]
+fn public_worktree_lease_repair_releases_only_matching_task_scope() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("public-worktree-lease-task-scoped-release");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
+    write_authoritative_active_contract_for_steps(repo, state, plan_rel, &[(1, 1), (2, 1)]);
+
+    let (run_identity, chunk_id, task_one_lease) = write_worktree_lease_missing_review_binding(
+        repo,
+        state,
+        plan_rel,
+        WorktreeLeaseFixtureInput {
+            task: 1,
+            step: 1,
+            execution_unit_id: "unit-task-one-lease-review-binding",
+            worktree_label: "task-one-lease-review-binding",
+            lease_state: WorktreeLeaseState::Cleaned,
+            cleanup_state: "cleaned",
+            tamper_lease_proof: false,
+        },
+    );
+    let (_, _, task_two_lease) = write_worktree_lease_missing_review_binding(
+        repo,
+        state,
+        plan_rel,
+        WorktreeLeaseFixtureInput {
+            task: 2,
+            step: 1,
+            execution_unit_id: "unit-task-two-lease-review-binding",
+            worktree_label: "task-two-lease-review-binding",
+            lease_state: WorktreeLeaseState::Cleaned,
+            cleanup_state: "cleaned",
+            tamper_lease_proof: false,
+        },
+    );
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "task-scoped missing worktree lease review binding fixture",
+    );
+    persist_active_worktree_lease_index(
+        &runtime,
+        run_identity,
+        chunk_id,
+        vec![
+            task_one_lease.lease_fingerprint.clone(),
+            task_two_lease.lease_fingerprint.clone(),
+        ],
+        vec![
+            task_one_lease.binding.clone(),
+            task_two_lease.binding.clone(),
+        ],
+    )
+    .expect("task-scoped worktree lease fixture should persist both active bindings");
+
+    let operator_ready = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "workflow operator before task-scoped worktree lease repair",
+    );
+    assert_task_closure_recording_route(&operator_ready, plan_rel, 1);
+
+    let close_json = record_task_closure_with_fixture_inputs_real_cli(
+        repo,
+        state,
+        plan_rel,
+        1,
+        "task-scoped-worktree-lease-release",
+    );
+    assert_eq!(
+        close_json["action"],
+        Value::from("recorded"),
+        "public close-current-task should record task 1 before task-scoped lease repair: {close_json}"
+    );
+    let repair_json = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["repair-review-state", "--plan", plan_rel],
+        "repair-review-state releases only task-scoped worktree lease binding",
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &repair_json,
+        "repair-review-state releases only task-scoped worktree lease binding",
+    );
+    let harness_state = authoritative_harness_state(repo, state);
+    let active_fingerprints = harness_state["active_worktree_lease_fingerprints"]
+        .as_array()
+        .expect("task-scoped repair should leave an active lease index")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(
+        !active_fingerprints.contains(&task_one_lease.lease_fingerprint.as_str()),
+        "task 1 closure repair should release its own lease: state={harness_state}"
+    );
+    assert!(
+        active_fingerprints.contains(&task_two_lease.lease_fingerprint.as_str()),
+        "task 1 closure repair must not release task 2's lease: state={harness_state}"
+    );
+    let release_records = harness_state["released_worktree_lease_records"]
+        .as_array()
+        .expect("task-scoped repair should record explicit lease release markers");
+    assert!(
+        release_records.iter().any(|record| {
+            record["lease_fingerprint"].as_str() == Some(task_one_lease.lease_fingerprint.as_str())
+                && record["source_task"].as_u64() == Some(1)
+        }),
+        "task 1 lease release marker should identify the closing task: state={harness_state}"
+    );
+    assert!(
+        release_records.iter().all(|record| {
+            record["lease_fingerprint"].as_str() != Some(task_two_lease.lease_fingerprint.as_str())
+        }),
+        "task 2 lease must not receive a release marker from task 1 closure: state={harness_state}"
+    );
+
+    let operator_after = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "workflow operator after task-scoped worktree lease repair",
+    );
+    let operator_text = serde_json::to_string(&operator_after)
+        .expect("task-scoped lease operator output should serialize");
+    assert!(
+        operator_text.contains("worktree_lease_review_receipt_missing"),
+        "unrelated active task 2 lease should remain blocking after task 1 repair: route={operator_after}"
+    );
+    assert_repair_review_state_route(
+        &operator_after,
+        plan_rel,
+        "workflow operator after task-scoped worktree lease repair",
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &operator_after,
+        "workflow operator after task-scoped worktree lease repair",
+    );
+}
+
+#[test]
+fn public_task_closure_does_not_bypass_unsafe_worktree_lease_state() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("public-worktree-lease-unsafe-state");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
+
+    let operator_ready = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "workflow operator before unsafe worktree lease state closure",
+    );
+    assert_task_closure_recording_route(&operator_ready, plan_rel, 1);
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &operator_ready,
+        "workflow operator before unsafe worktree lease state closure",
+    );
+
+    let close_json = record_task_closure_with_fixture_inputs_real_cli(
+        repo,
+        state,
+        plan_rel,
+        1,
+        "unsafe-worktree-lease-state",
+    );
+    assert_eq!(
+        close_json["action"],
+        Value::from("recorded"),
+        "public close-current-task should record the task boundary before the unsafe lease is re-evaluated: {close_json}"
+    );
+
+    let lease_fingerprint =
+        seed_cleaned_worktree_lease_missing_review_binding(repo, state, plan_rel, true);
+    let operator_after = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "workflow operator after unsafe worktree lease state closure",
+    );
+    let operator_after_text = serde_json::to_string(&operator_after)
+        .expect("unsafe lease operator output should serialize for reason scan");
+    assert!(
+        operator_after_text.contains("worktree_lease_identity_preserving_lease_proof_mismatch"),
+        "unsafe lease proof must fail closed after public task closure instead of being covered by closure metadata: lease={lease_fingerprint}, route={operator_after}"
+    );
+    assert_repair_review_state_route(
+        &operator_after,
+        plan_rel,
+        "workflow operator after unsafe worktree lease state closure",
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &operator_after,
+        "workflow operator after unsafe worktree lease state closure",
+    );
+    let repair_json = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["repair-review-state", "--plan", plan_rel],
+        "repair-review-state with unsafe worktree lease state",
+    );
+    let repair_text = serde_json::to_string(&repair_json)
+        .expect("unsafe lease repair output should serialize for reason scan");
+    assert!(
+        repair_text.contains("worktree_lease_identity_preserving_lease_proof_mismatch"),
+        "repair-review-state must preserve the unsafe lease blocker instead of clearing it: lease={lease_fingerprint}, output={repair_json}"
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &repair_json,
+        "repair-review-state with unsafe worktree lease state",
+    );
+}
+
+#[test]
+fn public_worktree_lease_open_state_fails_closed_without_hidden_helper() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("public-worktree-lease-open-state");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
+
+    let close_json = record_task_closure_with_fixture_inputs_real_cli(
+        repo,
+        state,
+        plan_rel,
+        1,
+        "open-worktree-lease-state",
+    );
+    assert_eq!(
+        close_json["action"],
+        Value::from("recorded"),
+        "public close-current-task should record before open lease state is evaluated: {close_json}"
+    );
+
+    let lease_fingerprint = seed_open_worktree_lease_missing_review_binding(repo, state, plan_rel);
+    let operator_after = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "workflow operator after open worktree lease state closure",
+    );
+    let operator_after_text = serde_json::to_string(&operator_after)
+        .expect("open lease operator output should serialize for reason scan");
+    assert!(
+        operator_after_text.contains("worktree_lease_open"),
+        "open lease state must fail closed as a public diagnostic: lease={lease_fingerprint}, route={operator_after}"
+    );
+    assert_repair_review_state_route(
+        &operator_after,
+        plan_rel,
+        "workflow operator after open worktree lease state closure",
+    );
+    assert_no_worktree_lease_manual_receipt_repair_terms(
+        &operator_after,
+        "workflow operator after open worktree lease state closure",
+    );
 }
 
 #[test]

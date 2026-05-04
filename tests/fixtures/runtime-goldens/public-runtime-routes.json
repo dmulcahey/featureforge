@@ -292,7 +292,6 @@
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [],
-          "recommended_command": null,
           "release_docs_state": "not_required",
           "repo_state_baseline_head_sha": null,
           "repo_state_baseline_worktree_fingerprint": null,
@@ -540,7 +539,6 @@
             "task_closure_baseline_repair_candidate",
             "prior_task_review_dispatch_missing"
           ],
-          "recommended_command": null,
           "recording_context": {
             "task_number": 1
           },
@@ -696,7 +694,6 @@
             "task_closure_baseline_repair_candidate",
             "prior_task_review_dispatch_missing"
           ],
-          "recommended_command": null,
           "recording_context": {
             "task_number": 1
           },
@@ -954,7 +951,6 @@
             "task_closure_baseline_repair_candidate",
             "prior_task_review_dispatch_missing"
           ],
-          "recommended_command": null,
           "recording_context": {
             "task_number": 1
           },
@@ -1674,7 +1670,7 @@
           "last_release_docs_artifact_fingerprint": null,
           "last_strategy_checkpoint_fingerprint": null,
           "latest_authoritative_sequence": 0,
-          "next_action": "repair review state / reenter execution",
+          "next_action": "runtime diagnostic required",
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
           "pending_evaluator_kinds": [],
@@ -1687,7 +1683,6 @@
           "reason_codes": [
             "stale_unreviewed_target_missing"
           ],
-          "recommended_command": null,
           "release_docs_state": "not_required",
           "repo_state_baseline_head_sha": null,
           "repo_state_baseline_worktree_fingerprint": null,
@@ -1728,7 +1723,7 @@
             "stale_unreviewed_target_missing",
             "missing_authoritative_stale_target"
           ],
-          "next_action": "repair review state / reenter execution",
+          "next_action": "runtime diagnostic required",
           "phase": "executing",
           "phase_detail": "runtime_reconcile_required",
           "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
@@ -1837,7 +1832,7 @@
           "last_release_docs_artifact_fingerprint": null,
           "last_strategy_checkpoint_fingerprint": null,
           "latest_authoritative_sequence": 0,
-          "next_action": "repair review state / reenter execution",
+          "next_action": "runtime diagnostic required",
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
           "pending_evaluator_kinds": [],
@@ -1850,7 +1845,6 @@
           "reason_codes": [
             "recommended_command_hidden_or_debug"
           ],
-          "recommended_command": null,
           "release_docs_state": "not_required",
           "repo_state_baseline_head_sha": null,
           "repo_state_baseline_worktree_fingerprint": null,
@@ -1890,7 +1884,7 @@
           "blocking_reason_codes": [
             "recommended_command_hidden_or_debug"
           ],
-          "next_action": "repair review state / reenter execution",
+          "next_action": "runtime diagnostic required",
           "phase": "blocked",
           "phase_detail": "blocked_runtime_bug",
           "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
@@ -2525,7 +2519,6 @@
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [],
-          "recommended_command": null,
           "recording_context": {
             "branch_closure_id": "branch-closure-<ID>"
           },
@@ -2780,7 +2773,6 @@
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [],
-          "recommended_command": null,
           "release_docs_state": "fresh",
           "repo_state_baseline_head_sha": null,
           "repo_state_baseline_worktree_fingerprint": null,
@@ -2984,7 +2976,6 @@
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [],
-          "recommended_command": null,
           "release_docs_state": "fresh",
           "repo_state_baseline_head_sha": null,
           "repo_state_baseline_worktree_fingerprint": null,
@@ -3202,7 +3193,6 @@
           "qa_requirement": "required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [],
-          "recommended_command": null,
           "release_docs_state": "fresh",
           "repo_state_baseline_head_sha": null,
           "repo_state_baseline_worktree_fingerprint": null,

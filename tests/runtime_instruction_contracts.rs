@@ -2101,7 +2101,7 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
                 "Artifact `pass` is the runtime-rendered form of CLI input `--result ready`.",
                 "Do not hand-write or edit this artifact.",
                 "workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.",
-                "If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.",
+                "If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.",
                 "If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path>` with the concrete plan and rerun workflow/operator.",
                 "When workflow/operator reports `phase_detail=release_readiness_recording_ready`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` only after substituting concrete values.",
                 "renders `**Result:** pass|blocked` in the derived companion artifact",
@@ -2435,11 +2435,15 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "When workflow/operator reports `review_state_status` as stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.",
+        concat!(
+            "When workflow/operator reports `review_state_status` as stale or missing closure context, do not invent a repair command. If `recommended_public_command",
+            "_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan ",
+            "<approved-plan-path>` only when the non-diagnostic route owns that repair lane."
+        ),
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` when present before any additional recording commands. If argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun the route owner.",
+        "After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` when present before any additional recording commands. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun the route owner.",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -2527,11 +2531,15 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "When workflow/operator reports `review_state_status` as stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.",
+        concat!(
+            "When workflow/operator reports `review_state_status` as stale or missing closure context, do not invent a repair command. If `recommended_public_command",
+            "_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan ",
+            "<approved-plan-path>` only when the non-diagnostic route owns that repair lane."
+        ),
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` when present before any additional recording commands. If argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun the route owner.",
+        "After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` when present before any additional recording commands. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun the route owner.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),

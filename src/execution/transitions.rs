@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::contracts::harness::parse_contract_task_step_scope;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::current_truth::parse_late_stage_surface_only_branch_surface;
 use crate::execution::event_log::{
@@ -4991,7 +4992,7 @@ pub(crate) fn enforce_active_contract_scope(
 fn parse_contract_scope(covered_steps: &[String]) -> Result<BTreeSet<(u32, u32)>, JsonFailure> {
     let mut parsed = BTreeSet::new();
     for step in covered_steps {
-        let Some(step_ref) = parse_task_step_scope(step) else {
+        let Some(step_ref) = parse_contract_task_step_scope(step) else {
             return Err(JsonFailure::new(
                 FailureClass::ContractMismatch,
                 "Execution contract covered_steps entries must use `Task <n> Step <m>` scope format.",
@@ -5000,22 +5001,6 @@ fn parse_contract_scope(covered_steps: &[String]) -> Result<BTreeSet<(u32, u32)>
         parsed.insert(step_ref);
     }
     Ok(parsed)
-}
-
-fn parse_task_step_scope(value: &str) -> Option<(u32, u32)> {
-    let mut parts = value.split_whitespace();
-    if parts.next()? != "Task" {
-        return None;
-    }
-    let task = parts.next()?.parse::<u32>().ok()?;
-    if parts.next()? != "Step" {
-        return None;
-    }
-    let step = parts.next()?.parse::<u32>().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some((task, step))
 }
 
 fn has_active_contract_pointer(state: &GateAuthorityState) -> bool {

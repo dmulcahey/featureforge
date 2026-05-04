@@ -57,9 +57,9 @@ use crate::execution::follow_up::{
     FollowUpAliasContext, FollowUpKind, direct_gate_follow_up_from_reason_codes,
     normalize_follow_up_alias,
 };
-use crate::execution::harness::TopologySelectionContext;
 use crate::execution::harness::{
     INITIAL_AUTHORITATIVE_SEQUENCE, LearnedTopologyGuidance, RunIdentitySnapshot,
+    TopologySelectionContext, WorktreeLeaseBindingSnapshot, WorktreeLeaseReleaseRecord,
 };
 use crate::execution::internal_args::{
     GateContractArgs, GateEvaluatorArgs, GateHandoffArgs, IsolatedAgentsArg, NoteArgs,
@@ -154,6 +154,10 @@ mod review_gate;
 mod runtime_methods;
 mod unit_review_truth;
 mod worktree_lease_truth;
+pub(crate) use worktree_lease_truth::{
+    releasable_terminal_worktree_lease_fingerprints_for_task_closure,
+    worktree_lease_public_gate_reason_code,
+};
 
 pub(super) const PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION: &str = "The runtime proof metadata is stale or invalid. Run `featureforge plan execution repair-review-state --plan <approved-plan-path>` and follow its `recommended_public_command_argv`; do not manually edit internal proof artifacts.";
 pub(super) const PUBLIC_WORKFLOW_OPERATOR_REMEDIATION: &str = "The execution proof metadata is stale or invalid. Run `featureforge workflow operator --plan <approved-plan-path>` and follow its `recommended_public_command_argv` to replay or repair through public runtime commands.";
@@ -256,4 +260,6 @@ struct WorktreeLeaseAuthoritativeContextProbe {
     repo_state_baseline_worktree_fingerprint: Option<String>,
     active_worktree_lease_fingerprints: Option<Vec<String>>,
     active_worktree_lease_bindings: Option<Vec<WorktreeLeaseBindingProbe>>,
+    #[serde(default)]
+    released_worktree_lease_records: Vec<WorktreeLeaseReleaseRecord>,
 }

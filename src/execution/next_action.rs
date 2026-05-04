@@ -34,6 +34,30 @@ use crate::execution::state::{
 };
 use crate::execution::transitions::load_authoritative_transition_state;
 
+pub(crate) const NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED: &str = "runtime diagnostic required";
+
+pub(crate) fn diagnostic_next_action_for_route(
+    state_kind: &str,
+    phase_detail: &str,
+    has_public_invocation: bool,
+    has_required_inputs: bool,
+) -> Option<String> {
+    let diagnostic = matches!(
+        state_kind,
+        crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG
+            | crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+    ) || matches!(
+        phase_detail,
+        crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG
+            | crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+    );
+    if diagnostic && !has_public_invocation && !has_required_inputs {
+        Some(String::from(NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED))
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NextActionKind {
     Begin,

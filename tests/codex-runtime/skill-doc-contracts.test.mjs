@@ -427,7 +427,7 @@ test('recommended_command guidance scanner rejects display-string execution samp
   });
 });
 
-test('active docs keep recommended_public_command_argv authoritative and recommended_command display-only', () => {
+test('active docs keep exact argv authoritative and display commands non-authoritative', () => {
   const argvAuthorityPattern = /recommended_public_command_argv[^.\n]*(?:authoritative|exact|machine invocation|machine-invocation)|(?:authoritative|exact|machine invocation|machine-invocation|follow the argv|run the returned|invoke that argv vector)[^.\n]*recommended_public_command_argv/i;
   const displayOnlyPattern = /recommended_command[^.\n]*(?:display-only|display only|human-readable|human compatibility|fallback text|compatibility text)|(?:display-only|display only|human-readable|human compatibility|fallback text|compatibility text)[^.\n]*recommended_command/i;
   const violations = [];
@@ -1484,7 +1484,14 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       normalized,
-      /run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly[\s\S]*`recommended_public_command_argv` is authoritative for the immediate reroute[\s\S]*Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required/i,
+      new RegExp(
+        [
+          'do not invent a repair command[\\s\\S]*`runtime diagnostic required`[\\s\\S]*`recommended_public_command',
+          '_argv` is authoritative for the immediate reroute[\\s\\S]*Use `featureforge plan execution status --plan ',
+          '<approved-plan-path>` only when additional diagnostics are required',
+        ].join(''),
+        'i',
+      ),
       `${label} should require repair-review-state plus returned recommended_public_command_argv sequencing`,
     );
     assert.match(
@@ -2399,7 +2406,7 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   );
   assert.match(
     usingFeatureForge,
-    /If workflow\/operator omits `recommended_public_command_argv`, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow\/operator\. Do not infer missing argv by parsing `recommended_command`\./,
+    /If workflow\/operator omits `recommended_public_command_argv`, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow\/operator\. If `next_action` is `runtime diagnostic required`, stop on that diagnostic instead of inventing repair\/reentry commands\. Do not infer missing argv by parsing `recommended_command`\./,
   );
   assert.match(
     usingFeatureForge,
@@ -2626,7 +2633,7 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
     documentRelease,
     /For reviewed-closure late-stage routing, use the workflow\/operator input shape `featureforge workflow operator --plan <approved-plan-path>` with the concrete plan; workflow\/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv`\. `recommended_command` is display-only compatibility text\./,
   );
-  assert.match(documentRelease, /If `recommended_public_command_argv` is present, invoke it exactly\. If argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow\/operator\./);
+  assert.match(documentRelease, /If `recommended_public_command_argv` is present, invoke it exactly\. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow\/operator\./);
   assert.match(documentRelease, /Confirm the current `phase_detail` before recording release-readiness\./);
   assert.match(documentRelease, /If workflow\/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path>` with the concrete plan and rerun workflow\/operator\./);
   assert.match(documentRelease, /When workflow\/operator reports `phase_detail=release_readiness_recording_ready`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready\|blocked --summary-file <release-summary>` only after substituting concrete values\./);
@@ -2720,11 +2727,11 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     readme,
-    /When workflow\/operator reports stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly\./,
+    /When workflow\/operator reports stale or missing closure context, do not invent a repair command\.[\s\S]*If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic\./,
   );
   assert.match(
     readme,
-    /After `repair-review-state`, treat that command's own `recommended_public_command_argv` as the immediate reroute when present and complete that follow-up before running any extra command\. If argv is absent, satisfy the typed `required_inputs` or prerequisite named by `next_action`, then rerun the command that owns the route\. `recommended_command` is display-only compatibility text; do not parse it for invocation\./,
+    /After `repair-review-state`, treat that command's own `recommended_public_command_argv` as the immediate reroute when present and complete that follow-up before running any extra command\. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy the typed `required_inputs` or prerequisite named by `next_action`, then rerun the command that owns the route\. `recommended_command` is display-only compatibility text; do not parse it for invocation\./,
   );
   assert.doesNotMatch(
     readme,

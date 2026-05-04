@@ -12,9 +12,7 @@ use crate::contracts::plan::{
 use crate::contracts::runtime::analyze_contract_report;
 use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::execution::phase::{
-    PUBLIC_STATUS_PHASE_VALUES, RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
-};
+use crate::execution::phase::PUBLIC_STATUS_PHASE_VALUES;
 use crate::git::{RepositoryIdentity, discover_repo_identity, stored_repo_root_matches_current};
 use crate::paths::{RepoPath, featureforge_state_dir};
 use crate::workflow::manifest::{
@@ -1670,11 +1668,6 @@ fn tighten_workflow_operator_phase_bound_recording_context_contracts(
         crate::execution::phase::PHASE_EXECUTING,
         "execution_command_context",
     )?;
-    append_operator_phase_detail_field_omitted_only_in_lanes(
-        schema,
-        "recommended_command",
-        RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
-    )?;
     Ok(())
 }
 
@@ -1861,45 +1854,6 @@ fn append_operator_phase_field_forbidden_outside_const_phase(
             "not": {
                 "required": [field]
             }
-        }
-    }));
-    Ok(())
-}
-
-fn append_operator_phase_detail_field_omitted_only_in_lanes(
-    schema: &mut serde_json::Value,
-    field: &str,
-    omission_phase_details: &[&str],
-) -> Result<(), DiagnosticError> {
-    let root = schema.as_object_mut().ok_or_else(|| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "WorkflowOperator schema root is not an object.",
-        )
-    })?;
-    let all_of = root
-        .entry(String::from("allOf"))
-        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
-        .as_array_mut()
-        .ok_or_else(|| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                "WorkflowOperator schema `allOf` is not an array.",
-            )
-        })?;
-    all_of.push(serde_json::json!({
-        "if": {
-            "properties": {
-                "phase_detail": { "enum": omission_phase_details }
-            }
-        },
-        "then": {
-            "not": {
-                "required": [field]
-            }
-        },
-        "else": {
-            "required": [field]
         }
     }));
     Ok(())

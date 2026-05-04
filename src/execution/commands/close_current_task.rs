@@ -511,7 +511,6 @@ pub fn close_current_task(
                 .map(|record| record.task)
                 .collect::<Vec<_>>();
             materialize_current_task_closure_from_close_inputs(
-                &locked_context,
                 authoritative_state,
                 CurrentTaskClosureMaterialization {
                     task: args.task,

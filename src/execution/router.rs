@@ -20,8 +20,9 @@ use crate::execution::follow_up::{
 };
 use crate::execution::harness::HarnessPhase;
 use crate::execution::next_action::{
-    NextActionAuthorityInputs, NextActionDecision, NextActionRequestInputs,
-    compute_next_action_decision_with_authority_inputs, repair_review_state_public_command,
+    NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED, NextActionAuthorityInputs, NextActionDecision,
+    NextActionRequestInputs, compute_next_action_decision_with_authority_inputs,
+    diagnostic_next_action_for_route, repair_review_state_public_command,
     select_authoritative_stale_reentry_target,
 };
 use crate::execution::phase;
@@ -134,6 +135,33 @@ impl PublicRouteDecision {
         self.recommended_public_command = command;
         self.invocation = invocation;
         self.required_inputs = required_inputs;
+    }
+
+    pub(crate) fn normalize_diagnostic_next_action(&mut self) {
+        if let Some(next_action) = diagnostic_next_action_for_route(
+            &self.state_kind,
+            &self.phase_detail,
+            self.invocation.is_some(),
+            !self.required_inputs.is_empty(),
+        ) {
+            self.next_action = next_action;
+            self.required_follow_up = None;
+            self.next_public_action = None;
+            self.blockers.clear();
+            self.public_repair_targets.clear();
+            self.recommended_command = None;
+            self.recommended_public_command = None;
+        }
+    }
+
+    fn is_diagnostic_only(&self) -> bool {
+        diagnostic_next_action_for_route(
+            &self.state_kind,
+            &self.phase_detail,
+            self.invocation.is_some(),
+            !self.required_inputs.is_empty(),
+        )
+        .is_some()
     }
 }
 
@@ -983,12 +1011,19 @@ fn repair_review_state_route_decision(
         primary_blocker_for_status(status, state_kind.as_str(), next_public_action.as_ref()),
         &runtime_state.context.plan_rel,
     );
-    RouteDecision {
+    let next_action = diagnostic_next_action_for_route(
+        &state_kind,
+        &phase_detail,
+        invocation.is_some(),
+        !required_inputs.is_empty(),
+    )
+    .unwrap_or_else(|| String::from("repair review state / reenter execution"));
+    let mut decision = RouteDecision {
         state_kind,
         phase: String::from(phase::PHASE_EXECUTING),
         phase_detail,
         review_state_status,
-        next_action: String::from("repair review state / reenter execution"),
+        next_action,
         blocking_reason_codes,
         recommended_command,
         recommended_public_command,
@@ -1000,7 +1035,9 @@ fn repair_review_state_route_decision(
         public_repair_targets: Vec::new(),
         execution_command_context: None,
         recording_context: None,
-    }
+    };
+    decision.normalize_diagnostic_next_action();
+    decision
 }
 
 fn runtime_reconcile_route_decision(
@@ -1051,12 +1088,19 @@ fn runtime_reconcile_route_decision(
             &runtime_state.context.plan_rel,
         )
     };
-    RouteDecision {
+    let next_action = diagnostic_next_action_for_route(
+        &state_kind,
+        &phase_detail,
+        invocation.is_some(),
+        !required_inputs.is_empty(),
+    )
+    .unwrap_or_else(|| String::from("repair review state / reenter execution"));
+    let mut decision = RouteDecision {
         state_kind,
         phase: String::from(phase::PHASE_EXECUTING),
         phase_detail,
         review_state_status,
-        next_action: String::from("repair review state / reenter execution"),
+        next_action,
         blocking_reason_codes,
         recommended_command,
         recommended_public_command,
@@ -1069,7 +1113,9 @@ fn runtime_reconcile_route_decision(
         public_repair_targets: Vec::new(),
         execution_command_context: None,
         recording_context: None,
-    }
+    };
+    decision.normalize_diagnostic_next_action();
+    decision
 }
 
 pub(crate) fn branch_closure_recording_route_decision(
@@ -1302,23 +1348,27 @@ pub(crate) fn route_decision_from_routing(
         );
         materialize_blocker_actions(blockers, &routing.route.plan_path)
     };
-    let route_next_action = if state_kind == phase::DETAIL_BLOCKED_RUNTIME_BUG {
-        String::from("runtime diagnostic required")
-    } else {
-        routing.next_action.clone()
-    };
-    let route_required_follow_up = if state_kind == phase::DETAIL_BLOCKED_RUNTIME_BUG {
-        None
-    } else {
-        derive_required_follow_up_from_optional_status(
-            routing.execution_status.as_ref(),
-            &routing.phase_detail,
-            &routing.review_state_status,
-            routing.blocking_reason_codes.iter().map(String::as_str),
-            routing.execution_command_context.as_ref(),
-        )
-    };
-    RouteDecision {
+    let route_next_action = diagnostic_next_action_for_route(
+        &state_kind,
+        &routing.phase_detail,
+        invocation.is_some(),
+        !required_inputs.is_empty(),
+    )
+    .unwrap_or_else(|| routing.next_action.clone());
+    let diagnostic_without_local_action =
+        route_next_action == NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED;
+    let route_required_follow_up = (!diagnostic_without_local_action)
+        .then(|| {
+            derive_required_follow_up_from_optional_status(
+                routing.execution_status.as_ref(),
+                &routing.phase_detail,
+                &routing.review_state_status,
+                routing.blocking_reason_codes.iter().map(String::as_str),
+                routing.execution_command_context.as_ref(),
+            )
+        })
+        .flatten();
+    let mut decision = RouteDecision {
         state_kind,
         phase: canonical_phase_for_shared_decision(&routing.phase, &routing.phase_detail),
         phase_detail: routing.phase_detail.clone(),
@@ -1335,7 +1385,9 @@ pub(crate) fn route_decision_from_routing(
         public_repair_targets: Vec::new(),
         execution_command_context: routing.execution_command_context.clone(),
         recording_context: routing.recording_context.clone(),
-    }
+    };
+    decision.normalize_diagnostic_next_action();
+    decision
 }
 
 fn route_decision_for_unroutable_runtime_state(status: &PlanExecutionStatus) -> RouteDecision {
@@ -1354,7 +1406,7 @@ fn route_decision_for_unroutable_runtime_state(status: &PlanExecutionStatus) -> 
         ),
         phase_detail: status.phase_detail.clone(),
         review_state_status: status.review_state_status.clone(),
-        next_action: String::from("runtime diagnostic required"),
+        next_action: String::from(NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED),
         blocking_reason_codes: compact_operator_reason_codes(
             Some(status),
             &status.phase_detail,
@@ -1406,6 +1458,7 @@ pub(crate) fn route_decision_with_status_blockers(
         &route_decision,
         route_repair_target_candidates,
     );
+    route_decision.normalize_diagnostic_next_action();
     route_decision
 }
 
@@ -1414,6 +1467,10 @@ fn public_repair_targets_from_route_decision(
     route_decision: &RouteDecision,
     route_repair_target_candidates: &[PublicRepairTarget],
 ) -> Vec<PublicRepairTarget> {
+    if route_decision.is_diagnostic_only() {
+        return Vec::new();
+    }
+
     let mut targets = Vec::new();
     if status.external_wait_state.is_some() {
         return targets;
@@ -2013,6 +2070,12 @@ fn classify_state_kind(
     if phase_detail == phase::DETAIL_PLANNING_REENTRY_REQUIRED && recommended_command.is_none() {
         return String::from("waiting_external_input");
     }
+    if phase_detail == phase::DETAIL_BLOCKED_RUNTIME_BUG && recommended_command.is_none() {
+        return String::from(phase::DETAIL_BLOCKED_RUNTIME_BUG);
+    }
+    if phase_detail == phase::DETAIL_RUNTIME_RECONCILE_REQUIRED && recommended_command.is_none() {
+        return String::from(phase::DETAIL_RUNTIME_RECONCILE_REQUIRED);
+    }
     if recommended_command.is_none()
         && !phase::RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS.contains(&phase_detail)
     {
@@ -2086,8 +2149,8 @@ fn public_command_for_required_follow_up(
 #[cfg(test)]
 mod tests {
     use super::{
-        primary_blocker_for_route, public_command_for_phase_detail, route_decision_from_routing,
-        synthesize_next_public_action,
+        classify_state_kind, primary_blocker_for_route, public_command_for_phase_detail,
+        route_decision_from_routing, synthesize_next_public_action,
     };
     use crate::execution::command_eligibility::{
         command_invokes_hidden_lane, hidden_command_tokens,
@@ -2254,7 +2317,23 @@ mod tests {
     }
 
     #[test]
-    fn blocked_runtime_bug_surfaces_single_diagnostic_blocker() {
+    fn diagnostic_phase_details_without_commands_preserve_diagnostic_state_kind() {
+        assert_eq!(
+            classify_state_kind(None, false, phase::DETAIL_RUNTIME_RECONCILE_REQUIRED, None),
+            phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+        );
+        assert_eq!(
+            classify_state_kind(None, false, phase::DETAIL_BLOCKED_RUNTIME_BUG, None),
+            phase::DETAIL_BLOCKED_RUNTIME_BUG
+        );
+        assert_eq!(
+            classify_state_kind(None, false, phase::DETAIL_EXECUTION_REENTRY_REQUIRED, None),
+            phase::DETAIL_BLOCKED_RUNTIME_BUG
+        );
+    }
+
+    #[test]
+    fn blocked_runtime_bug_suppresses_public_action_surfaces() {
         let routing = ExecutionRoutingState {
             route_decision: None,
             route: WorkflowRoute {
@@ -2309,9 +2388,8 @@ mod tests {
         assert!(decision.recommended_command.is_none());
         assert!(decision.required_follow_up.is_none());
         assert_eq!(decision.next_action, "runtime diagnostic required");
-        assert_eq!(decision.blockers.len(), 1);
-        assert_eq!(decision.blockers[0].category, "runtime_bug");
-        assert!(decision.blockers[0].next_public_action.is_none());
+        assert!(decision.blockers.is_empty());
+        assert!(decision.public_repair_targets.is_empty());
     }
 
     #[test]

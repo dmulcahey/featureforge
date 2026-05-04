@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -28,7 +28,7 @@ use crate::execution::gates::{
 };
 use crate::execution::harness::{
     ChunkId, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE, RunIdentitySnapshot,
-    WorktreeLeaseBindingSnapshot,
+    WorktreeLeaseBindingSnapshot, WorktreeLeaseReleaseRecord,
 };
 use crate::execution::internal_args::{
     RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs,
@@ -274,6 +274,8 @@ struct MutableHarnessState {
     active_worktree_lease_fingerprints: Option<Vec<String>>,
     #[serde(default)]
     active_worktree_lease_bindings: Option<Vec<WorktreeLeaseBindingSnapshot>>,
+    #[serde(default)]
+    released_worktree_lease_records: Option<Vec<WorktreeLeaseReleaseRecord>>,
     #[serde(default)]
     required_evaluator_kinds: Vec<String>,
     #[serde(default)]
@@ -1216,11 +1218,223 @@ pub fn persist_active_worktree_lease_index(
     active_worktree_lease_fingerprints: Vec<String>,
     active_worktree_lease_bindings: Vec<WorktreeLeaseBindingSnapshot>,
 ) -> Result<(), JsonFailure> {
+    persist_worktree_lease_index(
+        runtime,
+        run_identity,
+        chunk_id,
+        active_worktree_lease_fingerprints,
+        active_worktree_lease_bindings,
+        Vec::new(),
+    )
+}
+
+pub(crate) struct WorktreeLeaseReleaseDecision {
+    pub(crate) released_by: Vec<(u32, String)>,
+    pub(crate) lease_fingerprints: BTreeSet<String>,
+    pub(crate) release_records: Vec<WorktreeLeaseReleaseRecord>,
+}
+
+pub(crate) fn release_active_worktree_leases_with_locked_index<F>(
+    runtime: &ExecutionRuntime,
+    compute_release: F,
+) -> Result<Vec<(u32, String)>, JsonFailure>
+where
+    F: FnOnce(
+        &RunIdentitySnapshot,
+        &[String],
+        &[WorktreeLeaseBindingSnapshot],
+    ) -> Result<WorktreeLeaseReleaseDecision, JsonFailure>,
+{
+    let (_lock, mut state, state_path) =
+        load_mutable_harness_state_for_authoritative_write(runtime)?;
+    let active_worktree_lease_fingerprints = state
+        .active_worktree_lease_fingerprints
+        .clone()
+        .unwrap_or_default();
+    let active_worktree_lease_bindings = state
+        .active_worktree_lease_bindings
+        .clone()
+        .unwrap_or_default();
+    if active_worktree_lease_fingerprints.is_empty() && active_worktree_lease_bindings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let Some(run_identity) = state.run_identity.clone() else {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "Authoritative worktree lease index cannot be refreshed because execution_run_id is missing.",
+        ));
+    };
+    let Some(chunk_id) = state.chunk_id.as_deref() else {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "Authoritative worktree lease index cannot be refreshed because chunk_id is missing.",
+        ));
+    };
+    validate_safe_identifier_token(run_identity.execution_run_id.as_str(), "execution_run_id")?;
+    validate_safe_identifier_token(chunk_id, "chunk_id")?;
+    validate_worktree_lease_bindings(&run_identity, &active_worktree_lease_bindings)?;
+
+    let decision = compute_release(
+        &run_identity,
+        &active_worktree_lease_fingerprints,
+        &active_worktree_lease_bindings,
+    )?;
+    if decision.lease_fingerprints.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut removed_fingerprints = active_worktree_lease_fingerprints
+        .iter()
+        .filter(|fingerprint| decision.lease_fingerprints.contains(*fingerprint))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    removed_fingerprints.extend(
+        active_worktree_lease_bindings
+            .iter()
+            .filter(|binding| {
+                decision
+                    .lease_fingerprints
+                    .contains(&binding.lease_fingerprint)
+            })
+            .map(|binding| binding.lease_fingerprint.clone()),
+    );
+    if removed_fingerprints.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let release_records = decision
+        .release_records
+        .into_iter()
+        .filter(|record| removed_fingerprints.contains(&record.lease_fingerprint))
+        .collect::<Vec<_>>();
+    if removed_fingerprints.iter().any(|fingerprint| {
+        !release_records
+            .iter()
+            .any(|record| &record.lease_fingerprint == fingerprint)
+    }) {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "Authoritative worktree lease index cannot release an active lease without a matching release record.",
+        ));
+    }
+    validate_worktree_lease_release_records(&run_identity, &release_records)?;
+
+    state.active_worktree_lease_fingerprints = Some(
+        active_worktree_lease_fingerprints
+            .into_iter()
+            .filter(|fingerprint| !removed_fingerprints.contains(fingerprint))
+            .collect(),
+    );
+    state.active_worktree_lease_bindings = Some(
+        active_worktree_lease_bindings
+            .into_iter()
+            .filter(|binding| !removed_fingerprints.contains(&binding.lease_fingerprint))
+            .collect(),
+    );
+    append_unique_worktree_lease_release_records(&mut state, release_records);
+    persist_mutable_harness_state(
+        &state_path,
+        &state,
+        "authoritative_worktree_lease_index_refresh",
+    )?;
+    Ok(decision.released_by)
+}
+
+fn persist_worktree_lease_index(
+    runtime: &ExecutionRuntime,
+    run_identity: RunIdentitySnapshot,
+    chunk_id: ChunkId,
+    active_worktree_lease_fingerprints: Vec<String>,
+    active_worktree_lease_bindings: Vec<WorktreeLeaseBindingSnapshot>,
+    released_worktree_lease_records: Vec<WorktreeLeaseReleaseRecord>,
+) -> Result<(), JsonFailure> {
     let (_lock, mut state, state_path) =
         load_mutable_harness_state_for_authoritative_write(runtime)?;
     validate_safe_identifier_token(run_identity.execution_run_id.as_str(), "execution_run_id")?;
     validate_safe_identifier_token(chunk_id.as_str(), "chunk_id")?;
-    for binding in &active_worktree_lease_bindings {
+    validate_worktree_lease_bindings(&run_identity, &active_worktree_lease_bindings)?;
+    validate_worktree_lease_release_records(&run_identity, &released_worktree_lease_records)?;
+    state.run_identity = Some(run_identity);
+    state.chunk_id = Some(chunk_id.as_str().to_owned());
+    state.active_worktree_lease_fingerprints = Some(active_worktree_lease_fingerprints);
+    state.active_worktree_lease_bindings = Some(active_worktree_lease_bindings);
+    append_unique_worktree_lease_release_records(&mut state, released_worktree_lease_records);
+
+    persist_mutable_harness_state(
+        &state_path,
+        &state,
+        "authoritative_worktree_lease_index_refresh",
+    )
+}
+
+fn append_unique_worktree_lease_release_records(
+    state: &mut MutableHarnessState,
+    released_worktree_lease_records: Vec<WorktreeLeaseReleaseRecord>,
+) {
+    if released_worktree_lease_records.is_empty() {
+        return;
+    }
+    let mut release_records = state
+        .released_worktree_lease_records
+        .take()
+        .unwrap_or_default();
+    for record in released_worktree_lease_records {
+        if !release_records.iter().any(|existing| {
+            existing.execution_run_id == record.execution_run_id
+                && existing.lease_fingerprint == record.lease_fingerprint
+        }) {
+            release_records.push(record);
+        }
+    }
+    state.released_worktree_lease_records = Some(release_records);
+}
+
+fn persist_mutable_harness_state(
+    state_path: &Path,
+    state: &MutableHarnessState,
+    event_reason: &str,
+) -> Result<(), JsonFailure> {
+    let state_payload = serde_json::to_value(state).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::PartialAuthoritativeMutation,
+            format!(
+                "Could not encode authoritative harness state lease index payload {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    append_typed_state_event_for_state_path(
+        state_path,
+        "worktree_lease_index_update",
+        &state_payload,
+        event_reason,
+    )?;
+    let serialized = serde_json::to_string_pretty(state).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::PartialAuthoritativeMutation,
+            format!(
+                "Could not serialize authoritative harness state mutation {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    write_atomic_file(state_path, serialized).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::PartialAuthoritativeMutation,
+            format!(
+                "Could not publish authoritative harness state {}: {error}",
+                state_path.display()
+            ),
+        )
+    })
+}
+
+fn validate_worktree_lease_bindings(
+    run_identity: &RunIdentitySnapshot,
+    active_worktree_lease_bindings: &[WorktreeLeaseBindingSnapshot],
+) -> Result<(), JsonFailure> {
+    for binding in active_worktree_lease_bindings {
         if binding.execution_run_id != run_identity.execution_run_id.as_str() {
             return Err(JsonFailure::new(
                 FailureClass::ArtifactIntegrityMismatch,
@@ -1237,44 +1451,34 @@ pub fn persist_active_worktree_lease_index(
             )?;
         }
     }
-    state.run_identity = Some(run_identity);
-    state.chunk_id = Some(chunk_id.as_str().to_owned());
-    state.active_worktree_lease_fingerprints = Some(active_worktree_lease_fingerprints);
-    state.active_worktree_lease_bindings = Some(active_worktree_lease_bindings);
+    Ok(())
+}
 
-    let state_payload = serde_json::to_value(&state).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::PartialAuthoritativeMutation,
-            format!(
-                "Could not encode authoritative harness state lease index payload {}: {error}",
-                state_path.display()
-            ),
-        )
-    })?;
-    append_typed_state_event_for_state_path(
-        &state_path,
-        "worktree_lease_index_update",
-        &state_payload,
-        "authoritative_worktree_lease_index_refresh",
-    )?;
-    let serialized = serde_json::to_string_pretty(&state).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::PartialAuthoritativeMutation,
-            format!(
-                "Could not serialize authoritative harness state mutation {}: {error}",
-                state_path.display()
-            ),
-        )
-    })?;
-    write_atomic_file(&state_path, serialized).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::PartialAuthoritativeMutation,
-            format!(
-                "Could not publish authoritative harness state {}: {error}",
-                state_path.display()
-            ),
-        )
-    })
+fn validate_worktree_lease_release_records(
+    run_identity: &RunIdentitySnapshot,
+    release_records: &[WorktreeLeaseReleaseRecord],
+) -> Result<(), JsonFailure> {
+    for record in release_records {
+        if record.execution_run_id != run_identity.execution_run_id.as_str() {
+            return Err(JsonFailure::new(
+                FailureClass::ArtifactIntegrityMismatch,
+                "Authoritative worktree lease release record execution_run_id does not match active run identity.",
+            ));
+        }
+        validate_safe_identifier_token(&record.lease_fingerprint, "lease_fingerprint")?;
+        validate_safe_identifier_token(
+            &record.source_task_closure_record_id,
+            "source_task_closure_record_id",
+        )?;
+        validate_safe_identifier_token(&record.released_by, "released_by")?;
+        if record.source_task == 0 {
+            return Err(JsonFailure::new(
+                FailureClass::ArtifactIntegrityMismatch,
+                "Authoritative worktree lease release record source_task must be greater than zero.",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn load_mutable_harness_state_for_authoritative_write(
@@ -2286,16 +2490,25 @@ impl Drop for WriteAuthorityLock {
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthorityLockAcquireError, MutableStateLoadError, WriteAuthorityLock,
-        load_mutable_harness_state,
+        AuthorityLockAcquireError, MutableStateLoadError, WorktreeLeaseReleaseDecision,
+        WriteAuthorityLock, load_mutable_harness_state,
+        release_active_worktree_leases_with_locked_index,
     };
+    use std::collections::BTreeSet;
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use std::path::Path;
 
+    use serde_json::{Value, json};
+
+    use crate::execution::event_log::sync_fixture_event_log_for_tests;
+    use crate::execution::harness::{
+        ChunkId, ExecutionRunId, RunIdentitySnapshot, WorktreeLeaseBindingSnapshot,
+        WorktreeLeaseReleaseRecord,
+    };
     use crate::execution::state::ExecutionRuntime;
-    use crate::paths::harness_branch_root;
+    use crate::paths::{harness_branch_root, harness_state_path};
 
     fn test_runtime(state_dir: &Path) -> ExecutionRuntime {
         ExecutionRuntime {
@@ -2361,5 +2574,138 @@ mod tests {
             message.contains("must not be a symlink"),
             "symlink authoritative state failure should explain trust-boundary rejection"
         );
+    }
+
+    #[test]
+    fn locked_lease_release_preserves_unrelated_active_lease_from_current_state() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
+        let runtime = test_runtime(tempdir.path());
+        let state_path =
+            harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
+        fs::create_dir_all(
+            state_path
+                .parent()
+                .expect("harness state path should have a parent directory"),
+        )
+        .expect("harness state parent should be creatable");
+        let run_identity = RunIdentitySnapshot {
+            execution_run_id: ExecutionRunId::new("run-lease-release-lock"),
+            source_plan_path: String::from("docs/featureforge/plans/plan.md"),
+            source_plan_revision: 1,
+        };
+        let retained_fingerprint =
+            String::from("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let released_fingerprint =
+            String::from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let released_binding = test_worktree_lease_binding(
+            run_identity.execution_run_id.as_str(),
+            &released_fingerprint,
+        );
+        let retained_binding = test_worktree_lease_binding(
+            run_identity.execution_run_id.as_str(),
+            &retained_fingerprint,
+        );
+        let state_payload = json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 1,
+            "source_plan_path": "docs/featureforge/plans/plan.md",
+            "run_identity": run_identity,
+            "chunk_id": ChunkId::new("chunk-lease-release-lock"),
+            "active_worktree_lease_fingerprints": [
+                released_fingerprint,
+                retained_fingerprint,
+            ],
+            "active_worktree_lease_bindings": [
+                released_binding,
+                retained_binding,
+            ],
+        });
+        sync_fixture_event_log_for_tests(&state_path, &state_payload)
+            .expect("lease state fixture event log should be writable");
+
+        let released_by = release_active_worktree_leases_with_locked_index(
+            &runtime,
+            |run_identity, active_fingerprints, active_bindings| {
+                assert!(
+                    active_fingerprints.contains(&retained_fingerprint),
+                    "release computation should see the locked current active fingerprint index"
+                );
+                assert!(
+                    active_bindings
+                        .iter()
+                        .any(|binding| binding.lease_fingerprint == retained_fingerprint),
+                    "release computation should see the locked current active binding index"
+                );
+                Ok(WorktreeLeaseReleaseDecision {
+                    released_by: vec![(1, String::from("task-closure-1"))],
+                    lease_fingerprints: BTreeSet::from([released_fingerprint.clone()]),
+                    release_records: vec![WorktreeLeaseReleaseRecord {
+                        execution_run_id: run_identity.execution_run_id.as_str().to_owned(),
+                        lease_fingerprint: released_fingerprint.clone(),
+                        source_task: 1,
+                        source_task_closure_record_id: String::from("task-closure-1"),
+                        released_by: String::from("repair_review_state"),
+                    }],
+                })
+            },
+        )
+        .expect("locked lease release should succeed");
+        assert_eq!(released_by, vec![(1, String::from("task-closure-1"))]);
+
+        let state: Value = serde_json::from_str(
+            &fs::read_to_string(&state_path).expect("mutated lease state should be readable"),
+        )
+        .expect("mutated lease state should stay valid JSON");
+        let active_fingerprints = state["active_worktree_lease_fingerprints"]
+            .as_array()
+            .expect("active fingerprints should remain an array");
+        assert!(
+            active_fingerprints
+                .iter()
+                .all(|fingerprint| { fingerprint.as_str() != Some(released_fingerprint.as_str()) }),
+            "released fingerprint should be removed from active index: state={state}"
+        );
+        assert!(
+            active_fingerprints
+                .iter()
+                .any(|fingerprint| fingerprint.as_str() == Some(retained_fingerprint.as_str())),
+            "unrelated active fingerprint from the locked state must be retained: state={state}"
+        );
+        let release_records = state["released_worktree_lease_records"]
+            .as_array()
+            .expect("release records should be persisted");
+        assert!(
+            release_records.iter().any(|record| {
+                record["lease_fingerprint"].as_str() == Some(released_fingerprint.as_str())
+            }),
+            "released lease should have an audit record: state={state}"
+        );
+        assert!(
+            release_records.iter().all(|record| {
+                record["lease_fingerprint"].as_str() != Some(retained_fingerprint.as_str())
+            }),
+            "retained active lease must not receive a release audit record: state={state}"
+        );
+    }
+
+    fn test_worktree_lease_binding(
+        execution_run_id: &str,
+        lease_fingerprint: &str,
+    ) -> WorktreeLeaseBindingSnapshot {
+        WorktreeLeaseBindingSnapshot {
+            execution_run_id: execution_run_id.to_owned(),
+            lease_fingerprint: lease_fingerprint.to_owned(),
+            lease_artifact_path: format!("worktree-lease-{lease_fingerprint}.json"),
+            execution_context_key: Some(String::from("context-key")),
+            approved_task_packet_fingerprint: None,
+            approved_unit_contract_fingerprint: None,
+            reconcile_result_proof_fingerprint: None,
+            reviewed_checkpoint_commit_sha: None,
+            reconcile_result_commit_sha: None,
+            reconcile_mode: None,
+            review_receipt_fingerprint: None,
+            review_receipt_artifact_path: None,
+        }
     }
 }

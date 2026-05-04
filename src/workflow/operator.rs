@@ -91,6 +91,7 @@ enum WorkflowOperatorStateKindSchema {
     WaitingExternalInput,
     Terminal,
     BlockedRuntimeBug,
+    RuntimeReconcileRequired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

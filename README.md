@@ -78,9 +78,9 @@ The generated `using-featureforge` skill routes through `featureforge workflow o
 Execution starts from an engineering-approved plan and the exact approved plan path.
 Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level argv vector for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`. Late-stage public JSON reports `intent=advance_late_stage` plus a semantic `operation`; do not infer or invoke lower-level recording primitives from output fields.
 
-When workflow/operator reports stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
+When workflow/operator reports stale or missing closure context, do not invent a repair command. If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan <approved-plan-path>` only when the non-diagnostic route owns that repair lane.
 
-After `repair-review-state`, treat that command's own `recommended_public_command_argv` as the immediate reroute when present and complete that follow-up before running any extra command. If argv is absent, satisfy the typed `required_inputs` or prerequisite named by `next_action`, then rerun the command that owns the route. `recommended_command` is display-only compatibility text; do not parse it for invocation. Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
+After `repair-review-state`, treat that command's own `recommended_public_command_argv` as the immediate reroute when present and complete that follow-up before running any extra command. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy the typed `required_inputs` or prerequisite named by `next_action`, then rerun the command that owns the route. `recommended_command` is display-only compatibility text; do not parse it for invocation. Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
 Do not manually edit `**Execution Note:**` lines to recover runtime state; execution-note markdown is projection-only.
 Do not repair runtime routing by editing tracked plan, evidence, review, readiness, QA, or strategy projection files. They are export artifacts; the event log and reducer-owned state are authoritative.
 
@@ -95,7 +95,7 @@ Task closure is enforced at task boundaries, not only at the end of the full pla
 - compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
-- `repair-review-state` returns one exact next command as `recommended_public_command_argv` when all inputs are already bound; follow that argv directly, otherwise satisfy `required_inputs` and rerun the route owner
+- `repair-review-state` returns one exact next command as `recommended_public_command_argv` when all inputs are already bound; follow that argv directly, stop when argv is absent with `next_action=runtime diagnostic required`, otherwise satisfy `required_inputs` and rerun the route owner
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is authorized without per-dispatch user-consent prompts
 
 Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):

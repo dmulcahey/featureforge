@@ -65,8 +65,8 @@ Explicit usage rule:
 
 - agents SHOULD run `featureforge workflow operator --plan <path>` first for normal routing
 - agents SHOULD run `featureforge plan execution status --plan <path>` only when deeper diagnostics are needed
-- when workflow/operator reports stale or missing closure context, agents SHOULD run `featureforge plan execution repair-review-state --plan <path>` directly
-- after `repair-review-state`, the command’s own `recommended_public_command_argv` is authoritative for the immediate reroute when present; if argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, rerun the route owner, and do not shell-parse or whitespace-split `recommended_command`
+- when workflow/operator reports stale or missing closure context, agents SHOULD NOT invent a repair command; if `recommended_public_command_argv` is present, invoke it exactly, if argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic, otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan <path>` only when the non-diagnostic route owns that repair lane
+- after `repair-review-state`, the command’s own `recommended_public_command_argv` is authoritative for the immediate reroute when present; if argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, rerun the route owner, and do not shell-parse or whitespace-split `recommended_command`
 
 When workflow/operator returns a recording-ready substate, it must surface only the runtime-known ids the current recommended command still needs directly, plus any documented transparency-only identifiers that remain exposed:
 
@@ -220,9 +220,9 @@ The public workflow contract should be read like this:
 
 Supporting query fields that runtime-owned commands rely on:
 
-- `state_kind = actionable_public_command|waiting_external_input|terminal|blocked_runtime_bug` classifies routability
+- `state_kind = actionable_public_command|waiting_external_input|terminal|blocked_runtime_bug|runtime_reconcile_required` classifies routability
 - `next_public_action` carries the command template for the next legal public command when the state is actionable
-- `blockers[]` carries structured blocker scope and action context; non-terminal blocked states should expose one concrete blocker
+- `blockers[]` carries structured blocker scope and action context for actionable blocked states; diagnostic-only `blocked_runtime_bug` / `runtime_reconcile_required` routes intentionally omit blockers, public commands, and required inputs because the correct next step is runtime diagnosis rather than agent mutation
 - `finish_review_gate_pass_branch_closure_id` tells workflow/operator whether the finish-review compatibility checkpoint already passed for the still-current branch closure and therefore whether `finish_completion_gate_ready` is true
 - `blocking_scope` tells workflow-owned consumers whether the current block is task-scoped or finish-scoped
 - `blocking_reason_codes` enumerates the machine-readable reasons for the current block and must stay aligned across operator/status
@@ -248,6 +248,7 @@ Preferred future agent-facing `next_action` families:
 - finish branch
 - hand off
 - pivot / return to planning
+- runtime diagnostic required
 
 ## Testing Summary
 

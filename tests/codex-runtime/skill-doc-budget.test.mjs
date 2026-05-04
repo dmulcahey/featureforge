@@ -126,6 +126,16 @@ test('release validation docs keep prompt budget enforcement mandatory and revie
     /Any change to `skills\/skill-doc-budgets\.json`[\s\S]*requires explicit prompt-budget review/,
     'budget manifest changes should require explicit prompt-budget review',
   );
+  assert.match(
+    testingDoc,
+    /why the content must remain top-level[\s\S]*why\s+it cannot move to a companion reference[\s\S]*whether any existing top-level\s+prose was removed/,
+    'top-level prompt budget increases should require the reviewed headroom rationale',
+  );
+  assert.match(
+    testingDoc,
+    /companion references[\s\S]*discoverable[\s\S]*generated top-level skill docs[\s\S]*packaged skill\s+surface/,
+    'companion references should stay discoverable and packaged when content moves out of top-level prompts',
+  );
 });
 
 test('generated skill budget report covers top-level generated SKILL.md files only', () => {

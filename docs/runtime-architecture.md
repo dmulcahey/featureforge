@@ -80,6 +80,9 @@ When argv is absent, the route must expose typed `required_inputs` or the
 prerequisite named by `next_action`; consumers satisfy those inputs and rerun the
 operator or status command that owns the route. `recommended_command` is
 display-only compatibility text and must not be parsed or split to recover argv.
+When a diagnostic-only route has no argv and no typed inputs,
+`next_action=runtime diagnostic required`; consumers stop on that diagnostic and
+must not invent a repair/reentry command or manually edit runtime artifacts.
 `advance-late-stage` is the public late-stage intent. Its serialized output exposes
 `intent=advance_late_stage`, `stage_path`, and a semantic `operation`; it must not
 publish hidden stage primitive command names as control-plane guidance.

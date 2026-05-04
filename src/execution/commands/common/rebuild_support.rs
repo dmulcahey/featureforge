@@ -98,12 +98,10 @@ pub(in crate::execution::commands) fn refresh_task_closure_authoritative_lineage
 }
 
 pub(in crate::execution::commands) fn materialize_current_task_closure_from_close_inputs(
-    context: &ExecutionContext,
     authoritative_state: &mut AuthoritativeTransitionState,
     materialization: CurrentTaskClosureMaterialization<'_>,
 ) -> Result<(), JsonFailure> {
     record_current_task_closure(
-        context,
         authoritative_state,
         CurrentTaskClosureWrite {
             task: materialization.task,

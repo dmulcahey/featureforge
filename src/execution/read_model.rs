@@ -100,6 +100,7 @@ use crate::execution::semantic_identity::{
 use crate::execution::stale_target_projection::project_stale_unreviewed_closures;
 #[cfg(test)]
 use crate::execution::state::record_review_dispatch_blocked_output_from_gate;
+use crate::execution::state::worktree_lease_public_gate_reason_code;
 #[cfg(test)]
 use crate::execution::status::PublicReviewStateTaskClosure;
 use crate::execution::status::{
@@ -1340,6 +1341,7 @@ pub(crate) fn populate_public_status_contract_fields(
     if !missing_derived_overlays.is_empty() {
         push_status_reason_code_once(status, "derived_review_state_missing");
     }
+    project_worktree_lease_gate_blockers(status, gate_review);
     let task_scope_overlay_restore_required = status.execution_started == "yes"
         && shared_task_scope_overlay_restore_required(
             &missing_derived_overlays,
@@ -2799,6 +2801,41 @@ fn push_status_reason_code_once(status: &mut PlanExecutionStatus, reason_code: &
     }
 }
 
+fn project_worktree_lease_gate_blockers(
+    status: &mut PlanExecutionStatus,
+    gate_review: &GateResult,
+) {
+    if gate_review.allowed {
+        return;
+    }
+    if status.active_task.is_some()
+        || status.active_step.is_some()
+        || status.resume_task.is_some()
+        || status.resume_step.is_some()
+    {
+        return;
+    }
+    if status.current_task_closures.is_empty() && status.current_branch_closure_id.is_none() {
+        return;
+    }
+    for reason_code in gate_review
+        .reason_codes
+        .iter()
+        .map(String::as_str)
+        .filter(|reason_code| worktree_lease_public_gate_reason_code(reason_code))
+    {
+        push_status_reason_code_once(status, reason_code);
+    }
+}
+
+fn worktree_lease_review_state_repair_reason(status: &PlanExecutionStatus) -> Option<&str> {
+    status
+        .reason_codes
+        .iter()
+        .map(String::as_str)
+        .find(|reason_code| worktree_lease_public_gate_reason_code(reason_code))
+}
+
 pub(crate) fn task_scope_review_state_repair_reason(status: &PlanExecutionStatus) -> Option<&str> {
     status
         .reason_codes
@@ -2870,6 +2907,7 @@ pub(crate) fn execution_reentry_requires_review_state_repair(
         }
     }
     execution_reentry_repair_projection_active(status)
+        || worktree_lease_review_state_repair_reason(status).is_some()
         || (status
             .reason_codes
             .iter()

@@ -91,7 +91,7 @@ cargo test --test execution_query -- --nocapture
 Generated top-level skill prompts are budgeted separately from companion
 references. The active cutover baseline was 7,191 generated top-level
 `skills/*/SKILL.md` lines; the compacted enforce-mode target is at most 5,600
-lines, with the current generated total at 4,829 lines.
+lines. The budget test prints the current total and per-skill line counts.
 
 The budget gate must stay in enforce mode for release work:
 
@@ -113,7 +113,10 @@ Release checklists must record prompt-surface failures in two separate lines:
 
 Any change to `skills/skill-doc-budgets.json`, including line limits, enforce
 mode, or the set of budgeted skills, requires explicit prompt-budget review in
-the release notes or review record. Do not treat manifest changes as routine
+the release notes or review record. If a top-level generated skill needs more
+lines, that review note must explain why the content must remain top-level, why
+it cannot move to a companion reference, and whether any existing top-level
+prose was removed to make room. Do not treat manifest changes as routine
 test-fixture updates.
 
 Do not lower prompt budgets by moving mandatory workflow routing law, approval
@@ -122,6 +125,10 @@ rules, reviewer-recursion prohibitions, or `recommended_public_command_argv`
 authority entirely into companion references. Companion references can carry
 examples and rationale; active top-level skills must keep terminal gates and
 stop rules directly visible.
+
+When content moves into companion references, keep those references discoverable
+from the generated top-level skill docs and included in the packaged skill
+surface.
 
 ## Performance Budget
 

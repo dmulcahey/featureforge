@@ -822,7 +822,14 @@ fn internal_only_compatibility_read_surface_invariant_blocks_current_stale_overl
         to_value(&status).expect("invariant-adjusted status should serialize for assertions");
     assert_eq!(status_json["state_kind"], "blocked_runtime_bug");
     assert_eq!(status_json["phase_detail"], "blocked_runtime_bug");
+    assert_eq!(status_json["next_action"], "runtime diagnostic required");
     assert!(status_json["recommended_command"].is_null());
+    assert!(status_json["recommended_public_command_argv"].is_null());
+    assert!(
+        status_json["required_inputs"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+    );
     assert!(status_json["execution_command_context"].is_null());
     assert_eq!(
         status_json["current_task_closures"][0]["closure_record_id"],
@@ -1063,7 +1070,10 @@ fn internal_only_compatibility_read_surface_invariant_blocks_hidden_and_eligibil
     ));
     apply_read_surface_invariants(&mut status);
     assert_eq!(status.state_kind, "blocked_runtime_bug");
+    assert_eq!(status.next_action, "runtime diagnostic required");
     assert!(status.recommended_command.is_none());
+    assert!(status.recommended_public_command_argv.is_none());
+    assert!(status.required_inputs.is_empty());
     assert!(
         status
             .reason_codes
@@ -1098,7 +1108,10 @@ fn internal_only_compatibility_read_surface_invariant_blocks_hidden_and_eligibil
     );
     apply_read_surface_invariants(&mut rejected);
     assert_eq!(rejected.state_kind, "blocked_runtime_bug");
+    assert_eq!(rejected.next_action, "runtime diagnostic required");
     assert!(rejected.recommended_command.is_none());
+    assert!(rejected.recommended_public_command_argv.is_none());
+    assert!(rejected.required_inputs.is_empty());
 }
 
 #[test]
@@ -1221,12 +1234,19 @@ fn internal_only_compatibility_read_surface_invariant_sanitizes_hidden_command_o
     let routing_json =
         to_value(&routing).expect("sanitized routing state should serialize for assertions");
     assert_eq!(routing_json["phase_detail"], "blocked_runtime_bug");
+    assert_eq!(routing_json["next_action"], "runtime diagnostic required");
     assert_eq!(
         routing_json["execution_status"]["state_kind"],
         "blocked_runtime_bug"
     );
+    assert_eq!(
+        routing_json["execution_status"]["next_action"],
+        "runtime diagnostic required"
+    );
     assert!(routing_json["recommended_command"].is_null());
     assert!(routing_json["execution_status"]["recommended_command"].is_null());
+    assert!(routing_json["recommended_public_command_argv"].is_null());
+    assert!(routing_json["execution_status"]["recommended_public_command_argv"].is_null());
     assert!(
         routing_json["blocking_reason_codes"]
             .as_array()
@@ -1270,6 +1290,10 @@ fn internal_only_compatibility_repair_review_state_rebinds_route_after_read_inva
     assert_eq!(
         repair_json["phase_detail"], "blocked_runtime_bug",
         "repair-review-state must use the invariant-adjusted route instead of stale pre-invariant surfaces: {repair_json}"
+    );
+    assert_eq!(
+        repair_json["next_action"], "runtime diagnostic required",
+        "repair-review-state invariant route must expose diagnostic next_action: {repair_json}"
     );
     assert!(
         repair_json["recommended_command"].is_null(),

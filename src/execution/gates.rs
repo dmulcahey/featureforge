@@ -5,8 +5,9 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::contracts::harness::{
-    EvaluationReport, ExecutionContract, ExecutionHandoff, read_evaluation_report,
-    read_evidence_artifact, read_execution_contract, read_execution_handoff,
+    EvaluationReport, ExecutionContract, ExecutionHandoff, parse_contract_task_step_scope,
+    read_evaluation_report, read_evidence_artifact, read_execution_contract,
+    read_execution_handoff,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::context::{
@@ -373,7 +374,7 @@ fn validate_contract_scope_against_approved_plan(
     let mut contract_scope: BTreeSet<(u32, u32)> = BTreeSet::new();
 
     for step in &contract.covered_steps {
-        let Some(step_ref) = parse_task_step_scope(step) else {
+        let Some(step_ref) = parse_contract_task_step_scope(step) else {
             gate.fail(
                 FailureClass::ContractMismatch,
                 "contract_covered_step_malformed",
@@ -396,7 +397,7 @@ fn validate_contract_scope_against_approved_plan(
 
     for criterion in &contract.criteria {
         for step in &criterion.covered_steps {
-            let Some(step_ref) = parse_task_step_scope(step) else {
+            let Some(step_ref) = parse_contract_task_step_scope(step) else {
                 gate.fail(
                     FailureClass::ContractMismatch,
                     "contract_criterion_covered_step_malformed",
@@ -424,7 +425,7 @@ fn validate_contract_scope_against_approved_plan(
 
     for requirement in &contract.evidence_requirements {
         for step in &requirement.covered_steps {
-            let Some(step_ref) = parse_task_step_scope(step) else {
+            let Some(step_ref) = parse_contract_task_step_scope(step) else {
                 gate.fail(
                     FailureClass::ContractMismatch,
                     "contract_evidence_covered_step_malformed",
@@ -1638,22 +1639,6 @@ fn verify_authoritative_public_artifact(
         return None;
     }
     Some(canonical_fingerprint)
-}
-
-fn parse_task_step_scope(value: &str) -> Option<(u32, u32)> {
-    let mut parts = value.split_whitespace();
-    if parts.next()? != "Task" {
-        return None;
-    }
-    let task = parts.next()?.parse::<u32>().ok()?;
-    if parts.next()? != "Step" {
-        return None;
-    }
-    let step = parts.next()?.parse::<u32>().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some((task, step))
 }
 
 fn verify_declared_fingerprint(

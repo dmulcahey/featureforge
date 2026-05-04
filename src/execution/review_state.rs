@@ -21,7 +21,9 @@ use crate::execution::follow_up::{
     execution_step_repair_target_id, normalize_follow_up_alias,
     repair_follow_up_source_decision_hash,
 };
-use crate::execution::next_action::{reopen_public_command, repair_review_state_public_command};
+use crate::execution::next_action::{
+    diagnostic_next_action_for_route, reopen_public_command, repair_review_state_public_command,
+};
 use crate::execution::public_command_types::RecommendedPublicCommandArgv;
 use crate::execution::query::{
     ExecutionRoutingExecutionCommandContext, ExecutionRoutingState, ReviewStateBranchClosure,
@@ -40,6 +42,7 @@ use crate::execution::recording::{
     clear_task_review_dispatch_lineage_for_execution_reentry as clear_task_dispatch_lineage,
     clear_task_review_dispatch_lineage_for_structural_repair as clear_task_dispatch_lineage_for_structural_repair_recording,
     persist_review_state_repair_follow_up,
+    release_worktree_leases_for_current_task_closures_and_persist,
     resolve_current_task_closure_postconditions_for_current_workspace_and_persist,
     restore_review_state_projection_overlays, review_state_repair_follow_up_would_mutate,
 };
@@ -65,7 +68,7 @@ use crate::execution::state::{
     task_closure_baseline_bridge_ready_for_stale_target,
     task_closure_baseline_candidate_can_preempt_stale_target,
     task_closure_baseline_repair_candidate_with_stale_target,
-    task_scope_structural_review_state_reason,
+    task_scope_structural_review_state_reason, worktree_lease_public_gate_reason_code,
 };
 use crate::git::sha256_hex;
 
@@ -104,6 +107,8 @@ pub struct RepairReviewStateOutput {
     pub missing_derived_overlays: Vec<String>,
     pub actions_performed: Vec<String>,
     pub required_follow_up: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_action: Option<String>,
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: RecommendedPublicCommandArgv,
@@ -454,6 +459,7 @@ fn targetless_stale_reconcile_output(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: Some(String::from("execution_reentry")),
+            next_action: None,
             recommended_command: recommended_command.clone(),
             recommended_public_command_argv,
             required_inputs,
@@ -481,6 +487,12 @@ fn targetless_stale_reconcile_output(
         missing_derived_overlays: snapshot.missing_derived_overlays,
         actions_performed,
         required_follow_up: None,
+        next_action: diagnostic_next_action_for_route(
+            crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED,
+            TARGETLESS_STALE_RECONCILE_PHASE_DETAIL,
+            false,
+            false,
+        ),
         recommended_command: None,
         recommended_public_command_argv: None,
         required_inputs: Vec::new(),
@@ -1111,6 +1123,7 @@ fn repair_review_state_external_wait_output(
         missing_derived_overlays: phase_bundle.snapshot.missing_derived_overlays,
         actions_performed,
         required_follow_up: Some(String::from("wait_for_external_review_result")),
+        next_action: None,
         recommended_command: None,
         recommended_public_command_argv: None,
         required_inputs: Vec::new(),
@@ -1176,6 +1189,33 @@ fn clear_resolved_task_cycle_break_for_repair_review_state(
     actions_performed.push(format!(
         "cleared_resolved_task_cycle_break_task_{task_number}_{closure_record_id}"
     ));
+    Ok(true)
+}
+
+fn release_resolved_worktree_leases_for_repair_review_state(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    actions_performed: &mut Vec<String>,
+) -> Result<bool, JsonFailure> {
+    let worktree_lease_blocker = status
+        .reason_codes
+        .iter()
+        .chain(status.blocking_reason_codes.iter())
+        .any(|reason_code| worktree_lease_public_gate_reason_code(reason_code));
+    if !worktree_lease_blocker {
+        return Ok(false);
+    }
+    require_repair_review_state_mutation(status)?;
+    let resolved = release_worktree_leases_for_current_task_closures_and_persist(runtime, context)?;
+    if resolved.is_empty() {
+        return Ok(false);
+    }
+    for (task_number, closure_record_id) in resolved {
+        actions_performed.push(format!(
+            "released_resolved_worktree_lease_task_{task_number}_{closure_record_id}"
+        ));
+    }
     Ok(true)
 }
 
@@ -1268,6 +1308,14 @@ pub fn repair_review_state(
     )? {
         phase_bundle = load_repair_phase_bundle(runtime, &status_args)?;
     }
+    if release_resolved_worktree_leases_for_repair_review_state(
+        runtime,
+        &phase_bundle.read_scope.context,
+        &phase_bundle.status,
+        &mut actions_performed,
+    )? {
+        phase_bundle = load_repair_phase_bundle(runtime, &status_args)?;
+    }
     let mut analysis = analyze_repair_phase_bundle(&phase_bundle, &status_args)?;
     let original_repair_plan = analysis.repair_plan.clone();
     let original_branch_rerecording_unsupported_reason =
@@ -1303,6 +1351,14 @@ pub fn repair_review_state(
         )?;
         phase_bundle = load_repair_phase_bundle(runtime, &status_args)?;
         if clear_resolved_task_cycle_break_for_repair_review_state(
+            runtime,
+            &phase_bundle.read_scope.context,
+            &phase_bundle.status,
+            &mut actions_performed,
+        )? {
+            phase_bundle = load_repair_phase_bundle(runtime, &status_args)?;
+        }
+        if release_resolved_worktree_leases_for_repair_review_state(
             runtime,
             &phase_bundle.read_scope.context,
             &phase_bundle.status,
@@ -1560,6 +1616,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: None,
+            next_action: None,
             recommended_command: close_command.clone(),
             recommended_public_command_argv: close_command_argv,
             required_inputs,
@@ -1607,6 +1664,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: Some(String::from("advance_late_stage")),
+            next_action: None,
             recommended_command: recommended_command.clone(),
             recommended_public_command_argv,
             required_inputs,
@@ -1645,6 +1703,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: None,
+            next_action: None,
             recommended_command: recommended_command.clone(),
             recommended_public_command_argv,
             required_inputs,
@@ -1676,6 +1735,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: None,
+            next_action: None,
             recommended_command: close_command.clone(),
             recommended_public_command_argv: close_command_argv,
             required_inputs,
@@ -1720,6 +1780,7 @@ pub fn repair_review_state(
                 missing_derived_overlays: snapshot.missing_derived_overlays,
                 actions_performed,
                 required_follow_up: Some(String::from("request_external_review")),
+                next_action: None,
                 recommended_command: None,
                 recommended_public_command_argv: None,
                 required_inputs: Vec::new(),
@@ -1758,6 +1819,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: Some(String::from("advance_late_stage")),
+            next_action: None,
             recommended_command: recommended_command.clone(),
             recommended_public_command_argv,
             required_inputs,
@@ -1817,6 +1879,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: Some(String::from("execution_reentry")),
+            next_action: None,
             recommended_command: reopen_command.clone(),
             recommended_public_command_argv: reopen_command_argv,
             required_inputs,
@@ -1871,6 +1934,7 @@ pub fn repair_review_state(
                 missing_derived_overlays: snapshot.missing_derived_overlays,
                 actions_performed,
                 required_follow_up: None,
+                next_action: None,
                 recommended_command: close_command.clone(),
                 recommended_public_command_argv: close_command_argv,
                 required_inputs,
@@ -1924,6 +1988,7 @@ pub fn repair_review_state(
                 missing_derived_overlays: snapshot.missing_derived_overlays,
                 actions_performed,
                 required_follow_up: Some(String::from("execution_reentry")),
+                next_action: None,
                 recommended_command: reopen_command.clone(),
                 recommended_public_command_argv: reopen_command_argv,
                 required_inputs,
@@ -1952,6 +2017,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: Some(required_follow_up.to_owned()),
+            next_action: None,
             recommended_command,
             recommended_public_command_argv,
             required_inputs,
@@ -1989,6 +2055,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: None,
+            next_action: None,
             recommended_command: recommended_command.clone(),
             recommended_public_command_argv,
             required_inputs,
@@ -2014,6 +2081,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: Some(required_follow_up.clone()),
+            next_action: None,
             recommended_command: route_action.recommended_command(),
             recommended_public_command_argv: route_action.recommended_command_argv(),
             required_inputs: route_action.required_inputs(),
@@ -2042,6 +2110,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: None,
+            next_action: None,
             recommended_command: route_action.recommended_command(),
             recommended_public_command_argv: route_action.recommended_command_argv(),
             required_inputs: route_action.required_inputs(),
@@ -2096,6 +2165,7 @@ pub fn repair_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
             required_follow_up: Some(String::from("execution_reentry")),
+            next_action: None,
             recommended_command: reopen_command.clone(),
             recommended_public_command_argv: reopen_command_argv,
             required_inputs,
@@ -2129,6 +2199,12 @@ pub fn repair_review_state(
         || route_decision.state_kind == crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG
         || route_decision.phase_detail
             == crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED;
+    let diagnostic_next_action = diagnostic_next_action_for_route(
+        &route_decision.state_kind,
+        &route_decision.phase_detail,
+        route_action.recommended_command_argv().is_some(),
+        !route_action.required_inputs().is_empty(),
+    );
     let blocking_reason_codes = if diagnostic_route {
         route_action.blocking_reason_codes.clone()
     } else {
@@ -2147,6 +2223,7 @@ pub fn repair_review_state(
         missing_derived_overlays: snapshot.missing_derived_overlays,
         actions_performed,
         required_follow_up: None,
+        next_action: diagnostic_next_action,
         recommended_command: route_action.recommended_command(),
         recommended_public_command_argv: route_action.recommended_command_argv(),
         required_inputs: route_action.required_inputs(),

@@ -644,7 +644,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_malformed",
-            "The authoritative unit-review receipt is malformed.",
+            "The runtime-owned worktree lease review binding is malformed.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -658,7 +658,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_stage_mismatch",
-            "The authoritative unit-review receipt has the wrong review stage.",
+            "The runtime-owned worktree lease review binding has the wrong review stage.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -672,7 +672,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_not_dedicated",
-            "The authoritative unit-review receipt is not dedicated-independent.",
+            "The runtime-owned worktree lease review binding is not dedicated-independent.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -686,7 +686,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_plan_mismatch",
-            "The authoritative unit-review receipt does not match the current plan.",
+            "The runtime-owned worktree lease review binding does not match the current plan.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -700,7 +700,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_plan_revision_mismatch",
-            "The authoritative unit-review receipt does not match the current plan revision.",
+            "The runtime-owned worktree lease review binding does not match the current plan revision.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -714,7 +714,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_run_mismatch",
-            "The authoritative unit-review receipt does not match the current execution run.",
+            "The runtime-owned worktree lease review binding does not match the current execution run.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -728,7 +728,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_unit_mismatch",
-            "The authoritative unit-review receipt does not match the reviewed execution unit.",
+            "The runtime-owned worktree lease review binding does not match the reviewed execution unit.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -742,7 +742,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_lease_fingerprint_mismatch",
-            "The authoritative unit-review receipt does not match the reviewed lease fingerprint.",
+            "The runtime-owned worktree lease review binding does not match the reviewed lease fingerprint.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -756,7 +756,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_context_key_mismatch",
-            "The authoritative unit-review receipt does not match the current execution context.",
+            "The runtime-owned worktree lease review binding does not match the current execution context.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -770,7 +770,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_task_packet_mismatch",
-            "The authoritative unit-review receipt does not match the approved task packet.",
+            "The runtime-owned worktree lease review binding does not match the approved task packet.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -784,7 +784,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_unit_contract_mismatch",
-            "The authoritative unit-review receipt does not bind the approved unit contract.",
+            "The runtime-owned worktree lease review binding does not bind the approved unit contract.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -795,7 +795,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_unit_contract_mismatch",
-            "The authoritative unit-review receipt must bind a distinct approved unit contract fingerprint.",
+            "The runtime-owned worktree lease review binding must bind a distinct approved unit contract fingerprint.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -809,7 +809,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_reconcile_mode_mismatch",
-            "The authoritative unit-review receipt does not prove an identity-preserving reconcile.",
+            "The runtime-owned worktree lease review binding does not prove an identity-preserving reconcile.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -823,7 +823,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_identity_preserving_proof_mismatch",
-            "The authoritative unit-review receipt does not bind the exact reconciled commit.",
+            "The runtime-owned worktree lease review binding does not bind the exact reconciled commit.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -837,7 +837,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_identity_preserving_proof_unverifiable",
-            "The authoritative unit-review receipt exact reconcile proof could not be verified against repository history.",
+            "The runtime-owned worktree lease review binding exact reconcile proof could not be verified against repository history.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -851,7 +851,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_identity_preserving_proof_mismatch",
-            "The authoritative unit-review receipt does not bind the exact reconciled commit object.",
+            "The runtime-owned worktree lease review binding does not bind the exact reconciled commit object.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -865,7 +865,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_worktree_mismatch",
-            "The authoritative unit-review receipt does not match the reviewed worktree.",
+            "The runtime-owned worktree lease review binding does not match the reviewed worktree.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -874,7 +874,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_not_pass",
-            "The authoritative unit-review receipt is not marked pass.",
+            "The runtime-owned worktree lease review binding is not marked pass.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -888,7 +888,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_generator_mismatch",
-            "The authoritative unit-review receipt does not come from the unit-review generator.",
+            "The runtime-owned worktree lease review binding does not come from the required review generator.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -904,7 +904,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_binding_path_invalid",
-            "The authoritative unit-review receipt path does not match the reviewed execution unit provenance.",
+            "The runtime-owned worktree lease review binding path does not match the reviewed execution unit provenance.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -917,7 +917,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_head_missing",
-            "The authoritative unit-review receipt is missing its reviewed checkpoint.",
+            "The runtime-owned worktree lease review binding is missing its reviewed checkpoint.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -927,10 +927,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::MalformedExecutionState,
             "worktree_lease_review_receipt_fingerprint_unverifiable",
-            format!(
-                "Authoritative unit-review receipt fingerprint is unverifiable in {}.",
-                receipt_path.display()
-            ),
+            "Runtime-owned worktree lease review binding fingerprint is unverifiable.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -939,10 +936,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::ArtifactIntegrityMismatch,
             "worktree_lease_review_receipt_fingerprint_mismatch",
-            format!(
-                "Authoritative unit-review receipt fingerprint does not match canonical content in {}.",
-                receipt_path.display()
-            ),
+            "Runtime-owned worktree lease review binding fingerprint does not match canonical content.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;
@@ -956,10 +950,7 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         gate.fail(
             FailureClass::ArtifactIntegrityMismatch,
             "worktree_lease_review_receipt_fingerprint_mismatch",
-            format!(
-                "Authoritative unit-review receipt fingerprint header does not match canonical content in {}.",
-                receipt_path.display()
-            ),
+            "Runtime-owned worktree lease review binding fingerprint header does not match canonical content.",
             PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
         );
         return None;

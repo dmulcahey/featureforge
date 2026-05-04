@@ -90,6 +90,8 @@ struct SyntheticFixtureContext<'a> {
     branch_name: &'a str,
 }
 
+type LivenessRecommendedPublicCommandArgv = Option<Vec<String>>;
+
 #[derive(Debug, Clone, Deserialize)]
 struct LivenessPlanExecutionStatus {
     phase_detail: String,
@@ -107,11 +109,13 @@ struct LivenessPlanExecutionStatus {
     next_public_action: Option<LivenessNextPublicAction>,
     #[serde(default)]
     blockers: Vec<LivenessBlocker>,
+    #[serde(default)]
+    public_repair_targets: Vec<Value>,
     next_action: String,
     #[serde(default)]
     recommended_command: Option<String>,
     #[serde(default)]
-    recommended_public_command_argv: Option<Vec<String>>,
+    recommended_public_command_argv: LivenessRecommendedPublicCommandArgv,
     #[serde(default)]
     required_inputs: Vec<Value>,
     #[serde(default)]
@@ -1469,6 +1473,37 @@ fn is_diagnostic_status(status: &LivenessPlanExecutionStatus) -> bool {
             && !status.blocking_reason_codes.is_empty())
 }
 
+fn assert_diagnostic_status_shape(label: &str, status: &LivenessPlanExecutionStatus) {
+    assert!(
+        status.recommended_public_command_argv.is_none(),
+        "{label} diagnostic status must not expose executable public argv: {status:?}"
+    );
+    assert!(
+        status.required_inputs.is_empty(),
+        "{label} diagnostic status must not expose typed local inputs: {status:?}"
+    );
+    assert!(
+        status.next_public_action.is_none(),
+        "{label} diagnostic status must not expose next_public_action: {status:?}"
+    );
+    assert!(
+        status.public_repair_targets.is_empty(),
+        "{label} diagnostic status must not expose public repair targets: {status:?}"
+    );
+    assert!(
+        status.blockers.is_empty(),
+        "{label} diagnostic status must not expose route blockers: {status:?}"
+    );
+    assert_ne!(
+        status.next_action, "repair review state / reenter execution",
+        "{label} diagnostic status must not publish repair/reentry next_action wording: {status:?}"
+    );
+    assert_eq!(
+        status.next_action, "runtime diagnostic required",
+        "{label} diagnostic status should publish diagnostic next_action: {status:?}"
+    );
+}
+
 fn is_legal_real_work_command(command: &str) -> bool {
     public_command_kind(command)
         .is_some_and(|kind| matches!(kind.as_str(), "begin" | "complete" | "reopen" | "transfer"))
@@ -1481,9 +1516,9 @@ fn is_replayable_real_work_command(
 ) -> bool {
     match public_command_kind(command).as_deref() {
         Some("begin" | "transfer") => true,
-        // Completing a step is a human-work boundary. Replaying the templated
-        // command proves the CLI accepts placeholders, not that substantive
-        // task work happened, so bounded liveness stops there.
+        // Completing a step is a human-work boundary. Bounded liveness stops
+        // there unless the runtime emits a fully-bound executable argv for
+        // substantive task work.
         Some("complete") => false,
         Some("reopen") => reopen_target(command)
             .is_some_and(|(task, _step)| task <= u32::from(synthetic.completed_tasks)),
@@ -1748,6 +1783,7 @@ fn minimal_liveness_status(
         state_kind: String::from("blocked"),
         next_public_action: None,
         blockers: Vec::new(),
+        public_repair_targets: Vec::new(),
         next_action: String::from("repair review state"),
         recommended_command,
         recommended_public_command_argv,
@@ -2543,6 +2579,7 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 }
 
                 if targetless_stale_reconcile_status(&status) {
+                    assert_diagnostic_status_shape(&label, &status);
                     assert!(
                         public_command.is_none(),
                         "targetless stale reconcile must not synthesize a repair or reopen loop: {status:?}"
@@ -2551,6 +2588,7 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 }
 
                 if blocked_runtime_bug_diagnostic_status(&status) {
+                    assert_diagnostic_status_shape(&label, &status);
                     let public_output = format!("{status:?}");
                     assert!(
                         public_command.is_none(),
@@ -2564,6 +2602,7 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 }
 
                 if current_stale_overlap_runtime_diagnostic(&status) {
+                    assert_diagnostic_status_shape(&label, &status);
                     let public_output = format!("{status:?}");
                     assert!(
                         public_command.is_none(),
@@ -2574,6 +2613,11 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                             && !contains_hidden_command_token(&public_output),
                         "current/stale overlap diagnostic must not expose reopen or hidden helper lanes: {status:?}"
                     );
+                    continue;
+                }
+
+                if is_diagnostic_status(&status) {
+                    assert_diagnostic_status_shape(&label, &status);
                     continue;
                 }
 

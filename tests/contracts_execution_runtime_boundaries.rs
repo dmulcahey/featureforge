@@ -17,8 +17,9 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use featureforge::execution::query::{
-    ExecutionRoutingState, query_workflow_routing_state_for_runtime,
+use featureforge::execution::{
+    phase,
+    query::{ExecutionRoutingState, query_workflow_routing_state_for_runtime},
 };
 use featureforge::paths::harness_state_path;
 use runtime_support::execution_runtime;
@@ -1890,6 +1891,7 @@ fn status_and_operator_share_state_taxonomy_and_semantic_identity_fields() {
                 | "waiting_external_input"
                 | "terminal"
                 | "blocked_runtime_bug"
+                | phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
         ),
         "status state_kind should use the public taxonomy: {state_kind}"
     );

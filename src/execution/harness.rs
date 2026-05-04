@@ -277,6 +277,15 @@ pub struct WorktreeLeaseBindingSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorktreeLeaseReleaseRecord {
+    pub execution_run_id: String,
+    pub lease_fingerprint: String,
+    pub source_task: u32,
+    pub source_task_closure_record_id: String,
+    pub released_by: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvaluatorSetSnapshot {
     pub required_evaluator_kinds: Vec<EvaluatorKind>,
     pub completed_evaluator_kinds: Vec<EvaluatorKind>,
@@ -342,6 +351,8 @@ pub struct AuthoritativeHarnessState {
     pub active_worktree_lease_fingerprints: Option<Vec<String>>,
     #[serde(default)]
     pub active_worktree_lease_bindings: Option<Vec<WorktreeLeaseBindingSnapshot>>,
+    #[serde(default)]
+    pub released_worktree_lease_records: Option<Vec<WorktreeLeaseReleaseRecord>>,
     pub policy_snapshot: Option<FrozenPolicySnapshot>,
     pub artifact_pointers: AuthoritativeArtifactPointers,
     pub evaluators: EvaluatorSetSnapshot,
