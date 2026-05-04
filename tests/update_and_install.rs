@@ -1,17 +1,19 @@
 #[path = "support/bin.rs"]
 mod bin_support;
-#[path = "support/featureforge.rs"]
-mod featureforge_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
-use featureforge_support::{run_rust_featureforge, run_rust_featureforge_with_env_control};
 use process_support::run;
+use public_featureforge_cli::{
+    run_featureforge_real_cli, run_featureforge_with_env_control_real_cli,
+};
 
 fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
@@ -48,7 +50,7 @@ fn canonical_update_check_reports_upgrade_and_writes_canonical_state() {
     make_runtime_root(install_dir.path(), "1.0.0");
     write_file(&remote_dir.path().join("VERSION"), "1.1.0\n");
 
-    let output = run_rust_featureforge(
+    let output = run_featureforge_real_cli(
         None,
         Some(state_dir.path()),
         None,
@@ -98,7 +100,7 @@ fn canonical_update_check_uses_userprofile_install_when_home_is_missing() {
     make_runtime_root(&install_dir, "1.0.0");
     write_file(&remote_dir.path().join("VERSION"), "1.2.0\n");
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(repo_dir.path()),
         Some(state_dir.path()),
         None,
@@ -131,7 +133,7 @@ fn canonical_update_check_uses_userprofile_install_when_home_is_missing() {
 
 #[test]
 fn install_command_surface_is_removed() {
-    let output = run_rust_featureforge(
+    let output = run_featureforge_real_cli(
         None,
         None,
         None,
@@ -163,7 +165,7 @@ fn canonical_update_check_ignores_version_only_repo_roots() {
     write_file(&repo_dir.path().join("VERSION"), "1.0.0\n");
     write_file(&remote_dir.path().join("VERSION"), "1.1.0\n");
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(repo_dir.path()),
         Some(state_dir.path()),
         None,
@@ -205,7 +207,7 @@ fn canonical_update_check_accepts_a_valid_repo_local_runtime_root() {
     make_runtime_root(repo_dir.path(), "1.0.0");
     write_file(&remote_dir.path().join("VERSION"), "1.3.0\n");
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(repo_dir.path()),
         Some(state_dir.path()),
         Some(home_dir.path()),
@@ -280,7 +282,7 @@ fn canonical_update_check_rejects_invalid_featureforge_dir_overrides() {
     write_file(&invalid_override.path().join("VERSION"), "1.0.0\n");
     write_file(&remote_dir.path().join("VERSION"), "1.6.0\n");
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(repo_dir.path()),
         Some(state_dir.path()),
         None,

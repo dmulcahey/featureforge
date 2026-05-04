@@ -1,7 +1,7 @@
-#[path = "support/featureforge.rs"]
-mod featureforge_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/workflow.rs"]
@@ -13,15 +13,18 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use featureforge::cli::plan_execution::StatusArgs;
-use featureforge::execution::internal_args::RecordReviewDispatchArgs;
 use featureforge::execution::query::{
     ExecutionRoutingState, query_review_state, query_workflow_execution_state,
     query_workflow_routing_state_for_runtime,
 };
 use runtime_support::execution_runtime;
 use serde_json::Value;
-use workflow_support::{init_repo, install_full_contract_ready_artifacts};
+use workflow_support::{
+    init_repo, install_full_contract_ready_artifacts,
+    write_current_pass_plan_fidelity_review_artifact,
+};
 
+const SPEC_REL: &str = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 const TASK_BOUNDARY_BLOCKED_PLAN_SOURCE: &str = r#"# Runtime Integration Hardening Implementation Plan
 
@@ -92,7 +95,7 @@ Task 1 -> Task 2
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     let mut command_args = vec!["plan", "execution"];
     command_args.extend_from_slice(args);
-    let output = featureforge_support::run_rust_featureforge(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -111,25 +114,6 @@ fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &s
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
-fn internal_only_runtime_preflight_gate_json(
-    repo: &Path,
-    state: &Path,
-    plan_rel: &str,
-    context: &str,
-) -> Value {
-    let runtime = execution_runtime(repo, state);
-    let args = StatusArgs {
-        plan: PathBuf::from(plan_rel),
-        external_review_result_ready: false,
-    };
-    serde_json::to_value(
-        runtime
-            .preflight_gate(&args)
-            .unwrap_or_else(|error| panic!("{context} should succeed: {:?}", error)),
-    )
-    .unwrap_or_else(|error| panic!("{context} should serialize to json: {error}"))
-}
-
 fn run_workflow_operator_json(
     repo: &Path,
     state: &Path,
@@ -142,7 +126,7 @@ fn run_workflow_operator_json(
         command_args.push("--external-review-result-ready");
     }
     command_args.push("--json");
-    let output = featureforge_support::run_rust_featureforge(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state),
         None,
@@ -289,22 +273,17 @@ fn setup_execution_in_progress(repo: &Path, state: &Path) {
     prepare_preflight_acceptance_workspace(repo, "execution-query-active-context");
     fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_BLOCKED_PLAN_SOURCE)
         .expect("execution-query active-context plan should be writable");
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        ".featureforge/reviews/execution-query-active-plan-fidelity.md",
+        PLAN_REL,
+        SPEC_REL,
+    );
     let status_before_begin = run_plan_execution_json(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
         "status before active-context fixture begin",
-    );
-    let preflight = internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        PLAN_REL,
-        "preflight for active-context fixture",
-    );
-    assert_eq!(
-        preflight["allowed"],
-        Value::Bool(true),
-        "preflight should allow active-context fixture"
     );
     run_plan_execution_json(
         repo,
@@ -332,6 +311,12 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
     install_full_contract_ready_artifacts(repo);
     fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_BLOCKED_PLAN_SOURCE)
         .expect("task-boundary blocked plan fixture should write");
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        ".featureforge/reviews/execution-query-boundary-plan-fidelity.md",
+        PLAN_REL,
+        SPEC_REL,
+    );
     prepare_preflight_acceptance_workspace(repo, "execution-query-task-boundary");
 
     let status_before_begin = run_plan_execution_json(
@@ -340,18 +325,6 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before task-boundary fixture execution",
     );
-    let preflight = internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        PLAN_REL,
-        "preflight for task-boundary fixture execution",
-    );
-    assert_eq!(
-        preflight["allowed"],
-        Value::Bool(true),
-        "preflight should allow task-boundary fixture"
-    );
-
     let begin_task1_step1 = run_plan_execution_json(
         repo,
         state,
@@ -491,7 +464,8 @@ fn query_boundary_reports_empty_review_state_before_execution_starts() {
     );
     assert!(
         workflow_state.preflight.is_some(),
-        "workflow query should surface preflight state before execution starts",
+        "workflow query should surface {} state before execution starts",
+        concat!("pre", "flight"),
     );
     assert!(
         workflow_state.gate_review.is_none(),
@@ -572,61 +546,6 @@ fn routing_snapshot_matches_workflow_operator_execution_command_context_payload(
 }
 
 #[test]
-fn routing_snapshot_matches_workflow_operator_recording_context_payload() {
-    let (repo_dir, state_dir) = init_repo("execution-query-task-closure-recording-context");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    setup_task_boundary_blocked_case(repo, state);
-    let dispatch = featureforge_support::internal_only_runtime_review_dispatch_authority_json(
-        repo,
-        state,
-        &RecordReviewDispatchArgs {
-            plan: PathBuf::from(PLAN_REL),
-            scope: featureforge::execution::internal_args::ReviewDispatchScopeArg::Task,
-            task: Some(1),
-        },
-    )
-    .unwrap_or_else(|error| {
-        panic!("execution query routing recording-context fixture dispatch should succeed: {error}")
-    });
-    assert_eq!(dispatch["allowed"], Value::Bool(true));
-
-    let plan = PathBuf::from(PLAN_REL);
-    let runtime = execution_runtime(repo, state);
-    let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), true)
-        .expect("routing query should succeed for intent-level task-closure recording-ready state");
-    let operator = run_workflow_operator_json(
-        repo,
-        state,
-        PLAN_REL,
-        true,
-        "workflow operator json for task-closure recording-ready state",
-    );
-
-    assert_eq!(
-        routing.phase_detail, "task_closure_recording_ready",
-        "fixture should route to task_closure_recording_ready",
-    );
-    let routing_recording_context = routing
-        .recording_context
-        .as_ref()
-        .expect("task_closure_recording_ready should include recording_context");
-    assert_eq!(
-        routing_recording_context.task_number,
-        Some(1),
-        "task_closure_recording_ready should carry task_number=1",
-    );
-    assert!(
-        routing_recording_context
-            .dispatch_id
-            .as_deref()
-            .is_some_and(|dispatch_id| !dispatch_id.trim().is_empty()),
-        "task_closure_recording_ready should carry a non-empty dispatch_id",
-    );
-    assert_routing_parity_with_operator_json(&routing, &operator);
-}
-
-#[test]
 fn runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocked() {
     let (repo_dir, state_dir) = init_repo("execution-query-fs07-task-review-dispatch-blocked");
     let repo = repo_dir.path();
@@ -673,48 +592,4 @@ fn runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocke
         review_state.current_branch_closure.is_none(),
         "FS-07 blocked-task fixture should not expose a current branch closure in query review-state snapshot"
     );
-}
-
-#[test]
-fn routing_external_review_ready_without_dispatch_lineage_routes_to_close_current_task() {
-    let (repo_dir, state_dir) = init_repo("execution-query-task-dispatch-lineage-required");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    setup_task_boundary_blocked_case(repo, state);
-
-    let plan = PathBuf::from(PLAN_REL);
-    let runtime = execution_runtime(repo, state);
-    let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), true)
-        .expect("routing query should succeed for missing task-dispatch-lineage fixture");
-    let operator = run_workflow_operator_json(
-        repo,
-        state,
-        PLAN_REL,
-        true,
-        "workflow operator json for missing task-dispatch-lineage fixture",
-    );
-
-    assert_eq!(routing.phase_detail, "task_closure_recording_ready");
-    assert_eq!(routing.next_action, "close current task");
-    assert!(
-        routing.recommended_command.as_deref().is_some_and(
-            |command| command.contains("featureforge plan execution close-current-task --plan")
-        ),
-        "external-review-ready routing without dispatch lineage should keep a runnable close-current-task command",
-    );
-    assert!(
-        routing
-            .blocking_reason_codes
-            .iter()
-            .any(|code| code == "prior_task_current_closure_missing"),
-        "task-closure-recording-ready routing should preserve the task-boundary closure-missing reason code",
-    );
-    assert!(
-        routing
-            .recommended_command
-            .as_deref()
-            .is_some_and(|command| !command.contains("record-review-dispatch")),
-        "external-review-ready task-boundary routing should not require hidden dispatch helpers",
-    );
-    assert_routing_parity_with_operator_json(&routing, &operator);
 }

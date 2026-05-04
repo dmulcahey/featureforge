@@ -1,7 +1,5 @@
 #[path = "support/failure_json.rs"]
 mod failure_json_support;
-#[path = "support/featureforge.rs"]
-mod featureforge_support;
 #[path = "support/files.rs"]
 mod files_support;
 #[path = "support/git.rs"]
@@ -10,6 +8,8 @@ mod git_support;
 mod json_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 
 use assert_cmd::cargo::CommandCargoExt;
 use featureforge::git::derive_repo_slug;
@@ -26,7 +26,7 @@ use json_support::parse_json;
 use process_support::{run, run_checked};
 
 fn repo_slug(repo: &Path) -> String {
-    let output = featureforge_support::run_rust_featureforge(
+    let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         None,
         None,
@@ -124,8 +124,13 @@ fn run_shell_repo_safety(repo: &Path, state_dir: &Path, args: &[&str], context: 
     run(command, context)
 }
 
-fn run_rust_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    featureforge_support::run_rust_featureforge(
+fn run_featureforge_real_cli(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    context: &str,
+) -> Output {
+    public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
         None,
@@ -170,7 +175,7 @@ fn canonical_repo_safety_check_matches_helper_for_protected_branch_block() {
     );
     let helper_json = parse_json(&helper_output, "helper protected branch block");
 
-    let rust_output = run_rust_featureforge(
+    let rust_output = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -232,7 +237,7 @@ fn canonical_repo_safety_matches_helper_for_instruction_protected_branch_rule() 
     );
     let helper_json = parse_json(&helper_output, "helper instruction protected branch");
 
-    let rust_output = run_rust_featureforge(
+    let rust_output = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -266,7 +271,7 @@ fn canonical_repo_safety_handles_read_intent_feature_branches_and_instruction_ov
     let remote_url = "https://example.com/acme/repo-safety.git";
 
     let (read_repo_dir, read_state_dir) = init_repo("repo-safety-read", "main", remote_url);
-    let read_output = run_rust_featureforge(
+    let read_output = run_featureforge_real_cli(
         read_repo_dir.path(),
         read_state_dir.path(),
         &[
@@ -300,7 +305,7 @@ fn canonical_repo_safety_handles_read_intent_feature_branches_and_instruction_ov
 
     let (feature_repo_dir, feature_state_dir) =
         init_repo("repo-safety-feature", "feature/repo-safety", remote_url);
-    let feature_output = run_rust_featureforge(
+    let feature_output = run_featureforge_real_cli(
         feature_repo_dir.path(),
         feature_state_dir.path(),
         &[
@@ -339,7 +344,7 @@ fn canonical_repo_safety_handles_read_intent_feature_branches_and_instruction_ov
         &override_repo_dir.path().join("AGENTS.override.md"),
         "FeatureForge protected branches: release\n",
     );
-    let root_override_output = run_rust_featureforge(
+    let root_override_output = run_featureforge_real_cli(
         override_repo_dir.path(),
         override_state_dir.path(),
         &[
@@ -381,7 +386,7 @@ fn canonical_repo_safety_handles_read_intent_feature_branches_and_instruction_ov
         &override_repo_dir.path().join("apps/AGENTS.override.md"),
         "FeatureForge protected branches: release\n",
     );
-    let nested_override_output = run_rust_featureforge(
+    let nested_override_output = run_featureforge_real_cli(
         &override_repo_dir.path().join("apps/cli"),
         override_state_dir.path(),
         &[
@@ -423,7 +428,7 @@ fn canonical_repo_safety_handles_read_intent_feature_branches_and_instruction_ov
         &invalid_repo_dir.path().join("AGENTS.override.md"),
         "FeatureForge protected branches: release/*\n",
     );
-    let invalid_instruction_output = run_rust_featureforge(
+    let invalid_instruction_output = run_featureforge_real_cli(
         invalid_repo_dir.path(),
         invalid_state_dir.path(),
         &[
@@ -460,7 +465,7 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
     let repo = repo_dir.path();
     let state = state_dir.path();
 
-    let matching_approval = run_rust_featureforge(
+    let matching_approval = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -483,7 +488,7 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
         &matching_approval,
         "canonical repo-safety matching approval",
     );
-    let matching_check = run_rust_featureforge(
+    let matching_check = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -524,7 +529,7 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
         Value::String(String::from(""))
     );
 
-    let full_scope_approval = run_rust_featureforge(
+    let full_scope_approval = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -549,7 +554,7 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
         &full_scope_approval,
         "canonical repo-safety full-scope approval",
     );
-    let full_scope_check = run_rust_featureforge(
+    let full_scope_check = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -584,7 +589,7 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
         full_scope_check_json["approval_path"]
     );
 
-    let mismatched_path_approval = run_rust_featureforge(
+    let mismatched_path_approval = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -607,7 +612,7 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
         &mismatched_path_approval,
         "canonical repo-safety mismatched path approval",
     );
-    let mismatched_path_check = run_rust_featureforge(
+    let mismatched_path_check = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -643,7 +648,7 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
         mismatched_path_check_json["approval_path"]
     );
 
-    let mismatched_target_approval = run_rust_featureforge(
+    let mismatched_target_approval = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -664,7 +669,7 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
         &mismatched_target_approval,
         "canonical repo-safety mismatched target approval",
     );
-    let mismatched_target_check = run_rust_featureforge(
+    let mismatched_target_check = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -713,7 +718,7 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
             serde_json::to_vec(&record).expect("approval record should serialize"),
         )
         .expect("approval record should rewrite");
-        run_rust_featureforge(
+        run_featureforge_real_cli(
             repo,
             state,
             &[
@@ -746,7 +751,7 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
         Value::String(String::from("ApprovalScopeMismatch"))
     );
 
-    let invalid_write_target = run_rust_featureforge(
+    let invalid_write_target = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -787,7 +792,7 @@ fn canonical_repo_safety_distinguishes_exact_branch_names_in_scope_identity() {
     let state = state_dir.path();
 
     let slash_branch = parse_json(
-        &run_rust_featureforge(
+        &run_featureforge_real_cli(
             repo,
             state,
             &[
@@ -812,7 +817,7 @@ fn canonical_repo_safety_distinguishes_exact_branch_names_in_scope_identity() {
     checkout_branch(repo, "feature-x");
 
     let dash_branch = parse_json(
-        &run_rust_featureforge(
+        &run_featureforge_real_cli(
             repo,
             state,
             &[
@@ -851,7 +856,7 @@ fn canonical_repo_safety_rejects_invalid_inputs_and_keeps_deterministic_hot_path
     let repo = repo_dir.path();
     let state = state_dir.path();
 
-    let whitespace_task = run_rust_featureforge(
+    let whitespace_task = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -877,7 +882,7 @@ fn canonical_repo_safety_rejects_invalid_inputs_and_keeps_deterministic_hot_path
         Value::String(String::from("InvalidCommandInput"))
     );
 
-    let windows_path = run_rust_featureforge(
+    let windows_path = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -903,7 +908,7 @@ fn canonical_repo_safety_rejects_invalid_inputs_and_keeps_deterministic_hot_path
         Value::String(String::from("InvalidCommandInput"))
     );
 
-    let approval = run_rust_featureforge(
+    let approval = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -944,7 +949,7 @@ fn canonical_repo_safety_rejects_invalid_inputs_and_keeps_deterministic_hot_path
         .expect("decoy approval file should be writable");
     }
 
-    let hot_path_check = run_rust_featureforge(
+    let hot_path_check = run_featureforge_real_cli(
         repo,
         state,
         &[
@@ -987,7 +992,7 @@ fn canonical_repo_safety_accepts_legacy_symlinked_repo_root_records() {
     create_dir_symlink(repo, &alias_root);
 
     let approval_json = parse_json(
-        &run_rust_featureforge(
+        &run_featureforge_real_cli(
             repo,
             state,
             &[
@@ -1032,7 +1037,7 @@ fn canonical_repo_safety_accepts_legacy_symlinked_repo_root_records() {
     .expect("approval record should rewrite");
 
     let check_json = parse_json(
-        &run_rust_featureforge(
+        &run_featureforge_real_cli(
             &alias_root,
             state,
             &[
@@ -1071,7 +1076,7 @@ fn canonical_repo_safety_recovers_legacy_symlinked_local_repo_approvals() {
     create_dir_symlink(repo, &alias_root);
 
     let canonical_check_json = parse_json(
-        &run_rust_featureforge(
+        &run_featureforge_real_cli(
             repo,
             state,
             &[
@@ -1143,7 +1148,7 @@ fn canonical_repo_safety_recovers_legacy_symlinked_local_repo_approvals() {
     .expect("legacy approval record should write");
 
     let check_json = parse_json(
-        &run_rust_featureforge(
+        &run_featureforge_real_cli(
             &alias_root,
             state,
             &[
@@ -1183,7 +1188,7 @@ fn canonical_repo_safety_approval_paths_use_canonical_repo_slug_directory() {
     let state = state_dir.path();
 
     let check_json = parse_json(
-        &run_rust_featureforge(
+        &run_featureforge_real_cli(
             repo,
             state,
             &[

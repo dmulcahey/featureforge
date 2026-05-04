@@ -12,7 +12,8 @@ Run these commands from the repo root for the core contract surface:
 ```bash
 node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs --check
-node --test tests/codex-runtime/*.test.mjs
+node scripts/run-codex-runtime-tests.mjs
+node --test tests/evals/*.eval.mjs
 npm --prefix tests/brainstorm-server test
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-targets --all-features --no-fail-fast
@@ -25,6 +26,110 @@ commands only while iterating on a known failure, then return to
 `cargo nextest run --all-targets --all-features --no-fail-fast` before claiming
 the task or branch is green. The `--no-fail-fast` flag is required so the run
 captures the full failure set instead of stopping at the first failed binary.
+
+## Runtime Boundary Matrix
+
+When validating runtime public-surface hardening, generated docs, boundary
+tests, and replay churn fixes, include this focused matrix before the full
+no-fail-fast nextest gate:
+
+```bash
+node scripts/gen-skill-docs.mjs --check
+node scripts/gen-agent-docs.mjs --check
+node scripts/run-codex-runtime-tests.mjs
+node --test tests/evals/*.eval.mjs
+cargo test --test public_cli_flow_contracts -- --nocapture
+cargo test --test public_replay_churn -- --nocapture
+cargo test --test runtime_behavior_golden -- --nocapture
+cargo test --test runtime_module_boundaries -- --nocapture
+cargo test --test liveness_model_checker -- --nocapture
+cargo test --test packet_and_schema -- --nocapture
+cargo test --test workflow_shell_smoke -- --nocapture
+cargo test --test plan_execution -- --nocapture
+cargo test --test plan_execution_final_review -- --nocapture
+cargo test --test workflow_runtime -- --nocapture
+cargo test --test workflow_runtime_final_review -- --nocapture
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+Use that matrix to prove the intended surfaces directly. It does not replace
+the branch gate: after focused validation passes, still run
+`cargo nextest run --all-targets --all-features --no-fail-fast`.
+
+## Public And Internal Runtime Gates
+
+Public-flow proof and internal runtime compatibility are separate gates. Record
+their results separately in release checklists and CI summaries:
+
+```bash
+scripts/run-public-runtime-flow-tests.sh
+scripts/run-internal-runtime-compatibility-tests.sh
+```
+
+The public-flow gate runs the compiled-binary public route suites:
+`public_cli_flow_contracts`, `public_replay_churn`, and
+`runtime_behavior_golden`. These suites are the public UX proof for runtime
+reachability and replay churn.
+
+The internal runtime compatibility gate runs tests named
+`internal_only_compatibility*`. It preserves low-level direct-helper coverage
+for legacy and boundary compatibility, but do not count it as public-flow or
+public UX proof. Internal helper results may support compatibility confidence;
+they cannot replace the public-flow gate above.
+
+For final runtime cutover checks that touched execution query or workflow-entry
+coverage, extend the matrix with:
+
+```bash
+cargo test --test workflow_entry_shell_smoke -- --nocapture
+cargo test --test execution_harness_state -- --nocapture
+cargo test --test execution_query -- --nocapture
+```
+
+## Prompt Surface Budget Gate
+
+Generated top-level skill prompts are budgeted separately from companion
+references. The active cutover baseline was 7,191 generated top-level
+`skills/*/SKILL.md` lines; the compacted enforce-mode target is at most 5,600
+lines. The budget test prints the current total and per-skill line counts.
+
+The budget gate must stay in enforce mode for release work:
+
+```bash
+node scripts/gen-skill-docs.mjs --check
+node --test tests/codex-runtime/skill-doc-budget.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs
+```
+
+Release checklists must record prompt-surface failures in two separate lines:
+
+- Prompt budget enforcement: `tests/codex-runtime/skill-doc-budget.test.mjs`
+  fails when generated top-level skill docs or `skills/skill-doc-budgets.json`
+  exceed the approved manifest budget.
+- Mandatory-law retention: `tests/codex-runtime/skill-doc-contracts.test.mjs`
+  fails when compaction removes required workflow routing law, approval law,
+  protected-branch repo-safety law, hidden-helper bans, fail-closed stop rules,
+  reviewer-recursion prohibitions, or `recommended_public_command_argv`
+  authority from top-level skill docs.
+
+Any change to `skills/skill-doc-budgets.json`, including line limits, enforce
+mode, or the set of budgeted skills, requires explicit prompt-budget review in
+the release notes or review record. If a top-level generated skill needs more
+lines, that review note must explain why the content must remain top-level, why
+it cannot move to a companion reference, and whether any existing top-level
+prose was removed to make room. Do not treat manifest changes as routine
+test-fixture updates.
+
+Do not lower prompt budgets by moving mandatory workflow routing law, approval
+law, protected-branch repo-safety law, hidden-helper bans, fail-closed stop
+rules, reviewer-recursion prohibitions, or `recommended_public_command_argv`
+authority entirely into companion references. Companion references can carry
+examples and rationale; active top-level skills must keep terminal gates and
+stop rules directly visible.
+
+When content moves into companion references, keep those references discoverable
+from the generated top-level skill docs and included in the packaged skill
+surface.
+
 ## Performance Budget
 
 `cargo test` with no extra args is the canonical full-suite latency budget for this repository. Treat roughly 3 to 4 minutes on a warm local build as the target. If a warm local run regresses past about 240 seconds, stop and profile before merging instead of normalizing the slowdown away.
@@ -89,9 +194,18 @@ time -p cargo test --quiet --test plan_execution
 
 - generated skill-doc structure and freshness
 - explicit skill-doc generation contracts (`gen-skill-docs.unit`, `skill-doc-contracts`, `skill-doc-generation`)
+- generated top-level skill prompt budgets in enforce mode
+- mandatory-law retention, companion-reference packaging, and prompt-scoped reviewer recursion checks
 - active docs and archive layout fixtures
 - workflow-fixture invariants
 - routing and eval-document contract assertions
+
+Run this layer through `node scripts/run-codex-runtime-tests.mjs` in release
+and branch gates. The wrapper runs `node --test tests/codex-runtime/*.test.mjs`
+with a fixed timeout and fails closed if the grouped Node process prints a
+green TAP summary but does not exit. The raw command should still exit with
+status 0 in local and CI shells, but the release checklist uses the wrapper so
+open handles cannot be mistaken for success.
 
 `tests/brainstorm-server` `npm test` covers:
 
@@ -128,7 +242,8 @@ Editing skill templates or generated skill docs:
 
 ```bash
 node scripts/gen-skill-docs.mjs --check
-node --test tests/codex-runtime/*.test.mjs
+node --test tests/codex-runtime/skill-doc-budget.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs
+node scripts/run-codex-runtime-tests.mjs
 ```
 
 Editing brainstorm-server runtime scripts or launch wrappers:
@@ -162,10 +277,12 @@ node scripts/gen-skill-docs.mjs
 node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs
 node scripts/gen-agent-docs.mjs --check
-node --test tests/codex-runtime/*.test.mjs
+node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/review-accelerator-contract.eval.mjs
 npm --prefix tests/brainstorm-server test
 node scripts/verify-source-archive.mjs
+scripts/run-public-runtime-flow-tests.sh
+scripts/run-internal-runtime-compatibility-tests.sh
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --test liveness_model_checker
 cargo nextest run --all-targets --all-features --no-fail-fast
@@ -185,7 +302,7 @@ compiled-CLI rejection coverage:
 ```bash
 rg -n "runtime-owned receipt|receipt records|receipt-ready|Dedicated Reviewer Receipt Contract" README.md docs skills agents tests
 rg -n "Invoke `featureforge:plan-fidelity-review`\\." skills/writing-plans tests
-rg -n "record-review-dispatch|rebuild-evidence|gate-review|gate-finish|record-branch-closure|record-release-readiness|record-final-review|record-qa|preflight" tests
+cargo test --test public_cli_flow_contracts -- public_test_files_do_not_use_internal_helpers_or_hidden_commands
 ```
 
 The public replay suite (`tests/public_replay_churn.rs`) is part of the
@@ -213,22 +330,29 @@ Normal `begin`, `complete`, `reopen`, `transfer`, `close-current-task`,
 `repair-review-state`, `advance-late-stage`, `workflow operator`, and
 `plan execution status` commands must leave approved plan/evidence/review files
 and repo-local projection exports untouched. Runtime read models live under the
-state directory. Repo-local human-readable exports are explicit:
+state directory. Diagnostic materialization is state-dir-only by default:
 
 ```bash
 featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all
 ```
 
-Materialization writes repo-local projection exports without modifying approved
-plan or evidence files. It is projection-only and must not be recommended by
-operator routing as required progress.
+Repo-local human-readable projection exports are Git-visible and require an
+explicit confirmed export:
+
+```bash
+featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all --repo-export --confirm-repo-export
+```
+
+Materialization is never required for normal progress. Confirmed repo exports
+write projection-only files without modifying approved plan or evidence files,
+and must not be recommended by operator routing as required progress.
 
 Historical final-remediation plans used targeted Rust subsets while closing specific failures. For branch proof, task-completion gates, plan-task review loops, and pre-merge verification, use the full Rust nextest suite instead:
 
 ```bash
 node scripts/gen-skill-docs.mjs
 node scripts/gen-agent-docs.mjs
-node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs
+node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/review-accelerator-contract.eval.mjs
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-targets --all-features --no-fail-fast
@@ -259,9 +383,16 @@ When checked-in prebuilt artifacts are part of the change, refresh and verify th
 ```bash
 FEATUREFORGE_PREBUILT_TARGET=darwin-arm64 scripts/refresh-prebuilt-runtime.sh
 PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc FEATUREFORGE_PREBUILT_TARGET=windows-x64 FEATUREFORGE_PREBUILT_RUST_TARGET=x86_64-pc-windows-gnu scripts/refresh-prebuilt-runtime.sh
-cp target/aarch64-apple-darwin/release/featureforge bin/featureforge
-chmod +x bin/featureforge
+node scripts/prebuilt-runtime-provenance.mjs verify --repo-root .
 ```
+
+The full provenance verifier always validates the manifest, source fingerprint,
+binary hash/checksum provenance, and denied-string audit. Public help execution
+runs for the manifest target matching the host, or for the explicit `--target`
+when it matches the host. It also probes the root checked-in `bin/featureforge`
+surface when that root binary target matches the host. On incompatible targets
+the verifier runs `file`, emits a structured help-skip reason, and continues if
+the non-execution checks are clean.
 
 If Homebrew `cargo`/`rustc` shadow rustup-managed toolchains on `PATH`, put the rustup toolchain shims first before running the Windows GNU refresh command so the installed `x86_64-pc-windows-gnu` standard library can be found. The GNU cross-build also expects `x86_64-w64-mingw32-gcc` to be available on `PATH`.
 

@@ -18,9 +18,11 @@ For workflow-routed terminal sequencing, `featureforge:document-release` must ru
 
 When you need explicit late-stage phase/action/skill grounding while updating docs, cite `review/late-stage-precedence-reference.md`.
 
+Extended audit examples live in `$_FEATUREFORGE_ROOT/references/execution-review-qa-examples.md`.
+
 ## Step 0: Require base branch context
 
-For workflow-routed work, `BASE_BRANCH` is runtime-owned context from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`) and the active release-readiness lineage. Use that exact value and do not redetect.
+For workflow-routed work, get `BASE_BRANCH` from `workflow operator --json` (`base_branch`) for the concrete approved plan path; any `<approved-plan-path>` command text here is input shape, not exact argv.
 
 For non-workflow work, require `BASE_BRANCH` explicitly and keep it stable for this run:
 
@@ -33,21 +35,6 @@ git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true
 ```
 
 Do not use PR metadata or repo default-branch APIs as a fallback.
-
-## Core rules
-
-**Only stop for:**
-- Risky narrative rewrites
-- Security or architecture explanation changes
-- Large removals or section reshaping
-- Ambiguous `VERSION` / release-notes consistency questions
-- New `TODOS.md` items that require judgment
-
-**Never stop for:**
-- Straight factual corrections from the diff
-- Updating file paths, counts, commands, or skill names
-- Fixing stale cross-references
-- Minor discoverability improvements
 
 ## Optional Project Memory Follow-Up
 
@@ -81,9 +68,7 @@ Run repo-appropriate commands such as:
 
 ```bash
 git diff "origin/$BASE_BRANCH...HEAD" --stat 2>/dev/null || git diff "$BASE_BRANCH...HEAD" --stat 2>/dev/null || git diff --stat
-git log "origin/$BASE_BRANCH"..HEAD --oneline 2>/dev/null || git log "$BASE_BRANCH"..HEAD --oneline || git log --oneline -20
 git diff "origin/$BASE_BRANCH...HEAD" --name-only 2>/dev/null || git diff "$BASE_BRANCH...HEAD" --name-only || git diff --name-only
-find . -maxdepth 2 -name "*.md" -not -path "./.git/*" -not -path "./node_modules/*" -not -path "./.featureforge/*" | sort
 ```
 
 Classify the diff into:
@@ -94,29 +79,7 @@ Classify the diff into:
 
 ## Step 2: Per-file documentation audit
 
-Read each documentation file and cross-reference it against the diff.
-
-**README.md**
-- Feature list still accurate?
-- Setup instructions still accurate?
-- Examples still valid?
-
-**ARCHITECTURE.md**
-- Diagrams and system descriptions still accurate?
-- Be conservative. Only update things clearly contradicted by the diff.
-
-**CONTRIBUTING.md / install docs / workflow docs**
-- Would a new contributor succeed with these instructions?
-- Do commands still exist?
-- Are generated-file or build instructions still correct?
-
-**Other `.md` files**
-- Identify the file's audience and purpose
-- Flag contradictions against the current diff
-
-Classify each change as:
-- `Auto-update` for safe factual corrections
-- `Ask user` for risky or subjective edits
+Read relevant docs, classify safe factual corrections as `Auto-update`, and mark risky narrative, security, architecture, versioning, or TODO changes as `Ask user`.
 
 ## Step 3: Apply safe factual updates
 
@@ -187,25 +150,13 @@ If `TODOS.md` exists:
 
 For workflow-routed implementation work, runtime emits a project-scoped release-readiness companion artifact:
 
-- Require the exact approved plan path from the current workflow context before recording release-readiness via `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` so runtime can render the companion artifact.
+- Treat `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` as an input shape only; substitute concrete plan, result, and existing summary file, or invoke `recommended_public_command_argv` exactly when present.
 - Derive `Source Plan` and `Source Plan Revision` from that exact approved plan; do not leave placeholders or guess from prose.
 - If the approved plan path or revision is unavailable, stop and return to the current workflow instead of writing a partial artifact.
 - Use the runtime-provided base branch from Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
 - This markdown output is a derived operator handoff companion. Runtime-owned reviewed-closure and late-stage milestone records remain the authoritative gate-truth surface.
 
-```bash
-_SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
-if [ -n "$_SLUG_ENV" ]; then
-  eval "$_SLUG_ENV"
-fi
-unset _SLUG_ENV
-USER=$(whoami)
-DATETIME=$(date +%Y%m%d-%H%M%S)
-HEAD_SHA=$(git rev-parse HEAD)
-mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
-```
-
-Use this snippet only to inspect runtime-emitted artifact locations after recording; do not use it to hand-write companion artifacts.
+Inspect runtime-emitted artifact locations after recording only when needed; do not hand-write companion artifacts.
 
 For workflow-routed release-readiness, the runtime writes the derived companion artifact to:
 - `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/featureforge-{safe-branch}-release-readiness-{datetime}.md`
@@ -247,15 +198,16 @@ Artifact `pass` is the runtime-rendered form of CLI input `--result ready`.
 For workflow-routed implementation work, the derived companion artifact above is not the release gate itself.
 
 - workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.
-- For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`.
-- Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness.
-- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path>` and rerun workflow/operator.
-- When workflow/operator reports `phase_detail=release_readiness_recording_ready`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the runtime-owned release-readiness milestone.
-- When workflow/operator reports `phase_detail=release_blocker_resolution_required`, resolve the blocker and then run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the updated runtime-owned release-readiness milestone.
-- The `advance-late-stage --result ready|blocked` command input renders `**Result:** pass|blocked` in the derived companion artifact; do not rewrite the artifact to mirror the command input.
+- For reviewed-closure late-stage routing, use the workflow/operator input shape `featureforge workflow operator --plan <approved-plan-path>` with the concrete plan; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv`. `recommended_command` is display-only compatibility text.
+- If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.
+- Confirm the current `phase_detail` before recording release-readiness.
+- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path>` with the concrete plan and rerun workflow/operator.
+- When workflow/operator reports `phase_detail=release_readiness_recording_ready`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` only after substituting concrete values.
+- When workflow/operator reports `phase_detail=release_blocker_resolution_required`, resolve the blocker and then use that same concrete release-readiness input shape.
+- The `advance-late-stage --result ready|blocked` input shape renders `**Result:** pass|blocked` in the derived companion artifact; do not rewrite the artifact to mirror the command input.
 - If workflow/operator reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions.
 
-Example runtime-owned path:
+Example runtime-owned path after substituting concrete values:
 
 ```bash
 OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
@@ -274,10 +226,4 @@ fi
 
 ## Output
 
-Provide:
-- Files audited
-- Files changed
-- Risky changes that were deferred or skipped
-- Any remaining discoverability, VERSION, or TODO questions
-
-If documentation still looks stale after the safe pass, say so explicitly.
+Report files audited, files changed, risky changes deferred, and any remaining discoverability, VERSION, or TODO questions. If documentation still looks stale after the safe pass, say so explicitly.

@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use crate::process_support::repo_root;
+use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
+use featureforge::contracts::spec::parse_spec_file;
+use featureforge::git::sha256_hex;
 use serde_json::Value;
 
 pub fn workflow_fixture_root() -> PathBuf {
@@ -75,6 +78,48 @@ pub fn install_full_contract_ready_artifacts(repo: &Path) {
     )
     .expect("plan directory should be creatable");
     fs::write(&plan_path, adjusted_plan).expect("full-contract ready plan fixture should write");
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        ".featureforge/reviews/runtime-integration-hardening-plan-fidelity.md",
+        plan_rel,
+        spec_rel,
+    );
+}
+
+pub fn write_current_pass_plan_fidelity_review_artifact(
+    repo: &Path,
+    artifact_rel: &str,
+    plan_rel: &str,
+    spec_rel: &str,
+) {
+    let artifact_path = repo.join(artifact_rel);
+    let plan = parse_plan_file(repo.join(plan_rel)).expect("plan fixture should parse");
+    let spec = parse_spec_file(repo.join(spec_rel)).expect("spec fixture should parse");
+    let plan_fingerprint =
+        sha256_hex(&fs::read(repo.join(plan_rel)).expect("plan fixture should be readable"));
+    let spec_fingerprint =
+        sha256_hex(&fs::read(repo.join(spec_rel)).expect("spec fixture should be readable"));
+    let verified_requirement_ids = spec
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+
+    if let Some(parent) = artifact_path.parent() {
+        fs::create_dir_all(parent)
+            .expect("plan-fidelity artifact parent directory should be creatable");
+    }
+    fs::write(
+        artifact_path,
+        format!(
+            "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** pass\n**Reviewed Plan:** `{plan_rel}`\n**Reviewed Plan Revision:** {}\n**Reviewed Plan Fingerprint:** {plan_fingerprint}\n**Reviewed Spec:** `{spec_rel}`\n**Reviewed Spec Revision:** {}\n**Reviewed Spec Fingerprint:** {spec_fingerprint}\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** fixture-plan-fidelity-reviewer\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** {}\n**Verified Requirement IDs:** {}\n",
+            plan.plan_revision,
+            spec.spec_revision,
+            PLAN_FIDELITY_REQUIRED_SURFACES.join(", "),
+            verified_requirement_ids.join(", "),
+        ),
+    )
+    .expect("plan-fidelity artifact should write");
 }
 
 #[cfg(test)]
@@ -162,12 +207,18 @@ mod tests {
 
         let spec_rel = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
         let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+        let review_rel = ".featureforge/reviews/runtime-integration-hardening-plan-fidelity.md";
 
         let spec_path = repo.join(spec_rel);
         let plan_path = repo.join(plan_rel);
+        let review_path = repo.join(review_rel);
 
         assert!(spec_path.exists(), "spec fixture should be copied");
         assert!(plan_path.exists(), "plan fixture should be copied");
+        assert!(
+            review_path.exists(),
+            "plan-fidelity fixture should be written"
+        );
 
         let plan_contents =
             fs::read_to_string(plan_path).expect("installed plan fixture should be readable");

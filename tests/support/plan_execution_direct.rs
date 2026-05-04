@@ -1,3 +1,4 @@
+//! INTERNAL_RUNTIME_HELPER_TEST: this file intentionally exercises unavailable runtime internals.
 //! Internal reducer/unit-test helpers only.
 //! These helpers may exercise hidden or removed runtime machinery.
 //! They must not be used by tests that claim public CLI, operator, budget, liveness, or session-replay behavior.
@@ -26,7 +27,7 @@ struct DirectPlanExecutionSuccess {
     exit_code: u8,
 }
 
-pub fn try_run_plan_execution_output_direct(
+pub fn internal_only_try_run_plan_execution_output_direct(
     repo: &Path,
     state: &Path,
     args: &[&str],

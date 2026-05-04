@@ -1,13 +1,13 @@
 #[path = "support/bin.rs"]
 mod bin_support;
-#[path = "support/featureforge.rs"]
-mod featureforge_support;
 #[path = "support/files.rs"]
 mod files_support;
 #[path = "support/git.rs"]
 mod git_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 
 use std::fs;
 use std::path::Path;
@@ -58,23 +58,30 @@ fn run_shell_slug(repo: &Path, context: &str) -> Output {
     run(command, context)
 }
 
-fn run_rust_featureforge(
+fn run_featureforge_real_cli(
     repo: Option<&Path>,
     state_dir: &Path,
     args: &[&str],
     context: &str,
 ) -> Output {
-    featureforge_support::run_rust_featureforge(repo, Some(state_dir), None, &[], args, context)
+    public_featureforge_cli::run_featureforge_real_cli(
+        repo,
+        Some(state_dir),
+        None,
+        &[],
+        args,
+        context,
+    )
 }
 
-fn run_rust_featureforge_with_env_control(
+fn run_featureforge_with_env_control_real_cli(
     repo: Option<&Path>,
     env_remove: &[&str],
     envs: &[(&str, &str)],
     args: &[&str],
     context: &str,
 ) -> Output {
-    featureforge_support::run_rust_featureforge_with_env_control(
+    public_featureforge_cli::run_featureforge_with_env_control_real_cli(
         repo, None, None, env_remove, envs, args, context,
     )
 }
@@ -85,7 +92,7 @@ fn canonical_config_uses_userprofile_when_home_is_missing() {
     let userprofile_dir = TempDir::new().expect("userprofile tempdir should exist");
     init_repo_at(repo_dir.path(), "config-userprofile-home-fallback");
 
-    let output = run_rust_featureforge_with_env_control(
+    let output = run_featureforge_with_env_control_real_cli(
         Some(repo_dir.path()),
         &["HOME", "FEATUREFORGE_STATE_DIR"],
         &[(
@@ -129,7 +136,7 @@ fn canonical_config_set_get_and_list_use_canonical_path() {
     let state = state_dir.path();
     let canonical_config = state.join("config").join("config.yaml");
 
-    let missing = run_rust_featureforge(
+    let missing = run_featureforge_real_cli(
         None,
         state,
         &["config", "get", "update_check"],
@@ -142,7 +149,7 @@ fn canonical_config_set_get_and_list_use_canonical_path() {
     assert_eq!(String::from_utf8_lossy(&missing.stdout).trim(), "");
     assert_eq!(String::from_utf8_lossy(&missing.stderr).trim(), "");
 
-    let set_false = run_rust_featureforge(
+    let set_false = run_featureforge_real_cli(
         None,
         state,
         &["config", "set", "update_check", "false"],
@@ -153,7 +160,7 @@ fn canonical_config_set_get_and_list_use_canonical_path() {
         "canonical config set should succeed"
     );
 
-    let get_false = run_rust_featureforge(
+    let get_false = run_featureforge_real_cli(
         None,
         state,
         &["config", "get", "update_check"],
@@ -161,7 +168,7 @@ fn canonical_config_set_get_and_list_use_canonical_path() {
     );
     assert_eq!(String::from_utf8_lossy(&get_false.stdout).trim(), "false");
 
-    let set_true = run_rust_featureforge(
+    let set_true = run_featureforge_real_cli(
         None,
         state,
         &["config", "set", "update_check", "true"],
@@ -172,7 +179,7 @@ fn canonical_config_set_get_and_list_use_canonical_path() {
         "canonical config overwrite should succeed"
     );
 
-    let get_true = run_rust_featureforge(
+    let get_true = run_featureforge_real_cli(
         None,
         state,
         &["config", "get", "update_check"],
@@ -180,7 +187,7 @@ fn canonical_config_set_get_and_list_use_canonical_path() {
     );
     assert_eq!(String::from_utf8_lossy(&get_true.stdout).trim(), "true");
 
-    let set_contributor = run_rust_featureforge(
+    let set_contributor = run_featureforge_real_cli(
         None,
         state,
         &["config", "set", "featureforge_contributor", "true"],
@@ -191,7 +198,8 @@ fn canonical_config_set_get_and_list_use_canonical_path() {
         "canonical config second key set should succeed"
     );
 
-    let listing = run_rust_featureforge(None, state, &["config", "list"], "canonical config list");
+    let listing =
+        run_featureforge_real_cli(None, state, &["config", "list"], "canonical config list");
     assert!(
         listing.status.success(),
         "canonical config list should succeed"
@@ -213,7 +221,7 @@ fn canonical_config_rejects_invalid_yaml_in_canonical_path() {
     let canonical_config = state.join("config").join("config.yaml");
     write_file(&canonical_config, "update_check:\n  nested: true\n");
 
-    let rust_list = run_rust_featureforge(
+    let rust_list = run_featureforge_real_cli(
         None,
         state,
         &["config", "list"],
@@ -258,7 +266,7 @@ fn canonical_slug_matches_helper_for_remote_and_detached_head() {
     run_checked(git_checkout, "git checkout feature branch");
 
     let helper_remote = run_shell_slug(repo, "helper remote slug");
-    let rust_remote = run_rust_featureforge(
+    let rust_remote = run_featureforge_real_cli(
         Some(repo),
         state,
         &["repo", "slug"],
@@ -280,7 +288,7 @@ fn canonical_slug_matches_helper_for_remote_and_detached_head() {
     run_checked(git_detach, "git checkout detached");
 
     let helper_detached = run_shell_slug(repo, "helper detached slug");
-    let rust_detached = run_rust_featureforge(
+    let rust_detached = run_featureforge_real_cli(
         Some(repo),
         state,
         &["repo", "slug"],
@@ -313,7 +321,7 @@ fn canonical_slug_matches_helper_for_fallback_path_hashing_and_branch_cleanup() 
     run_checked(git_checkout, "git checkout fallback branch");
 
     let helper_fallback = run_shell_slug(&fallback_repo, "helper fallback slug");
-    let rust_fallback = run_rust_featureforge(
+    let rust_fallback = run_featureforge_real_cli(
         Some(&fallback_repo),
         state_dir.path(),
         &["repo", "slug"],
@@ -338,7 +346,7 @@ fn canonical_slug_matches_helper_for_fallback_path_hashing_and_branch_cleanup() 
     run_checked(git_checkout_branch_safe, "git checkout branch-safe branch");
 
     let helper_branch_safe = run_shell_slug(&branch_safe_repo, "helper branch-safe slug");
-    let rust_branch_safe = run_rust_featureforge(
+    let rust_branch_safe = run_featureforge_real_cli(
         Some(&branch_safe_repo),
         state_dir.path(),
         &["repo", "slug"],

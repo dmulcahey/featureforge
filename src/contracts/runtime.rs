@@ -14,7 +14,7 @@ use crate::cli::plan_contract::{
 use crate::contracts::packet::{PacketObligation, build_task_packet_with_timestamp};
 use crate::contracts::plan::{
     AnalyzePlanReport, ContractDiagnostic, OverlappingWriteScope, analyze_execution_topology,
-    evaluate_plan_fidelity_review, parse_plan_file,
+    evaluate_plan_fidelity_review, parse_plan_file, plan_fidelity_review_applicable_workflow_state,
 };
 use crate::contracts::spec::parse_spec_file;
 use crate::contracts::task_contract::{
@@ -1099,7 +1099,10 @@ fn apply_plan_fidelity_gate_to_report(
     plan_source: &str,
     report: &mut AnalyzePlanReport,
 ) {
-    if find_header_value(plan_source, "Workflow State") != Some("Draft") {
+    let Some(workflow_state) = find_header_value(plan_source, "Workflow State") else {
+        return;
+    };
+    if !plan_fidelity_review_applicable_workflow_state(workflow_state) {
         return;
     }
 
@@ -1121,7 +1124,7 @@ fn apply_plan_fidelity_gate_to_report(
                 diagnostics.push(ContractDiagnostic {
                     code: String::from("plan_fidelity_verification_incomplete"),
                     message: String::from(
-                        "Plan-fidelity review cannot be validated until the draft plan parses cleanly.",
+                        "Plan-fidelity review cannot be validated until the plan parses cleanly.",
                     ),
                 });
             }
@@ -1857,7 +1860,7 @@ fn prune_packet_cache(packet_dir: &Path, current_packet: &Path) {
             (entry.path(), modified)
         })
         .collect::<Vec<_>>();
-    packets.sort_by(|left, right| right.1.cmp(&left.1));
+    packets.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
     let current_is_present = packets.iter().any(|(path, _)| path == current_packet);
     let keep_others = if current_is_present {
         limit.saturating_sub(1)

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO_ROOT="${FEATUREFORGE_CUTOVER_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
+SCRIPT_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="${FEATUREFORGE_CUTOVER_REPO_ROOT:-$SCRIPT_REPO_ROOT}"
 cd "$REPO_ROOT"
 
 # Match the exact retired root even when prose wraps it in punctuation or
@@ -94,5 +94,9 @@ grep -Fq 'bin/prebuilt/windows-x64/featureforge.exe' bin/prebuilt/manifest.json 
 if grep -nE "$LEGACY_ROOT_REGEX" bin/prebuilt/manifest.json >/dev/null; then
   fail 'manifest must not reference retired legacy-root paths'
 fi
+
+command -v node >/dev/null 2>&1 || fail 'node is required for prebuilt runtime validation'
+node "$SCRIPT_REPO_ROOT/scripts/prebuilt-runtime-provenance.mjs" verify --repo-root "$REPO_ROOT" >/dev/null \
+  || fail 'prebuilt runtime validation failed'
 
 printf 'featureforge cutover checks passed\n'

@@ -26,11 +26,11 @@ Execution authority is event-only:
 
 - for this repository's shipped work packages, approved specs and plans are preserved under `docs/archive/featureforge/specs/*.md` and `docs/archive/featureforge/plans/*.md`
 - for new FeatureForge-managed project work, approved specs and plans still live under `docs/featureforge/specs/*.md` and `docs/featureforge/plans/*.md`
-- normal runtime commands render current read models under the runtime state directory; explicit materialization writes repo-local human-readable exports under `docs/featureforge/projections/` instead of mutating approved plan or evidence files
+- normal runtime commands render current read models under the runtime state directory; explicit materialization writes repo-local human-readable exports under `docs/featureforge/projections/` instead of mutating approved plan or evidence files, and materialization is never required for normal progress
 - once plan execution starts, branch execution truth is the append-only event log under the harness branch root (`execution-harness/events.jsonl`)
 - `state.json`, approved-plan checklist marks, execution evidence, release/readiness/review/QA markdown, and strategy displays are deterministic projections/read models
 - deleting, exporting, or regenerating those projections must not change operator routing, status, review-state repair, or mutator legality
-- use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` for state-dir-only diagnostic projection refreshes; add `--repo-export --confirm-repo-export` only when a repo-local human-readable projection export is explicitly needed; approved plan and evidence files are not modified
+- use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` for state-dir-only diagnostic projection refreshes; add `--repo-export --confirm-repo-export` only when a repo-local human-readable projection export is explicitly needed; approved plan and evidence files are not modified, and materialization is never required for normal progress
 - runtime-owned reviewed-closure, milestone, dispatch-lineage, and strategy facts are reduced from the event log for routing and gates
 - branch-scoped local projections live under `~/.featureforge/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
 
@@ -76,11 +76,11 @@ Planning chain in plain language:
 The generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; if no approved plan path is known, resolve it through the normal planning/review handoff, then route with workflow/operator.
 
 Execution starts from an engineering-approved plan and the exact approved plan path.
-Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level command for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`.
+Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level argv vector for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`. Late-stage public JSON reports `intent=advance_late_stage` plus a semantic `operation`; do not infer or invoke lower-level recording primitives from output fields.
 
-When workflow/operator reports stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
+When workflow/operator reports stale or missing closure context, do not invent a repair command. If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan <approved-plan-path>` only when the non-diagnostic route owns that repair lane.
 
-After `repair-review-state`, treat that command's own `recommended_command` as the immediate reroute and complete that follow-up before running any extra command. Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
+After `repair-review-state`, treat that command's own `recommended_public_command_argv` as the immediate reroute when present and complete that follow-up before running any extra command. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy the typed `required_inputs` or prerequisite named by `next_action`, then rerun the command that owns the route. `recommended_command` is display-only compatibility text; do not parse it for invocation. Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
 Do not manually edit `**Execution Note:**` lines to recover runtime state; execution-note markdown is projection-only.
 Do not repair runtime routing by editing tracked plan, evidence, review, readiness, QA, or strategy projection files. They are export artifacts; the event log and reducer-owned state are authoritative.
 
@@ -95,7 +95,7 @@ Task closure is enforced at task boundaries, not only at the end of the full pla
 - compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
-- `repair-review-state` returns one exact next command; follow that returned command directly
+- `repair-review-state` returns one exact next command as `recommended_public_command_argv` when all inputs are already bound; follow that argv directly, stop when argv is absent with `next_action=runtime diagnostic required`, otherwise satisfy `required_inputs` and rerun the route owner
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is authorized without per-dispatch user-consent prompts
 
 Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):
@@ -123,7 +123,7 @@ Execution strategy checkpoints are runtime-owned execution state, not planning-s
 
 The approved plan path/revision remains fixed during execution. Runtime strategy may adjust topology, lane/worktree allocation, and remediation order without sending the workflow back to planning stages.
 
-The runtime records checkpoint history in the authoritative event log and renders `strategy_checkpoints` into projection state for `plan execution status`. Unit-review receipts are validated against the reduced active `last_strategy_checkpoint_fingerprint`.
+The runtime records checkpoint history in the authoritative event log and renders `strategy_checkpoints` into projection state for `plan execution status`. Runtime-owned review projections are trace artifacts only; task advancement is governed by current positive task-closure records and reducer-owned state.
 
 Use `featureforge plan execution status --plan <approved-plan-path>` to inspect:
 
@@ -159,10 +159,18 @@ Core validation:
 ```bash
 node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs --check
-node --test tests/codex-runtime/*.test.mjs
+node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/review-accelerator-contract.eval.mjs
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-targets --all-features --no-fail-fast
+```
+
+Runtime release checks keep public-flow proof separate from internal
+compatibility coverage:
+
+```bash
+scripts/run-public-runtime-flow-tests.sh
+scripts/run-internal-runtime-compatibility-tests.sh
 ```
 
 The Rust verification command is intentionally the full nextest suite. It covers
@@ -183,9 +191,16 @@ Refresh checked-in prebuilt binaries (release-facing artifacts) when runtime pac
 ```bash
 FEATUREFORGE_PREBUILT_TARGET=darwin-arm64 scripts/refresh-prebuilt-runtime.sh
 PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc FEATUREFORGE_PREBUILT_TARGET=windows-x64 FEATUREFORGE_PREBUILT_RUST_TARGET=x86_64-pc-windows-gnu scripts/refresh-prebuilt-runtime.sh
-cp target/aarch64-apple-darwin/release/featureforge bin/featureforge
-chmod +x bin/featureforge
+node scripts/prebuilt-runtime-provenance.mjs verify --repo-root .
 ```
+
+Full prebuilt verification always checks the manifest, source fingerprint,
+binary hashes, and denied public/control-plane strings. It executes
+`--help`, `plan execution --help`, and `workflow --help` for the manifest target
+matching the current host, or for the explicit `--target` when it matches the
+host. It also probes the root checked-in `bin/featureforge` surface when that
+root binary target matches the host. Incompatible target binaries are inspected
+with `file` and reported with a structured help-skip reason instead.
 
 If Homebrew `cargo`/`rustc` shadow rustup-managed toolchains on your `PATH`, make sure the rustup toolchain shims are ahead of Homebrew Rust before running the Windows GNU refresh command so the installed `x86_64-pc-windows-gnu` standard library is visible. The GNU cross-build also expects `x86_64-w64-mingw32-gcc` to be available on `PATH`.
 

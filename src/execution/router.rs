@@ -2,24 +2,36 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::JsonFailure;
+use crate::execution::closure_diagnostics::{
+    merge_task_boundary_projection_diagnostics, public_task_boundary_decision,
+    task_boundary_projection_diagnostic_reason_code,
+};
 use crate::execution::command_eligibility::{
-    command_invokes_hidden_lane, command_is_legal_public_command, decide_public_mutation,
-    public_mutation_request_from_command,
+    PublicAdvanceLateStageMode, PublicCommand, PublicCommandInputRequirement,
+    PublicCommandInvocation, PublicCommandKind, PublicMutationKind,
+    public_advance_late_stage_mode_for_phase_detail, public_command_recommendation_surfaces,
 };
 use crate::execution::current_truth::{
-    CurrentTruthSnapshot, RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
-    normalized_plan_qa_requirement, public_task_boundary_decision,
-    resolve_actionable_repair_follow_up, task_boundary_projection_diagnostic_reason_code,
+    CurrentTruthSnapshot, normalized_plan_qa_requirement, resolve_actionable_repair_follow_up,
 };
 use crate::execution::follow_up::{
-    follow_up_command_template, follow_up_from_phase_detail,
-    normalize_public_routing_follow_up_token, repair_follow_up_source_decision_hash,
+    follow_up_from_phase_detail, normalize_public_routing_follow_up_token,
+    repair_follow_up_source_decision_hash,
 };
 use crate::execution::harness::HarnessPhase;
 use crate::execution::next_action::{
-    AuthoritativeStaleReentryTarget, NextActionAuthorityInputs, NextActionDecision, NextActionKind,
+    NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED, NextActionAuthorityInputs, NextActionDecision,
     NextActionRequestInputs, compute_next_action_decision_with_authority_inputs,
-    exact_execution_command_from_decision, public_next_action_text,
+    diagnostic_next_action_for_route, repair_review_state_public_command,
+    select_authoritative_stale_reentry_target,
+};
+use crate::execution::phase;
+use crate::execution::public_command_types::RecommendedPublicCommandArgv;
+use crate::execution::public_repair_targets::public_repair_target_candidates_from_authority;
+use crate::execution::public_route_selection::shared_next_action_seed_from_runtime_state;
+#[cfg(test)]
+pub(crate) use crate::execution::public_route_selection::{
+    SharedNextActionRoutingInputs, shared_next_action_seed_from_decision,
 };
 use crate::execution::query::{
     ExecutionRoutingExecutionCommandContext, ExecutionRoutingRecordingContext,
@@ -33,11 +45,10 @@ use crate::execution::reentry_reconcile::{
     TargetlessStaleReconcile,
 };
 use crate::execution::state::{
-    ExecutionReadScope, ExecutionRuntime, PlanExecutionStatus, StatusBlockingRecord,
-    current_branch_closure_structural_review_state_reason,
-    task_closure_baseline_bridge_ready_for_stale_target,
-    task_closure_baseline_repair_candidate_with_stale_target,
-    task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
+    ExecutionReadScope, ExecutionRuntime, PlanExecutionStatus, PublicRepairTarget,
+    StatusBlockingRecord, current_branch_closure_structural_review_state_reason,
+    task_closure_baseline_bridge_ready_for_stale_target, task_scope_review_state_repair_reason,
+    task_scope_structural_review_state_reason,
 };
 use crate::workflow::status::WorkflowRoute;
 
@@ -60,8 +71,10 @@ pub struct Blocker {
     pub details: String,
 }
 
+pub(crate) type RouteDecision = PublicRouteDecision;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct RouteDecision {
+pub(crate) struct PublicRouteDecision {
     pub(crate) state_kind: String,
     pub(crate) phase: String,
     pub(crate) phase_detail: String,
@@ -70,15 +83,86 @@ pub(crate) struct RouteDecision {
     pub(crate) blocking_reason_codes: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) recommended_command: Option<String>,
+    #[serde(skip)]
+    pub(crate) recommended_public_command: Option<PublicCommand>,
+    #[serde(skip)]
+    pub(crate) invocation: Option<PublicCommandInvocation>,
+    pub(crate) required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) required_follow_up: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) next_public_action: Option<NextPublicAction>,
     pub(crate) blockers: Vec<Blocker>,
     #[serde(skip)]
+    pub(crate) public_repair_targets: Vec<PublicRepairTarget>,
+    #[serde(skip)]
     pub(crate) execution_command_context: Option<ExecutionRoutingExecutionCommandContext>,
     #[serde(skip)]
     pub(crate) recording_context: Option<ExecutionRoutingRecordingContext>,
+}
+
+impl PublicRouteDecision {
+    pub(crate) fn command_surfaces(
+        command: Option<&PublicCommand>,
+    ) -> (
+        Option<String>,
+        Option<PublicCommandInvocation>,
+        Vec<PublicCommandInputRequirement>,
+    ) {
+        let (recommended_command, argv, required_inputs) =
+            public_command_recommendation_surfaces(command);
+        (
+            recommended_command,
+            argv.map(|argv| PublicCommandInvocation { argv }),
+            required_inputs,
+        )
+    }
+
+    pub(crate) fn public_command_argv(&self) -> RecommendedPublicCommandArgv {
+        self.invocation
+            .as_ref()
+            .map(|invocation| invocation.argv.clone())
+    }
+
+    pub(crate) fn recommended_command_display(&self) -> Option<String> {
+        self.recommended_command.clone()
+    }
+
+    pub(crate) fn bind_public_command(&mut self, command: Option<PublicCommand>) {
+        let (recommended_command, invocation, required_inputs) =
+            Self::command_surfaces(command.as_ref());
+        self.recommended_command = recommended_command;
+        self.recommended_public_command = command;
+        self.invocation = invocation;
+        self.required_inputs = required_inputs;
+    }
+
+    pub(crate) fn normalize_diagnostic_next_action(&mut self) {
+        if let Some(next_action) = diagnostic_next_action_for_route(
+            &self.state_kind,
+            &self.phase_detail,
+            self.invocation.is_some(),
+            !self.required_inputs.is_empty(),
+        ) {
+            self.next_action = next_action;
+            self.required_follow_up = None;
+            self.next_public_action = None;
+            self.blockers.clear();
+            self.public_repair_targets.clear();
+            self.recommended_command = None;
+            self.recommended_public_command = None;
+        }
+    }
+
+    fn is_diagnostic_only(&self) -> bool {
+        diagnostic_next_action_for_route(
+            &self.state_kind,
+            &self.phase_detail,
+            self.invocation.is_some(),
+            !self.required_inputs.is_empty(),
+        )
+        .is_some()
+    }
 }
 
 pub(crate) fn project_runtime_routing_state(
@@ -121,7 +205,7 @@ pub(crate) fn project_runtime_routing_state_with_reduced_state(
     } else {
         route_runtime_state(&runtime_state, external_review_result_ready)
     };
-    let source_route_decision_hash = repair_follow_up_source_decision_hash(&route_decision);
+    let mut source_route_decision_hash = repair_follow_up_source_decision_hash(&route_decision);
     let route_bound_follow_up = resolve_actionable_repair_follow_up(
         &runtime_state,
         &CurrentTruthSnapshot::from_authoritative_state(read_scope.authoritative_state.as_ref())
@@ -139,7 +223,14 @@ pub(crate) fn project_runtime_routing_state_with_reduced_state(
         } else {
             route_runtime_state(&runtime_state, external_review_result_ready)
         };
+        source_route_decision_hash = repair_follow_up_source_decision_hash(&route_decision);
     }
+    runtime_state.route_repair_target_candidates = public_repair_target_candidates_from_authority(
+        &runtime_state.context,
+        &runtime_state.status,
+        read_scope.authoritative_state.as_ref(),
+        source_route_decision_hash.as_deref(),
+    );
     let route = route_from_runtime_state(&runtime_state);
     let routing = project_routing_from_runtime_state(
         route,
@@ -155,23 +246,24 @@ pub(crate) fn project_non_runtime_workflow_routing_state(
     external_review_result_ready: bool,
 ) -> Result<(ExecutionRoutingState, RouteDecision), JsonFailure> {
     let workflow_phase = non_runtime_workflow_phase(&route.status);
-    let (phase, phase_detail, next_action, recommended_command) = match workflow_phase.as_str() {
-        "handoff_required" => (
-            String::from("handoff_required"),
-            String::from("handoff_recording_required"),
-            String::from("hand off"),
-            Some(format!(
-                "featureforge plan execution transfer --plan {} --scope branch --to <owner> --reason <reason>",
-                route.plan_path
-            )),
-        ),
-        _ => (
-            String::from("pivot_required"),
-            String::from("planning_reentry_required"),
-            String::from("pivot / return to planning"),
-            None,
-        ),
-    };
+    let (phase, phase_detail, next_action, recommended_public_command) =
+        match workflow_phase.as_str() {
+            phase::PHASE_HANDOFF_REQUIRED => (
+                String::from(phase::PHASE_HANDOFF_REQUIRED),
+                String::from(phase::DETAIL_HANDOFF_RECORDING_REQUIRED),
+                String::from("hand off"),
+                Some(PublicCommand::TransferHandoff {
+                    plan: route.plan_path.clone(),
+                    scope: String::from("branch"),
+                }),
+            ),
+            _ => (
+                String::from(phase::PHASE_PIVOT_REQUIRED),
+                String::from(phase::DETAIL_PLANNING_REENTRY_REQUIRED),
+                String::from("pivot / return to planning"),
+                None,
+            ),
+        };
     let blocking_reason_codes = compact_operator_reason_codes(None, &phase_detail, "clean");
     let external_wait_state = external_wait_state_for_phase_detail(
         &phase_detail,
@@ -180,6 +272,8 @@ pub(crate) fn project_non_runtime_workflow_routing_state(
     );
     let (reason_family, diagnostic_reason_codes) =
         late_stage_observability_for_phase(&workflow_phase, None, None);
+    let (recommended_command, _, _) =
+        PublicRouteDecision::command_surfaces(recommended_public_command.as_ref());
     let mut routing = ExecutionRoutingState {
         route,
         route_decision: None,
@@ -196,6 +290,7 @@ pub(crate) fn project_non_runtime_workflow_routing_state(
         recording_context: None,
         execution_command_context: None,
         next_action,
+        recommended_public_command,
         recommended_command,
         blocking_scope: None,
         blocking_task: None,
@@ -219,8 +314,10 @@ fn non_runtime_workflow_phase(route_status: &str) -> String {
         "spec_draft" => String::from("spec_review"),
         "plan_draft" => String::from("plan_review"),
         "spec_approved_needs_plan" | "stale_plan" => String::from("plan_writing"),
-        "handoff_required" => String::from("handoff_required"),
-        "implementation_ready" => String::from("implementation_handoff"),
+        phase::PHASE_HANDOFF_REQUIRED => String::from(phase::PHASE_HANDOFF_REQUIRED),
+        phase::WORKFLOW_STATUS_IMPLEMENTATION_READY => {
+            String::from(phase::PHASE_IMPLEMENTATION_HANDOFF)
+        }
         other => other.to_owned(),
     }
 }
@@ -236,7 +333,7 @@ fn route_from_runtime_state(runtime_state: &RuntimeState) -> WorkflowRoute {
         .to_owned();
     WorkflowRoute {
         schema_version: 3,
-        status: String::from("implementation_ready"),
+        status: String::from(phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
         next_skill: String::new(),
         spec_path,
         plan_path: runtime_state.context.plan_rel.clone(),
@@ -283,7 +380,7 @@ pub(crate) fn shared_next_action_decision(
     )
 }
 
-fn shared_next_action_decision_from_runtime_state(
+pub(crate) fn shared_next_action_decision_from_runtime_state(
     runtime_state: &RuntimeState,
     external_review_result_ready: bool,
 ) -> Option<NextActionDecision> {
@@ -306,25 +403,16 @@ fn shared_next_action_decision_from_runtime_state(
             persisted_repair_follow_up: runtime_state.persisted_repair_follow_up.as_deref(),
             branch_rerecording_assessment: runtime_state.branch_rerecording_assessment.as_ref(),
             gate_finish: runtime_state.gate_snapshot.gate_finish.as_ref(),
-            task_closure_execution_run_ids: Some(&runtime_state.task_closure_execution_run_ids),
-            authoritative_stale_target: runtime_state
+            has_authoritative_stale_target: runtime_state
                 .gate_snapshot
-                .earliest_task_stale_target_details()
-                .and_then(AuthoritativeStaleReentryTarget::from_stale_target),
+                .has_authoritative_stale_binding(&runtime_state.status),
+            authoritative_stale_target: select_authoritative_stale_reentry_target(
+                &runtime_state.status,
+                &runtime_state.gate_snapshot.stale_targets,
+            ),
+            ..NextActionAuthorityInputs::default()
         },
     )
-}
-
-pub(crate) struct SharedNextActionRoutingInputs<'a> {
-    pub(crate) plan_path: &'a str,
-    #[cfg(test)]
-    pub(crate) external_review_result_ready: bool,
-    pub(crate) require_exact_execution_command: bool,
-    pub(crate) task_review_dispatch_id: Option<&'a str>,
-    pub(crate) final_review_dispatch_id: Option<&'a str>,
-    #[cfg(test)]
-    pub(crate) final_review_dispatch_lineage_present: bool,
-    pub(crate) current_branch_closure_id: Option<&'a str>,
 }
 
 fn route_decision_from_runtime_state_with_inputs(
@@ -333,6 +421,13 @@ fn route_decision_from_runtime_state_with_inputs(
     require_exact_execution_command: bool,
 ) -> RouteDecision {
     let status = &runtime_state.status;
+    let actionable_stale_reentry_target = select_authoritative_stale_reentry_target(
+        status,
+        &runtime_state.gate_snapshot.stale_targets,
+    );
+    let authoritative_stale_target_bound = runtime_state
+        .gate_snapshot
+        .has_authoritative_stale_binding(status);
     if status.review_state_status == "missing_current_closure"
         && status.current_branch_closure_id.is_none()
         && !status.current_task_closures.is_empty()
@@ -365,10 +460,30 @@ fn route_decision_from_runtime_state_with_inputs(
             TARGETLESS_STALE_RECONCILE_REASON_CODE,
         );
     }
+    if status.review_state_status == "stale_unreviewed"
+        && !authoritative_stale_target_bound
+        && actionable_stale_reentry_target.is_none()
+        && !task_closure_baseline_bridge_route_ready(runtime_state, status)
+    {
+        return runtime_reconcile_route_decision(
+            runtime_state,
+            status,
+            status
+                .blocking_task
+                .or_else(|| blocking_task_from_status_records(status)),
+            TARGETLESS_STALE_RECONCILE_REASON_CODE,
+        );
+    }
     if status.blocking_records.iter().any(|record| {
         record.record_type == "review_state"
             && record.required_follow_up.as_deref() == Some("repair_review_state")
     }) && !task_closure_baseline_bridge_route_ready(runtime_state, status)
+        && actionable_stale_reentry_target
+            .is_none_or(|target| Some(target.task) == status.blocking_task)
+        && !status
+            .reason_codes
+            .iter()
+            .any(|code| code == "negative_result_requires_execution_reentry")
     {
         return repair_review_state_route_decision(
             runtime_state,
@@ -384,7 +499,7 @@ fn route_decision_from_runtime_state_with_inputs(
         external_review_result_ready,
         require_exact_execution_command,
     ) {
-        if seed.phase_detail == "planning_reentry_required"
+        if seed.phase_detail == phase::DETAIL_PLANNING_REENTRY_REQUIRED
             && status.execution_started == "yes"
             && status.current_branch_closure_id.is_none()
             && !status
@@ -402,36 +517,40 @@ fn route_decision_from_runtime_state_with_inputs(
         {
             return route_decision;
         }
-        let mut recommended_command = match seed.phase_detail.as_str() {
-            "final_review_recording_ready" => Some(format!(
-                "featureforge plan execution advance-late-stage --plan {} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>",
-                runtime_state.context.plan_rel
-            )),
-            _ => sanitize_public_recommended_command(
-                seed.recommended_command.as_deref(),
-                &seed.phase_detail,
-            )
-            .map(|command| materialize_plan_template(&command, &runtime_state.context.plan_rel)),
+        let mut recommended_public_command = match seed.phase_detail.as_str() {
+            phase::DETAIL_FINAL_REVIEW_RECORDING_READY => Some(PublicCommand::AdvanceLateStage {
+                plan: runtime_state.context.plan_rel.clone(),
+                mode: PublicAdvanceLateStageMode::FinalReview,
+            }),
+            _ => seed.recommended_public_command.clone(),
         };
-        if recommended_command.is_none()
-            && !RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS.contains(&seed.phase_detail.as_str())
+        let execution_command_context = seed.execution_command_context.clone();
+        if recommended_public_command.is_none()
+            && !phase::RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS
+                .contains(&seed.phase_detail.as_str())
             && TargetlessStaleReconcile::from_phase_and_reason_codes(
                 &seed.phase_detail,
                 &seed.blocking_reason_codes,
             )
             .is_none()
-            && let Some(follow_up_command) = status
-                .blocking_records
-                .first()
-                .and_then(|record| follow_up_command_template(record.required_follow_up.as_deref()))
-                .map(|template| {
-                    materialize_plan_template(&template, &runtime_state.context.plan_rel)
-                })
+            && let Some(follow_up_command) = status.blocking_records.first().and_then(|record| {
+                public_command_for_required_follow_up(
+                    record.required_follow_up.as_deref(),
+                    &runtime_state.context.plan_rel,
+                    &seed.phase_detail,
+                    Some(record.record_type.as_str()),
+                )
+            })
         {
-            recommended_command = Some(follow_up_command);
+            recommended_public_command = Some(follow_up_command);
         }
-        let next_public_action =
-            synthesize_next_public_action(recommended_command.as_deref(), &seed.phase_detail);
+        let (recommended_command, invocation, required_inputs) =
+            PublicRouteDecision::command_surfaces(recommended_public_command.as_ref());
+        let next_public_action = synthesize_next_public_action(
+            recommended_public_command.as_ref(),
+            &seed.phase_detail,
+            &runtime_state.context.plan_rel,
+        );
         let review_state_status = effective_route_review_state_status(status, &seed);
         let blocking_reason_codes = merge_reason_codes(
             public_route_blocking_reason_codes(status, &seed),
@@ -443,6 +562,19 @@ fn route_decision_from_runtime_state_with_inputs(
                 None,
             ),
         );
+        if command_context_reopens_current_task_closure(status, execution_command_context.as_ref())
+        {
+            return repair_review_state_route_decision(
+                runtime_state,
+                status,
+                seed.blocking_task.or_else(|| {
+                    execution_command_context
+                        .as_ref()
+                        .and_then(|context| context.task_number)
+                }),
+                "prior_task_current_closure_stale",
+            );
+        }
         let next_action = seed.next_action;
         let external_wait_state = external_wait_state_for_phase_detail(
             &seed.phase_detail,
@@ -454,7 +586,7 @@ fn route_decision_from_runtime_state_with_inputs(
             external_wait_state.as_deref(),
             status.harness_phase,
             &seed.phase_detail,
-            recommended_command.as_deref(),
+            state_kind_command_marker(recommended_public_command.as_ref()),
         );
         let blockers =
             if targetless_stale_reconcile_for_phase(&seed.phase_detail, &blocking_reason_codes) {
@@ -472,34 +604,33 @@ fn route_decision_from_runtime_state_with_inputs(
             &seed.phase_detail,
             &review_state_status,
             blocking_reason_codes.iter().map(String::as_str),
-            seed.execution_command_context.as_ref(),
+            execution_command_context.as_ref(),
         );
-        if seed.phase_detail == "execution_reentry_required"
+        if seed.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
             && status.current_task_closures.is_empty()
             && let Some(task_number) = status.blocking_task.or(seed.blocking_task).or_else(|| {
-                seed.execution_command_context
+                execution_command_context
                     .as_ref()
                     .and_then(|context| context.task_number)
             })
             && (task_closure_baseline_bridge_route_ready(runtime_state, status)
-                || close_current_task_public_repair_target_present(status, task_number)
+                || (reducer_stale_target_allows_task_closure_bridge(runtime_state, task_number)
+                    && close_current_task_public_repair_target_candidate_present(
+                        runtime_state,
+                        task_number,
+                    ))
                 || reducer_dispatch_bridge_ready(runtime_state, status, task_number))
         {
             return close_current_task_route_decision(runtime_state, status, task_number);
         }
-        if seed.phase_detail == "execution_reentry_required"
+        if seed.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
             && !status
                 .reason_codes
                 .iter()
                 .any(|code| code == "prior_task_current_closure_stale")
             && prior_task_closure_progress_edge_required(status)
             && let Some(task_number) = status.blocking_task
-        {
-            return close_current_task_route_decision(runtime_state, status, task_number);
-        }
-        if seed.phase_detail == "execution_reentry_required"
-            && let Some(task_number) =
-                task_closure_projection_refresh_route_task(runtime_state, status)
+            && reducer_stale_target_allows_task_closure_bridge(runtime_state, task_number)
         {
             return close_current_task_route_decision(runtime_state, status, task_number);
         }
@@ -511,14 +642,44 @@ fn route_decision_from_runtime_state_with_inputs(
             next_action,
             blocking_reason_codes,
             recommended_command,
+            recommended_public_command,
+            invocation,
+            required_inputs,
             required_follow_up,
             next_public_action,
             blockers,
-            execution_command_context: seed.execution_command_context,
+            public_repair_targets: Vec::new(),
+            execution_command_context,
             recording_context: seed.recording_context,
         };
     }
     route_decision_for_unroutable_runtime_state(status)
+}
+
+fn command_context_reopens_current_task_closure(
+    status: &PlanExecutionStatus,
+    context: Option<&ExecutionRoutingExecutionCommandContext>,
+) -> bool {
+    if status
+        .reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "negative_result_requires_execution_reentry")
+    {
+        return false;
+    }
+    let Some(context) = context else {
+        return false;
+    };
+    if context.command_kind != "reopen" {
+        return false;
+    }
+    let Some(task_number) = context.task_number else {
+        return false;
+    };
+    status
+        .current_task_closures
+        .iter()
+        .any(|closure| closure.task == task_number)
 }
 
 fn public_route_blocking_reason_codes(
@@ -529,9 +690,9 @@ fn public_route_blocking_reason_codes(
         && status.blocking_step.is_none()
         && matches!(
             seed.phase_detail.as_str(),
-            "task_closure_recording_ready"
-                | "task_review_result_pending"
-                | "execution_reentry_required"
+            phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+                | phase::DETAIL_TASK_REVIEW_RESULT_PENDING
+                | phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         )
     {
         return seed
@@ -546,7 +707,7 @@ fn public_route_blocking_reason_codes(
     }
     if status.blocking_task.is_some()
         && status.blocking_step.is_none()
-        && seed.phase_detail == "task_closure_recording_ready"
+        && seed.phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
     {
         return public_task_boundary_decision(status).public_reason_codes;
     }
@@ -614,16 +775,25 @@ fn reducer_stale_target_allows_task_closure_bridge(
     else {
         return true;
     };
-    target.task == Some(task_number) && target.reason_code != "prior_task_current_closure_stale"
+    let Some(stale_task) = target.task else {
+        return true;
+    };
+    if stale_task < task_number {
+        return false;
+    }
+    stale_task > task_number || target.task_closure_bridge_allowed
 }
 
-fn close_current_task_public_repair_target_present(
-    status: &PlanExecutionStatus,
+fn close_current_task_public_repair_target_candidate_present(
+    runtime_state: &RuntimeState,
     task_number: u32,
 ) -> bool {
-    status.public_repair_targets.iter().any(|target| {
-        target.command_kind == "close-current-task" && target.task == Some(task_number)
-    })
+    runtime_state
+        .route_repair_target_candidates
+        .iter()
+        .any(|target| {
+            target.command_kind == "close-current-task" && target.task == Some(task_number)
+        })
 }
 
 fn reducer_dispatch_bridge_ready(
@@ -642,53 +812,6 @@ fn reducer_dispatch_bridge_ready(
             .all(|step| step.checked)
 }
 
-fn task_closure_projection_refresh_route_task(
-    runtime_state: &RuntimeState,
-    status: &PlanExecutionStatus,
-) -> Option<u32> {
-    if late_stage_failed_result_requires_execution_reentry(status) {
-        return None;
-    }
-    status
-        .current_task_closures
-        .iter()
-        .map(|closure| closure.task)
-        .find(|task_number| {
-            task_closure_baseline_repair_candidate_with_stale_target(
-                &runtime_state.context,
-                status,
-                *task_number,
-                runtime_state.gate_snapshot.earliest_task_stale_target(),
-            )
-            .ok()
-            .flatten()
-            .is_some_and(|candidate| {
-                candidate.projection_refresh_only
-                    && runtime_state
-                        .context
-                        .steps
-                        .iter()
-                        .all(|step| step.checked || step.task_number <= candidate.task)
-            })
-        })
-}
-
-fn late_stage_failed_result_requires_execution_reentry(status: &PlanExecutionStatus) -> bool {
-    let final_review_failed = status.current_final_review_result.as_deref() == Some("fail")
-        && status
-            .current_final_review_branch_closure_id
-            .as_deref()
-            .zip(status.current_branch_closure_id.as_deref())
-            .is_some_and(|(recorded, current)| recorded == current);
-    let qa_failed = status.current_qa_result.as_deref() == Some("fail")
-        && status
-            .current_qa_branch_closure_id
-            .as_deref()
-            .zip(status.current_branch_closure_id.as_deref())
-            .is_some_and(|(recorded, current)| recorded == current);
-    final_review_failed || qa_failed
-}
-
 pub(crate) fn route_runtime_state(
     runtime_state: &RuntimeState,
     external_review_result_ready: bool,
@@ -700,27 +823,13 @@ pub(crate) fn route_runtime_state(
     )
 }
 
-pub(crate) fn router_allows_public_recommended_mutation(
-    status: &PlanExecutionStatus,
-    command: &str,
-) -> bool {
-    if command_invokes_hidden_lane(command) || !command_is_legal_public_command(command) {
-        return false;
-    }
-    if let Some(request) = public_mutation_request_from_command(command) {
-        return decide_public_mutation(status, &request).allowed;
-    }
-    command.starts_with("featureforge workflow operator --plan ")
-        || command.starts_with("featureforge plan execution status --plan ")
-}
-
 fn effective_route_review_state_status(
     status: &PlanExecutionStatus,
     seed: &WorkflowRoutingDecision,
 ) -> String {
     if status.review_state_status == "stale_unreviewed"
         || (!status.stale_unreviewed_closures.is_empty()
-            && seed.phase_detail == "task_closure_recording_ready")
+            && seed.phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY)
     {
         return String::from("stale_unreviewed");
     }
@@ -782,41 +891,37 @@ fn merge_reason_codes(mut primary: Vec<String>, secondary: Vec<String>) -> Vec<S
     primary
 }
 
-fn close_current_task_route_decision(
+pub(crate) fn close_current_task_route_decision(
     runtime_state: &RuntimeState,
     status: &PlanExecutionStatus,
     task_number: u32,
 ) -> RouteDecision {
-    let projection_refresh_only = task_closure_baseline_repair_candidate_with_stale_target(
-        &runtime_state.context,
-        status,
-        task_number,
-        runtime_state.gate_snapshot.earliest_task_stale_target(),
-    )
-    .ok()
-    .flatten()
-    .is_some_and(|candidate| candidate.projection_refresh_only);
     if status
         .current_task_closures
         .iter()
         .any(|closure| closure.task == task_number)
         && status.current_branch_closure_id.is_none()
-        && !projection_refresh_only
     {
         return branch_closure_recording_route_decision(runtime_state, status);
     }
-    let phase_detail = String::from("task_closure_recording_ready");
-    let recommended_command = Some(close_current_task_recording_command(
+    let phase_detail = String::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY);
+    let recommended_public_command = Some(PublicCommand::CloseCurrentTask {
+        plan: runtime_state.context.plan_rel.clone(),
+        task: Some(task_number),
+        result_inputs_required: true,
+    });
+    let (recommended_command, invocation, required_inputs) =
+        PublicRouteDecision::command_surfaces(recommended_public_command.as_ref());
+    let next_public_action = synthesize_next_public_action(
+        recommended_public_command.as_ref(),
+        &phase_detail,
         &runtime_state.context.plan_rel,
-        task_number,
-    ));
-    let next_public_action =
-        synthesize_next_public_action(recommended_command.as_deref(), &phase_detail);
+    );
     let state_kind = derive_state_kind_from_seed(
         None,
         HarnessPhase::Executing,
         &phase_detail,
-        recommended_command.as_deref(),
+        state_kind_command_marker(recommended_public_command.as_ref()),
     );
     let blockers = materialize_blocker_actions(
         primary_blocker_for_status(status, state_kind.as_str(), next_public_action.as_ref()),
@@ -837,7 +942,7 @@ fn close_current_task_route_decision(
     );
     RouteDecision {
         state_kind,
-        phase: String::from("task_closure_pending"),
+        phase: String::from(phase::PHASE_TASK_CLOSURE_PENDING),
         phase_detail,
         review_state_status: if status.review_state_status == "stale_unreviewed"
             || !status.stale_unreviewed_closures.is_empty()
@@ -849,9 +954,13 @@ fn close_current_task_route_decision(
         next_action: String::from("close current task"),
         blocking_reason_codes,
         recommended_command,
+        recommended_public_command,
+        invocation,
+        required_inputs,
         required_follow_up: None,
         next_public_action,
         blockers,
+        public_repair_targets: Vec::new(),
         execution_command_context: None,
         recording_context: Some(ExecutionRoutingRecordingContext {
             task_number: Some(task_number),
@@ -867,13 +976,17 @@ fn repair_review_state_route_decision(
     task_number: Option<u32>,
     reason_code: &str,
 ) -> RouteDecision {
-    let phase_detail = String::from("execution_reentry_required");
-    let recommended_command = Some(format!(
-        "featureforge plan execution repair-review-state --plan {}",
-        runtime_state.context.plan_rel
+    let phase_detail = String::from(phase::DETAIL_EXECUTION_REENTRY_REQUIRED);
+    let recommended_public_command = Some(repair_review_state_public_command(
+        &runtime_state.context.plan_rel,
     ));
-    let next_public_action =
-        synthesize_next_public_action(recommended_command.as_deref(), &phase_detail);
+    let (recommended_command, invocation, required_inputs) =
+        PublicRouteDecision::command_surfaces(recommended_public_command.as_ref());
+    let next_public_action = synthesize_next_public_action(
+        recommended_public_command.as_ref(),
+        &phase_detail,
+        &runtime_state.context.plan_rel,
+    );
     let review_state_status = status.review_state_status.clone();
     let mut blocking_reason_codes = compact_route_reason_codes(
         status,
@@ -892,26 +1005,39 @@ fn repair_review_state_route_decision(
         None,
         status.harness_phase,
         &phase_detail,
-        recommended_command.as_deref(),
+        state_kind_command_marker(recommended_public_command.as_ref()),
     );
     let blockers = materialize_blocker_actions(
         primary_blocker_for_status(status, state_kind.as_str(), next_public_action.as_ref()),
         &runtime_state.context.plan_rel,
     );
-    RouteDecision {
+    let next_action = diagnostic_next_action_for_route(
+        &state_kind,
+        &phase_detail,
+        invocation.is_some(),
+        !required_inputs.is_empty(),
+    )
+    .unwrap_or_else(|| String::from("repair review state / reenter execution"));
+    let mut decision = RouteDecision {
         state_kind,
-        phase: String::from("executing"),
+        phase: String::from(phase::PHASE_EXECUTING),
         phase_detail,
         review_state_status,
-        next_action: String::from("repair review state / reenter execution"),
+        next_action,
         blocking_reason_codes,
         recommended_command,
+        recommended_public_command,
+        invocation,
+        required_inputs,
         required_follow_up: Some(String::from("repair_review_state")),
         next_public_action,
         blockers,
+        public_repair_targets: Vec::new(),
         execution_command_context: None,
         recording_context: None,
-    }
+    };
+    decision.normalize_diagnostic_next_action();
+    decision
 }
 
 fn runtime_reconcile_route_decision(
@@ -923,14 +1049,15 @@ fn runtime_reconcile_route_decision(
     let phase_detail = String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL);
     let targetless_stale_reconcile =
         TargetlessStaleReconcile::from_reason_code(reason_code).is_some();
-    let recommended_command = (!targetless_stale_reconcile).then(|| {
-        format!(
-            "featureforge plan execution repair-review-state --plan {}",
-            runtime_state.context.plan_rel
-        )
-    });
-    let next_public_action =
-        synthesize_next_public_action(recommended_command.as_deref(), &phase_detail);
+    let recommended_public_command = (!targetless_stale_reconcile)
+        .then(|| repair_review_state_public_command(&runtime_state.context.plan_rel));
+    let (recommended_command, invocation, required_inputs) =
+        PublicRouteDecision::command_surfaces(recommended_public_command.as_ref());
+    let next_public_action = synthesize_next_public_action(
+        recommended_public_command.as_ref(),
+        &phase_detail,
+        &runtime_state.context.plan_rel,
+    );
     let review_state_status = status.review_state_status.clone();
     let mut blocking_reason_codes = compact_route_reason_codes(
         status,
@@ -951,7 +1078,7 @@ fn runtime_reconcile_route_decision(
         None,
         status.harness_phase,
         &phase_detail,
-        recommended_command.as_deref(),
+        state_kind_command_marker(recommended_public_command.as_ref()),
     );
     let blockers = if targetless_stale_reconcile {
         targetless_stale_reconcile_blockers(&phase_detail)
@@ -961,33 +1088,53 @@ fn runtime_reconcile_route_decision(
             &runtime_state.context.plan_rel,
         )
     };
-    RouteDecision {
+    let next_action = diagnostic_next_action_for_route(
+        &state_kind,
+        &phase_detail,
+        invocation.is_some(),
+        !required_inputs.is_empty(),
+    )
+    .unwrap_or_else(|| String::from("repair review state / reenter execution"));
+    let mut decision = RouteDecision {
         state_kind,
-        phase: String::from("executing"),
+        phase: String::from(phase::PHASE_EXECUTING),
         phase_detail,
         review_state_status,
-        next_action: String::from("repair review state / reenter execution"),
+        next_action,
         blocking_reason_codes,
         recommended_command,
+        recommended_public_command,
+        invocation,
+        required_inputs,
         required_follow_up: (!targetless_stale_reconcile)
             .then(|| String::from("repair_review_state")),
         next_public_action,
         blockers,
+        public_repair_targets: Vec::new(),
         execution_command_context: None,
         recording_context: None,
-    }
+    };
+    decision.normalize_diagnostic_next_action();
+    decision
 }
 
-fn branch_closure_recording_route_decision(
+pub(crate) fn branch_closure_recording_route_decision(
     runtime_state: &RuntimeState,
     status: &PlanExecutionStatus,
 ) -> RouteDecision {
-    let phase_detail = String::from("branch_closure_recording_required_for_release_readiness");
-    let recommended_command = Some(release_readiness_recording_command(
+    let phase_detail =
+        String::from(phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS);
+    let recommended_public_command = Some(PublicCommand::AdvanceLateStage {
+        plan: runtime_state.context.plan_rel.clone(),
+        mode: PublicAdvanceLateStageMode::Basic,
+    });
+    let (recommended_command, invocation, required_inputs) =
+        PublicRouteDecision::command_surfaces(recommended_public_command.as_ref());
+    let next_public_action = synthesize_next_public_action(
+        recommended_public_command.as_ref(),
+        &phase_detail,
         &runtime_state.context.plan_rel,
-    ));
-    let next_public_action =
-        synthesize_next_public_action(recommended_command.as_deref(), &phase_detail);
+    );
     let blockers = materialize_blocker_actions(
         primary_blocker_for_status(
             status,
@@ -998,15 +1145,19 @@ fn branch_closure_recording_route_decision(
     );
     RouteDecision {
         state_kind: String::from("actionable_public_command"),
-        phase: String::from("document_release_pending"),
+        phase: String::from(phase::PHASE_DOCUMENT_RELEASE_PENDING),
         phase_detail,
         review_state_status: String::from("missing_current_closure"),
         next_action: String::from("advance late stage"),
         blocking_reason_codes: vec![String::from("missing_current_closure")],
         recommended_command,
+        recommended_public_command,
+        invocation,
+        required_inputs,
         required_follow_up: Some(String::from("advance_late_stage")),
         next_public_action,
         blockers,
+        public_repair_targets: Vec::new(),
         execution_command_context: None,
         recording_context: None,
     }
@@ -1017,7 +1168,7 @@ fn final_review_dispatch_route_for_repaired_late_stage_drift(
     seed: &WorkflowRoutingDecision,
 ) -> Option<RouteDecision> {
     let status = &runtime_state.status;
-    if seed.phase_detail != "branch_closure_recording_required_for_release_readiness"
+    if seed.phase_detail != phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
         || runtime_state.persisted_repair_follow_up.as_deref() != Some("advance_late_stage")
         || runtime_state
             .release_readiness_result_for_current_branch
@@ -1028,16 +1179,9 @@ fn final_review_dispatch_route_for_repaired_late_stage_drift(
         return None;
     }
     let branch_closure_id = status.current_branch_closure_id.as_ref()?;
-    let phase_detail = String::from("final_review_dispatch_required");
+    let phase_detail = String::from(phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED);
     let next_public_action =
-        synthesize_next_public_action(None, &phase_detail).map(|mut action| {
-            action.command =
-                materialize_plan_template(&action.command, &runtime_state.context.plan_rel);
-            action.args_template = action.args_template.map(|template| {
-                materialize_plan_template(&template, &runtime_state.context.plan_rel)
-            });
-            action
-        });
+        synthesize_next_public_action(None, &phase_detail, &runtime_state.context.plan_rel);
     let blockers = vec![Blocker {
         category: String::from("late_stage"),
         scope_type: String::from("branch"),
@@ -1058,259 +1202,22 @@ fn final_review_dispatch_route_for_repaired_late_stage_drift(
             &phase_detail,
             None,
         ),
-        phase: String::from("final_review_pending"),
+        phase: String::from(phase::PHASE_FINAL_REVIEW_PENDING),
         phase_detail,
         review_state_status: String::from("clean"),
         next_action: String::from("request final review"),
         blocking_reason_codes,
         recommended_command: None,
+        recommended_public_command: None,
+        invocation: None,
+        required_inputs: Vec::new(),
         required_follow_up: Some(String::from("request_external_review")),
         next_public_action,
         blockers,
+        public_repair_targets: Vec::new(),
         execution_command_context: None,
         recording_context: None,
     })
-}
-
-#[cfg(test)]
-pub(crate) fn shared_next_action_seed_from_decision(
-    context: &crate::execution::state::ExecutionContext,
-    status: &PlanExecutionStatus,
-    inputs: SharedNextActionRoutingInputs<'_>,
-) -> Result<Option<WorkflowRoutingDecision>, JsonFailure> {
-    let Some(decision) = shared_next_action_decision(
-        context,
-        status,
-        inputs.plan_path,
-        inputs.external_review_result_ready,
-        inputs.task_review_dispatch_id,
-        inputs.final_review_dispatch_id,
-        inputs.final_review_dispatch_lineage_present,
-    ) else {
-        return Ok(None);
-    };
-    shared_next_action_seed_from_precomputed_decision(context, status, inputs, decision)
-}
-
-fn shared_next_action_seed_from_runtime_state(
-    runtime_state: &RuntimeState,
-    external_review_result_ready: bool,
-    require_exact_execution_command: bool,
-) -> Result<Option<WorkflowRoutingDecision>, JsonFailure> {
-    let Some(decision) =
-        shared_next_action_decision_from_runtime_state(runtime_state, external_review_result_ready)
-    else {
-        return Ok(None);
-    };
-    shared_next_action_seed_from_precomputed_decision(
-        &runtime_state.context,
-        &runtime_state.status,
-        SharedNextActionRoutingInputs {
-            plan_path: &runtime_state.context.plan_rel,
-            #[cfg(test)]
-            external_review_result_ready,
-            require_exact_execution_command,
-            task_review_dispatch_id: runtime_state.task_review_dispatch_id.as_deref(),
-            final_review_dispatch_id: runtime_state
-                .final_review_dispatch_authority
-                .dispatch_id
-                .as_deref(),
-            #[cfg(test)]
-            final_review_dispatch_lineage_present: runtime_state
-                .final_review_dispatch_authority
-                .lineage_present,
-            current_branch_closure_id: runtime_state.status.current_branch_closure_id.as_deref(),
-        },
-        decision,
-    )
-}
-
-fn shared_next_action_seed_from_precomputed_decision(
-    context: &crate::execution::state::ExecutionContext,
-    status: &PlanExecutionStatus,
-    inputs: SharedNextActionRoutingInputs<'_>,
-    decision: NextActionDecision,
-) -> Result<Option<WorkflowRoutingDecision>, JsonFailure> {
-    let mut default_phase = default_phase_for_shared_seed(status, &decision);
-    let mut phase_detail = decision.phase_detail.clone();
-    let review_state_status = decision.review_state_status.clone();
-    let mut recording_context = None;
-    let mut execution_command_context = None;
-    let mut next_action = public_next_action_text(&decision);
-    let mut recommended_command = decision.recommended_command.clone();
-    let mut blocking_task = decision.blocking_task;
-    let task_review_dispatch_id = inputs.task_review_dispatch_id.map(str::to_owned);
-    let final_review_dispatch_id = inputs.final_review_dispatch_id.map(str::to_owned);
-
-    let repair_review_state_reentry = decision.kind == NextActionKind::Reopen
-        && (next_action == "repair review state / reenter execution"
-            || (phase_detail == "execution_reentry_required"
-                && review_state_status == "missing_current_closure"));
-    if repair_review_state_reentry {
-        recommended_command = Some(format!(
-            "featureforge plan execution repair-review-state --plan {}",
-            inputs.plan_path
-        ));
-    }
-    let decision_requires_exact_execution_command = matches!(
-        decision.kind,
-        NextActionKind::Begin | NextActionKind::Resume
-    ) || (decision.kind == NextActionKind::Reopen
-        && !repair_review_state_reentry)
-        || (decision.kind == NextActionKind::CloseCurrentTask
-            && status.active_task.is_some()
-            && status.active_step.is_some());
-    if decision_requires_exact_execution_command {
-        let exact_execution_command =
-            exact_execution_command_from_decision(status, &decision, inputs.plan_path);
-        if decision_requires_exact_execution_command
-            && inputs.require_exact_execution_command
-            && exact_execution_command.is_none()
-        {
-            return Ok(None);
-        }
-        if let Some(exact_execution_command) = exact_execution_command {
-            execution_command_context = Some(ExecutionRoutingExecutionCommandContext {
-                command_kind: String::from(exact_execution_command.command_kind),
-                task_number: Some(exact_execution_command.task_number),
-                step_id: exact_execution_command.step_id,
-            });
-            recommended_command = Some(exact_execution_command.recommended_command);
-            if decision.kind == NextActionKind::Reopen {
-                blocking_task = Some(exact_execution_command.task_number);
-            }
-        }
-    }
-    if next_action == "execution preflight"
-        && marker_free_started_execution(context)
-        && execution_command_context
-            .as_ref()
-            .is_some_and(|command| command.task_number == Some(1) && command.step_id == Some(1))
-    {
-        recommended_command = None;
-        if !inputs.require_exact_execution_command {
-            default_phase = String::from("executing");
-            phase_detail = String::from("execution_in_progress");
-            execution_command_context = None;
-        }
-    }
-    if phase_detail == "task_closure_recording_ready"
-        && !matches!(
-            status.harness_phase,
-            HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
-        )
-    {
-        if decision.kind == NextActionKind::CloseCurrentTask
-            && let Some(task_number) = decision.task_number.or(status.blocking_task)
-        {
-            recording_context = Some(ExecutionRoutingRecordingContext {
-                task_number: Some(task_number),
-                dispatch_id: task_review_dispatch_id.clone(),
-                branch_closure_id: None,
-            });
-            recommended_command = Some(close_current_task_recording_command(
-                inputs.plan_path,
-                task_number,
-            ));
-            next_action = String::from("close current task");
-            blocking_task = Some(task_number);
-        } else if review_state_status == "missing_current_closure" {
-            recommended_command = Some(release_readiness_recording_command(inputs.plan_path));
-            next_action = String::from("advance late stage");
-            blocking_task = decision.task_number.or(status.blocking_task);
-        } else {
-            recommended_command = Some(format!(
-                "featureforge plan execution repair-review-state --plan {}",
-                inputs.plan_path
-            ));
-            next_action = String::from("repair review state / reenter execution");
-            blocking_task = decision.task_number.or(status.blocking_task);
-        }
-    } else if phase_detail == "task_closure_recording_ready" {
-        if let Some(task_number) = decision.task_number.or(status.blocking_task) {
-            recording_context = Some(ExecutionRoutingRecordingContext {
-                task_number: Some(task_number),
-                dispatch_id: task_review_dispatch_id.clone(),
-                branch_closure_id: None,
-            });
-            recommended_command = Some(close_current_task_recording_command(
-                inputs.plan_path,
-                task_number,
-            ));
-            next_action = String::from("close current task");
-            blocking_task = Some(task_number);
-        }
-    } else if phase_detail == "final_review_recording_ready" {
-        recording_context = inputs.current_branch_closure_id.map(|branch_closure_id| {
-            ExecutionRoutingRecordingContext {
-                task_number: None,
-                dispatch_id: final_review_dispatch_id.clone(),
-                branch_closure_id: Some(branch_closure_id.to_owned()),
-            }
-        });
-        recommended_command = Some(final_review_recording_command(inputs.plan_path));
-        next_action = String::from("advance late stage");
-    } else if matches!(
-        phase_detail.as_str(),
-        "release_readiness_recording_ready" | "release_blocker_resolution_required"
-    ) {
-        recording_context = inputs.current_branch_closure_id.map(|branch_closure_id| {
-            ExecutionRoutingRecordingContext {
-                task_number: None,
-                dispatch_id: None,
-                branch_closure_id: Some(branch_closure_id.to_owned()),
-            }
-        });
-    }
-    if phase_detail == "task_closure_recording_ready"
-        && stale_branch_closure_refresh_required(status)
-    {
-        phase_detail = String::from("branch_closure_recording_required_for_release_readiness");
-        recording_context = None;
-        execution_command_context = None;
-        recommended_command = Some(release_readiness_recording_command(inputs.plan_path));
-        next_action = String::from("advance late stage");
-        blocking_task = None;
-    }
-
-    Ok(Some(WorkflowRoutingDecision {
-        phase: canonical_phase_for_shared_decision(default_phase.as_str(), phase_detail.as_str()),
-        phase_detail,
-        review_state_status,
-        recording_context,
-        execution_command_context,
-        next_action,
-        recommended_command,
-        blocking_scope: None,
-        blocking_task,
-        external_wait_state: None,
-        blocking_reason_codes: decision.blocking_reason_codes.clone(),
-    }))
-}
-
-fn default_phase_for_shared_seed(
-    status: &PlanExecutionStatus,
-    decision: &NextActionDecision,
-) -> String {
-    if matches!(
-        status.harness_phase,
-        HarnessPhase::ContractDrafting
-            | HarnessPhase::PivotRequired
-            | HarnessPhase::HandoffRequired
-    ) {
-        default_phase_for_status(status)
-    } else {
-        decision.phase.clone()
-    }
-}
-
-fn stale_branch_closure_refresh_required(status: &PlanExecutionStatus) -> bool {
-    status.current_branch_closure_id.is_some()
-        && status.current_branch_meaningful_drift
-        && status.blocking_records.iter().any(|record| {
-            record.record_type == "branch_closure"
-                && record.review_state_status == "missing_current_closure"
-        })
 }
 
 pub(crate) fn required_follow_up_from_route_decision(
@@ -1380,7 +1287,7 @@ fn route_requires_review_state_repair(
     if review_state_status == "stale_unreviewed" {
         return true;
     }
-    if phase_detail != "execution_reentry_required" {
+    if phase_detail != phase::DETAIL_EXECUTION_REENTRY_REQUIRED {
         return false;
     }
     if execution_command_context.is_none() {
@@ -1414,43 +1321,19 @@ fn route_requires_review_state_repair(
     })
 }
 
-fn close_current_task_recording_command(plan_path: &str, task_number: u32) -> String {
-    format!(
-        "featureforge plan execution close-current-task --plan {plan_path} --task {task_number} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-    )
-}
-
-fn final_review_recording_command(plan_path: &str) -> String {
-    format!(
-        "featureforge plan execution advance-late-stage --plan {plan_path} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>"
-    )
-}
-
-fn release_readiness_recording_command(plan_path: &str) -> String {
-    format!("featureforge plan execution advance-late-stage --plan {plan_path}")
-}
-
 pub(crate) fn route_decision_from_routing(
     routing: &ExecutionRoutingState,
     blocking_records: &[StatusBlockingRecord],
 ) -> RouteDecision {
     let state_kind = derive_state_kind(routing);
-    let recommended_command = sanitize_public_recommended_command(
-        routing.recommended_command.as_deref(),
-        &routing.phase_detail,
-    )
-    .map(|command| materialize_plan_template(&command, &routing.route.plan_path));
+    let recommended_public_command = routing.recommended_public_command.clone();
+    let (recommended_command, invocation, required_inputs) =
+        PublicRouteDecision::command_surfaces(recommended_public_command.as_ref());
     let next_public_action = synthesize_next_public_action(
-        recommended_command.as_deref(),
+        recommended_public_command.as_ref(),
         &routing.phase_detail,
-    )
-    .map(|mut action| {
-        action.command = materialize_plan_template(&action.command, &routing.route.plan_path);
-        action.args_template = action
-            .args_template
-            .map(|template| materialize_plan_template(&template, &routing.route.plan_path));
-        action
-    });
+        &routing.route.plan_path,
+    );
     let blockers = if targetless_stale_reconcile_for_phase(
         &routing.phase_detail,
         &routing.blocking_reason_codes,
@@ -1465,23 +1348,27 @@ pub(crate) fn route_decision_from_routing(
         );
         materialize_blocker_actions(blockers, &routing.route.plan_path)
     };
-    let route_next_action = if state_kind == "blocked_runtime_bug" {
-        String::from("runtime diagnostic required")
-    } else {
-        routing.next_action.clone()
-    };
-    let route_required_follow_up = if state_kind == "blocked_runtime_bug" {
-        None
-    } else {
-        derive_required_follow_up_from_optional_status(
-            routing.execution_status.as_ref(),
-            &routing.phase_detail,
-            &routing.review_state_status,
-            routing.blocking_reason_codes.iter().map(String::as_str),
-            routing.execution_command_context.as_ref(),
-        )
-    };
-    RouteDecision {
+    let route_next_action = diagnostic_next_action_for_route(
+        &state_kind,
+        &routing.phase_detail,
+        invocation.is_some(),
+        !required_inputs.is_empty(),
+    )
+    .unwrap_or_else(|| routing.next_action.clone());
+    let diagnostic_without_local_action =
+        route_next_action == NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED;
+    let route_required_follow_up = (!diagnostic_without_local_action)
+        .then(|| {
+            derive_required_follow_up_from_optional_status(
+                routing.execution_status.as_ref(),
+                &routing.phase_detail,
+                &routing.review_state_status,
+                routing.blocking_reason_codes.iter().map(String::as_str),
+                routing.execution_command_context.as_ref(),
+            )
+        })
+        .flatten();
+    let mut decision = RouteDecision {
         state_kind,
         phase: canonical_phase_for_shared_decision(&routing.phase, &routing.phase_detail),
         phase_detail: routing.phase_detail.clone(),
@@ -1489,45 +1376,50 @@ pub(crate) fn route_decision_from_routing(
         next_action: route_next_action,
         blocking_reason_codes: routing.blocking_reason_codes.clone(),
         recommended_command,
+        recommended_public_command,
+        invocation,
+        required_inputs,
         required_follow_up: route_required_follow_up,
         next_public_action,
         blockers,
+        public_repair_targets: Vec::new(),
         execution_command_context: routing.execution_command_context.clone(),
         recording_context: routing.recording_context.clone(),
-    }
-}
-
-fn marker_free_started_execution(context: &crate::execution::state::ExecutionContext) -> bool {
-    context.plan_document.execution_mode != "none"
-        && context.evidence.attempts.is_empty()
-        && context.steps.iter().all(|step| {
-            !step.checked && step.note_state.is_none() && step.note_summary.trim().is_empty()
-        })
+    };
+    decision.normalize_diagnostic_next_action();
+    decision
 }
 
 fn route_decision_for_unroutable_runtime_state(status: &PlanExecutionStatus) -> RouteDecision {
     let recommended_command = None;
     let next_public_action = None;
-    let blockers =
-        primary_blocker_for_status(status, "blocked_runtime_bug", next_public_action.as_ref());
+    let blockers = primary_blocker_for_status(
+        status,
+        phase::DETAIL_BLOCKED_RUNTIME_BUG,
+        next_public_action.as_ref(),
+    );
     RouteDecision {
-        state_kind: String::from("blocked_runtime_bug"),
+        state_kind: String::from(phase::DETAIL_BLOCKED_RUNTIME_BUG),
         phase: canonical_phase_for_shared_decision(
             &default_phase_for_status(status),
             "runtime_route_unavailable",
         ),
         phase_detail: status.phase_detail.clone(),
         review_state_status: status.review_state_status.clone(),
-        next_action: String::from("runtime diagnostic required"),
+        next_action: String::from(NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED),
         blocking_reason_codes: compact_operator_reason_codes(
             Some(status),
             &status.phase_detail,
             &status.review_state_status,
         ),
         recommended_command,
+        recommended_public_command: None,
+        invocation: None,
+        required_inputs: Vec::new(),
         required_follow_up: None,
         next_public_action,
         blockers,
+        public_repair_targets: Vec::new(),
         execution_command_context: None,
         recording_context: None,
     }
@@ -1536,6 +1428,7 @@ fn route_decision_for_unroutable_runtime_state(status: &PlanExecutionStatus) -> 
 pub(crate) fn route_decision_with_status_blockers(
     mut route_decision: RouteDecision,
     status: &PlanExecutionStatus,
+    route_repair_target_candidates: &[PublicRepairTarget],
 ) -> RouteDecision {
     if targetless_stale_reconcile_for_phase(
         &route_decision.phase_detail,
@@ -1560,7 +1453,258 @@ pub(crate) fn route_decision_with_status_blockers(
             route_decision.execution_command_context.as_ref(),
         );
     }
+    route_decision.public_repair_targets = public_repair_targets_from_route_decision(
+        status,
+        &route_decision,
+        route_repair_target_candidates,
+    );
+    route_decision.normalize_diagnostic_next_action();
     route_decision
+}
+
+fn public_repair_targets_from_route_decision(
+    status: &PlanExecutionStatus,
+    route_decision: &RouteDecision,
+    route_repair_target_candidates: &[PublicRepairTarget],
+) -> Vec<PublicRepairTarget> {
+    if route_decision.is_diagnostic_only() {
+        return Vec::new();
+    }
+
+    let mut targets = Vec::new();
+    if status.external_wait_state.is_some() {
+        return targets;
+    }
+    if let Some(route_request) = route_decision
+        .recommended_public_command
+        .as_ref()
+        .and_then(PublicCommand::to_mutation_request)
+        && route_request.kind == PublicMutationKind::Reopen
+    {
+        push_public_repair_target_once(
+            &mut targets,
+            PublicRepairTarget {
+                command_kind: String::from("reopen"),
+                task: route_request.task,
+                step: route_request.step,
+                reason_code: String::from("route_execution_reentry_required"),
+                source_record_id: Some(String::from("route_decision:reopen")),
+                expires_when_fingerprint_changes: true,
+            },
+        );
+    }
+    if route_decision.phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+        && let Some(task) = route_decision
+            .recording_context
+            .as_ref()
+            .and_then(|context| context.task_number)
+    {
+        push_public_repair_target_once(
+            &mut targets,
+            PublicRepairTarget {
+                command_kind: String::from("close-current-task"),
+                task: Some(task),
+                step: None,
+                reason_code: String::from("route_task_closure_recording_ready"),
+                source_record_id: Some(String::from("route_decision:task_closure_recording_ready")),
+                expires_when_fingerprint_changes: true,
+            },
+        );
+    }
+    for candidate in route_repair_target_candidates {
+        if route_allows_public_repair_target_candidate(status, route_decision, candidate) {
+            push_public_repair_target_once(&mut targets, candidate.clone());
+        }
+    }
+
+    let route_exposes_task_closure_repair = route_decision.phase_detail
+        == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+        && route_decision
+            .blocking_reason_codes
+            .iter()
+            .any(|reason_code| {
+                matches!(
+                    reason_code.as_str(),
+                    "prior_task_current_closure_missing"
+                        | "prior_task_review_dispatch_stale"
+                        | "task_closure_baseline_repair_candidate"
+                )
+            });
+    let repair_review_state_target_allowed = route_decision.phase_detail
+        == phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+        || route_decision.state_kind != phase::DETAIL_BLOCKED_RUNTIME_BUG;
+    if (route_exposes_task_closure_repair
+        || route_decision_exposes_repair_review_state_target(status, route_decision))
+        && repair_review_state_target_allowed
+    {
+        let reason_code = if route_exposes_task_closure_repair {
+            "route_task_closure_repair_state_refresh"
+        } else {
+            "route_repair_review_state_available"
+        };
+        push_public_repair_target_once(
+            &mut targets,
+            PublicRepairTarget {
+                command_kind: String::from("repair-review-state"),
+                task: None,
+                step: None,
+                reason_code: String::from(reason_code),
+                source_record_id: Some(format!("route_decision:{}", route_decision.phase_detail)),
+                expires_when_fingerprint_changes: true,
+            },
+        );
+    }
+
+    if route_recommended_public_command_is(route_decision, PublicCommandKind::AdvanceLateStage)
+        && route_decision.phase_detail != phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+        && route_decision.state_kind != phase::DETAIL_BLOCKED_RUNTIME_BUG
+    {
+        push_public_repair_target_once(
+            &mut targets,
+            PublicRepairTarget {
+                command_kind: String::from("advance-late-stage"),
+                task: None,
+                step: None,
+                reason_code: String::from("route_advance_late_stage_ready"),
+                source_record_id: Some(String::from("route_decision:advance_late_stage")),
+                expires_when_fingerprint_changes: true,
+            },
+        );
+    }
+
+    targets
+}
+
+fn route_allows_public_repair_target_candidate(
+    status: &PlanExecutionStatus,
+    route_decision: &RouteDecision,
+    candidate: &PublicRepairTarget,
+) -> bool {
+    match candidate.command_kind.as_str() {
+        "reopen" => {
+            candidate.reason_code == "explicit_reopen_repair_target"
+                || candidate.reason_code == "persisted_execution_reentry_follow_up"
+                || (route_decision.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
+                    && candidate.task.is_some()
+                    && route_reentry_target_matches_candidate(route_decision, candidate))
+        }
+        "close-current-task" => {
+            candidate.task.is_some()
+                && (explicit_close_current_task_candidate(candidate)
+                    || (route_decision.phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+                        && route_recording_target_matches_candidate(route_decision, candidate)))
+        }
+        "repair-review-state" => {
+            route_decision_exposes_repair_review_state_target(status, route_decision)
+                && route_decision.state_kind != phase::DETAIL_BLOCKED_RUNTIME_BUG
+        }
+        "advance-late-stage" => {
+            route_recommended_public_command_is(route_decision, PublicCommandKind::AdvanceLateStage)
+                && route_decision.phase_detail != phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+                && route_decision.state_kind != phase::DETAIL_BLOCKED_RUNTIME_BUG
+        }
+        _ => false,
+    }
+}
+
+fn route_reentry_target_matches_candidate(
+    route_decision: &RouteDecision,
+    candidate: &PublicRepairTarget,
+) -> bool {
+    if let Some(route_request) = route_decision
+        .recommended_public_command
+        .as_ref()
+        .and_then(PublicCommand::to_mutation_request)
+        && route_request.kind == PublicMutationKind::Reopen
+    {
+        return candidate.task == route_request.task && candidate.step == route_request.step;
+    }
+    route_decision
+        .execution_command_context
+        .as_ref()
+        .is_some_and(|context| {
+            context.task_number == candidate.task && context.step_id == candidate.step
+        })
+}
+
+fn route_recording_target_matches_candidate(
+    route_decision: &RouteDecision,
+    candidate: &PublicRepairTarget,
+) -> bool {
+    route_decision
+        .recording_context
+        .as_ref()
+        .is_some_and(|context| context.task_number == candidate.task)
+}
+
+fn explicit_close_current_task_candidate(candidate: &PublicRepairTarget) -> bool {
+    matches!(
+        candidate.reason_code.as_str(),
+        "persisted_task_closure_follow_up"
+            | "authoritative_task_closure_postcondition_cleanup"
+            | "task_review_dispatch_closure_ready"
+            | "authoritative_preflight_recovery_task_closure"
+            | "status_task_closure_recording_ready"
+    )
+}
+
+fn push_public_repair_target_once(
+    targets: &mut Vec<PublicRepairTarget>,
+    target: PublicRepairTarget,
+) {
+    if !targets.iter().any(|existing| {
+        existing.command_kind == target.command_kind
+            && existing.task == target.task
+            && existing.step == target.step
+    }) {
+        targets.push(target);
+    }
+}
+
+fn route_recommended_public_command_is(
+    route_decision: &RouteDecision,
+    kind: PublicCommandKind,
+) -> bool {
+    route_decision
+        .recommended_public_command
+        .as_ref()
+        .is_some_and(|command| command.kind() == kind)
+}
+
+fn route_decision_exposes_repair_review_state_target(
+    status: &PlanExecutionStatus,
+    route_decision: &RouteDecision,
+) -> bool {
+    route_recommended_public_command_is(route_decision, PublicCommandKind::RepairReviewState)
+        || route_decision.required_follow_up.as_deref() == Some("repair_review_state")
+        || route_decision.review_state_status != "clean"
+        || task_scope_structural_review_state_reason(status).is_some()
+        || current_branch_closure_structural_review_state_reason(status).is_some()
+        || status.blocking_records.iter().any(|record| {
+            record.record_type == "review_state"
+                && record.required_follow_up.as_deref() == Some("repair_review_state")
+        })
+        || matches!(
+            route_decision.phase_detail.as_str(),
+            phase::DETAIL_EXECUTION_REENTRY_REQUIRED
+                | phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+                | phase::DETAIL_RELEASE_READINESS_RECORDING_READY
+                | phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+        )
+        || (route_decision.phase_detail == phase::DETAIL_FINISH_COMPLETION_GATE_READY
+            && route_decision.state_kind == "terminal")
+        || route_decision
+            .blocking_reason_codes
+            .iter()
+            .any(|reason_code| {
+                matches!(
+                    reason_code.as_str(),
+                    "prior_task_current_closure_missing"
+                        | "prior_task_review_dispatch_stale"
+                        | "stale_provenance"
+                        | "task_closure_baseline_repair_candidate"
+                )
+            })
 }
 
 fn project_routing_from_runtime_state(
@@ -1569,24 +1713,19 @@ fn project_routing_from_runtime_state(
     route_decision: &RouteDecision,
     _external_review_result_ready: bool,
 ) -> ExecutionRoutingState {
+    let mut route_decision = route_decision.clone();
     let status = runtime_state.status.clone();
-    let (reason_family, mut diagnostic_reason_codes) = late_stage_observability_for_phase(
+    let (reason_family, diagnostic_reason_codes) = late_stage_observability_for_phase(
         &route_decision.phase,
         runtime_state.gate_review.as_ref(),
         runtime_state.gate_finish.as_ref(),
     );
-    for reason_code in public_task_boundary_decision(&status).diagnostic_reason_codes {
-        if !diagnostic_reason_codes
-            .iter()
-            .any(|existing| existing == &reason_code)
-        {
-            diagnostic_reason_codes.push(reason_code);
-        }
-    }
+    let diagnostic_reason_codes =
+        merge_task_boundary_projection_diagnostics(diagnostic_reason_codes, &status);
     let mut blocking_scope = status.blocking_scope.clone();
     let mut blocking_task = status.blocking_task;
     let recording_context = match route_decision.phase_detail.as_str() {
-        "final_review_recording_ready" => runtime_state
+        phase::DETAIL_FINAL_REVIEW_RECORDING_READY => runtime_state
             .authoritative_current_branch_closure_id
             .as_ref()
             .map(|branch_closure_id| ExecutionRoutingRecordingContext {
@@ -1597,16 +1736,15 @@ fn project_routing_from_runtime_state(
                     .clone(),
                 branch_closure_id: Some(branch_closure_id.clone()),
             }),
-        "release_readiness_recording_ready" | "release_blocker_resolution_required" => {
-            runtime_state
-                .authoritative_current_branch_closure_id
-                .as_ref()
-                .map(|branch_closure_id| ExecutionRoutingRecordingContext {
-                    task_number: None,
-                    dispatch_id: None,
-                    branch_closure_id: Some(branch_closure_id.clone()),
-                })
-        }
+        phase::DETAIL_RELEASE_READINESS_RECORDING_READY
+        | phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => runtime_state
+            .authoritative_current_branch_closure_id
+            .as_ref()
+            .map(|branch_closure_id| ExecutionRoutingRecordingContext {
+                task_number: None,
+                dispatch_id: None,
+                branch_closure_id: Some(branch_closure_id.clone()),
+            }),
         _ => route_decision.recording_context.clone().or_else(|| {
             status
                 .recording_context
@@ -1618,8 +1756,9 @@ fn project_routing_from_runtime_state(
                 })
         }),
     };
+    route_decision.recording_context = recording_context.clone();
     let execution_command_context = route_decision.execution_command_context.clone();
-    if route_decision.phase_detail == "execution_reentry_required"
+    if route_decision.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         && let Some(task_number) = execution_command_context
             .as_ref()
             .and_then(|context| context.task_number)
@@ -1628,7 +1767,7 @@ fn project_routing_from_runtime_state(
     {
         blocking_scope = Some(String::from("task"));
         blocking_task = Some(task_number);
-    } else if route_decision.phase_detail == "task_closure_recording_ready"
+    } else if route_decision.phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
         && let Some(task_number) = recording_context
             .as_ref()
             .and_then(|context| context.task_number)
@@ -1636,7 +1775,7 @@ fn project_routing_from_runtime_state(
         blocking_scope = Some(String::from("task"));
         blocking_task = Some(task_number);
     } else if route_decision.phase_detail
-        == "branch_closure_recording_required_for_release_readiness"
+        == phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
     {
         blocking_scope = Some(String::from("branch"));
         blocking_task = None;
@@ -1678,9 +1817,10 @@ fn project_routing_from_runtime_state(
             .finish_review_gate_pass_branch_closure_id
             .clone()
             .or_else(|| status.finish_review_gate_pass_branch_closure_id.clone()),
-        recording_context,
+        recording_context: route_decision.recording_context.clone(),
         execution_command_context,
         next_action: route_decision.next_action.clone(),
+        recommended_public_command: route_decision.recommended_public_command.clone(),
         recommended_command: route_decision.recommended_command.clone(),
         blocking_scope,
         blocking_task,
@@ -1708,7 +1848,6 @@ fn project_routing_from_runtime_state(
 
 fn blocker_from_status_record(
     record: &StatusBlockingRecord,
-    phase_detail: &str,
     next_public_action: Option<&NextPublicAction>,
 ) -> Blocker {
     let category = match record.scope_type.as_str() {
@@ -1721,13 +1860,7 @@ fn blocker_from_status_record(
         scope_type: record.scope_type.clone(),
         scope_key: record.scope_key.clone(),
         record_id: record.record_id.clone(),
-        next_public_action: next_public_action
-            .map(|action| action.command.clone())
-            .or_else(|| {
-                (!RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS.contains(&phase_detail))
-                    .then(|| follow_up_command_template(record.required_follow_up.as_deref()))
-                    .flatten()
-            }),
+        next_public_action: next_public_action.map(|action| action.command.clone()),
         details: record.message.clone(),
     }
 }
@@ -1803,14 +1936,10 @@ fn primary_blocker_for_source(
     }
 
     if let Some(primary) = source.blocking_records.first() {
-        return vec![blocker_from_status_record(
-            primary,
-            source.phase_detail,
-            next_public_action,
-        )];
+        return vec![blocker_from_status_record(primary, next_public_action)];
     }
 
-    if state_kind == "blocked_runtime_bug" {
+    if state_kind == phase::DETAIL_BLOCKED_RUNTIME_BUG {
         return vec![Blocker {
             category: String::from("runtime_bug"),
             scope_type: String::from("runtime"),
@@ -1861,38 +1990,50 @@ fn materialize_blocker_actions(mut blockers: Vec<Blocker>, plan_path: &str) -> V
 }
 
 fn synthesize_next_public_action(
-    recommended_command: Option<&str>,
+    recommended_public_command: Option<&PublicCommand>,
     phase_detail: &str,
+    plan_path: &str,
 ) -> Option<NextPublicAction> {
-    if let Some(command) = sanitize_public_recommended_command(recommended_command, phase_detail) {
+    if let Some(command) = recommended_public_command
+        .filter(|_| !phase::RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS.contains(&phase_detail))
+        .filter(|command| command.kind() != PublicCommandKind::WorkflowOperator)
+        .filter(|command| command.to_invocation().is_some())
+        .map(PublicCommand::to_display_command)
+    {
         return Some(NextPublicAction {
             command: command.clone(),
             args_template: Some(command),
         });
     }
     let command = match phase_detail {
-        "final_review_dispatch_required" | "test_plan_refresh_required" => {
-            "featureforge workflow operator --plan <approved-plan-path>"
+        phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED | phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED => {
+            PublicCommand::WorkflowOperator {
+                plan: plan_path.to_owned(),
+                external_review_result_ready: false,
+            }
+            .to_display_command()
         }
         _ => return None,
     };
     Some(NextPublicAction {
-        command: String::from(command),
-        args_template: Some(String::from(command)),
+        command: command.clone(),
+        args_template: Some(command),
     })
 }
 
 fn derive_state_kind(routing: &ExecutionRoutingState) -> String {
-    let recommended_command = sanitize_public_recommended_command(
-        routing.recommended_command.as_deref(),
-        &routing.phase_detail,
-    );
+    let recommended_command =
+        state_kind_command_marker(routing.recommended_public_command.as_ref());
     classify_state_kind(
         routing.external_wait_state.as_deref(),
-        routing.phase == "ready_for_branch_completion",
+        routing.phase == phase::PHASE_READY_FOR_BRANCH_COMPLETION,
         &routing.phase_detail,
-        recommended_command.as_deref(),
+        recommended_command,
     )
+}
+
+fn state_kind_command_marker(command: Option<&PublicCommand>) -> Option<&'static str> {
+    command.map(|_| "public_command")
 }
 
 fn derive_state_kind_from_seed(
@@ -1921,67 +2062,86 @@ fn classify_state_kind(
         return String::from("waiting_external_input");
     }
     if terminal_phase
-        && phase_detail == "finish_completion_gate_ready"
+        && phase_detail == phase::DETAIL_FINISH_COMPLETION_GATE_READY
         && recommended_command.is_none()
     {
         return String::from("terminal");
     }
-    if phase_detail == "planning_reentry_required" && recommended_command.is_none() {
+    if phase_detail == phase::DETAIL_PLANNING_REENTRY_REQUIRED && recommended_command.is_none() {
         return String::from("waiting_external_input");
     }
+    if phase_detail == phase::DETAIL_BLOCKED_RUNTIME_BUG && recommended_command.is_none() {
+        return String::from(phase::DETAIL_BLOCKED_RUNTIME_BUG);
+    }
+    if phase_detail == phase::DETAIL_RUNTIME_RECONCILE_REQUIRED && recommended_command.is_none() {
+        return String::from(phase::DETAIL_RUNTIME_RECONCILE_REQUIRED);
+    }
     if recommended_command.is_none()
-        && !RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS.contains(&phase_detail)
+        && !phase::RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS.contains(&phase_detail)
     {
-        return String::from("blocked_runtime_bug");
+        return String::from(phase::DETAIL_BLOCKED_RUNTIME_BUG);
     }
     String::from("actionable_public_command")
 }
 
-fn sanitize_public_recommended_command(
-    recommended_command: Option<&str>,
-    phase_detail: &str,
-) -> Option<String> {
-    let had_recommended_command = recommended_command
-        .map(str::trim)
-        .is_some_and(|command| !command.is_empty());
-    let command = recommended_command
-        .map(str::trim)
-        .filter(|command| !command.is_empty())
-        .filter(|command| !command_invokes_hidden_lane(command))
-        .filter(|command| command_is_legal_public_command(command))
-        .map(ToOwned::to_owned);
-    if let Some(command) = command {
-        if RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS.contains(&phase_detail)
-            && command.starts_with(GENERIC_WORKFLOW_OPERATOR_PREFIX)
-        {
-            return None;
+#[cfg(test)]
+fn public_command_for_phase_detail(phase_detail: &str, plan_path: &str) -> Option<PublicCommand> {
+    match phase_detail {
+        phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED | phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED => {
+            Some(PublicCommand::WorkflowOperator {
+                plan: plan_path.to_owned(),
+                external_review_result_ready: false,
+            })
         }
-        return Some(command);
+        phase::DETAIL_EXECUTION_REENTRY_REQUIRED | phase::DETAIL_PLANNING_REENTRY_REQUIRED => {
+            Some(repair_review_state_public_command(plan_path))
+        }
+        _ => public_advance_late_stage_mode_for_phase_detail(phase_detail).map(|mode| {
+            PublicCommand::AdvanceLateStage {
+                plan: plan_path.to_owned(),
+                mode,
+            }
+        }),
     }
-    if RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS.contains(&phase_detail) {
-        return None;
-    }
-    if !had_recommended_command {
-        return None;
-    }
-    fallback_public_command_for_phase_detail(phase_detail)
 }
 
-const GENERIC_WORKFLOW_OPERATOR_PREFIX: &str = "featureforge workflow operator --plan ";
-
-fn fallback_public_command_for_phase_detail(phase_detail: &str) -> Option<String> {
-    match phase_detail {
-        "final_review_dispatch_required" | "test_plan_refresh_required" => Some(String::from(
-            "featureforge workflow operator --plan <approved-plan-path>",
-        )),
-        "execution_reentry_required" | "planning_reentry_required" => Some(String::from(
-            "featureforge plan execution repair-review-state --plan <approved-plan-path>",
-        )),
-        "branch_closure_recording_required_for_release_readiness"
-        | "release_readiness_recording_ready"
-        | "release_blocker_resolution_required" => Some(String::from(
-            "featureforge plan execution advance-late-stage --plan <approved-plan-path>",
-        )),
+fn public_command_for_required_follow_up(
+    required_follow_up: Option<&str>,
+    plan_path: &str,
+    phase_detail: &str,
+    record_type: Option<&str>,
+) -> Option<PublicCommand> {
+    match normalize_public_routing_follow_up_token(required_follow_up)? {
+        "repair_review_state" => Some(repair_review_state_public_command(plan_path)),
+        "resolve_release_blocker" => Some(PublicCommand::AdvanceLateStage {
+            plan: plan_path.to_owned(),
+            mode: PublicAdvanceLateStageMode::ReleaseReadiness,
+        }),
+        "advance_late_stage" => {
+            let mode = public_advance_late_stage_mode_for_phase_detail(phase_detail).or({
+                match record_type {
+                    Some("branch_closure") => Some(PublicAdvanceLateStageMode::Basic),
+                    Some("release_readiness") => Some(PublicAdvanceLateStageMode::ReleaseReadiness),
+                    _ => None,
+                }
+            })?;
+            Some(PublicCommand::AdvanceLateStage {
+                plan: plan_path.to_owned(),
+                mode,
+            })
+        }
+        "record_handoff" => Some(PublicCommand::TransferHandoff {
+            plan: plan_path.to_owned(),
+            scope: String::from("task|branch"),
+        }),
+        "execution_reentry"
+        | "request_external_review"
+        | "wait_for_external_review_result"
+        | "run_verification" => Some(PublicCommand::WorkflowOperator {
+            plan: plan_path.to_owned(),
+            external_review_result_ready: false,
+        }),
+        "close_current_task" | "gate_review" | "gate_finish" => None,
         _ => None,
     }
 }
@@ -1989,12 +2149,17 @@ fn fallback_public_command_for_phase_detail(phase_detail: &str) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::{
-        primary_blocker_for_route, route_decision_from_routing, synthesize_next_public_action,
+        classify_state_kind, primary_blocker_for_route, public_command_for_phase_detail,
+        route_decision_from_routing, synthesize_next_public_action,
+    };
+    use crate::execution::command_eligibility::{
+        command_invokes_hidden_lane, hidden_command_tokens,
     };
     use crate::execution::follow_up::follow_up_command_template as follow_up_to_command_template;
     use crate::execution::harness::{
         AggregateEvaluationState, ChunkId, DownstreamFreshnessState, HarnessPhase,
     };
+    use crate::execution::phase;
     use crate::execution::query::ExecutionRoutingState;
     use crate::execution::state::PlanExecutionStatus;
     use crate::workflow::status::WorkflowRoute;
@@ -2011,20 +2176,10 @@ mod tests {
             "wait_for_external_review_result",
             "run_verification",
         ];
-        let hidden_tokens = [
-            "record-review-dispatch",
-            "gate-review",
-            "gate-finish",
-            "rebuild-evidence",
-            "plan execution preflight",
-            "plan execution recommend",
-            "workflow recommend",
-            "workflow preflight",
-        ];
         for follow_up in follow_ups {
             let template = follow_up_to_command_template(Some(follow_up))
                 .expect("known follow-up should map to a command template");
-            for hidden in hidden_tokens {
+            for hidden in hidden_command_tokens() {
                 assert!(
                     !template.contains(hidden),
                     "public follow-up templates must not reference removed hidden commands, saw `{hidden}` in `{template}`"
@@ -2036,14 +2191,19 @@ mod tests {
     #[test]
     fn task_review_dispatch_lane_does_not_expose_public_action_or_blocker_command() {
         assert!(
-            synthesize_next_public_action(None, "task_review_dispatch_required").is_none(),
+            synthesize_next_public_action(
+                None,
+                "task_review_dispatch_required",
+                "docs/featureforge/plans/plan.md"
+            )
+            .is_none(),
             "task-review dispatch is no longer a public route"
         );
         let routing = ExecutionRoutingState {
             route_decision: None,
             route: WorkflowRoute {
                 schema_version: 3,
-                status: String::from("implementation_ready"),
+                status: String::from(phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
                 next_skill: String::from("featureforge:executing-plans"),
                 spec_path: String::from("docs/featureforge/specs/spec.md"),
                 plan_path: String::from("docs/featureforge/plans/plan.md"),
@@ -2063,8 +2223,8 @@ mod tests {
             preflight: None,
             gate_review: None,
             gate_finish: None,
-            workflow_phase: String::from("task_closure_pending"),
-            phase: String::from("task_closure_pending"),
+            workflow_phase: String::from(phase::PHASE_TASK_CLOSURE_PENDING),
+            phase: String::from(phase::PHASE_TASK_CLOSURE_PENDING),
             phase_detail: String::from("task_review_dispatch_required"),
             review_state_status: String::from("clean"),
             qa_requirement: None,
@@ -2072,6 +2232,7 @@ mod tests {
             recording_context: None,
             execution_command_context: None,
             next_action: String::from("runtime diagnostic required"),
+            recommended_public_command: None,
             recommended_command: None,
             blocking_scope: Some(String::from("task")),
             blocking_task: Some(2),
@@ -2098,7 +2259,7 @@ mod tests {
             route_decision: None,
             route: WorkflowRoute {
                 schema_version: 3,
-                status: String::from("implementation_ready"),
+                status: String::from(phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
                 next_skill: String::from("featureforge:requesting-code-review"),
                 spec_path: String::from("docs/featureforge/specs/spec.md"),
                 plan_path: String::from("docs/featureforge/plans/plan.md"),
@@ -2118,15 +2279,16 @@ mod tests {
             preflight: None,
             gate_review: None,
             gate_finish: None,
-            workflow_phase: String::from("final_review_pending"),
-            phase: String::from("final_review_pending"),
-            phase_detail: String::from("final_review_outcome_pending"),
+            workflow_phase: String::from(phase::PHASE_FINAL_REVIEW_PENDING),
+            phase: String::from(phase::PHASE_FINAL_REVIEW_PENDING),
+            phase_detail: String::from(phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING),
             review_state_status: String::from("clean"),
             qa_requirement: None,
             finish_review_gate_pass_branch_closure_id: None,
             recording_context: None,
             execution_command_context: None,
             next_action: String::from("wait for external review result"),
+            recommended_public_command: None,
             recommended_command: None,
             blocking_scope: Some(String::from("branch")),
             blocking_task: None,
@@ -2149,18 +2311,34 @@ mod tests {
         assert_eq!(decision.blockers[0].scope_type, "branch");
         assert_eq!(
             decision.blockers[0].scope_key,
-            "final_review_outcome_pending"
+            phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
         );
         assert!(decision.blockers[0].next_public_action.is_none());
     }
 
     #[test]
-    fn blocked_runtime_bug_surfaces_single_diagnostic_blocker() {
+    fn diagnostic_phase_details_without_commands_preserve_diagnostic_state_kind() {
+        assert_eq!(
+            classify_state_kind(None, false, phase::DETAIL_RUNTIME_RECONCILE_REQUIRED, None),
+            phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+        );
+        assert_eq!(
+            classify_state_kind(None, false, phase::DETAIL_BLOCKED_RUNTIME_BUG, None),
+            phase::DETAIL_BLOCKED_RUNTIME_BUG
+        );
+        assert_eq!(
+            classify_state_kind(None, false, phase::DETAIL_EXECUTION_REENTRY_REQUIRED, None),
+            phase::DETAIL_BLOCKED_RUNTIME_BUG
+        );
+    }
+
+    #[test]
+    fn blocked_runtime_bug_suppresses_public_action_surfaces() {
         let routing = ExecutionRoutingState {
             route_decision: None,
             route: WorkflowRoute {
                 schema_version: 3,
-                status: String::from("implementation_ready"),
+                status: String::from(phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
                 next_skill: String::from("featureforge:executing-plans"),
                 spec_path: String::from("docs/featureforge/specs/spec.md"),
                 plan_path: String::from("docs/featureforge/plans/plan.md"),
@@ -2180,15 +2358,16 @@ mod tests {
             preflight: None,
             gate_review: None,
             gate_finish: None,
-            workflow_phase: String::from("executing"),
-            phase: String::from("executing"),
-            phase_detail: String::from("execution_reentry_required"),
+            workflow_phase: String::from(phase::PHASE_EXECUTING),
+            phase: String::from(phase::PHASE_EXECUTING),
+            phase_detail: String::from(phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
             review_state_status: String::from("clean"),
             qa_requirement: None,
             finish_review_gate_pass_branch_closure_id: None,
             recording_context: None,
             execution_command_context: None,
             next_action: String::from("execution reentry required"),
+            recommended_public_command: None,
             recommended_command: None,
             blocking_scope: Some(String::from("workflow")),
             blocking_task: None,
@@ -2204,18 +2383,17 @@ mod tests {
         };
 
         let decision = route_decision_from_routing(&routing, &[]);
-        assert_eq!(decision.state_kind, "blocked_runtime_bug");
+        assert_eq!(decision.state_kind, phase::DETAIL_BLOCKED_RUNTIME_BUG);
         assert!(decision.next_public_action.is_none());
         assert!(decision.recommended_command.is_none());
         assert!(decision.required_follow_up.is_none());
         assert_eq!(decision.next_action, "runtime diagnostic required");
-        assert_eq!(decision.blockers.len(), 1);
-        assert_eq!(decision.blockers[0].category, "runtime_bug");
-        assert!(decision.blockers[0].next_public_action.is_none());
+        assert!(decision.blockers.is_empty());
+        assert!(decision.public_repair_targets.is_empty());
     }
 
     #[test]
-    fn hidden_recommended_commands_are_sanitized_to_public_follow_ups() {
+    fn hidden_string_recommendations_are_not_route_authority() {
         let status = PlanExecutionStatus {
             schema_version: 3,
             plan_revision: 1,
@@ -2236,7 +2414,7 @@ mod tests {
             current_qa_result: None,
             qa_requirement: None,
             latest_authoritative_sequence: 1,
-            phase: Some(String::from("executing")),
+            phase: Some(String::from(phase::PHASE_EXECUTING)),
             harness_phase: HarnessPhase::Executing,
             chunk_id: ChunkId(String::from("chunk-1")),
             chunking_strategy: None,
@@ -2293,8 +2471,12 @@ mod tests {
             semantic_workspace_tree_id: String::from("semantic_tree:authoritative"),
             raw_workspace_tree_id: Some(String::from("git_tree:debug")),
             next_action: String::from("runtime diagnostic required"),
-            recommended_command: Some(String::from(
-                "featureforge plan execution record-review-dispatch --plan docs/featureforge/plans/example.md --scope task --task 1",
+            recommended_public_command: None,
+            recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
+            recommended_command: Some(format!(
+                "featureforge plan execution {} --plan docs/featureforge/plans/example.md --scope task --task 1",
+                ["record", "review", "dispatch"].join("-")
             )),
             finish_review_gate_pass_branch_closure_id: None,
             reason_codes: Vec::new(),
@@ -2315,31 +2497,54 @@ mod tests {
             resume_step: None,
         };
 
-        let recommended = super::sanitize_public_recommended_command(
-            status.recommended_command.as_deref(),
-            &status.phase_detail,
-        );
-        assert_eq!(recommended.as_deref(), None);
         assert!(
-            synthesize_next_public_action(recommended.as_deref(), &status.phase_detail).is_none(),
+            synthesize_next_public_action(
+                status.recommended_public_command.as_ref(),
+                &status.phase_detail,
+                "docs/featureforge/plans/plan.md"
+            )
+            .is_none(),
             "task-review dispatch is diagnostic-only and must not synthesize a public operator loop"
         );
     }
 
     #[test]
-    fn removed_plan_execution_commands_are_not_public_recommendations() {
+    fn next_public_action_binds_concrete_plan_path_for_operator_fallbacks() {
+        let plan_path = "docs/featureforge/plans/plan.md";
+        let action = synthesize_next_public_action(
+            None,
+            phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED,
+            plan_path,
+        )
+        .expect("final review dispatch should route through workflow/operator");
+
+        assert!(action.command.contains(plan_path));
+        assert!(!action.command.contains("<approved-plan-path>"));
+        assert!(
+            action
+                .args_template
+                .as_deref()
+                .is_some_and(|template| template.contains(plan_path)
+                    && !template.contains("<approved-plan-path>")),
+            "args_template should also bind the concrete plan path: {action:?}"
+        );
+    }
+
+    #[test]
+    fn removed_plan_execution_commands_are_not_public_route_commands() {
         for removed in ["preflight", "recommend"] {
             let command =
                 format!("featureforge plan execution {removed} --plan docs/plan.md --json");
+            assert!(command_invokes_hidden_lane(&command));
             assert_eq!(
-                super::sanitize_public_recommended_command(
-                    Some(command.as_str()),
-                    "execution_reentry_required"
-                ),
-                Some(String::from(
-                    "featureforge plan execution repair-review-state --plan <approved-plan-path>"
-                )),
-                "removed `{removed}` command must sanitize to a public follow-up"
+                public_command_for_phase_detail(
+                    phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
+                    "<approved-plan-path>",
+                )
+                .map(|command| command.to_display_command())
+                .as_deref(),
+                Some("featureforge plan execution repair-review-state --plan <approved-plan-path>"),
+                "removed `{removed}` command cannot be parsed into a route command; the typed fallback is explicit"
             );
         }
     }

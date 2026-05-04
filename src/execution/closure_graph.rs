@@ -231,24 +231,6 @@ impl AuthoritativeClosureGraph {
             .collect()
     }
 
-    pub(crate) fn stale_unreviewed_record_ids(&self) -> Vec<String> {
-        let mut stale_record_ids = self
-            .evaluations
-            .iter()
-            .filter(|(record_id, evaluation)| {
-                evaluation.freshness == ClosureFreshness::StaleUnreviewed
-                    && !self.superseded_by.contains_key(record_id.as_str())
-            })
-            .map(|(record_id, _)| record_id.clone())
-            .collect::<Vec<_>>();
-        for record_id in &self.stale_projection_only_record_ids {
-            if !self.superseded_by.contains_key(record_id.as_str()) {
-                append_unique(&mut stale_record_ids, record_id.clone());
-            }
-        }
-        stale_record_ids
-    }
-
     pub(crate) fn stale_unreviewed_evaluations(&self) -> Vec<ClosureEvaluation> {
         self.evaluations
             .iter()
@@ -1025,7 +1007,8 @@ mod tests {
         assert_eq!(current.identity.record_id, "task-1-current");
         assert_eq!(current.freshness, ClosureFreshness::Current);
         assert!(
-            graph.stale_unreviewed_record_ids().is_empty(),
+            graph.stale_unreviewed_evaluations().is_empty()
+                && graph.stale_projection_only_record_ids().is_empty(),
             "late-stage stale projections must not reclassify current task closures when no branch/final-review/qa target ids are bound"
         );
         assert_eq!(

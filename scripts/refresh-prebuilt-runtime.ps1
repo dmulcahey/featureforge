@@ -22,7 +22,6 @@ $Version = (Get-Content (Join-Path $RepoRoot "VERSION") -Raw).Trim()
 $OutputDir = Join-Path $RepoRoot "bin/prebuilt/$TargetKey"
 $OutputPath = Join-Path $OutputDir $BinaryName
 $ChecksumPath = "$OutputPath.sha256"
-$ManifestPath = Join-Path $RepoRoot "bin/prebuilt/manifest.json"
 $BuildPath = Join-Path $RepoRoot "target/$RustTarget/release/$BinaryName"
 
 Push-Location $RepoRoot
@@ -34,31 +33,28 @@ try {
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 Copy-Item -Force $BuildPath $OutputPath
+if ($TargetKey -eq "darwin-arm64") {
+  Copy-Item -Force $OutputPath (Join-Path $RepoRoot "bin/featureforge")
+}
 
 $Checksum = (Get-FileHash -Algorithm SHA256 $OutputPath).Hash.ToLowerInvariant()
 Set-Content -NoNewline:$false -Path $ChecksumPath -Value "$Checksum  $BinaryName"
 
-if (Test-Path $ManifestPath) {
-  $Manifest = Get-Content $ManifestPath -Raw | ConvertFrom-Json
-} else {
-  $Manifest = [pscustomobject]@{
-    runtime_revision = $Version
-    targets = [pscustomobject]@{}
-  }
+node (Join-Path $ScriptDir "prebuilt-runtime-provenance.mjs") update `
+  --target $TargetKey `
+  --binary-path "bin/prebuilt/$TargetKey/$BinaryName" `
+  --checksum-path "bin/prebuilt/$TargetKey/$BinaryName.sha256" `
+  --version $Version `
+  --repo-root $RepoRoot | Out-Host
+if ($LASTEXITCODE -ne 0) {
+  throw "prebuilt runtime manifest provenance update failed"
 }
 
-if (-not $Manifest.targets) {
-  $Manifest | Add-Member -NotePropertyName targets -NotePropertyValue ([pscustomobject]@{}) -Force
+node (Join-Path $ScriptDir "prebuilt-runtime-provenance.mjs") verify `
+  --target $TargetKey `
+  --repo-root $RepoRoot | Out-Host
+if ($LASTEXITCODE -ne 0) {
+  throw "prebuilt runtime validation failed"
 }
-
-$Manifest.runtime_revision = $Version
-$Manifest.targets | Add-Member -NotePropertyName $TargetKey -NotePropertyValue ([pscustomobject]@{
-  binary_path = "bin/prebuilt/$TargetKey/$BinaryName"
-  checksum_path = "bin/prebuilt/$TargetKey/$BinaryName.sha256"
-}) -Force
-
-$ManifestDir = Split-Path -Parent $ManifestPath
-New-Item -ItemType Directory -Force -Path $ManifestDir | Out-Null
-$Manifest | ConvertTo-Json -Depth 6 | Set-Content -NoNewline:$false -Path $ManifestPath
 
 Write-Host "Refreshed checked-in runtime for $TargetKey at $OutputPath"

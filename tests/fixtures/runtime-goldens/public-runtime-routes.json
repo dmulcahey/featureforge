@@ -1,0 +1,3355 @@
+{
+  "normalization": [
+    "absolute temp repo and state paths are replaced",
+    "run/chunk ids are replaced",
+    "git shas and sha256 fingerprints are replaced",
+    "timestamps and generated artifact timestamp slugs are replaced"
+  ],
+  "scenarios": [
+    {
+      "label": "not_started",
+      "note": "approved plan with current fidelity before any execution command",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blockers": [
+            {
+              "category": "workflow",
+              "details": "Follow the public routing lane for `execution_preflight_required`.",
+              "next_public_action": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+              "scope_key": "execution_preflight_required",
+              "scope_type": "route"
+            }
+          ],
+          "blocking_records": [],
+          "blocking_step": null,
+          "blocking_task": null,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-pending-<CHUNK_ID>",
+          "chunking_strategy": null,
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [],
+          "dependency_index_state": "missing",
+          "evaluator_policy": null,
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_command_context": {
+            "command_kind": "begin",
+            "step_id": 1,
+            "task_number": 1
+          },
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "none",
+          "execution_run_id": null,
+          "execution_started": "no",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "implementation_handoff",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": null,
+          "latest_authoritative_sequence": 0,
+          "next_action": "continue execution",
+          "next_public_action": {
+            "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+            "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"
+          },
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "execution_preflight",
+          "phase_detail": "execution_preflight_required",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [],
+          "recommended_command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            "0000000000000000000000000000000000000000"
+          ],
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "reset_policy": null,
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": null,
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "none",
+          "strategy_reset_required": false,
+          "strategy_state": "checkpoint_missing",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "blockers": [
+            {
+              "category": "workflow",
+              "details": "Follow the public routing lane for `execution_preflight_required`.",
+              "next_public_action": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+              "scope_key": "execution_preflight_required",
+              "scope_type": "route"
+            }
+          ],
+          "blocking_reason_codes": [],
+          "execution_command_context": {
+            "command_kind": "begin",
+            "step_id": 1,
+            "task_number": 1
+          },
+          "next_action": "continue execution",
+          "next_public_action": {
+            "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+            "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"
+          },
+          "phase": "execution_preflight",
+          "phase_detail": "execution_preflight_required",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "recommended_command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            "0000000000000000000000000000000000000000"
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "active_task",
+      "note": "Task 1 has begun and remains active",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": 1,
+          "active_task": 1,
+          "aggregate_evaluation_state": "pending",
+          "blocking_records": [],
+          "blocking_step": null,
+          "blocking_task": null,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-<CHUNK_ID>",
+          "chunking_strategy": "task",
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [],
+          "dependency_index_state": "fresh",
+          "evaluator_policy": "spec_compliance+code_quality",
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_command_context": {
+            "command_kind": "complete",
+            "step_id": 1,
+            "task_number": 1
+          },
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "featureforge:executing-plans",
+          "execution_run_id": "run-<RUN_ID>",
+          "execution_started": "yes",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "handoff_required",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": "<SHA256>",
+          "latest_authoritative_sequence": 0,
+          "next_action": "continue execution",
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "handoff_required",
+          "phase_detail": "execution_in_progress",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [],
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "text",
+              "name": "claim"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_mode",
+              "values": [
+                "manual_summary",
+                "command_result"
+              ]
+            },
+            {
+              "kind": "text",
+              "name": "manual_verify_summary",
+              "required_when": "verification_mode=manual_summary"
+            },
+            {
+              "kind": "text",
+              "name": "verify_command",
+              "required_when": "verification_mode=command_result"
+            },
+            {
+              "kind": "text",
+              "name": "verify_result",
+              "required_when": "verification_mode=command_result"
+            }
+          ],
+          "reset_policy": "chunk-boundary",
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": [
+            "featureforge:requesting-code-review",
+            "featureforge:qa-only",
+            "featureforge:document-release"
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "initial_dispatch",
+          "strategy_reset_required": false,
+          "strategy_state": "ready",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "blocking_reason_codes": [],
+          "execution_command_context": {
+            "command_kind": "complete",
+            "step_id": 1,
+            "task_number": 1
+          },
+          "next_action": "continue execution",
+          "phase": "handoff_required",
+          "phase_detail": "execution_in_progress",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "required_inputs": [
+            {
+              "kind": "text",
+              "name": "claim"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_mode",
+              "values": [
+                "manual_summary",
+                "command_result"
+              ]
+            },
+            {
+              "kind": "text",
+              "name": "manual_verify_summary",
+              "required_when": "verification_mode=manual_summary"
+            },
+            {
+              "kind": "text",
+              "name": "verify_command",
+              "required_when": "verification_mode=command_result"
+            },
+            {
+              "kind": "text",
+              "name": "verify_result",
+              "required_when": "verification_mode=command_result"
+            }
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "completion_output": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blocking_reason_codes": [
+            "prior_task_current_closure_missing",
+            "task_closure_baseline_repair_candidate"
+          ],
+          "blocking_records": [],
+          "blocking_scope": "task",
+          "blocking_step": null,
+          "blocking_task": 1,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-<CHUNK_ID>",
+          "chunking_strategy": "task",
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [],
+          "dependency_index_state": "fresh",
+          "evaluator_policy": "spec_compliance+code_quality",
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "featureforge:executing-plans",
+          "execution_reentry_target_source": "baseline_bridge",
+          "execution_run_id": "run-<RUN_ID>",
+          "execution_started": "no",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "executing",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": "<SHA256>",
+          "latest_authoritative_sequence": 0,
+          "next_action": "close current task",
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "task_closure_pending",
+          "phase_detail": "task_closure_recording_ready",
+          "plan_revision": 1,
+          "projection_diagnostics": [
+            "prior_task_review_dispatch_missing"
+          ],
+          "projection_mode": "state_dir_only",
+          "public_repair_targets": [
+            {
+              "command_kind": "close-current-task",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_task_closure_recording_ready",
+              "source_record_id": "route_decision:task_closure_recording_ready",
+              "task": 1
+            },
+            {
+              "command_kind": "repair-review-state",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_task_closure_repair_state_refresh",
+              "source_record_id": "route_decision:task_closure_recording_ready"
+            }
+          ],
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [
+            "prior_task_current_closure_missing",
+            "task_closure_baseline_repair_candidate",
+            "prior_task_review_dispatch_missing"
+          ],
+          "recording_context": {
+            "task_number": 1
+          },
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "review_result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "review_summary_file"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_result",
+              "values": [
+                "pass",
+                "fail",
+                "not-run"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "verification_summary_file",
+              "required_when": "verification_result!=not-run"
+            }
+          ],
+          "reset_policy": "chunk-boundary",
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": [
+            "featureforge:requesting-code-review",
+            "featureforge:qa-only",
+            "featureforge:document-release"
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "initial_dispatch",
+          "strategy_reset_required": false,
+          "strategy_state": "ready",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "label": "completed_step_waiting_task_closure",
+      "note": "Task 1 Step 1 completion is recorded and waits for public task closure",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blocking_reason_codes": [
+            "prior_task_current_closure_missing",
+            "task_closure_baseline_repair_candidate"
+          ],
+          "blocking_records": [],
+          "blocking_scope": "task",
+          "blocking_step": null,
+          "blocking_task": 1,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-<CHUNK_ID>",
+          "chunking_strategy": "task",
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [],
+          "dependency_index_state": "fresh",
+          "evaluator_policy": "spec_compliance+code_quality",
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "featureforge:executing-plans",
+          "execution_reentry_target_source": "baseline_bridge",
+          "execution_run_id": "run-<RUN_ID>",
+          "execution_started": "no",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "executing",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": "<SHA256>",
+          "latest_authoritative_sequence": 0,
+          "next_action": "close current task",
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "task_closure_pending",
+          "phase_detail": "task_closure_recording_ready",
+          "plan_revision": 1,
+          "projection_diagnostics": [
+            "prior_task_review_dispatch_missing"
+          ],
+          "projection_mode": "state_dir_only",
+          "public_repair_targets": [
+            {
+              "command_kind": "close-current-task",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_task_closure_recording_ready",
+              "source_record_id": "route_decision:task_closure_recording_ready",
+              "task": 1
+            },
+            {
+              "command_kind": "repair-review-state",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_task_closure_repair_state_refresh",
+              "source_record_id": "route_decision:task_closure_recording_ready"
+            }
+          ],
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [
+            "prior_task_current_closure_missing",
+            "task_closure_baseline_repair_candidate",
+            "prior_task_review_dispatch_missing"
+          ],
+          "recording_context": {
+            "task_number": 1
+          },
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "review_result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "review_summary_file"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_result",
+              "values": [
+                "pass",
+                "fail",
+                "not-run"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "verification_summary_file",
+              "required_when": "verification_result!=not-run"
+            }
+          ],
+          "reset_policy": "chunk-boundary",
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": [
+            "featureforge:requesting-code-review",
+            "featureforge:qa-only",
+            "featureforge:document-release"
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "initial_dispatch",
+          "strategy_reset_required": false,
+          "strategy_state": "ready",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "blocking_reason_codes": [
+            "prior_task_current_closure_missing",
+            "task_closure_baseline_repair_candidate"
+          ],
+          "blocking_scope": "task",
+          "blocking_task": 1,
+          "next_action": "close current task",
+          "phase": "task_closure_pending",
+          "phase_detail": "task_closure_recording_ready",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "recording_context": {
+            "task_number": 1
+          },
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "review_result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "review_summary_file"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_result",
+              "values": [
+                "pass",
+                "fail",
+                "not-run"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "verification_summary_file",
+              "required_when": "verification_result!=not-run"
+            }
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "task_closure_recording_ready",
+      "note": "Workflow operator projects the same completed task as public close-current-task",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blocking_reason_codes": [
+            "prior_task_current_closure_missing",
+            "task_closure_baseline_repair_candidate"
+          ],
+          "blocking_records": [],
+          "blocking_scope": "task",
+          "blocking_step": null,
+          "blocking_task": 1,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-<CHUNK_ID>",
+          "chunking_strategy": "task",
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [],
+          "dependency_index_state": "fresh",
+          "evaluator_policy": "spec_compliance+code_quality",
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "featureforge:executing-plans",
+          "execution_reentry_target_source": "baseline_bridge",
+          "execution_run_id": "run-<RUN_ID>",
+          "execution_started": "no",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "executing",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": "<SHA256>",
+          "latest_authoritative_sequence": 0,
+          "next_action": "close current task",
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "task_closure_pending",
+          "phase_detail": "task_closure_recording_ready",
+          "plan_revision": 1,
+          "projection_diagnostics": [
+            "prior_task_review_dispatch_missing"
+          ],
+          "projection_mode": "state_dir_only",
+          "public_repair_targets": [
+            {
+              "command_kind": "close-current-task",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_task_closure_recording_ready",
+              "source_record_id": "route_decision:task_closure_recording_ready",
+              "task": 1
+            },
+            {
+              "command_kind": "repair-review-state",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_task_closure_repair_state_refresh",
+              "source_record_id": "route_decision:task_closure_recording_ready"
+            }
+          ],
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [
+            "prior_task_current_closure_missing",
+            "task_closure_baseline_repair_candidate",
+            "prior_task_review_dispatch_missing"
+          ],
+          "recording_context": {
+            "task_number": 1
+          },
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "review_result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "review_summary_file"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_result",
+              "values": [
+                "pass",
+                "fail",
+                "not-run"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "verification_summary_file",
+              "required_when": "verification_result!=not-run"
+            }
+          ],
+          "reset_policy": "chunk-boundary",
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": [
+            "featureforge:requesting-code-review",
+            "featureforge:qa-only",
+            "featureforge:document-release"
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "initial_dispatch",
+          "strategy_reset_required": false,
+          "strategy_state": "ready",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "blocking_reason_codes": [
+            "prior_task_current_closure_missing",
+            "task_closure_baseline_repair_candidate"
+          ],
+          "blocking_scope": "task",
+          "blocking_task": 1,
+          "next_action": "close current task",
+          "phase": "task_closure_pending",
+          "phase_detail": "task_closure_recording_ready",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "recording_context": {
+            "task_number": 1
+          },
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "review_result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "review_summary_file"
+            },
+            {
+              "kind": "enum",
+              "name": "verification_result",
+              "values": [
+                "pass",
+                "fail",
+                "not-run"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "verification_summary_file",
+              "required_when": "verification_result!=not-run"
+            }
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "begin_ready",
+      "note": "Task 1 closure is current and Task 2 is ready to begin",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blockers": [
+            {
+              "category": "workflow",
+              "details": "Follow the public routing lane for `execution_reentry_required`.",
+              "next_public_action": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 2 --step 1 --expect-execution-fingerprint <SHA256>",
+              "scope_key": "task-2",
+              "scope_type": "task"
+            }
+          ],
+          "blocking_records": [],
+          "blocking_scope": "task",
+          "blocking_step": null,
+          "blocking_task": 2,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-<CHUNK_ID>",
+          "chunking_strategy": "task",
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [
+            {
+              "closure_record_id": "task-closure-<ID>",
+              "contract_identity": "task_def:<SHA256>",
+              "effective_reviewed_surface_paths": [
+                "cargo test --test runtime_behavior_golden",
+                "docs/runtime-golden-output-1.md"
+              ],
+              "reviewed_state_id": "git_tree:<GIT_SHA>",
+              "task": 1
+            }
+          ],
+          "dependency_index_state": "fresh",
+          "evaluator_policy": "spec_compliance+code_quality",
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_command_context": {
+            "command_kind": "begin",
+            "step_id": 1,
+            "task_number": 2
+          },
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "featureforge:executing-plans",
+          "execution_run_id": "run-<RUN_ID>",
+          "execution_started": "yes",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "executing",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": "<SHA256>",
+          "latest_authoritative_sequence": 0,
+          "next_action": "execution reentry required",
+          "next_public_action": {
+            "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 2 --step 1 --expect-execution-fingerprint <SHA256>",
+            "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 2 --step 1 --expect-execution-fingerprint <SHA256>"
+          },
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "executing",
+          "phase_detail": "execution_reentry_required",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "public_repair_targets": [
+            {
+              "command_kind": "repair-review-state",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_repair_review_state_available",
+              "source_record_id": "route_decision:execution_reentry_required"
+            }
+          ],
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [],
+          "recommended_command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 2 --step 1 --expect-execution-fingerprint <SHA256>",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "--task",
+            "2",
+            "--step",
+            "1",
+            "--expect-execution-fingerprint",
+            "0000000000000000000000000000000000000000"
+          ],
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "reset_policy": "chunk-boundary",
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": [
+            "featureforge:requesting-code-review",
+            "featureforge:qa-only",
+            "featureforge:document-release"
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "review_remediation",
+          "strategy_reset_required": false,
+          "strategy_state": "ready",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "blockers": [
+            {
+              "category": "workflow",
+              "details": "Follow the public routing lane for `execution_reentry_required`.",
+              "next_public_action": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 2 --step 1 --expect-execution-fingerprint <SHA256>",
+              "scope_key": "task-2",
+              "scope_type": "task"
+            }
+          ],
+          "blocking_reason_codes": [],
+          "blocking_scope": "task",
+          "blocking_task": 2,
+          "execution_command_context": {
+            "command_kind": "begin",
+            "step_id": 1,
+            "task_number": 2
+          },
+          "next_action": "execution reentry required",
+          "next_public_action": {
+            "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 2 --step 1 --expect-execution-fingerprint <SHA256>",
+            "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 2 --step 1 --expect-execution-fingerprint <SHA256>"
+          },
+          "phase": "executing",
+          "phase_detail": "execution_reentry_required",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "recommended_command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 2 --step 1 --expect-execution-fingerprint <SHA256>",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "--task",
+            "2",
+            "--step",
+            "1",
+            "--expect-execution-fingerprint",
+            "0000000000000000000000000000000000000000"
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "repair_review_state_required",
+      "note": "A stale current task closure routes through public repair-review-state",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blockers": [
+            {
+              "category": "task_boundary",
+              "details": "The current reviewed state is stale because later workspace changes landed after the latest reviewed closure.",
+              "next_public_action": "featureforge plan execution repair-review-state --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+              "record_id": "task-closure-<ID>",
+              "scope_key": "task-closure-<ID>",
+              "scope_type": "task"
+            }
+          ],
+          "blocking_reason_codes": [
+            "stale_unreviewed",
+            "prior_task_current_closure_stale",
+            "derived_review_state_missing"
+          ],
+          "blocking_records": [
+            {
+              "code": "stale_unreviewed",
+              "message": "The current reviewed state is stale because later workspace changes landed after the latest reviewed closure.",
+              "record_id": "task-closure-<ID>",
+              "record_type": "review_state",
+              "required_follow_up": "repair_review_state",
+              "review_state_status": "stale_unreviewed",
+              "scope_key": "task-closure-<ID>",
+              "scope_type": "task"
+            }
+          ],
+          "blocking_scope": "task",
+          "blocking_step": null,
+          "blocking_task": 1,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-<CHUNK_ID>",
+          "chunking_strategy": "task",
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [],
+          "dependency_index_state": "fresh",
+          "evaluator_policy": "spec_compliance+code_quality",
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "featureforge:executing-plans",
+          "execution_reentry_target_source": "closure_graph_stale_target",
+          "execution_run_id": "run-<RUN_ID>",
+          "execution_started": "yes",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "executing",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": "<SHA256>",
+          "latest_authoritative_sequence": 0,
+          "next_action": "repair review state / reenter execution",
+          "next_public_action": {
+            "args_template": "featureforge plan execution repair-review-state --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "command": "featureforge plan execution repair-review-state --plan docs/featureforge/plans/runtime-golden-execution-plan.md"
+          },
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "executing",
+          "phase_detail": "execution_reentry_required",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "public_repair_targets": [
+            {
+              "command_kind": "repair-review-state",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_repair_review_state_available",
+              "source_record_id": "route_decision:execution_reentry_required"
+            }
+          ],
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [
+            "prior_task_current_closure_stale"
+          ],
+          "recommended_command": "featureforge plan execution repair-review-state --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "repair-review-state",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md"
+          ],
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "reset_policy": "chunk-boundary",
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": [
+            "featureforge:requesting-code-review",
+            "featureforge:qa-only",
+            "featureforge:document-release"
+          ],
+          "review_state_status": "stale_unreviewed",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [
+            "task-closure-<ID>"
+          ],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "review_remediation",
+          "strategy_reset_required": false,
+          "strategy_state": "ready",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "blockers": [
+            {
+              "category": "task_boundary",
+              "details": "The current reviewed state is stale because later workspace changes landed after the latest reviewed closure.",
+              "next_public_action": "featureforge plan execution repair-review-state --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+              "record_id": "task-closure-<ID>",
+              "scope_key": "task-closure-<ID>",
+              "scope_type": "task"
+            }
+          ],
+          "blocking_reason_codes": [
+            "stale_unreviewed",
+            "prior_task_current_closure_stale",
+            "derived_review_state_missing"
+          ],
+          "blocking_scope": "task",
+          "blocking_task": 1,
+          "next_action": "repair review state / reenter execution",
+          "next_public_action": {
+            "args_template": "featureforge plan execution repair-review-state --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "command": "featureforge plan execution repair-review-state --plan docs/featureforge/plans/runtime-golden-execution-plan.md"
+          },
+          "phase": "executing",
+          "phase_detail": "execution_reentry_required",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "recommended_command": "featureforge plan execution repair-review-state --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "repair-review-state",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md"
+          ],
+          "review_state_status": "stale_unreviewed",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "stale_targetless_reconcile",
+      "note": "Invariant-injected stale review state has no target and must not fabricate current scope",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blocking_reason_codes": [
+            "stale_unreviewed_target_missing",
+            "missing_authoritative_stale_target"
+          ],
+          "blocking_records": [
+            {
+              "code": "stale_unreviewed_target_missing",
+              "message": "Review state is stale_unreviewed but no authoritative stale task, branch, or milestone target is bound.",
+              "record_id": null,
+              "record_type": "review_state",
+              "required_follow_up": null,
+              "review_state_status": "stale_unreviewed",
+              "scope_key": "targetless_stale_unreviewed",
+              "scope_type": "runtime"
+            }
+          ],
+          "blocking_step": null,
+          "blocking_task": null,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-pending-<CHUNK_ID>",
+          "chunking_strategy": null,
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [],
+          "dependency_index_state": "missing",
+          "evaluator_policy": null,
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "none",
+          "execution_run_id": null,
+          "execution_started": "no",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "executing",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": null,
+          "latest_authoritative_sequence": 0,
+          "next_action": "runtime diagnostic required",
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "executing",
+          "phase_detail": "runtime_reconcile_required",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [
+            "stale_unreviewed_target_missing"
+          ],
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "reset_policy": null,
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": null,
+          "review_state_status": "stale_unreviewed",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "runtime_reconcile_required",
+          "strategy_checkpoint_kind": "none",
+          "strategy_reset_required": false,
+          "strategy_state": "checkpoint_missing",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "blocking_reason_codes": [
+            "stale_unreviewed_target_missing",
+            "missing_authoritative_stale_target"
+          ],
+          "next_action": "runtime diagnostic required",
+          "phase": "executing",
+          "phase_detail": "runtime_reconcile_required",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "review_state_status": "stale_unreviewed",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "runtime_reconcile_required",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "blocked_runtime_bug_diagnostic",
+      "note": "Invariant-injected hidden recommended command fails closed before exposure",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blocking_reason_codes": [
+            "recommended_command_hidden_or_debug"
+          ],
+          "blocking_records": [],
+          "blocking_step": null,
+          "blocking_task": null,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-pending-<CHUNK_ID>",
+          "chunking_strategy": null,
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [],
+          "dependency_index_state": "missing",
+          "evaluator_policy": null,
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "none",
+          "execution_run_id": null,
+          "execution_started": "no",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "implementation_handoff",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": null,
+          "latest_authoritative_sequence": 0,
+          "next_action": "runtime diagnostic required",
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "blocked",
+          "phase_detail": "blocked_runtime_bug",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [
+            "recommended_command_hidden_or_debug"
+          ],
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "reset_policy": null,
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": null,
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "blocked_runtime_bug",
+          "strategy_checkpoint_kind": "none",
+          "strategy_reset_required": false,
+          "strategy_state": "checkpoint_missing",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "blocking_reason_codes": [
+            "recommended_command_hidden_or_debug"
+          ],
+          "next_action": "runtime diagnostic required",
+          "phase": "blocked",
+          "phase_detail": "blocked_runtime_bug",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "blocked_runtime_bug",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "engineering_approved_missing_fidelity_gate",
+      "note": "Engineering Approved plans without a current fidelity artifact route back to engineering review",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blockers": [
+            {
+              "category": "workflow",
+              "details": "Follow the public routing lane for `execution_preflight_required`.",
+              "next_public_action": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+              "scope_key": "execution_preflight_required",
+              "scope_type": "route"
+            }
+          ],
+          "blocking_records": [],
+          "blocking_step": null,
+          "blocking_task": null,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-pending-<CHUNK_ID>",
+          "chunking_strategy": null,
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [],
+          "dependency_index_state": "missing",
+          "evaluator_policy": null,
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_command_context": {
+            "command_kind": "begin",
+            "step_id": 1,
+            "task_number": 1
+          },
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "none",
+          "execution_run_id": null,
+          "execution_started": "no",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "implementation_handoff",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": null,
+          "latest_authoritative_sequence": 0,
+          "next_action": "continue execution",
+          "next_public_action": {
+            "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+            "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"
+          },
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "execution_preflight",
+          "phase_detail": "execution_preflight_required",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [],
+          "recommended_command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            "0000000000000000000000000000000000000000"
+          ],
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "reset_policy": null,
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": null,
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "none",
+          "strategy_reset_required": false,
+          "strategy_state": "checkpoint_missing",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "blockers": [
+            {
+              "category": "external_input",
+              "details": "Waiting for external review result.",
+              "scope_key": "planning_reentry_required",
+              "scope_type": "external"
+            }
+          ],
+          "blocking_reason_codes": [],
+          "next_action": "pivot / return to planning",
+          "phase": "pivot_required",
+          "phase_detail": "planning_reentry_required",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "",
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [],
+          "state_kind": "waiting_external_input",
+          "tracked_projection_paths": [],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [
+            {
+              "artifact": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+              "code": "engineering_approval_missing_plan_fidelity_review",
+              "message": "Engineering Approved plan cannot route to implementation until a current pass plan-fidelity review artifact exists.",
+              "remediation": "Return to featureforge:plan-eng-review and refresh the plan-fidelity review gate for the current approved plan before implementation.",
+              "severity": "error"
+            },
+            {
+              "artifact": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+              "code": "missing_plan_fidelity_review_artifact",
+              "message": "Plan-fidelity review artifact is missing for the current plan.",
+              "remediation": "Return to featureforge:plan-eng-review and refresh the plan-fidelity review gate for the current approved plan before implementation.",
+              "severity": "error"
+            }
+          ],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "featureforge:plan-eng-review",
+          "note": "engineering_approval_missing_plan_fidelity_review,missing_plan_fidelity_review_artifact",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [
+              {
+                "code": "missing_plan_fidelity_review_artifact",
+                "message": "Plan-fidelity review artifact is missing for the current plan."
+              }
+            ],
+            "provenance_source": "",
+            "reason_codes": [
+              "missing_plan_fidelity_review_artifact"
+            ],
+            "required_artifact_template": {
+              "artifact_path": ".featureforge/reviews/runtime-golden-execution-plan-plan-fidelity.md",
+              "content": "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** <review-verdict-pass-or-fail>\n**Reviewed Plan:** `docs/featureforge/plans/runtime-golden-execution-plan.md`\n**Reviewed Plan Revision:** 1\n**Reviewed Plan Fingerprint:** <SHA256>\n**Reviewed Spec:** `docs/featureforge/specs/runtime-golden-execution-design.md`\n**Reviewed Spec Revision:** 1\n**Reviewed Spec Fingerprint:** <SHA256>\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** <reviewer-id>\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** requirement_index, execution_topology, task_contract, task_determinism, spec_reference_fidelity\n**Verified Requirement IDs:** REQ-001, REQ-002\n\n## Findings Summary\n\n<review-summary>\n",
+              "required_distinct_from_stages": [
+                "featureforge:writing-plans",
+                "featureforge:plan-eng-review"
+              ],
+              "required_requirement_ids": [
+                "REQ-001",
+                "REQ-002"
+              ],
+              "required_verified_surfaces": [
+                "requirement_index",
+                "execution_topology",
+                "task_contract",
+                "task_determinism",
+                "spec_reference_fidelity"
+              ],
+              "review_stage": "featureforge:plan-fidelity-review",
+              "review_verdict_options": [
+                "pass",
+                "fail"
+              ],
+              "reviewed_plan_fingerprint": "<SHA256>",
+              "reviewed_plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+              "reviewed_plan_revision": 1,
+              "reviewed_spec_fingerprint": "<SHA256>",
+              "reviewed_spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+              "reviewed_spec_revision": 1,
+              "reviewer_id_placeholder": "<reviewer-id>",
+              "reviewer_source_options": [
+                "fresh-context-subagent",
+                "cross-model"
+              ],
+              "summary_placeholder": "<review-summary>"
+            },
+            "review_artifact_path": "",
+            "reviewer_stage": "",
+            "state": "missing",
+            "verified_execution_topology": false,
+            "verified_requirement_index": false,
+            "verified_spec_reference_fidelity": false,
+            "verified_task_contract": false,
+            "verified_task_determinism": false
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "engineering_approval_missing_plan_fidelity_review,missing_plan_fidelity_review_artifact",
+          "reason_codes": [
+            "engineering_approval_missing_plan_fidelity_review",
+            "missing_plan_fidelity_review_artifact"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "plan_review_required"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "implementation_ready_after_fidelity_pass",
+      "note": "Engineering Approved plan with current fidelity routes to implementation",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blockers": [
+            {
+              "category": "workflow",
+              "details": "Follow the public routing lane for `execution_preflight_required`.",
+              "next_public_action": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+              "scope_key": "execution_preflight_required",
+              "scope_type": "route"
+            }
+          ],
+          "blocking_records": [],
+          "blocking_step": null,
+          "blocking_task": null,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-pending-<CHUNK_ID>",
+          "chunking_strategy": null,
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": null,
+          "current_branch_reviewed_state_id": null,
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [],
+          "dependency_index_state": "missing",
+          "evaluator_policy": null,
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_command_context": {
+            "command_kind": "begin",
+            "step_id": 1,
+            "task_number": 1
+          },
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "none",
+          "execution_run_id": null,
+          "execution_started": "no",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "implementation_handoff",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": null,
+          "latest_authoritative_sequence": 0,
+          "next_action": "continue execution",
+          "next_public_action": {
+            "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+            "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"
+          },
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "execution_preflight",
+          "phase_detail": "execution_preflight_required",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [],
+          "recommended_command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            "0000000000000000000000000000000000000000"
+          ],
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "reset_policy": null,
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": null,
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "none",
+          "strategy_reset_required": false,
+          "strategy_state": "checkpoint_missing",
+          "superseded_closures_summary": [],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "blockers": [
+            {
+              "category": "workflow",
+              "details": "Follow the public routing lane for `execution_preflight_required`.",
+              "next_public_action": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+              "scope_key": "execution_preflight_required",
+              "scope_type": "route"
+            }
+          ],
+          "blocking_reason_codes": [],
+          "execution_command_context": {
+            "command_kind": "begin",
+            "step_id": 1,
+            "task_number": 1
+          },
+          "next_action": "continue execution",
+          "next_public_action": {
+            "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+            "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"
+          },
+          "phase": "execution_preflight",
+          "phase_detail": "execution_preflight_required",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "recommended_command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            "0000000000000000000000000000000000000000"
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "release_readiness_pending",
+      "note": "Current branch closure is recorded and release-readiness evidence is pending",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blockers": [
+            {
+              "category": "late_stage",
+              "details": "A current release-readiness result for the active branch closure is required before late-stage progression can continue.",
+              "record_id": "branch-closure-<ID>",
+              "scope_key": "branch-closure-<ID>",
+              "scope_type": "branch"
+            }
+          ],
+          "blocking_records": [
+            {
+              "code": "release_readiness_recording_ready",
+              "message": "A current release-readiness result for the active branch closure is required before late-stage progression can continue.",
+              "record_id": "branch-closure-<ID>",
+              "record_type": "release_readiness",
+              "required_follow_up": "advance_late_stage",
+              "review_state_status": "clean",
+              "scope_key": "branch-closure-<ID>",
+              "scope_type": "branch"
+            }
+          ],
+          "blocking_scope": "branch",
+          "blocking_step": null,
+          "blocking_task": null,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-<CHUNK_ID>",
+          "chunking_strategy": null,
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": "branch-closure-<ID>",
+          "current_branch_reviewed_state_id": "git_tree:<GIT_SHA>",
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": null,
+          "current_task_closures": [
+            {
+              "closure_record_id": "task-closure-<ID>",
+              "contract_identity": "task_def:<SHA256>",
+              "effective_reviewed_surface_paths": [
+                "cargo test --test runtime_behavior_golden",
+                "docs/runtime-golden-output-2.md"
+              ],
+              "reviewed_state_id": "git_tree:<GIT_SHA>",
+              "task": 2
+            }
+          ],
+          "dependency_index_state": "fresh",
+          "evaluator_policy": null,
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "featureforge:executing-plans",
+          "execution_run_id": "run-<RUN_ID>",
+          "execution_started": "yes",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "document_release_pending",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": null,
+          "last_strategy_checkpoint_fingerprint": "<SHA256>",
+          "latest_authoritative_sequence": 0,
+          "next_action": "advance late stage",
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "document_release_pending",
+          "phase_detail": "release_readiness_recording_ready",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "public_repair_targets": [
+            {
+              "command_kind": "repair-review-state",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_repair_review_state_available",
+              "source_record_id": "route_decision:release_readiness_recording_ready"
+            },
+            {
+              "command_kind": "advance-late-stage",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_advance_late_stage_ready",
+              "source_record_id": "route_decision:advance_late_stage"
+            }
+          ],
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [],
+          "recording_context": {
+            "branch_closure_id": "branch-closure-<ID>"
+          },
+          "release_docs_state": "not_required",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "result",
+              "values": [
+                "ready",
+                "blocked"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "summary_file"
+            }
+          ],
+          "reset_policy": null,
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": null,
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+            "<STATE>/projects/<PROJECT_KEY>/branch-closure-branch-closure-<ID>.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "review_remediation",
+          "strategy_reset_required": false,
+          "strategy_state": "ready",
+          "superseded_closures_summary": [
+            "task-closure-<ID>"
+          ],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/branch-closure-branch-closure-<ID>.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "base_branch": "main",
+          "blockers": [
+            {
+              "category": "late_stage",
+              "details": "A current release-readiness result for the active branch closure is required before late-stage progression can continue.",
+              "record_id": "branch-closure-<ID>",
+              "scope_key": "branch-closure-<ID>",
+              "scope_type": "branch"
+            }
+          ],
+          "blocking_reason_codes": [],
+          "blocking_scope": "branch",
+          "next_action": "advance late stage",
+          "phase": "document_release_pending",
+          "phase_detail": "release_readiness_recording_ready",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "recording_context": {
+            "branch_closure_id": "branch-closure-<ID>"
+          },
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "result",
+              "values": [
+                "ready",
+                "blocked"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "summary_file"
+            }
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+            "<STATE>/projects/<PROJECT_KEY>/branch-closure-branch-closure-<ID>.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/branch-closure-branch-closure-<ID>.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "final_review_pending",
+      "note": "Release-readiness is current and final review dispatch/result is pending",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blockers": [
+            {
+              "category": "late_stage",
+              "details": "A fresh external final review is required before late-stage progression can continue.",
+              "next_public_action": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+              "scope_key": "branch-closure-<ID>",
+              "scope_type": "branch"
+            }
+          ],
+          "blocking_reason_codes": [
+            "final_review_dispatch_required"
+          ],
+          "blocking_records": [
+            {
+              "code": "final_review_dispatch_required",
+              "message": "A fresh external final review is required before late-stage progression can continue.",
+              "record_id": null,
+              "record_type": "final_review_dispatch",
+              "required_follow_up": "request_external_review",
+              "review_state_status": "clean",
+              "scope_key": "branch-closure-<ID>",
+              "scope_type": "branch"
+            }
+          ],
+          "blocking_scope": "branch",
+          "blocking_step": null,
+          "blocking_task": null,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-<CHUNK_ID>",
+          "chunking_strategy": null,
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": "branch-closure-<ID>",
+          "current_branch_reviewed_state_id": "git_tree:<GIT_SHA>",
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_state": "not_required",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": "ready",
+          "current_task_closures": [
+            {
+              "closure_record_id": "task-closure-<ID>",
+              "contract_identity": "task_def:<SHA256>",
+              "effective_reviewed_surface_paths": [
+                "cargo test --test runtime_behavior_golden",
+                "docs/runtime-golden-output-2.md"
+              ],
+              "reviewed_state_id": "git_tree:<GIT_SHA>",
+              "task": 2
+            }
+          ],
+          "dependency_index_state": "fresh",
+          "evaluator_policy": null,
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "featureforge:executing-plans",
+          "execution_run_id": "run-<RUN_ID>",
+          "execution_started": "yes",
+          "final_review_state": "not_required",
+          "finish_review_gate_pass_branch_closure_id": null,
+          "handoff_required": false,
+          "harness_phase": "final_review_pending",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": null,
+          "last_release_docs_artifact_fingerprint": "<SHA256>",
+          "last_strategy_checkpoint_fingerprint": "<SHA256>",
+          "latest_authoritative_sequence": 0,
+          "next_action": "request final review",
+          "next_public_action": {
+            "args_template": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "command": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md"
+          },
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "final_review_pending",
+          "phase_detail": "final_review_dispatch_required",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "public_repair_targets": [
+            {
+              "command_kind": "repair-review-state",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_repair_review_state_available",
+              "source_record_id": "route_decision:final_review_dispatch_required"
+            }
+          ],
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [],
+          "release_docs_state": "fresh",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "reset_policy": null,
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": null,
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+            "<STATE>/projects/<PROJECT_KEY>/branch-closure-branch-closure-<ID>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "review_remediation",
+          "strategy_reset_required": false,
+          "strategy_state": "ready",
+          "superseded_closures_summary": [
+            "task-closure-<ID>"
+          ],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/branch-closure-branch-closure-<ID>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "base_branch": "main",
+          "blockers": [
+            {
+              "category": "late_stage",
+              "details": "A fresh external final review is required before late-stage progression can continue.",
+              "next_public_action": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+              "scope_key": "branch-closure-<ID>",
+              "scope_type": "branch"
+            }
+          ],
+          "blocking_reason_codes": [
+            "final_review_dispatch_required"
+          ],
+          "blocking_scope": "branch",
+          "next_action": "request final review",
+          "next_public_action": {
+            "args_template": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "command": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md"
+          },
+          "phase": "final_review_pending",
+          "phase_detail": "final_review_dispatch_required",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+            "<STATE>/projects/<PROJECT_KEY>/branch-closure-branch-closure-<ID>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/branch-closure-branch-closure-<ID>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "ready_for_branch_completion",
+      "note": "Release-readiness and final review are current for a plan without required QA",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blocking_records": [],
+          "blocking_scope": "branch",
+          "blocking_step": null,
+          "blocking_task": null,
+          "browser_qa_state": "not_required",
+          "chunk_id": "chunk-<CHUNK_ID>",
+          "chunking_strategy": null,
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": "branch-closure-<ID>",
+          "current_branch_reviewed_state_id": "git_tree:<GIT_SHA>",
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_branch_closure_id": "branch-closure-<ID>",
+          "current_final_review_result": "pass",
+          "current_final_review_state": "fresh",
+          "current_qa_state": "not_required",
+          "current_release_readiness_state": "ready",
+          "current_task_closures": [
+            {
+              "closure_record_id": "task-closure-<ID>",
+              "contract_identity": "task_def:<SHA256>",
+              "effective_reviewed_surface_paths": [
+                "cargo test --test runtime_behavior_golden",
+                "docs/runtime-golden-output-2.md"
+              ],
+              "reviewed_state_id": "git_tree:<GIT_SHA>",
+              "task": 2
+            }
+          ],
+          "dependency_index_state": "fresh",
+          "evaluator_policy": null,
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "featureforge:executing-plans",
+          "execution_run_id": "run-<RUN_ID>",
+          "execution_started": "yes",
+          "final_review_state": "fresh",
+          "finish_review_gate_pass_branch_closure_id": "branch-closure-<ID>",
+          "handoff_required": false,
+          "harness_phase": "ready_for_branch_completion",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": "<SHA256>",
+          "last_release_docs_artifact_fingerprint": "<SHA256>",
+          "last_strategy_checkpoint_fingerprint": "<SHA256>",
+          "latest_authoritative_sequence": 0,
+          "next_action": "finish branch",
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "ready_for_branch_completion",
+          "phase_detail": "finish_completion_gate_ready",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "public_repair_targets": [
+            {
+              "command_kind": "repair-review-state",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_repair_review_state_available",
+              "source_record_id": "route_decision:finish_completion_gate_ready"
+            }
+          ],
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [],
+          "release_docs_state": "fresh",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "reset_policy": null,
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": null,
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+            "<STATE>/projects/<PROJECT_KEY>/branch-closure-branch-closure-<ID>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-independent-review-final-review-record-<SHA256>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-code-review-final-review-record-<SHA256>.md"
+          ],
+          "state_kind": "terminal",
+          "strategy_checkpoint_kind": "review_remediation",
+          "strategy_reset_required": false,
+          "strategy_state": "ready",
+          "superseded_closures_summary": [
+            "task-closure-<ID>"
+          ],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/branch-closure-branch-closure-<ID>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-independent-review-final-review-record-<SHA256>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-code-review-final-review-record-<SHA256>.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "base_branch": "main",
+          "blocking_reason_codes": [],
+          "blocking_scope": "branch",
+          "finish_review_gate_pass_branch_closure_id": "branch-closure-<ID>",
+          "next_action": "finish branch",
+          "phase": "ready_for_branch_completion",
+          "phase_detail": "finish_completion_gate_ready",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "not-required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+            "<STATE>/projects/<PROJECT_KEY>/branch-closure-branch-closure-<ID>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-independent-review-final-review-record-<SHA256>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-code-review-final-review-record-<SHA256>.md"
+          ],
+          "state_kind": "terminal",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/branch-closure-branch-closure-<ID>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-independent-review-final-review-record-<SHA256>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-code-review-final-review-record-<SHA256>.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    },
+    {
+      "label": "qa_pending",
+      "note": "Release-readiness and final review are current but required QA is still pending",
+      "plan_execution_status": {
+        "json": {
+          "active_contract_fingerprint": null,
+          "active_contract_path": null,
+          "active_step": null,
+          "active_task": null,
+          "aggregate_evaluation_state": "pending",
+          "blockers": [
+            {
+              "category": "late_stage",
+              "details": "A current QA result for the active branch closure is required before late-stage progression can continue.",
+              "record_id": "branch-closure-<ID>",
+              "scope_key": "branch-closure-<ID>",
+              "scope_type": "branch"
+            }
+          ],
+          "blocking_records": [
+            {
+              "code": "qa_recording_required",
+              "message": "A current QA result for the active branch closure is required before late-stage progression can continue.",
+              "record_id": "branch-closure-<ID>",
+              "record_type": "qa_result",
+              "required_follow_up": "advance_late_stage",
+              "review_state_status": "clean",
+              "scope_key": "branch-closure-<ID>",
+              "scope_type": "branch"
+            }
+          ],
+          "blocking_scope": "branch",
+          "blocking_step": null,
+          "blocking_task": null,
+          "browser_qa_state": "missing",
+          "chunk_id": "chunk-<CHUNK_ID>",
+          "chunking_strategy": null,
+          "completed_evaluator_kinds": [],
+          "current_branch_closure_id": "branch-closure-<ID>",
+          "current_branch_reviewed_state_id": "git_tree:<GIT_SHA>",
+          "current_chunk_pivot_threshold": 0,
+          "current_chunk_retry_budget": 0,
+          "current_chunk_retry_count": 0,
+          "current_final_review_branch_closure_id": "branch-closure-<ID>",
+          "current_final_review_result": "pass",
+          "current_final_review_state": "fresh",
+          "current_qa_state": "missing",
+          "current_release_readiness_state": "ready",
+          "current_task_closures": [
+            {
+              "closure_record_id": "task-closure-<ID>",
+              "contract_identity": "task_def:<SHA256>",
+              "effective_reviewed_surface_paths": [
+                "cargo test --test runtime_behavior_golden",
+                "docs/runtime-golden-output-2.md"
+              ],
+              "reviewed_state_id": "git_tree:<GIT_SHA>",
+              "task": 2
+            }
+          ],
+          "dependency_index_state": "fresh",
+          "evaluator_policy": null,
+          "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+          "execution_fingerprint": "<SHA256>",
+          "execution_mode": "featureforge:executing-plans",
+          "execution_run_id": "run-<RUN_ID>",
+          "execution_started": "yes",
+          "final_review_state": "fresh",
+          "finish_review_gate_pass_branch_closure_id": "branch-closure-<ID>",
+          "handoff_required": false,
+          "harness_phase": "qa_pending",
+          "last_browser_qa_artifact_fingerprint": null,
+          "last_evaluation_evaluator_kind": null,
+          "last_evaluation_report_fingerprint": null,
+          "last_evaluation_report_path": null,
+          "last_evaluation_verdict": null,
+          "last_final_review_artifact_fingerprint": "<SHA256>",
+          "last_release_docs_artifact_fingerprint": "<SHA256>",
+          "last_strategy_checkpoint_fingerprint": "<SHA256>",
+          "latest_authoritative_sequence": 0,
+          "next_action": "run QA",
+          "non_passing_evaluator_kinds": [],
+          "open_failed_criteria": [],
+          "pending_evaluator_kinds": [],
+          "phase": "qa_pending",
+          "phase_detail": "qa_recording_required",
+          "plan_revision": 1,
+          "projection_mode": "state_dir_only",
+          "public_repair_targets": [
+            {
+              "command_kind": "advance-late-stage",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_advance_late_stage_ready",
+              "source_record_id": "route_decision:advance_late_stage"
+            }
+          ],
+          "qa_requirement": "required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "reason_codes": [],
+          "release_docs_state": "fresh",
+          "repo_state_baseline_head_sha": null,
+          "repo_state_baseline_worktree_fingerprint": null,
+          "repo_state_drift_state": "preflight_pending",
+          "required_evaluator_kinds": [],
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "summary_file"
+            }
+          ],
+          "reset_policy": null,
+          "resume_step": null,
+          "resume_task": null,
+          "review_stack": null,
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "stale_unreviewed_closures": [],
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+            "<STATE>/projects/<PROJECT_KEY>/branch-closure-branch-closure-<ID>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-independent-review-final-review-record-<SHA256>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-code-review-final-review-record-<SHA256>.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "strategy_checkpoint_kind": "review_remediation",
+          "strategy_reset_required": false,
+          "strategy_state": "ready",
+          "superseded_closures_summary": [
+            "task-closure-<ID>"
+          ],
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/branch-closure-branch-closure-<ID>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-independent-review-final-review-record-<SHA256>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-code-review-final-review-record-<SHA256>.md"
+          ],
+          "tracked_projections_current": false,
+          "warning_codes": [],
+          "write_authority_holder": null,
+          "write_authority_state": "preflight_pending",
+          "write_authority_worktree": null
+        },
+        "ok": true
+      },
+      "workflow_operator": {
+        "json": {
+          "base_branch": "main",
+          "blockers": [
+            {
+              "category": "late_stage",
+              "details": "A current QA result for the active branch closure is required before late-stage progression can continue.",
+              "record_id": "branch-closure-<ID>",
+              "scope_key": "branch-closure-<ID>",
+              "scope_type": "branch"
+            }
+          ],
+          "blocking_reason_codes": [],
+          "blocking_scope": "branch",
+          "finish_review_gate_pass_branch_closure_id": "branch-closure-<ID>",
+          "next_action": "run QA",
+          "phase": "qa_pending",
+          "phase_detail": "qa_recording_required",
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "projection_mode": "state_dir_only",
+          "qa_requirement": "required",
+          "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "required_inputs": [
+            {
+              "kind": "enum",
+              "name": "result",
+              "values": [
+                "pass",
+                "fail"
+              ]
+            },
+            {
+              "kind": "path",
+              "must_exist": true,
+              "name": "summary_file"
+            }
+          ],
+          "review_state_status": "clean",
+          "schema_version": 3,
+          "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "state_dir_projection_paths": [
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
+            "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
+            "<STATE>/projects/<PROJECT_KEY>/branch-closure-branch-closure-<ID>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-independent-review-final-review-record-<SHA256>.md",
+            "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-code-review-final-review-record-<SHA256>.md"
+          ],
+          "state_kind": "actionable_public_command",
+          "tracked_projection_paths": [
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
+            "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/branch-closure-branch-closure-<ID>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-release-readiness-release-readiness-<ID>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-independent-review-final-review-record-<SHA256>.md",
+            "docs/featureforge/projections/feature-runtime-golden-e40ef2721b65/featureforge-feature-runtime-golden-e40ef2721b65-code-review-final-review-record-<SHA256>.md"
+          ],
+          "tracked_projections_current": false
+        },
+        "ok": true
+      },
+      "workflow_status": {
+        "json": {
+          "contract_state": "valid",
+          "diagnostics": [],
+          "manifest_path": "<STATE>/projects/<PROJECT_KEY>/<USER>-feature-runtime-golden-e40ef2721b65-workflow-state.json",
+          "next_skill": "",
+          "note": "implementation_ready",
+          "plan_candidate_count": 1,
+          "plan_fidelity_review": {
+            "diagnostics": [],
+            "provenance_source": "fresh-context-subagent",
+            "reason_codes": [],
+            "review_artifact_path": ".featureforge/reviews/runtime-golden-plan-fidelity.md",
+            "reviewer_stage": "featureforge:plan-fidelity-review",
+            "state": "pass",
+            "verified_execution_topology": true,
+            "verified_requirement_index": true,
+            "verified_spec_reference_fidelity": true,
+            "verified_task_contract": true,
+            "verified_task_determinism": true
+          },
+          "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
+          "reason": "implementation_ready",
+          "reason_codes": [
+            "implementation_ready"
+          ],
+          "root": "<REPO>",
+          "scan_truncated": false,
+          "schema_version": 3,
+          "spec_candidate_count": 1,
+          "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
+          "status": "implementation_ready"
+        },
+        "ok": true
+      }
+    }
+  ],
+  "schema_version": 1
+}

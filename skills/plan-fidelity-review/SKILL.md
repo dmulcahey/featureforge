@@ -29,7 +29,7 @@ _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
 
-Use three lenses:
+Use three lenses, then decide from local repo truth:
 - Layer 1: tried-and-true / built-ins / existing repo-native solutions
 - Layer 2: current practice and known footguns
 - Layer 3: first-principles reasoning for this repo and this problem
@@ -69,6 +69,9 @@ Per-skill instructions may add additional formatting rules on top of this baseli
 ## Review Artifact Contract
 
 - Persist exactly one review artifact at `.featureforge/reviews/YYYY-MM-DD-<feature-name>-plan-fidelity.md`.
+- When `workflow status --json` or `featureforge plan contract analyze-plan --format json` returns `plan_fidelity_review.required_artifact_template`, write the template's `artifact_path` using the template `content` verbatim.
+- Fill only the reviewer-owned placeholders in that template: reviewer id, review verdict, and findings/summary content.
+- Do not invent, rename, reorder, omit, or hand-type parseable artifact headers when a runtime template is available.
 - The artifact must include these parseable fields:
   - `Review Stage`
   - `Review Verdict`
@@ -83,7 +86,7 @@ Per-skill instructions may add additional formatting rules on top of this baseli
   - `Distinct From Stages`
   - `Verified Surfaces`
   - `Verified Requirement IDs`
-- `Review Verdict` must be `pass` for this gate to advance.
+- `Review Verdict` must be either `pass` or `fail`; only `pass` advances this gate.
 - Review artifacts missing any required verified surface are stale or invalid for the expanded plan-fidelity gate, even if they verified requirement coverage and topology under an older artifact shape.
 
 ## Review Completion

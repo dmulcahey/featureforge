@@ -18,6 +18,10 @@ pub struct PrebuiltManifestEntry<'a> {
     pub target: &'a str,
     pub binary_path: &'a str,
     pub checksum_path: &'a str,
+    pub binary_sha256: Option<String>,
+    pub source_fingerprint: Option<String>,
+    pub source_fingerprint_algorithm: Option<&'a str>,
+    pub source_fingerprint_path_count: Option<usize>,
 }
 
 pub fn canonical_prebuilt_entries() -> [PrebuiltManifestEntry<'static>; 2] {
@@ -26,11 +30,19 @@ pub fn canonical_prebuilt_entries() -> [PrebuiltManifestEntry<'static>; 2] {
             target: DARWIN_ARM64_TARGET,
             binary_path: DARWIN_ARM64_BINARY_REL,
             checksum_path: DARWIN_ARM64_CHECKSUM_REL,
+            binary_sha256: None,
+            source_fingerprint: None,
+            source_fingerprint_algorithm: None,
+            source_fingerprint_path_count: None,
         },
         PrebuiltManifestEntry {
             target: WINDOWS_X64_TARGET,
             binary_path: WINDOWS_X64_BINARY_REL,
             checksum_path: WINDOWS_X64_CHECKSUM_REL,
+            binary_sha256: None,
+            source_fingerprint: None,
+            source_fingerprint_algorithm: None,
+            source_fingerprint_path_count: None,
         },
     ]
 }
@@ -38,6 +50,10 @@ pub fn canonical_prebuilt_entries() -> [PrebuiltManifestEntry<'static>; 2] {
 pub fn sha256_checksum_line(binary_name: &str, contents: &str) -> String {
     let checksum = format!("{:x}", Sha256::digest(contents.as_bytes()));
     format!("{checksum}  {binary_name}\n")
+}
+
+fn sha256_manifest_digest(contents: &str) -> String {
+    format!("sha256:{:x}", Sha256::digest(contents.as_bytes()))
 }
 
 pub fn write_prebuilt_artifact(
@@ -73,13 +89,31 @@ pub fn write_prebuilt_manifest(
 
     let mut manifest_targets = serde_json::Map::new();
     for entry in entries {
-        manifest_targets.insert(
-            entry.target.to_owned(),
-            json!({
-                "binary_path": entry.binary_path,
-                "checksum_path": entry.checksum_path,
-            }),
-        );
+        let mut target = serde_json::Map::new();
+        target.insert(String::from("binary_path"), json!(entry.binary_path));
+        target.insert(String::from("checksum_path"), json!(entry.checksum_path));
+        if let Some(binary_sha256) = entry.binary_sha256.as_deref() {
+            target.insert(String::from("binary_sha256"), json!(binary_sha256));
+        }
+        if let Some(source_fingerprint) = entry.source_fingerprint.as_deref() {
+            target.insert(
+                String::from("source_fingerprint"),
+                json!(source_fingerprint),
+            );
+        }
+        if let Some(source_fingerprint_algorithm) = entry.source_fingerprint_algorithm {
+            target.insert(
+                String::from("source_fingerprint_algorithm"),
+                json!(source_fingerprint_algorithm),
+            );
+        }
+        if let Some(source_fingerprint_path_count) = entry.source_fingerprint_path_count {
+            target.insert(
+                String::from("source_fingerprint_path_count"),
+                json!(source_fingerprint_path_count),
+            );
+        }
+        manifest_targets.insert(entry.target.to_owned(), serde_json::Value::Object(target));
     }
 
     fs::write(
@@ -128,5 +162,25 @@ pub fn write_canonical_prebuilt_layout(
     );
 
     let entries = canonical_prebuilt_entries();
+    let entries = [
+        PrebuiltManifestEntry {
+            target: entries[0].target,
+            binary_path: entries[0].binary_path,
+            checksum_path: entries[0].checksum_path,
+            binary_sha256: Some(sha256_manifest_digest(darwin_binary_contents)),
+            source_fingerprint: None,
+            source_fingerprint_algorithm: None,
+            source_fingerprint_path_count: None,
+        },
+        PrebuiltManifestEntry {
+            target: entries[1].target,
+            binary_path: entries[1].binary_path,
+            checksum_path: entries[1].checksum_path,
+            binary_sha256: Some(sha256_manifest_digest(windows_binary_contents)),
+            source_fingerprint: None,
+            source_fingerprint_algorithm: None,
+            source_fingerprint_path_count: None,
+        },
+    ];
     write_prebuilt_manifest(root, runtime_revision, &entries);
 }

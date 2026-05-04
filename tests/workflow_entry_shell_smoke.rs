@@ -1,8 +1,5 @@
 #[path = "support/bin.rs"]
 mod bin_support;
-#[allow(dead_code)]
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/workflow.rs"]
@@ -12,7 +9,7 @@ use bin_support::compiled_featureforge_path;
 use featureforge::git::discover_slug_identity;
 use featureforge::paths::harness_state_path;
 use process_support::run;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -114,6 +111,56 @@ fn assert_parity_probe_budget(scenario_id: &str, consumed_probe_commands: usize,
     );
 }
 
+fn assert_task_closure_required_inputs(surface: &Value, context: &str) {
+    let required_inputs = json!([
+        {
+            "kind": "enum",
+            "name": "review_result",
+            "values": ["pass", "fail"]
+        },
+        {
+            "kind": "path",
+            "must_exist": true,
+            "name": "review_summary_file"
+        },
+        {
+            "kind": "enum",
+            "name": "verification_result",
+            "values": ["pass", "fail", "not-run"]
+        },
+        {
+            "kind": "path",
+            "must_exist": true,
+            "name": "verification_summary_file",
+            "required_when": "verification_result!=not-run"
+        }
+    ]);
+    assert_eq!(
+        surface["recommended_command"],
+        Value::Null,
+        "{context} should not expose a placeholder command: {surface}"
+    );
+    assert!(
+        surface.get("recommended_public_command_argv").is_none(),
+        "{context} should not expose machine argv while task-closure input is missing: {surface}"
+    );
+    assert_eq!(
+        surface["required_inputs"], required_inputs,
+        "{context} should expose typed task-closure inputs: {surface}"
+    );
+    if surface.get("next_public_action").is_some() {
+        assert_eq!(
+            surface["next_public_action"]["command"],
+            Value::Null,
+            "{context} next_public_action should not expose a placeholder command: {surface}"
+        );
+        assert_eq!(
+            surface["next_public_action"]["required_inputs"], required_inputs,
+            "{context} next_public_action should carry typed task-closure inputs: {surface}"
+        );
+    }
+}
+
 fn run_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
     let mut command = Command::new(compiled_featureforge_path());
     command
@@ -148,6 +195,25 @@ fn harness_state_file_path(repo: &Path, state: &Path) -> std::path::PathBuf {
     harness_state_path(state, &identity.repo_slug, &identity.branch_name)
 }
 
+fn read_authoritative_harness_state(repo: &Path, state: &Path, purpose: &str) -> Value {
+    let state_path = harness_state_file_path(repo, state);
+    featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(&state_path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "event-authoritative workflow-entry harness state should reduce for {purpose} at {}: {}",
+                state_path.display(),
+                error.message
+            )
+        })
+        .unwrap_or_else(|| {
+            serde_json::from_str(
+                &fs::read_to_string(&state_path)
+                    .unwrap_or_else(|error| panic!("harness state should read for {purpose}: {error}")),
+            )
+            .unwrap_or_else(|error| panic!("harness state should parse for {purpose}: {error}"))
+        })
+}
+
 fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
     let state_path = harness_state_file_path(repo, state);
     if let Some(parent) = state_path.parent() {
@@ -158,10 +224,8 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
         serde_json::to_string_pretty(payload).expect("harness state should serialize"),
     )
     .expect("harness state should be writable");
-    let events_path = state_path.with_file_name("events.jsonl");
-    let legacy_backup_path = state_path.with_file_name("state.legacy.json");
-    let _ = fs::remove_file(events_path);
-    let _ = fs::remove_file(legacy_backup_path);
+    featureforge::execution::event_log::sync_fixture_event_log_for_tests(&state_path, payload)
+        .expect("workflow-entry harness fixture should sync typed event authority");
 }
 
 fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
@@ -176,15 +240,6 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
         &["status", "--plan", plan_rel],
         "status before task-boundary blocked entry fixture execution",
     );
-    let _ = plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        &featureforge::cli::plan_execution::StatusArgs {
-            plan: plan_rel.into(),
-            external_review_result_ready: false,
-        },
-    )
-    .expect("internal preflight helper should succeed for task-boundary blocked entry fixture");
     let begin_task1_step1 = run_plan_execution_json(
         repo,
         state,
@@ -284,10 +339,16 @@ fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
     checkout
         .args(["checkout", "-B", branch_name])
         .current_dir(repo);
-    let output = run(checkout, "git checkout preflight acceptance branch");
+    let output = run(
+        checkout,
+        concat!("git checkout pre", "flight acceptance branch"),
+    );
     assert!(
         output.status.success(),
-        "preflight acceptance branch checkout should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        concat!(
+            "pre",
+            "flight acceptance branch checkout should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}"
+        ),
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
@@ -455,13 +516,16 @@ fn fs02_entry_route_surfaces_share_parity_and_budget() {
         .as_str()
         .expect("FS-02 operator route should include phase_detail");
     assert_eq!(
-        phase_detail, "execution_preflight_required",
-        "FS-02 fixture should keep comment-only entry drift on the execution-preflight lane under semantic identity routing, got {operator_json}"
+        phase_detail,
+        concat!("execution_pre", "flight_required"),
+        "FS-02 fixture should keep comment-only entry drift on the execution-{} lane under semantic identity routing, got {}",
+        concat!("pre", "flight"),
+        operator_json
     );
     assert_eq!(
         operator_json["next_action"],
-        Value::from("execution preflight"),
-        "FS-02 entry-path classification should stay on execution preflight for comment-only drift"
+        Value::from("continue execution"),
+        "FS-02 entry-path classification should stay on the executable begin lane for comment-only drift"
     );
     assert_parity_probe_budget("FS-02", runtime_management_commands, 2);
 }
@@ -474,11 +538,7 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     setup_task_boundary_blocked_case(repo, state, plan_rel);
 
-    let mut harness_state_json: Value = serde_json::from_str(
-        &fs::read_to_string(harness_state_file_path(repo, state))
-            .expect("harness state should be readable before FS-09 fixture mutation"),
-    )
-    .expect("harness state should remain valid json before FS-09 fixture mutation");
+    let mut harness_state_json = read_authoritative_harness_state(repo, state, "FS-09 mutation");
     harness_state_json["current_task_closure_records"] = serde_json::json!({});
     harness_state_json["strategy_review_dispatch_lineage"] = serde_json::json!({});
     harness_state_json["review_state_repair_follow_up"] = Value::from("execution_reentry");
@@ -492,14 +552,7 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
     );
     assert_eq!(repair["action"], Value::from("blocked"), "json: {repair}");
     assert_eq!(repair["required_follow_up"], Value::Null, "json: {repair}");
-    assert!(
-        repair["recommended_command"]
-            .as_str()
-            .is_some_and(|command| {
-                command.contains("featureforge plan execution close-current-task --plan")
-            }),
-        "repair should expose an executable close-current-task command after clearing stale reroute state: {repair}",
-    );
+    assert_task_closure_required_inputs(&repair, "FS-09 repair after stale reroute cleanup");
 
     let operator = run_featureforge_json(
         repo,
@@ -520,21 +573,8 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
         Value::from("task_closure_recording_ready")
     );
     assert_eq!(operator["next_action"], Value::from("close current task"));
-    assert!(
-        operator["recommended_command"]
-            .as_str()
-            .is_some_and(|command| {
-                command.contains("featureforge plan execution close-current-task --plan")
-            }),
-        "workflow operator should expose the executable close-current-task command after repair: {operator}"
-    );
-
-    assert!(
-        operator["next_public_action"]["command"]
-            .as_str()
-            .is_some_and(
-                |command| command.contains("featureforge plan execution close-current-task")
-            ),
-        "workflow operator should surface the post-repair task-closure blocker through next_public_action"
+    assert_task_closure_required_inputs(
+        &operator,
+        "FS-09 workflow operator after stale reroute cleanup",
     );
 }

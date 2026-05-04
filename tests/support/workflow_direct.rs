@@ -1,3 +1,5 @@
+//! INTERNAL_RUNTIME_HELPER_TEST: this file intentionally exercises unavailable runtime internals.
+
 use std::path::Path;
 use std::process::{ExitStatus, Output};
 
@@ -11,7 +13,7 @@ enum DirectWorkflowEmission {
     Json(Result<Vec<u8>, JsonFailure>),
 }
 
-pub fn try_run_workflow_output_direct(
+pub fn internal_only_try_run_workflow_output_direct(
     repo: &Path,
     state: &Path,
     args: &[&str],

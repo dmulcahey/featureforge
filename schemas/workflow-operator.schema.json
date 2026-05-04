@@ -52,6 +52,44 @@
       ],
       "type": "object"
     },
+    "PublicCommandInputKind": {
+      "enum": [
+        "text",
+        "enum",
+        "path"
+      ],
+      "type": "string"
+    },
+    "PublicCommandInputRequirement": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/PublicCommandInputKind"
+        },
+        "must_exist": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required_when": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
     "WorkflowOperatorCommandKindSchema": {
       "enum": [
         "begin",
@@ -90,6 +128,7 @@
         "finish branch",
         "close current task",
         "continue execution",
+        "runtime diagnostic required",
         "request final review",
         "execution reentry required",
         "hand off",
@@ -107,6 +146,7 @@
       "enum": [
         "blocked_runtime_bug",
         "execution_in_progress",
+        "execution_preflight_required",
         "execution_reentry_required",
         "task_review_result_pending",
         "task_closure_recording_ready",
@@ -130,6 +170,7 @@
       "enum": [
         "blocked",
         "executing",
+        "execution_preflight",
         "task_closure_pending",
         "document_release_pending",
         "final_review_pending",
@@ -190,7 +231,8 @@
         "actionable_public_command",
         "waiting_external_input",
         "terminal",
-        "blocked_runtime_bug"
+        "blocked_runtime_bug",
+        "runtime_reconcile_required"
       ],
       "type": "string"
     }
@@ -317,36 +359,6 @@
           }
         }
       }
-    },
-    {
-      "else": {
-        "required": [
-          "recommended_command"
-        ]
-      },
-      "if": {
-        "properties": {
-          "phase_detail": {
-            "enum": [
-              "task_review_result_pending",
-              "execution_in_progress",
-              "runtime_reconcile_required",
-              "finish_review_gate_ready",
-              "finish_completion_gate_ready",
-              "final_review_dispatch_required",
-              "final_review_outcome_pending",
-              "test_plan_refresh_required"
-            ]
-          }
-        }
-      },
-      "then": {
-        "not": {
-          "required": [
-            "recommended_command"
-          ]
-        }
-      }
     }
   ],
   "properties": {
@@ -441,8 +453,23 @@
     "recommended_command": {
       "type": "string"
     },
+    "recommended_public_command_argv": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "recording_context": {
       "$ref": "#/$defs/WorkflowOperatorRecordingContext"
+    },
+    "required_inputs": {
+      "items": {
+        "$ref": "#/$defs/PublicCommandInputRequirement"
+      },
+      "type": "array"
     },
     "review_state_status": {
       "$ref": "#/$defs/WorkflowOperatorReviewStateStatusSchema"

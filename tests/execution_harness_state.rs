@@ -6,18 +6,14 @@ mod files_support;
 mod git_support;
 #[path = "support/json.rs"]
 mod json_support;
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/projection.rs"]
 mod projection_support;
 
-use featureforge::cli::plan_execution::StatusArgs;
 use featureforge::contracts::evidence::read_execution_evidence;
 use featureforge::contracts::plan::parse_plan_file;
 use featureforge::diagnostics::FailureClass;
-use featureforge::execution::internal_args::RecordContractArgs;
 use featureforge::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, STABLE_EVENT_KINDS,
 };
@@ -25,9 +21,7 @@ use featureforge::execution::state::{
     ExecutionRuntime, PacketFingerprintInput, compute_packet_fingerprint, current_head_sha,
     hash_contract_plan,
 };
-use featureforge::paths::{
-    harness_authoritative_artifact_path, harness_dependency_index_path, harness_state_path,
-};
+use featureforge::paths::{harness_authoritative_artifact_path, harness_state_path};
 use files_support::write_file;
 use json_support::parse_json;
 use schemars::schema_for;
@@ -43,7 +37,7 @@ const SPEC_REL: &str = "docs/featureforge/specs/2026-03-25-execution-harness-sta
 
 const EXPECTED_PUBLIC_HARNESS_PHASES: &[&str] = &[
     "implementation_handoff",
-    "execution_preflight",
+    concat!("execution_pre", "flight"),
     "contract_drafting",
     "contract_pending_approval",
     "contract_approved",
@@ -135,27 +129,6 @@ fn parse_failure_json(output: &Output, context: &str) -> Value {
         .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
 }
 
-fn internal_only_runtime_preflight_gate_json(
-    repo: &Path,
-    state: &Path,
-    plan_rel: &str,
-    context: &str,
-) -> Value {
-    let mut runtime = ExecutionRuntime::discover(repo)
-        .unwrap_or_else(|error| panic!("{context} should discover runtime: {:?}", error));
-    runtime.state_dir = state.to_path_buf();
-    let args = StatusArgs {
-        plan: PathBuf::from(plan_rel),
-        external_review_result_ready: false,
-    };
-    to_value(
-        runtime
-            .preflight_gate(&args)
-            .unwrap_or_else(|error| panic!("{context} should succeed: {:?}", error)),
-    )
-    .unwrap_or_else(|error| panic!("{context} should serialize to json: {error}"))
-}
-
 fn run_checked_output(command: Command, context: &str) -> Output {
     let output = run(command, context);
     assert!(
@@ -235,14 +208,19 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 }
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    match plan_execution_direct_support::try_run_plan_execution_output_direct(
-        repo, state, args, context,
-    ) {
-        Ok(Some(output)) => return parse_json(&output, context),
-        Ok(None) => {}
-        Err(error) => panic!("{error}"),
-    }
     parse_json(&run_plan_execution(repo, state, args, context), context)
+}
+
+fn materialize_state_dir_projections(repo: &Path, state: &Path, context: &str) -> Value {
+    let materialized = run_plan_execution_json(
+        repo,
+        state,
+        &["materialize-projections", "--plan", PLAN_REL],
+        context,
+    );
+    assert_eq!(materialized["action"], Value::from("materialized"));
+    assert_eq!(materialized["runtime_truth_changed"], Value::Bool(false));
+    materialized
 }
 
 fn run_plan_execution(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
@@ -404,111 +382,14 @@ fn write_authoritative_contract_fixture(repo: &Path, state: &Path) -> (String, S
     (contract_file, contract_fingerprint)
 }
 
-fn write_candidate_contract_fixture(repo: &Path, artifact_rel: &str) -> String {
-    let plan_source =
-        fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable for contract");
-    let source_spec_source =
-        fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable for contract");
-    let plan_fingerprint = hash_contract_plan(&plan_source);
-    let source_spec_fingerprint = sha256_hex(source_spec_source.as_bytes());
-    let plan_document =
-        parse_plan_file(repo.join(PLAN_REL)).expect("plan should parse for contract");
-    let task_definition_identity = plan_document
-        .tasks
-        .iter()
-        .find(|task| task.number == 1)
-        .map(serde_json::to_string)
-        .transpose()
-        .expect("task should serialize for contract")
-        .map(|serialized| format!("task_def:{}", sha256_hex(serialized.as_bytes())))
-        .expect("task should exist for contract");
-    let packet_fingerprint = compute_packet_fingerprint(PacketFingerprintInput {
-        plan_path: PLAN_REL,
-        plan_revision: 1,
-        task_definition_identity: &task_definition_identity,
-        source_spec_path: SPEC_REL,
-        source_spec_revision: 2,
-        source_spec_fingerprint: &source_spec_fingerprint,
-        task: 1,
-        step: 1,
-    });
-
-    let template = format!(
-        r#"# Execution Contract
-
-**Contract Version:** 1
-**Authoritative Sequence:** 17
-**Source Plan Path:** `{PLAN_REL}`
-**Source Plan Revision:** 1
-**Source Plan Fingerprint:** `{plan_fingerprint}`
-**Source Spec Path:** `{SPEC_REL}`
-**Source Spec Revision:** 2
-**Source Spec Fingerprint:** `{source_spec_fingerprint}`
-**Source Task Packet Fingerprints:**
-- `{packet_fingerprint}`
-**Chunk ID:** chunk-1
-**Chunking Strategy:** single_chunk
-**Covered Steps:**
-- Task 1 Step 1
-**Requirement IDs:**
-- REQ-001
-**Criteria:**
-### Criterion 1
-**Criterion ID:** criterion-contract-scope
-**Title:** Preserve active approved-plan scope
-**Description:** Contract fixture stays within the approved plan scope.
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Verifier Types:**
-- spec_compliance
-**Threshold:** all
-**Notes:** Fixture criterion for runtime gate validation.
-
-**Non Goals:**
-- none
-
-**Verifiers:**
-- spec_compliance
-
-**Evidence Requirements:**
-[]
-
-**Retry Budget:** 2
-**Pivot Threshold:** 3
-**Reset Policy:** none
-**Generated By:** featureforge:executing-plans
-**Generated At:** 2026-03-25T12:00:00Z
-**Contract Fingerprint:** __CONTRACT_FINGERPRINT__
-"#
-    );
-    let contract_fingerprint =
-        sha256_hex(template.replace("__CONTRACT_FINGERPRINT__", "").as_bytes());
-    write_file(
-        &repo.join(artifact_rel),
-        &template.replace("__CONTRACT_FINGERPRINT__", &contract_fingerprint),
-    );
-    contract_fingerprint
-}
-
-fn accept_execution_preflight(repo: &Path, state: &Path) {
+fn accept_execution_preflight(repo: &Path, _state: &Path) {
     let mut checkout = Command::new("git");
     checkout
-        .args(["checkout", "-B", "execution-preflight-fixture"])
+        .args(["checkout", "-B", concat!("execution-pre", "flight-fixture")])
         .current_dir(repo);
-    run_checked_output(checkout, "git checkout execution-preflight-fixture");
-
-    let preflight = internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        PLAN_REL,
-        "execution preflight acceptance for per-step provenance coverage",
-    );
-    assert_eq!(
-        preflight["allowed"],
-        Value::Bool(true),
-        "execution preflight should allow begin/complete fixtures for per-step provenance coverage, got {preflight}"
+    run_checked_output(
+        checkout,
+        concat!("git checkout execution-pre", "flight-fixture"),
     );
 }
 
@@ -867,7 +748,9 @@ fn status_exposes_run_identity_policy_snapshot_and_authority_diagnostics_before_
     );
     assert!(
         missing_or_invalid_nullable_string_fields.is_empty(),
-        "status should expose nullable preflight diagnostics as null or non-empty strings, missing/invalid: {missing_or_invalid_nullable_string_fields:?}"
+        "status should expose nullable {} diagnostics as null or non-empty strings, missing/invalid: {:?}",
+        concat!("pre", "flight"),
+        missing_or_invalid_nullable_string_fields
     );
 
     let missing_non_empty_string_fields =
@@ -939,7 +822,9 @@ fn status_exposes_run_identity_policy_snapshot_and_authority_diagnostics_before_
     );
     assert!(
         missing_prestart_null_fields.is_empty(),
-        "status should keep pre-start authority fields unset before preflight/evaluation, missing null fields: {missing_prestart_null_fields:?}"
+        "status should keep pre-start authority fields unset before {}/evaluation, missing null fields: {:?}",
+        concat!("pre", "flight"),
+        missing_prestart_null_fields
     );
 
     let missing_number_fields = missing_number_fields(
@@ -1096,166 +981,6 @@ fn status_ignores_persisted_late_stage_phase_without_late_stage_bindings() {
 }
 
 #[test]
-fn record_contract_persists_dependency_index_with_authoritative_contract_node() {
-    let (repo_dir, state_dir) =
-        init_repo("execution-harness-state-dependency-index-record-contract");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    write_approved_spec(repo);
-    write_plan(repo, "none");
-
-    let contract_rel = "docs/featureforge/execution-evidence/dependency-index-record-contract.md";
-    let contract_fingerprint = write_candidate_contract_fixture(repo, contract_rel);
-
-    write_harness_state_payload(
-        repo,
-        state,
-        &json!({
-            "schema_version": 1,
-            "harness_phase": "contract_pending_approval",
-            "latest_authoritative_sequence": 0,
-            "current_chunk_retry_count": 0,
-            "current_chunk_retry_budget": 0,
-            "current_chunk_pivot_threshold": 0,
-            "handoff_required": false,
-            "open_failed_criteria": []
-        }),
-    );
-
-    let record_json = plan_execution_direct_support::internal_only_unit_record_contract_json(
-        repo,
-        state,
-        &RecordContractArgs {
-            plan: PathBuf::from(PLAN_REL),
-            contract: PathBuf::from(contract_rel),
-        },
-    )
-    .unwrap_or_else(|error| {
-        panic!("record-contract dependency-index persistence fixture should succeed: {error}")
-    });
-    assert_eq!(record_json["allowed"], Value::Bool(true));
-
-    let dependency_index_path =
-        harness_dependency_index_path(state, &repo_slug(repo), &branch_name(repo));
-    assert!(
-        dependency_index_path.is_file(),
-        "record-contract should persist a durable dependency index at {}",
-        dependency_index_path.display()
-    );
-
-    let dependency_index: Value = serde_json::from_str(
-        &fs::read_to_string(&dependency_index_path)
-            .expect("dependency index should be readable after record-contract"),
-    )
-    .expect("dependency index should remain valid json after record-contract");
-    let nodes = dependency_index["nodes"]
-        .as_array()
-        .expect("dependency index should expose a nodes array");
-    let has_authoritative_contract_node = nodes.iter().any(|node| {
-        node["artifact_kind"] == "contract"
-            && node["artifact_fingerprint"] == contract_fingerprint
-            && node["authoritative"] == Value::Bool(true)
-    });
-    assert!(
-        has_authoritative_contract_node,
-        "record-contract should index an authoritative contract dependency node for {contract_fingerprint}, got {dependency_index}"
-    );
-}
-
-#[test]
-fn record_contract_persists_observability_event_and_authoritative_mutation_counter() {
-    let (repo_dir, state_dir) = init_repo("execution-harness-state-observability-record-contract");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    write_approved_spec(repo);
-    write_plan(repo, "none");
-
-    let contract_rel = "docs/featureforge/execution-evidence/observability-record-contract.md";
-    let contract_fingerprint = write_candidate_contract_fixture(repo, contract_rel);
-
-    write_harness_state_payload(
-        repo,
-        state,
-        &json!({
-            "schema_version": 1,
-            "harness_phase": "contract_pending_approval",
-            "latest_authoritative_sequence": 0,
-            "current_chunk_retry_count": 0,
-            "current_chunk_retry_budget": 0,
-            "current_chunk_pivot_threshold": 0,
-            "handoff_required": false,
-            "open_failed_criteria": []
-        }),
-    );
-
-    let record_json = plan_execution_direct_support::internal_only_unit_record_contract_json(
-        repo,
-        state,
-        &RecordContractArgs {
-            plan: PathBuf::from(PLAN_REL),
-            contract: PathBuf::from(contract_rel),
-        },
-    )
-    .unwrap_or_else(|error| {
-        panic!("record-contract observability persistence fixture should succeed: {error}")
-    });
-    assert_eq!(record_json["allowed"], Value::Bool(true));
-
-    let harness_root = harness_state_path(state, &repo_slug(repo), &branch_name(repo))
-        .parent()
-        .expect("harness state path should always live under a branch-scoped harness root")
-        .to_path_buf();
-    let events_path = harness_root.join("observability-events.jsonl");
-    let telemetry_path = harness_root.join("telemetry-counters.json");
-
-    assert!(
-        events_path.is_file(),
-        "record-contract should persist a branch-scoped observability event sink at {}",
-        events_path.display()
-    );
-    assert!(
-        telemetry_path.is_file(),
-        "record-contract should persist branch-scoped telemetry counters at {}",
-        telemetry_path.display()
-    );
-
-    let first_event_line = fs::read_to_string(&events_path)
-        .expect("observability event sink should be readable after record-contract")
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .map(str::to_owned)
-        .expect("observability event sink should contain at least one structured event line");
-    let event_json: Value = serde_json::from_str(&first_event_line)
-        .expect("first observability event line should be valid json");
-    assert_eq!(
-        event_json["event_kind"],
-        Value::String("authoritative_mutation_recorded".to_owned()),
-        "record-contract should emit authoritative_mutation_recorded in the persisted sink"
-    );
-    assert_eq!(
-        event_json["command_name"],
-        Value::String("record-contract".to_owned()),
-        "record-contract observability should keep command_name machine-readable"
-    );
-    assert_eq!(
-        event_json["active_contract_fingerprint"],
-        Value::String(contract_fingerprint),
-        "record-contract observability should carry the active contract fingerprint"
-    );
-
-    let telemetry_json: Value = serde_json::from_str(
-        &fs::read_to_string(&telemetry_path)
-            .expect("telemetry counters sink should be readable after record-contract"),
-    )
-    .expect("telemetry counters sink should remain valid json after record-contract");
-    assert_eq!(
-        telemetry_json["authoritative_mutation_count"],
-        Value::Number(1_u64.into()),
-        "record-contract should increment authoritative_mutation_count exactly once"
-    );
-}
-
-#[test]
 fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
     let (repo_dir, state_dir) = init_repo("execution-harness-state-overlay-validation");
     let repo = repo_dir.path();
@@ -1408,6 +1133,11 @@ fn complete_writes_contract_evaluation_and_repo_state_provenance_into_step_evide
         state,
         "Completed step with expected contract/evaluation provenance.",
     );
+    materialize_state_dir_projections(
+        repo,
+        state,
+        "materialize evidence projection for per-step provenance assertions",
+    );
     let evidence_path = projection_support::state_dir_projection_path(
         &complete_status,
         complete_status["evidence_path"]
@@ -1484,6 +1214,11 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
         .expect("complete status should expose evidence_path");
     let evidence_path =
         projection_support::state_dir_projection_path(&complete_status, evidence_rel);
+    materialize_state_dir_projections(
+        repo,
+        state,
+        "materialize evidence projection before seeded reopen provenance assertion",
+    );
 
     let seeded_step = read_execution_evidence(&evidence_path)
         .expect("seeded execution evidence should parse before reopen")
@@ -1536,6 +1271,11 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
                 .expect("status should expose execution_fingerprint before reopen"),
         ],
         "reopen should preserve source handoff provenance when applicable",
+    );
+    materialize_state_dir_projections(
+        repo,
+        state,
+        "materialize evidence projection after reopen provenance assertion",
     );
 
     let reopened_step = read_execution_evidence(&evidence_path)

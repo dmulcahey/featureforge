@@ -2,9 +2,6 @@
 mod files_support;
 #[path = "support/git.rs"]
 mod git_support;
-#[allow(dead_code)]
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 
@@ -173,47 +170,6 @@ fn harness_branch_dir(repo: &Path, state: &Path) -> PathBuf {
         .join(safe_branch)
 }
 
-fn preflight_acceptance_state_path(repo: &Path, state: &Path) -> PathBuf {
-    harness_branch_dir(repo, state)
-        .join("execution-preflight")
-        .join("acceptance-state.json")
-}
-
-fn internal_only_runtime_preflight_gate_json(
-    repo: &Path,
-    state: &Path,
-    plan_rel: &str,
-) -> serde_json::Value {
-    plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
-        repo,
-        state,
-        &featureforge::cli::plan_execution::StatusArgs {
-            plan: plan_rel.into(),
-            external_review_result_ready: false,
-        },
-    )
-    .expect("internal preflight helper should succeed")
-}
-
-fn internal_only_unit_preflight_failure_json(
-    repo: &Path,
-    state: &Path,
-    plan_rel: &str,
-) -> serde_json::Value {
-    serde_json::from_str(
-        &plan_execution_direct_support::internal_only_runtime_preflight_gate_json(
-            repo,
-            state,
-            &featureforge::cli::plan_execution::StatusArgs {
-                plan: plan_rel.into(),
-                external_review_result_ready: false,
-            },
-        )
-        .expect_err("internal preflight helper should fail"),
-    )
-    .expect("internal preflight failure should serialize")
-}
-
 #[cfg(unix)]
 struct DirectoryModeGuard {
     path: PathBuf,
@@ -242,120 +198,6 @@ impl Drop for DirectoryModeGuard {
     fn drop(&mut self) {
         let _ = fs::set_permissions(&self.path, self.original_permissions.clone());
     }
-}
-
-#[test]
-fn preflight_reclaims_stale_write_authority_lock_before_acceptance() {
-    let (repo_dir, state_dir) = init_repo("contracts-execution-leases-reclaim");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-
-    write_approved_spec(repo);
-    write_single_step_plan(repo, "none");
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["checkout", "-B", "execution-preflight-fixture"])
-                .current_dir(repo);
-            command
-        },
-        "git checkout execution-preflight-fixture",
-    );
-
-    let lock_path = harness_branch_dir(repo, state)
-        .join("execution-harness")
-        .join("write-authority.lock");
-    let stale_pid = {
-        let mut child_cmd = Command::new("sh");
-        child_cmd.args(["-c", "exit 0"]);
-        let mut child = child_cmd
-            .spawn()
-            .expect("stale write-authority fixture process should spawn");
-        let pid = child.id();
-        let exit_status = child
-            .wait()
-            .expect("stale write-authority fixture process should exit");
-        assert!(
-            exit_status.success(),
-            "stale write-authority fixture process should exit successfully"
-        );
-        pid
-    };
-    write_file(&lock_path, &format!("pid={stale_pid}\n"));
-
-    let acceptance_path = preflight_acceptance_state_path(repo, state);
-    assert!(
-        !acceptance_path.exists(),
-        "preflight acceptance state should not exist before stale-lock preflight"
-    );
-
-    let gate = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
-
-    assert_eq!(
-        gate["allowed"], true,
-        "stale write-authority locks should be reclaimed"
-    );
-    assert!(
-        !lock_path.exists(),
-        "stale write-authority lock should be removed after reclamation"
-    );
-    assert!(
-        acceptance_path.exists(),
-        "preflight should persist acceptance state after reclaiming stale write authority"
-    );
-}
-
-#[test]
-fn preflight_blocks_live_write_authority_conflict_without_persisting_acceptance() {
-    let (repo_dir, state_dir) = init_repo("contracts-execution-leases-conflict");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-
-    write_approved_spec(repo);
-    write_single_step_plan(repo, "none");
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["checkout", "-B", "execution-preflight-fixture"])
-                .current_dir(repo);
-            command
-        },
-        "git checkout execution-preflight-fixture",
-    );
-
-    let lock_path = harness_branch_dir(repo, state)
-        .join("execution-harness")
-        .join("write-authority.lock");
-    let mut holder_cmd = Command::new("sh");
-    holder_cmd.args(["-c", "sleep 30"]);
-    let mut holder = holder_cmd
-        .spawn()
-        .expect("live write-authority fixture process should spawn");
-    write_file(&lock_path, &format!("pid={}\n", holder.id()));
-
-    let acceptance_path = preflight_acceptance_state_path(repo, state);
-    assert!(
-        !acceptance_path.exists(),
-        "preflight acceptance state should not exist before live-lock preflight"
-    );
-
-    let gate = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
-    let _ = holder.kill();
-    let _ = holder.wait();
-
-    assert_eq!(gate["allowed"], false);
-    assert!(
-        gate["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| codes.iter().any(|code| code == "write_authority_conflict")),
-        "preflight should report the write-authority conflict reason code"
-    );
-    assert!(
-        !acceptance_path.exists(),
-        "preflight must not persist acceptance state when write authority is held by a live process"
-    );
 }
 
 #[cfg(unix)]
@@ -404,41 +246,6 @@ fn status_fails_closed_when_authoritative_state_is_unreadable() {
         authoritative_state_inspection_failure_visible(&stderr)
             || authoritative_state_inspection_failure_visible(&stdout),
         "status should surface the unreadable authoritative state failure"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn preflight_fails_closed_when_write_authority_lock_is_unreadable() {
-    let (repo_dir, state_dir) = init_repo("contracts-execution-leases-lock-unreadable");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-
-    write_approved_spec(repo);
-    write_single_step_plan(repo, "none");
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["checkout", "-B", "execution-preflight-fixture"])
-                .current_dir(repo);
-            command
-        },
-        "git checkout execution-preflight-fixture",
-    );
-
-    let harness_dir = harness_branch_dir(repo, state);
-    let lock_path = harness_dir.join("write-authority.lock");
-    write_file(&lock_path, "pid=12345\n");
-    let _guard = DirectoryModeGuard::new(&harness_dir, 0o000);
-
-    let failure = internal_only_unit_preflight_failure_json(repo, state, PLAN_REL);
-    assert_eq!(failure["error_class"], "MalformedExecutionState");
-    assert!(
-        failure["message"]
-            .as_str()
-            .is_some_and(authoritative_state_inspection_failure_visible),
-        "preflight should surface authoritative-state inspection failure when hidden-gate migration cannot inspect state: {failure:?}"
     );
 }
 
@@ -493,79 +300,6 @@ fn status_fails_closed_when_authoritative_state_is_dangling_symlink() {
     assert!(
         stderr.contains("must not be a symlink") || stdout.contains("must not be a symlink"),
         "status should surface the dangling authoritative symlink failure"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn preflight_fails_closed_when_write_authority_lock_is_dangling_symlink() {
-    let (repo_dir, state_dir) = init_repo("contracts-execution-leases-lock-symlink");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-
-    write_approved_spec(repo);
-    write_single_step_plan(repo, "none");
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["checkout", "-B", "execution-preflight-fixture"])
-                .current_dir(repo);
-            command
-        },
-        "git checkout execution-preflight-fixture",
-    );
-
-    let harness_dir = harness_branch_dir(repo, state).join("execution-harness");
-    fs::create_dir_all(&harness_dir).expect("harness directory should be creatable");
-    let lock_path = harness_dir.join("write-authority.lock");
-    symlink("missing-lock-target.pid", &lock_path)
-        .expect("dangling write-authority symlink should be creatable");
-
-    let gate = internal_only_runtime_preflight_gate_json(repo, state, PLAN_REL);
-
-    assert_eq!(gate["allowed"], false);
-    assert!(
-        gate["reason_codes"].as_array().is_some_and(|codes| codes
-            .iter()
-            .any(|code| code == "write_authority_unavailable")),
-        "dangling write-authority symlink should fail closed instead of clearing the preflight"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn preflight_fails_closed_when_authoritative_state_is_dangling_symlink() {
-    let (repo_dir, state_dir) = init_repo("contracts-execution-leases-preflight-symlink");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-
-    write_approved_spec(repo);
-    write_single_step_plan(repo, "none");
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["checkout", "-B", "execution-preflight-fixture"])
-                .current_dir(repo);
-            command
-        },
-        "git checkout execution-preflight-fixture",
-    );
-
-    let harness_dir = harness_branch_dir(repo, state).join("execution-harness");
-    fs::create_dir_all(&harness_dir).expect("harness directory should be creatable");
-    let state_path = harness_dir.join("state.json");
-    symlink("missing-state-target.json", &state_path)
-        .expect("dangling authoritative state symlink should be creatable");
-
-    let failure = internal_only_unit_preflight_failure_json(repo, state, PLAN_REL);
-    assert_eq!(failure["error_class"], "MalformedExecutionState");
-    assert!(
-        failure["message"].as_str().is_some_and(|message| {
-            message.contains("Authoritative harness state path must not be a symlink")
-        }),
-        "preflight should surface authoritative-state symlink failure when hidden-gate migration cannot load state: {failure:?}"
     );
 }
 

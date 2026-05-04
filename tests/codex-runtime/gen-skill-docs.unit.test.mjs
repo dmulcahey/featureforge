@@ -118,7 +118,7 @@ test('using-featureforge template keeps canonical late-stage precedence wording'
   );
   assert.match(
     usingFeatureForgeTemplate,
-    /If workflow\/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`\./,
+    /If workflow\/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`\./,
   );
 
   const lateStageReference = fs.readFileSync(
@@ -137,6 +137,10 @@ test('generated preambles include the shared Search Before Building section for 
 
   for (const preamble of [basePreamble, reviewPreamble]) {
     assert.match(preamble, /## Search Before Building/);
+    assert.match(
+      preamble,
+      /Before introducing a custom pattern, external service, concurrency primitive, auth\/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability\/landscape check first\./,
+    );
     assert.match(preamble, /Layer 1: tried-and-true \/ built-ins \/ existing repo-native solutions/);
     assert.match(preamble, /Layer 2: current practice and known footguns/);
     assert.match(preamble, /Layer 3: first-principles reasoning for this repo and this problem/);
@@ -149,4 +153,6 @@ test('generated preambles include the shared Search Before Building section for 
 
   assert.doesNotMatch(basePreamble, /## Contributor Mode/);
   assert.match(reviewPreamble, /## Contributor Mode/);
+  assert.match(reviewPreamble, /See `\$_FEATUREFORGE_ROOT\/references\/agent-grounding\.md`/);
+  assert.match(reviewPreamble, /Use `\$_FEATUREFORGE_ROOT\/references\/contributor-mode\.md`/);
 });

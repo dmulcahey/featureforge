@@ -5,16 +5,17 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::contracts::harness::{
-    EvaluationReport, ExecutionContract, ExecutionHandoff, read_evaluation_report,
-    read_evidence_artifact, read_execution_contract, read_execution_handoff,
+    EvaluationReport, ExecutionContract, ExecutionHandoff, parse_contract_task_step_scope,
+    read_evaluation_report, read_evidence_artifact, read_execution_contract,
+    read_execution_handoff,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::context::{
+    hash_contract_plan, load_execution_context_without_authority_overlay, task_packet_fingerprint,
+};
 use crate::execution::event_log::load_reduced_authoritative_state;
 use crate::execution::internal_args::{GateContractArgs, GateEvaluatorArgs, GateHandoffArgs};
-use crate::execution::state::{
-    ExecutionContext, ExecutionRuntime, GateResult, GateState, hash_contract_plan,
-    load_execution_context_without_authority_overlay, task_packet_fingerprint,
-};
+use crate::execution::state::{ExecutionContext, ExecutionRuntime, GateResult, GateState};
 use crate::git::sha256_hex;
 use crate::paths::{
     harness_authoritative_artifact_path, harness_authoritative_artifacts_dir, harness_state_path,
@@ -373,7 +374,7 @@ fn validate_contract_scope_against_approved_plan(
     let mut contract_scope: BTreeSet<(u32, u32)> = BTreeSet::new();
 
     for step in &contract.covered_steps {
-        let Some(step_ref) = parse_task_step_scope(step) else {
+        let Some(step_ref) = parse_contract_task_step_scope(step) else {
             gate.fail(
                 FailureClass::ContractMismatch,
                 "contract_covered_step_malformed",
@@ -396,7 +397,7 @@ fn validate_contract_scope_against_approved_plan(
 
     for criterion in &contract.criteria {
         for step in &criterion.covered_steps {
-            let Some(step_ref) = parse_task_step_scope(step) else {
+            let Some(step_ref) = parse_contract_task_step_scope(step) else {
                 gate.fail(
                     FailureClass::ContractMismatch,
                     "contract_criterion_covered_step_malformed",
@@ -424,7 +425,7 @@ fn validate_contract_scope_against_approved_plan(
 
     for requirement in &contract.evidence_requirements {
         for step in &requirement.covered_steps {
-            let Some(step_ref) = parse_task_step_scope(step) else {
+            let Some(step_ref) = parse_contract_task_step_scope(step) else {
                 gate.fail(
                     FailureClass::ContractMismatch,
                     "contract_evidence_covered_step_malformed",
@@ -551,7 +552,7 @@ fn validate_evaluator_authority_state(
 
     if !matches!(
         state.harness_phase.as_deref(),
-        Some("executing" | "evaluating" | "repairing")
+        Some(crate::execution::phase::PHASE_EXECUTING | "evaluating" | "repairing")
     ) {
         gate.fail(
             FailureClass::IllegalHarnessPhase,
@@ -633,7 +634,10 @@ fn validate_handoff_authority_state(
         return;
     };
 
-    if !matches!(state.harness_phase.as_deref(), Some("handoff_required")) {
+    if !matches!(
+        state.harness_phase.as_deref(),
+        Some(crate::execution::phase::PHASE_HANDOFF_REQUIRED)
+    ) {
         gate.fail(
             FailureClass::IllegalHarnessPhase,
             "handoff_illegal_phase",
@@ -1204,7 +1208,7 @@ pub(crate) fn validate_handoff_semantics(
         .map(String::as_str)
         .collect();
 
-    if handoff.harness_phase != "handoff_required" {
+    if handoff.harness_phase != crate::execution::phase::PHASE_HANDOFF_REQUIRED {
         gate.fail(
             FailureClass::MissingRequiredHandoff,
             "handoff_phase_mismatch",
@@ -1635,22 +1639,6 @@ fn verify_authoritative_public_artifact(
         return None;
     }
     Some(canonical_fingerprint)
-}
-
-fn parse_task_step_scope(value: &str) -> Option<(u32, u32)> {
-    let mut parts = value.split_whitespace();
-    if parts.next()? != "Task" {
-        return None;
-    }
-    let task = parts.next()?.parse::<u32>().ok()?;
-    if parts.next()? != "Step" {
-        return None;
-    }
-    let step = parts.next()?.parse::<u32>().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some((task, step))
 }
 
 fn verify_declared_fingerprint(

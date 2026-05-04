@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getEvalDir } from '../evals/helpers/eval-observability.mjs';
@@ -157,6 +158,7 @@ const TELEMETRY_CONCEPT_FAMILY_MATRIX = {
 const EVENT_KIND_STRUCTURED_DISCRIMINATOR_FIELDS = ['harness_phase', 'command_name', 'gate_name', 'failure_class'];
 
 const RUNTIME_OBSERVABILITY_PATH = path.join(REPO_ROOT, 'src/execution/observability.rs');
+const RUNTIME_PHASE_PATH = path.join(REPO_ROOT, 'src/execution/phase.rs');
 const HARNESS_OBSERVABILITY_SEAM_EXPECTATION_PATHS = [
   path.join(REPO_ROOT, 'tests/contracts_execution_harness.rs'),
   path.join(REPO_ROOT, 'tests/execution_harness_state.rs'),
@@ -458,6 +460,8 @@ test('eval judge helpers gate deterministic eval execution without live credenti
   assert.equal(evalsEnabled({ FEATUREFORGE_RUN_EVALS: '1' }), true);
   assert.equal(evalsEnabled({ RUN_EVALS: '1' }), true);
   assert.equal(evalsEnabled({ EVALS: '1' }), true);
+  assert.equal(evalsEnabled({ FEATUREFORGE_RUN_EVALS: 'true' }), true);
+  assert.equal(evalsEnabled({ RUN_EVALS: 'TRUE' }), true);
   assert.equal(evalsEnabled({ FEATUREFORGE_RUN_EVALS: '0', RUN_EVALS: '0', EVALS: '0' }), false);
 
   assert.deepEqual(requireEvalEnv({}), {
@@ -481,6 +485,56 @@ test('eval judge helpers gate deterministic eval execution without live credenti
   const result = await runJsonJudgeEval({ name: 'disabled-eval', system: '', prompt: '' }, {});
   assert.equal(result.skipped, true);
   assert.match(result.reason, /evaluator disabled/);
+});
+
+test('eval judge helper returns parsed judge fields at the top level for enabled live responses', async (t) => {
+  const tempStateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'featureforge-eval-state-'));
+  t.after(() => fs.rmSync(tempStateDir, { recursive: true, force: true }));
+
+  t.mock.method(globalThis, 'fetch', async (url, request) => {
+    assert.equal(url, 'https://api.openai.test/v1/responses');
+    assert.equal(request.method, 'POST');
+    const body = JSON.parse(request.body);
+    assert.equal(body.model, 'judge-model');
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          output_text: JSON.stringify({
+            passed: true,
+            summary: 'contract satisfied',
+            score: 0.97,
+            findings: [],
+          }),
+          usage: {
+            input_tokens: 12,
+            output_tokens: 8,
+          },
+        };
+      },
+    };
+  });
+
+  const result = await runJsonJudgeEval(
+    { name: 'mocked-live-eval', system: 'judge system', prompt: 'judge prompt' },
+    {
+      FEATUREFORGE_RUN_EVALS: 'TRUE',
+      OPENAI_API_KEY: 'test-key',
+      OPENAI_EVAL_MODEL: 'judge-model',
+      OPENAI_BASE_URL: 'https://api.openai.test/v1',
+      FEATUREFORGE_STATE_DIR: tempStateDir,
+    },
+  );
+
+  assert.equal(result.passed, true);
+  assert.equal(result.summary, 'contract satisfied');
+  assert.equal(result.score, 0.97);
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.judge_result.score, 0.97);
+  assert.equal(result.model, 'judge-model');
+  assert.match(result.record_path, /mocked-live-eval\.json$/);
+  assert.ok(fs.existsSync(result.record_path), 'mocked live eval should write an observability record');
 });
 
 test('observability case payloads allow variant-specific structured details while preserving envelope ownership', () => {
@@ -764,26 +818,61 @@ test('harness fixture/runtime output expectations should pin observability vocab
 
 function parseRuntimeObservabilityContract() {
   const source = readUtf8(RUNTIME_OBSERVABILITY_PATH);
+  const phaseSource = readUtf8(RUNTIME_PHASE_PATH);
   return {
-    stableEventKinds: new Set(extractRustStableConstArrayValues(source, 'STABLE_EVENT_KINDS')),
-    stableReasonCodes: new Set(extractRustStableConstArrayValues(source, 'STABLE_REASON_CODES')),
+    stableEventKinds: new Set(extractRustStableConstArrayValues(source, 'STABLE_EVENT_KINDS', [source, phaseSource])),
+    stableReasonCodes: new Set(extractRustStableConstArrayValues(source, 'STABLE_REASON_CODES', [source, phaseSource])),
     eventFieldTypes: extractRustStructFieldMap(source, 'HarnessObservabilityEvent'),
     telemetryCounterFields: new Set(extractRustStructFieldMap(source, 'HarnessTelemetryCounters').keys()),
   };
 }
 
-function extractRustStableConstArrayValues(source, arrayName) {
+function extractRustStableConstArrayValues(source, arrayName, constSources = [source]) {
   const arrayMatch = source.match(new RegExp(`pub const ${arrayName}: \\[&str;\\s*\\d+\\s*\\] = \\[([\\s\\S]*?)\\];`));
   assert.ok(arrayMatch, `runtime observability source should expose ${arrayName}`);
+  const constDefinitions = extractRustStringConstDefinitions(constSources);
   const referencedConstNames = [...arrayMatch[1].matchAll(/\b([A-Z0-9_]+)\b/g)]
     .map((entry) => entry[1])
     .filter((name) => name !== arrayName);
 
   return referencedConstNames.map((constName) => {
-    const constMatch = source.match(new RegExp(`pub const ${constName}: &str\\s*=\\s*"([^"]+)"\\s*;`));
-    assert.ok(constMatch, `runtime observability source should expose ${constName}`);
-    return constMatch[1];
+    const value = resolveRustStringConstValue(constName, constDefinitions);
+    assert.ok(value, `runtime observability source should expose ${constName}`);
+    return value;
   });
+}
+
+function extractRustStringConstDefinitions(sources) {
+  const definitions = new Map();
+  for (const source of sources) {
+    const constPattern = /pub const ([A-Z0-9_]+): &str\s*=\s*([^;]+);/g;
+    for (const match of source.matchAll(constPattern)) {
+      const expression = match[2].trim();
+      const literalMatch = expression.match(/^"([^"]+)"$/);
+      if (literalMatch) {
+        definitions.set(match[1], { literal: literalMatch[1] });
+        continue;
+      }
+      const referenceMatch = expression.match(/(?:^|::)([A-Z0-9_]+)$/);
+      if (referenceMatch) {
+        definitions.set(match[1], { reference: referenceMatch[1] });
+      }
+    }
+  }
+  return definitions;
+}
+
+function resolveRustStringConstValue(constName, definitions, seen = new Set()) {
+  assert.equal(seen.has(constName), false, `runtime string const ${constName} should not be recursive`);
+  seen.add(constName);
+  const definition = definitions.get(constName);
+  if (!definition) {
+    return null;
+  }
+  if (definition.literal !== undefined) {
+    return definition.literal;
+  }
+  return resolveRustStringConstValue(definition.reference, definitions, seen);
 }
 
 function extractRustStructFieldMap(source, structName) {

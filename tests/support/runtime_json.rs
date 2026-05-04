@@ -1,9 +1,10 @@
 use std::path::Path;
+use std::process::Command;
 
-use featureforge::cli::plan_execution::StatusArgs;
 use featureforge::execution::state::ExecutionRuntime;
-use serde::Serialize;
-use serde_json::{Value, to_value};
+use serde_json::Value;
+
+use crate::process_support::run;
 
 pub fn discover_execution_runtime(
     repo: &Path,
@@ -23,20 +24,37 @@ pub fn plan_execution_status_json(
     external_review_result_ready: bool,
     context: &str,
 ) -> Value {
-    serialize_json_value(
-        runtime.status(&StatusArgs {
-            plan: plan.into(),
-            external_review_result_ready,
-        }),
-        &format!("{context}: plan execution status"),
-    )
+    let mut args = vec!["plan", "execution", "status", "--plan", plan];
+    if external_review_result_ready {
+        args.push("--external-review-result-ready");
+    }
+    run_featureforge_json_real_cli(&runtime.repo_root, &runtime.state_dir, &args, context)
 }
 
-fn serialize_json_value<T, E>(result: Result<T, E>, context: &str) -> Value
-where
-    T: Serialize,
-    E: std::fmt::Debug,
-{
-    let value = result.unwrap_or_else(|error| panic!("{context} should succeed: {error:?}"));
-    to_value(value).unwrap_or_else(|error| panic!("{context} should serialize: {error}"))
+pub fn run_featureforge_json_real_cli(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    context: &str,
+) -> Value {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_featureforge"));
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
+        .args(args);
+    let output = run(command, context);
+    assert!(
+        output.status.success(),
+        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "{context} should emit valid json: {error}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
 }

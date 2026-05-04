@@ -514,7 +514,8 @@ fn authoritative_preflight_acceptance_seed(
     };
     if matches!(
         harness_phase.as_str(),
-        "implementation_handoff" | "execution_preflight"
+        crate::execution::phase::PHASE_IMPLEMENTATION_HANDOFF
+            | crate::execution::phase::PHASE_EXECUTION_PREFLIGHT
     ) {
         return Ok(None);
     }
@@ -552,7 +553,7 @@ pub(crate) fn new_preflight_acceptance(
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     let seed = format!(
-        "execution-preflight-acceptance\n{}\n{}\n{}\n{}\n{}\n{}\n",
+        "execution-readiness-acceptance\n{}\n{}\n{}\n{}\n{}\n{}\n",
         context.runtime.repo_slug,
         context.runtime.branch_name,
         context.plan_rel,

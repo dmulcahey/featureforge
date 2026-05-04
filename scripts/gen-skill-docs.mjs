@@ -58,7 +58,7 @@ export function buildSearchBeforeBuildingSection() {
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
 
-Use three lenses:
+Use three lenses, then decide from local repo truth:
 - Layer 1: tried-and-true / built-ins / existing repo-native solutions
 - Layer 2: current practice and known footguns
 - Layer 3: first-principles reasoning for this repo and this problem
@@ -92,38 +92,7 @@ export function buildContributorMode() {
 
 If contributor mode is enabled in FeatureForge config, file a field report only for **featureforge itself**, not the user's app or repository. Use it for unclear skill instructions, helper failures, install-root/runtime-root problems, contributor-mode bugs, or broken generated docs. Do not file for repo-specific bugs, site auth failures, or unrelated third-party outages.
 
-Write \`~/.featureforge/contributor-logs/{slug}.md\` with:
-
-\`\`\`
-# {Title}
-
-Hey featureforge team — ran into this while using /{skill-name}:
-
-**Goal:** {what the user/agent was trying to do}
-**What happened:** {what actually happened}
-**Annoyance (1-5):** {1=meh, 3=friction, 5=blocker}
-
-## Steps to reproduce
-1. {step}
-
-## Raw output
-(wrap any error messages or unexpected output in a markdown code block)
-
-**Date:** {YYYY-MM-DD} | **Version:** {featureforge version} | **Skill:** /{skill}
-\`\`\`
-
-Then run:
-
-\`\`\`bash
-mkdir -p ~/.featureforge/contributor-logs
-if command -v open >/dev/null 2>&1; then
-  open ~/.featureforge/contributor-logs/{slug}.md
-elif command -v xdg-open >/dev/null 2>&1; then
-  xdg-open ~/.featureforge/contributor-logs/{slug}.md >/dev/null 2>&1 || true
-fi
-\`\`\`
-
-Slug: lowercase, hyphens, max 60 chars (for example \`skill-trigger-missed\`). Skip if the file already exists. Max 3 reports per session. File inline, continue, and tell the user: "Filed featureforge field report: {title}"`;
+Write at most 3 reports per session under \`~/.featureforge/contributor-logs/{slug}.md\`; skip existing slugs, continue the user task, and tell the user: "Filed featureforge field report: {title}". Use \`$_FEATUREFORGE_ROOT/references/contributor-mode.md\` for the report template and optional open-command helper.`;
 }
 
 export function buildAgentGrounding() {
@@ -131,7 +100,7 @@ export function buildAgentGrounding() {
 
 Honor the active repo instruction chain from \`AGENTS.md\`, \`AGENTS.override.md\`, \`.github/copilot-instructions.md\`, and \`.github/instructions/*.instructions.md\`, including nested \`AGENTS.md\` and \`AGENTS.override.md\` files closer to the current working directory.
 
-These review skills are public FeatureForge skills for Codex and GitHub Copilot local installs.`;
+These review skills are public FeatureForge skills for Codex and GitHub Copilot local installs. See \`$_FEATUREFORGE_ROOT/references/agent-grounding.md\` for install-surface notes.`;
 }
 
 export function generatePreamble({ review }) {

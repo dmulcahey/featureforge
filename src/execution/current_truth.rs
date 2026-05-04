@@ -26,10 +26,13 @@ use crate::execution::observability::{
     REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, REASON_CODE_STALE_PROVENANCE,
 };
 use crate::execution::projection_renderer::is_projection_export_path;
-use crate::execution::reducer::{RuntimeGateSnapshot, RuntimeState};
+use crate::execution::reducer::RuntimeState;
 use crate::execution::semantic_identity::{
     branch_definition_identity_for_context, semantic_paths_changed_between_raw_trees,
     semantic_tree_entries_for_raw_tree, semantic_workspace_snapshot,
+};
+use crate::execution::stale_target_projection::{
+    AuthoritativeStaleTargetScope, RuntimeGateSnapshot,
 };
 use crate::execution::state::{
     ExecutionContext, GateResult, NO_REPO_FILES_MARKER, PlanExecutionStatus,
@@ -56,157 +59,6 @@ pub(crate) struct CurrentLateStageBranchBindings {
     pub current_qa_record_id: Option<String>,
     pub current_qa_branch_closure_id: Option<String>,
     pub current_qa_result: Option<String>,
-}
-
-pub(crate) const RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS: &[&str] = &[
-    "task_review_result_pending",
-    "execution_in_progress",
-    "runtime_reconcile_required",
-    "finish_review_gate_ready",
-    "finish_completion_gate_ready",
-    "final_review_dispatch_required",
-    "final_review_outcome_pending",
-    "test_plan_refresh_required",
-];
-
-const PUBLIC_TASK_BOUNDARY_REASON_CODES: &[&str] = &[
-    "prior_task_current_closure_missing",
-    "prior_task_current_closure_stale",
-    "prior_task_current_closure_invalid",
-    "prior_task_current_closure_reviewed_state_malformed",
-    "task_cycle_break_active",
-    "current_task_closure_overlay_restore_required",
-    "prior_task_review_not_green",
-    "task_closure_baseline_repair_candidate",
-    "task_closure_recording_ready",
-];
-
-const TASK_BOUNDARY_PROJECTION_DIAGNOSTIC_REASON_CODES: &[&str] = &[
-    "prior_task_review_dispatch_missing",
-    "prior_task_review_dispatch_stale",
-    "prior_task_verification_missing",
-    "prior_task_verification_missing_legacy",
-    "task_review_not_independent",
-    "task_review_artifact_malformed",
-    "task_verification_summary_malformed",
-];
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub(crate) struct PublicTaskBoundaryDecision {
-    pub task: Option<u32>,
-    pub state: PublicTaskBoundaryState,
-    pub public_reason_codes: Vec<String>,
-    pub diagnostic_reason_codes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PublicTaskBoundaryState {
-    Clean,
-    CurrentClosureMissing,
-    CurrentClosureStale,
-    NegativeReviewCurrent,
-    CycleBreakActive,
-    OverlayRestoreRequired,
-    TaskClosureRecordingReady,
-    ExecutionReentryRequired,
-}
-
-pub(crate) fn public_task_boundary_reason_code(reason_code: &str) -> bool {
-    PUBLIC_TASK_BOUNDARY_REASON_CODES.contains(&reason_code)
-}
-
-pub(crate) fn task_boundary_projection_diagnostic_reason_code(reason_code: &str) -> bool {
-    TASK_BOUNDARY_PROJECTION_DIAGNOSTIC_REASON_CODES.contains(&reason_code)
-}
-
-pub(crate) fn public_task_boundary_decision(
-    status: &PlanExecutionStatus,
-) -> PublicTaskBoundaryDecision {
-    let task_scope = status.blocking_step.is_none()
-        && (status.blocking_task.is_some()
-            || status.phase_detail == "task_closure_recording_ready"
-            || status.reason_codes.iter().any(|reason_code| {
-                public_task_boundary_reason_code(reason_code)
-                    || task_boundary_projection_diagnostic_reason_code(reason_code)
-            }));
-    if !task_scope {
-        return PublicTaskBoundaryDecision {
-            task: None,
-            state: PublicTaskBoundaryState::Clean,
-            public_reason_codes: Vec::new(),
-            diagnostic_reason_codes: Vec::new(),
-        };
-    }
-
-    let public_reason_codes =
-        reason_codes_matching(&status.reason_codes, public_task_boundary_reason_code);
-    let diagnostic_reason_codes = reason_codes_matching(
-        &status.reason_codes,
-        task_boundary_projection_diagnostic_reason_code,
-    );
-    let state = if public_reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "task_cycle_break_active")
-    {
-        PublicTaskBoundaryState::CycleBreakActive
-    } else if public_reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "current_task_closure_overlay_restore_required")
-    {
-        PublicTaskBoundaryState::OverlayRestoreRequired
-    } else if public_reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "prior_task_review_not_green")
-    {
-        PublicTaskBoundaryState::NegativeReviewCurrent
-    } else if public_reason_codes.iter().any(|reason_code| {
-        matches!(
-            reason_code.as_str(),
-            "prior_task_current_closure_invalid"
-                | "prior_task_current_closure_reviewed_state_malformed"
-        )
-    }) {
-        PublicTaskBoundaryState::ExecutionReentryRequired
-    } else if public_reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "prior_task_current_closure_stale")
-    {
-        PublicTaskBoundaryState::CurrentClosureStale
-    } else if public_reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "prior_task_current_closure_missing")
-    {
-        PublicTaskBoundaryState::CurrentClosureMissing
-    } else if status.phase_detail == "task_closure_recording_ready"
-        || public_reason_codes.iter().any(|reason_code| {
-            matches!(
-                reason_code.as_str(),
-                "task_closure_baseline_repair_candidate" | "task_closure_recording_ready"
-            )
-        })
-    {
-        PublicTaskBoundaryState::TaskClosureRecordingReady
-    } else {
-        PublicTaskBoundaryState::Clean
-    };
-
-    PublicTaskBoundaryDecision {
-        task: status.blocking_task,
-        state,
-        public_reason_codes,
-        diagnostic_reason_codes,
-    }
-}
-
-fn reason_codes_matching(reason_codes: &[String], predicate: fn(&str) -> bool) -> Vec<String> {
-    let mut matched = Vec::new();
-    for reason_code in reason_codes {
-        if predicate(reason_code) && !matched.iter().any(|existing| existing == reason_code) {
-            matched.push(reason_code.clone());
-        }
-    }
-    matched
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -934,7 +786,7 @@ fn current_branch_task_closure_records_with_authority(
     if authoritative_state.is_none() {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
-            "record-branch-closure requires authoritative current task-closure state.",
+            "advance-late-stage branch-closure recording requires authoritative current task-closure state.",
         ));
     }
     Ok(still_current_task_closure_records(context)?
@@ -963,7 +815,7 @@ fn tracked_paths_changed_since_task_closure_records_baseline(
         if current_record.contract_identity.trim().is_empty() {
             return Err(JsonFailure::new(
                 FailureClass::ExecutionStateNotReady,
-                "record-branch-closure requires task-closure contract identity for the current task-closure baseline.",
+                "advance-late-stage branch-closure recording requires task-closure contract identity for the current task-closure baseline.",
             ));
         }
         let tree_sha = current_task_closure_reviewed_tree_sha(context, current_record)?;
@@ -1065,7 +917,7 @@ fn require_unambiguous_task_closure_path_entry(
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
             format!(
-                "record-branch-closure requires one unambiguous current task-closure reviewed-state baseline for path `{path}`."
+                "advance-late-stage branch-closure recording requires one unambiguous current task-closure reviewed-state baseline for path `{path}`."
             ),
         ));
     };
@@ -1586,7 +1438,7 @@ fn repair_follow_up_target_still_bound(
             };
             gate_snapshot.is_some_and(|snapshot| {
                 snapshot.stale_targets.iter().any(|target| {
-                    target.scope == crate::execution::reducer::AuthoritativeStaleTargetScope::Branch
+                    target.scope == AuthoritativeStaleTargetScope::Branch
                         && target.record_id.as_deref() == Some(record_id)
                 })
             })
@@ -2034,7 +1886,8 @@ pub(crate) struct FollowUpOverrideInputs<'a> {
 
 #[cfg(test)]
 pub(crate) fn resolve_follow_up_override(inputs: FollowUpOverrideInputs<'_>) -> String {
-    let mut raw_pivot_required = inputs.workflow_phase == Some("pivot_required")
+    let mut raw_pivot_required = inputs.workflow_phase
+        == Some(crate::execution::phase::PHASE_PIVOT_REQUIRED)
         || inputs.harness_phase == Some(HarnessPhase::PivotRequired)
         || inputs.reason_codes.iter().any(|code| {
             matches!(
@@ -2042,7 +1895,8 @@ pub(crate) fn resolve_follow_up_override(inputs: FollowUpOverrideInputs<'_>) -> 
                 "blocked_on_plan_revision" | "qa_requirement_missing_or_invalid"
             )
         });
-    let mut raw_handoff_required = inputs.workflow_phase == Some("handoff_required")
+    let mut raw_handoff_required = inputs.workflow_phase
+        == Some(crate::execution::phase::PHASE_HANDOFF_REQUIRED)
         || inputs.harness_phase == Some(HarnessPhase::HandoffRequired)
         || inputs.handoff_required;
 
@@ -2221,7 +2075,11 @@ pub(crate) fn negative_result_requires_execution_reentry(
         return true;
     }
 
-    if matches!(workflow_phase, "handoff_required" | "pivot_required") {
+    if matches!(
+        workflow_phase,
+        crate::execution::phase::PHASE_HANDOFF_REQUIRED
+            | crate::execution::phase::PHASE_PIVOT_REQUIRED
+    ) {
         return false;
     }
 

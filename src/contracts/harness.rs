@@ -407,6 +407,22 @@ pub struct ExecutionContract {
     pub contract_fingerprint: String,
 }
 
+pub(crate) fn parse_contract_task_step_scope(value: &str) -> Option<(u32, u32)> {
+    let mut parts = value.split_whitespace();
+    if parts.next()? != "Task" {
+        return None;
+    }
+    let task = parts.next()?.parse::<u32>().ok()?;
+    if parts.next()? != "Step" {
+        return None;
+    }
+    let step = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((task, step))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ContractCriterion {
     pub criterion_id: String,

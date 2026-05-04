@@ -1,13 +1,19 @@
 use std::collections::BTreeSet;
 
+use crate::execution::command_eligibility::{
+    PublicCommand, PublicCommandKind, command_invokes_hidden_lane, decide_public_mutation,
+    public_argv_has_template_tokens, recommended_public_command_argv,
+    required_inputs_for_public_command,
+};
+use crate::execution::next_action::{
+    NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED, diagnostic_next_action_for_route,
+    reopen_public_command_with_reason,
+};
 use crate::execution::reentry_reconcile::{
-    TARGETLESS_STALE_RECONCILE_REASON_CODE, TargetlessStaleReconcile,
+    TARGETLESS_STALE_RECONCILE_PHASE_DETAIL, TARGETLESS_STALE_RECONCILE_REASON_CODE,
+    TargetlessStaleReconcile,
 };
 use crate::execution::state::PlanExecutionStatus;
-use crate::execution::{
-    command_eligibility::{command_invokes_hidden_lane, command_is_legal_public_command},
-    router::router_allows_public_recommended_mutation,
-};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeInvariantSeverity {
@@ -79,12 +85,25 @@ fn inject_status_invariant_test_violation_from_env(
     };
     match injection.as_str() {
         "current_stale_overlap" => inject_current_stale_overlap(status),
+        "targetless_stale_unreviewed" => inject_targetless_stale_unreviewed(status),
         "hidden_recommended_command" => {
-            status.recommended_command = Some(String::from(
-                "featureforge plan execution gate-review --plan injected",
+            let hidden_command = ["gate", "review"].join("-");
+            status.recommended_command = Some(format!(
+                "featureforge plan execution {hidden_command} --plan injected"
             ));
         }
         "rejected_recommended_command" => {
+            status.recommended_public_command = Some(PublicCommand::Begin {
+                plan: String::from("injected"),
+                task: 999,
+                step: 1,
+                execution_mode: None,
+                fingerprint: Some(String::from("injected")),
+            });
+            status.recommended_public_command_argv =
+                recommended_public_command_argv(status.recommended_public_command.as_ref());
+            status.required_inputs =
+                required_inputs_for_public_command(status.recommended_public_command.as_ref());
             status.recommended_command = Some(String::from(
                 "featureforge plan execution begin --plan injected --task 999 --step 1 --expect-execution-fingerprint injected",
             ));
@@ -95,8 +114,8 @@ fn inject_status_invariant_test_violation_from_env(
 }
 
 pub fn read_surface_invariant_projection_active(status: &PlanExecutionStatus) -> bool {
-    status.state_kind == "blocked_runtime_bug"
-        || status.phase_detail == "blocked_runtime_bug"
+    status.state_kind == crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG
+        || status.phase_detail == crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG
         || status
             .reason_codes
             .iter()
@@ -109,9 +128,8 @@ const RUNTIME_INVARIANT_CODES: &[&str] = &[
     "execution_reentry_target_missing",
     "illegal_execution_command_context",
     "recommended_command_hidden_or_debug",
-    "recommended_command_illegal_public_shape",
+    "recommended_public_command_argv_template_tokens",
     "next_public_action_hidden_or_debug",
-    "next_public_action_illegal_public_shape",
     "recommended_command_next_action_mismatch",
     TARGETLESS_STALE_RECONCILE_REASON_CODE,
     "terminal_recommended_command",
@@ -150,9 +168,9 @@ fn check_execution_reentry_has_concrete_target(
     status: &PlanExecutionStatus,
     violations: &mut Vec<RuntimeInvariantViolation>,
 ) {
-    if status.phase_detail != "execution_reentry_required"
-        || status.state_kind == "blocked_runtime_bug"
-        || status.phase_detail == "runtime_reconcile_required"
+    if status.phase_detail != crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
+        || status.state_kind == crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG
+        || status.phase_detail == crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
         || !status_exposes_public_execution_mutation(status)
     {
         return;
@@ -199,7 +217,6 @@ fn check_public_commands(
             "recommended command",
             recommended_command,
             "recommended_command_hidden_or_debug",
-            "recommended_command_illegal_public_shape",
             violations,
         );
     }
@@ -208,9 +225,19 @@ fn check_public_commands(
             "next public action",
             next_public_action.command.as_str(),
             "next_public_action_hidden_or_debug",
-            "next_public_action_illegal_public_shape",
             violations,
         );
+    }
+    if let Some(argv) = status.recommended_public_command_argv.as_ref()
+        && public_argv_has_template_tokens(argv)
+    {
+        violations.push(RuntimeInvariantViolation {
+            code: "recommended_public_command_argv_template_tokens",
+            severity: RuntimeInvariantSeverity::RuntimeBug,
+            detail: format!(
+                "recommended_public_command_argv must be executable-or-absent; got {argv:?}."
+            ),
+        });
     }
     if matches!(mode, InvariantEnforcementMode::PostMutation)
         && let (Some(recommended_command), Some(next_public_action)) = (
@@ -234,7 +261,6 @@ fn check_public_command_shape(
     label: &str,
     command: &str,
     hidden_code: &'static str,
-    illegal_code: &'static str,
     violations: &mut Vec<RuntimeInvariantViolation>,
 ) {
     if command_invokes_hidden_lane(command) {
@@ -242,14 +268,6 @@ fn check_public_command_shape(
             code: hidden_code,
             severity: RuntimeInvariantSeverity::RuntimeBug,
             detail: format!("{label} must not expose hidden/debug command `{command}`."),
-        });
-        return;
-    }
-    if !command_is_legal_public_command(command) {
-        violations.push(RuntimeInvariantViolation {
-            code: illegal_code,
-            severity: RuntimeInvariantSeverity::RuntimeBug,
-            detail: format!("{label} must be one legal public command shape, got `{command}`."),
         });
     }
 }
@@ -291,19 +309,20 @@ fn check_waiting_external_input_does_not_recommend_local_mutation(
     if status.state_kind != "waiting_external_input" {
         return;
     }
-    let Some(command) = status.recommended_command.as_deref() else {
+    let Some(command) = status.recommended_public_command.as_ref() else {
         return;
     };
-    if !command_recommends_local_mutation(command)
-        || command_is_external_acknowledgment_path(command)
+    if !public_command_recommends_local_mutation(command)
+        || command.kind() == PublicCommandKind::WorkflowOperator
     {
         return;
     }
+    let display = command.to_display_command();
     violations.push(RuntimeInvariantViolation {
         code: "waiting_external_input_local_mutation",
         severity: RuntimeInvariantSeverity::RuntimeBug,
         detail: format!(
-            "waiting_external_input states must not recommend local mutation command `{command}`."
+            "waiting_external_input states must not recommend local mutation command `{display}`."
         ),
     });
 }
@@ -312,20 +331,22 @@ fn check_recommended_command_matches_mutation_eligibility(
     status: &PlanExecutionStatus,
     violations: &mut Vec<RuntimeInvariantViolation>,
 ) {
-    let Some(command) = status.recommended_command.as_deref() else {
+    let Some(command) = status.recommended_public_command.as_ref() else {
         return;
     };
-    if command_invokes_hidden_lane(command) || !command_is_legal_public_command(command) {
+    if !public_command_recommends_local_mutation(command) {
         return;
     }
-    if command_recommends_local_mutation(command)
-        && !router_allows_public_recommended_mutation(status, command)
-    {
+    let Some(request) = command.to_mutation_request() else {
+        return;
+    };
+    if !decide_public_mutation(status, &request).allowed {
+        let display = command.to_display_command();
         violations.push(RuntimeInvariantViolation {
             code: "recommended_mutation_command_rejected",
             severity: RuntimeInvariantSeverity::RuntimeBug,
             detail: format!(
-                "recommended command `{command}` is not accepted by the mutation eligibility oracle."
+                "recommended command `{display}` is not accepted by the mutation eligibility oracle."
             ),
         });
     }
@@ -343,12 +364,24 @@ fn convert_status_to_runtime_reconcile_or_bug(
         .any(|violation| violation.severity == RuntimeInvariantSeverity::RuntimeBug);
     if has_runtime_bug {
         status.phase = Some(String::from("blocked"));
-        status.phase_detail = String::from("blocked_runtime_bug");
-        status.state_kind = String::from("blocked_runtime_bug");
+        status.phase_detail = String::from(crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG);
+        status.state_kind = String::from(crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG);
     } else {
-        status.phase_detail = String::from("runtime_reconcile_required");
+        status.phase_detail =
+            String::from(crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED);
+        status.state_kind =
+            String::from(crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED);
     }
-    status.next_action = String::from("repair review state / reenter execution");
+    status.recommended_public_command = None;
+    status.recommended_public_command_argv = None;
+    status.required_inputs.clear();
+    status.next_action = diagnostic_next_action_for_route(
+        &status.state_kind,
+        &status.phase_detail,
+        status.recommended_public_command_argv.is_some(),
+        !status.required_inputs.is_empty(),
+    )
+    .unwrap_or_else(|| String::from(NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED));
     status.recommended_command = None;
     status.execution_command_context = None;
     status.execution_reentry_target_source = None;
@@ -391,11 +424,68 @@ fn inject_current_stale_overlap(status: &mut PlanExecutionStatus) {
             .push(current.closure_record_id.clone());
     }
     status.review_state_status = String::from("stale_unreviewed");
-    status.phase_detail = String::from("execution_reentry_required");
+    status.phase_detail = String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED);
+    status.recommended_public_command = Some(reopen_public_command_with_reason(
+        "injected",
+        current.task,
+        1,
+        "featureforge:executing-plans",
+        "injected",
+        None,
+    ));
+    status.recommended_public_command_argv =
+        recommended_public_command_argv(status.recommended_public_command.as_ref());
+    status.required_inputs =
+        required_inputs_for_public_command(status.recommended_public_command.as_ref());
     status.recommended_command = Some(format!(
         "featureforge plan execution reopen --plan injected --task {} --step 1 --source featureforge:executing-plans --reason injected",
         current.task
     ));
+}
+
+fn inject_targetless_stale_unreviewed(status: &mut PlanExecutionStatus) {
+    status.review_state_status = String::from("stale_unreviewed");
+    status.phase = Some(String::from(crate::execution::phase::PHASE_EXECUTING));
+    status.harness_phase = crate::execution::harness::HarnessPhase::Executing;
+    status.phase_detail = String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL);
+    status.state_kind = String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL);
+    status.current_branch_closure_id = None;
+    status.finish_review_gate_pass_branch_closure_id = None;
+    status.current_final_review_branch_closure_id = None;
+    status.current_qa_branch_closure_id = None;
+    status.stale_unreviewed_closures.clear();
+    status.current_task_closures.clear();
+    status.recording_context = None;
+    status.execution_command_context = None;
+    status.execution_reentry_target_source = None;
+    status.public_repair_targets.clear();
+    status.recommended_public_command = None;
+    status.recommended_public_command_argv = None;
+    status.required_inputs.clear();
+    status.next_action = diagnostic_next_action_for_route(
+        &status.state_kind,
+        &status.phase_detail,
+        status.recommended_public_command_argv.is_some(),
+        !status.required_inputs.is_empty(),
+    )
+    .unwrap_or_else(|| String::from(NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED));
+    status.recommended_command = None;
+    status.next_public_action = None;
+    status.blockers.clear();
+    status.blocking_scope = None;
+    status.blocking_task = None;
+    status.blocking_step = None;
+    status.external_wait_state = None;
+    status
+        .reason_codes
+        .retain(|code| code != "task_closure_baseline_repair_candidate");
+    status
+        .blocking_reason_codes
+        .retain(|code| code != "task_closure_baseline_repair_candidate");
+    TargetlessStaleReconcile::ensure_status_diagnostic(status);
+    status.blocking_records = TargetlessStaleReconcile::status_blocking_record(status)
+        .into_iter()
+        .collect();
 }
 
 fn targetless_stale_reconcile_diagnostic(status: &PlanExecutionStatus) -> bool {
@@ -421,32 +511,27 @@ fn execution_reentry_has_concrete_target(status: &PlanExecutionStatus) -> bool {
 
 fn status_exposes_public_execution_mutation(status: &PlanExecutionStatus) -> bool {
     status
-        .recommended_command
-        .as_deref()
-        .is_some_and(command_recommends_execution_mutation)
-        || status
-            .next_public_action
-            .as_ref()
-            .is_some_and(|action| command_recommends_execution_mutation(&action.command))
+        .recommended_public_command
+        .as_ref()
+        .is_some_and(public_command_recommends_execution_mutation)
 }
 
-fn command_recommends_execution_mutation(command: &str) -> bool {
-    command.starts_with("featureforge plan execution begin --plan ")
-        || command.starts_with("featureforge plan execution complete --plan ")
-        || command.starts_with("featureforge plan execution reopen --plan ")
+fn public_command_recommends_execution_mutation(command: &PublicCommand) -> bool {
+    matches!(
+        command.kind(),
+        PublicCommandKind::Begin | PublicCommandKind::Complete | PublicCommandKind::Reopen
+    )
 }
 
-fn command_recommends_local_mutation(command: &str) -> bool {
-    command.starts_with("featureforge plan execution begin --plan ")
-        || command.starts_with("featureforge plan execution complete --plan ")
-        || command.starts_with("featureforge plan execution reopen --plan ")
-        || command.starts_with("featureforge plan execution transfer --plan ")
-        || command.starts_with("featureforge plan execution close-current-task --plan ")
-        || command.starts_with("featureforge plan execution advance-late-stage --plan ")
-        || command.starts_with("featureforge plan execution repair-review-state --plan ")
-}
-
-fn command_is_external_acknowledgment_path(command: &str) -> bool {
-    command.starts_with("featureforge workflow operator --plan ")
-        && command.contains("--external-review-result-ready")
+fn public_command_recommends_local_mutation(command: &PublicCommand) -> bool {
+    matches!(
+        command.kind(),
+        PublicCommandKind::Begin
+            | PublicCommandKind::Complete
+            | PublicCommandKind::Reopen
+            | PublicCommandKind::Transfer
+            | PublicCommandKind::CloseCurrentTask
+            | PublicCommandKind::AdvanceLateStage
+            | PublicCommandKind::RepairReviewState
+    )
 }

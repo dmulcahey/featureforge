@@ -1,10 +1,6 @@
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
 
 use crate::git::sha256_hex;
-
-use crate::execution::workflow_operator_requery_command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FollowUpKind {
@@ -188,6 +184,7 @@ impl FollowUpKind {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn command_template(self) -> Option<&'static str> {
         match self {
             Self::RepairReviewState => {
@@ -196,9 +193,9 @@ impl FollowUpKind {
             Self::AdvanceLateStage | Self::ResolveReleaseBlocker => {
                 Some("featureforge plan execution advance-late-stage --plan <approved-plan-path>")
             }
-            Self::RecordHandoff => Some(
-                "featureforge plan execution transfer --plan <approved-plan-path> --scope task|branch --to <owner> --reason <reason>",
-            ),
+            Self::RecordHandoff => {
+                Some("featureforge workflow operator --plan <approved-plan-path>")
+            }
             Self::ExecutionReentry
             | Self::RequestExternalReview
             | Self::WaitForExternalReviewResult
@@ -206,39 +203,6 @@ impl FollowUpKind {
                 Some("featureforge workflow operator --plan <approved-plan-path>")
             }
             Self::CloseCurrentTask | Self::GateReview | Self::GateFinish => None,
-        }
-    }
-
-    pub(crate) fn materialized_command(
-        self,
-        plan_path: &Path,
-        external_review_result_ready: bool,
-    ) -> Option<String> {
-        match self {
-            Self::GateReview | Self::GateFinish => Some(workflow_operator_requery_command(
-                plan_path,
-                external_review_result_ready,
-            )),
-            Self::RepairReviewState => Some(format!(
-                "featureforge plan execution repair-review-state --plan {}",
-                plan_path.display()
-            )),
-            Self::AdvanceLateStage | Self::ResolveReleaseBlocker => Some(format!(
-                "featureforge plan execution advance-late-stage --plan {}",
-                plan_path.display()
-            )),
-            Self::RecordHandoff => Some(format!(
-                "featureforge plan execution transfer --plan {} --scope task|branch --to <owner> --reason <reason>",
-                plan_path.display()
-            )),
-            Self::ExecutionReentry
-            | Self::RequestExternalReview
-            | Self::WaitForExternalReviewResult
-            | Self::RunVerification => Some(workflow_operator_requery_command(
-                plan_path,
-                external_review_result_ready,
-            )),
-            Self::CloseCurrentTask => None,
         }
     }
 }
@@ -335,38 +299,43 @@ pub(crate) fn follow_up_from_phase_detail<'a>(
     phase_detail: &str,
     blocking_reason_codes: impl IntoIterator<Item = &'a str>,
 ) -> Option<FollowUpKind> {
-    if phase_detail == "branch_closure_recording_required_for_release_readiness" {
+    if phase_detail
+        == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
+    {
         return Some(FollowUpKind::AdvanceLateStage);
     }
     match phase_detail {
-        "final_review_dispatch_required" => Some(FollowUpKind::RequestExternalReview),
-        "task_review_result_pending" => {
+        crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED => {
+            Some(FollowUpKind::RequestExternalReview)
+        }
+        crate::execution::phase::DETAIL_TASK_REVIEW_RESULT_PENDING => {
             if task_review_result_requires_verification(blocking_reason_codes) {
                 Some(FollowUpKind::RunVerification)
             } else {
                 Some(FollowUpKind::WaitForExternalReviewResult)
             }
         }
-        "final_review_outcome_pending" => Some(FollowUpKind::WaitForExternalReviewResult),
-        "release_blocker_resolution_required" => Some(FollowUpKind::ResolveReleaseBlocker),
-        "execution_reentry_required" => Some(FollowUpKind::ExecutionReentry),
-        "handoff_recording_required" => Some(FollowUpKind::RecordHandoff),
+        crate::execution::phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING => {
+            Some(FollowUpKind::WaitForExternalReviewResult)
+        }
+        crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => {
+            Some(FollowUpKind::ResolveReleaseBlocker)
+        }
+        crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED => {
+            Some(FollowUpKind::ExecutionReentry)
+        }
+        crate::execution::phase::DETAIL_HANDOFF_RECORDING_REQUIRED => {
+            Some(FollowUpKind::RecordHandoff)
+        }
         _ => None,
     }
 }
 
+#[cfg(test)]
 pub(crate) fn follow_up_command_template(follow_up: Option<&str>) -> Option<String> {
     normalize_follow_up_alias(follow_up, FollowUpAliasContext::PublicRouting)
         .and_then(FollowUpKind::command_template)
         .map(str::to_owned)
-}
-
-pub(crate) fn materialized_follow_up_kind_command(
-    follow_up: FollowUpKind,
-    plan_path: &Path,
-    external_review_result_ready: bool,
-) -> Option<String> {
-    follow_up.materialized_command(plan_path, external_review_result_ready)
 }
 
 fn public_routing_alias(follow_up: &str) -> Option<FollowUpKind> {
@@ -381,19 +350,6 @@ fn persisted_repair_state_alias(follow_up: &str) -> Option<FollowUpKind> {
         .iter()
         .find(|rule| rule.token == follow_up)
         .and_then(|rule| rule.persisted_repair_kind)
-}
-
-pub(crate) fn missing_branch_closure_gate_follow_up(
-    routing_review_state_status: Option<&str>,
-    routing_required_follow_up: Option<FollowUpKind>,
-) -> FollowUpKind {
-    if routing_review_state_status == Some("missing_current_closure")
-        || routing_required_follow_up == Some(FollowUpKind::AdvanceLateStage)
-    {
-        FollowUpKind::AdvanceLateStage
-    } else {
-        FollowUpKind::RepairReviewState
-    }
 }
 
 pub(crate) fn direct_gate_follow_up_from_reason_codes<'a>(
@@ -440,9 +396,10 @@ fn task_review_result_requires_verification<'a>(
 mod tests {
     use super::{
         FollowUpKind, direct_gate_follow_up_from_reason_codes, follow_up_command_template,
-        follow_up_from_phase_detail, missing_branch_closure_gate_follow_up,
-        normalize_persisted_repair_follow_up_token, normalize_public_routing_follow_up_token,
+        follow_up_from_phase_detail, normalize_persisted_repair_follow_up_token,
+        normalize_public_routing_follow_up_token,
     };
+    use crate::execution::command_eligibility::hidden_command_tokens;
 
     #[test]
     fn public_routing_aliases_are_canonicalized_once() {
@@ -497,28 +454,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_branch_closure_gate_follow_up_uses_shared_required_follow_up_taxonomy() {
-        assert_eq!(
-            missing_branch_closure_gate_follow_up(Some("missing_current_closure"), None),
-            FollowUpKind::AdvanceLateStage
-        );
-        assert_eq!(
-            missing_branch_closure_gate_follow_up(
-                Some("clean"),
-                Some(FollowUpKind::AdvanceLateStage)
-            ),
-            FollowUpKind::AdvanceLateStage
-        );
-        assert_eq!(
-            missing_branch_closure_gate_follow_up(
-                Some("clean"),
-                Some(FollowUpKind::RepairReviewState)
-            ),
-            FollowUpKind::RepairReviewState
-        );
-    }
-
-    #[test]
     fn persisted_repair_aliases_preserve_projection_repair_intent() {
         assert_eq!(
             normalize_persisted_repair_follow_up_token(Some("record_branch_closure")),
@@ -538,17 +473,23 @@ mod tests {
     fn phase_detail_follow_up_resolution_is_shared() {
         assert_eq!(
             follow_up_from_phase_detail(
-                "task_review_result_pending",
+                crate::execution::phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
                 ["prior_task_verification_missing"]
             ),
             Some(FollowUpKind::RunVerification)
         );
         assert_eq!(
-            follow_up_from_phase_detail("task_review_result_pending", ["task_review_pending"]),
+            follow_up_from_phase_detail(
+                crate::execution::phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
+                ["task_review_pending"]
+            ),
             Some(FollowUpKind::WaitForExternalReviewResult)
         );
         assert_eq!(
-            follow_up_from_phase_detail("execution_reentry_required", std::iter::empty()),
+            follow_up_from_phase_detail(
+                crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
+                std::iter::empty()
+            ),
             Some(FollowUpKind::ExecutionReentry)
         );
     }
@@ -567,15 +508,7 @@ mod tests {
         ] {
             let template = follow_up_command_template(Some(follow_up))
                 .expect("public follow-up should expose a public command template");
-            for hidden_token in [
-                "record-review-dispatch",
-                "gate-review",
-                "gate-finish",
-                "rebuild-evidence",
-                "plan execution preflight",
-                "plan execution recommend",
-                "workflow recommend",
-            ] {
+            for hidden_token in hidden_command_tokens() {
                 assert!(
                     !template.contains(hidden_token),
                     "{follow_up} exposed hidden command token {hidden_token}: {template}"

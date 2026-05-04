@@ -53,7 +53,7 @@ For each page or route visited during QA:
 
 ## Workflow-Routed QA Contract
 
-This taxonomy is a workflow-routed downstream review gate aid, not an authoritative gate-review or finish-gate mutation surface.
+This taxonomy is a workflow-routed downstream review gate aid, not an authoritative low-level compatibility/debug gate mutation surface.
 
 For harness-driven handoffs, keep each QA artifact tied to its source plan, source test plan, task-packet context, coverage matrix, and execution evidence path provenance.
 

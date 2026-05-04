@@ -10,11 +10,9 @@ description: Use when you have an engineering-approved FeatureForge implementati
 
 ## Overview
 
-Load the approved plan, follow the runtime-selected topology, execute all tasks, run `featureforge:document-release`, request final review, then report when complete. When the runtime-selected topology is worktree-backed parallel, create isolated worktrees first and dispatch the parallel lanes; when it is conservative fallback, stay serial.
+Load the approved plan, follow the runtime-selected topology, execute all tasks, run `featureforge:document-release`, request final review, then report when complete. When the runtime-selected topology is worktree-backed parallel, create isolated worktrees first and dispatch the parallel lanes; when it is conservative fallback, stay serial. Extended execution and review examples live in `$_FEATUREFORGE_ROOT/references/execution-review-qa-examples.md`.
 
-**Announce at start:** "I'm using the executing-plans skill to implement this plan."
-
-**Note:** Use this skill when the runtime-selected topology calls for a separate-session coordinator or conservative fallback. Prefer `featureforge:subagent-driven-development` when the runtime-selected topology keeps execution in one session and the worktree-first orchestration model is already in place.
+Use this skill when the runtime-selected topology calls for a separate-session coordinator or conservative fallback. Prefer `featureforge:subagent-driven-development` when the runtime-selected topology keeps execution in one session and the worktree-first orchestration model is already in place.
 
 ## The Process
 
@@ -37,7 +35,7 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 7. Do not bulk-clean the workspace ad hoc. If the helper-selected topology or protected-branch gate requires isolated execution, provision or route through a worktree-backed workspace before mutating repo state, and let the runtime-owned barrier flow reconcile reviewed work back onto the active branch and clean temporary worktrees at safe intervals.
 8. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
 9. Run `featureforge workflow operator --plan <approved-plan-path>` before starting execution.
-10. If workflow/operator does not report `phase` `executing`, stop and follow the reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution through compatibility helpers.
+10. If workflow/operator does not report `phase` `executing`, stop and follow the reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of reopening execution through compatibility helpers. Treat `recommended_command` as display-only compatibility text.
 11. If workflow/operator confirms `phase` `executing`, review the plan critically for execution concerns and treat workflow/operator plus `plan execution status` as the live execution surface. Tracked checklist/evidence markdown is an optional materialized export; the event log remains authoritative for routing and gates.
 12. Treat execution start as a hard gate, not a reminder:
    - no code edits and no test edits are allowed after workflow/operator confirms the current execution preflight handoff and before the first `begin` for the active step
@@ -76,7 +74,7 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
   - `review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically when reviewable dispatch lineage enters remediation and when remediation reopens execution work.
   - `cycle_break`: required when churn is detected. Runtime records it automatically when the same task hits three review-dispatch/reopen cycles in one run.
 - Cycle-break trigger: cap remediation churn at 3 cycles per task. On the third cycle, transition to `cycle_break` strategy automatically (no human replanning loopback).
-- Unit-review receipts and downstream final-review evidence must reference the checkpoint fingerprint from the runtime status for traceability.
+- Reviewers return summaries/results; the controller/runtime binds those results to authoritative state and runtime-owned review projections retain checkpoint fingerprints for traceability. Agents do not search for, repair, or depend on those projection files.
 - Surface and respect runtime strategy status from `featureforge plan execution status --plan ...`:
   - `strategy_state`
   - `strategy_checkpoint_kind`
@@ -100,16 +98,9 @@ featureforge repo-safety check --intent write --stage featureforge:executing-pla
 - Use one stable task id per repo-writing task slice and pass the concrete repo-relative paths when they are known.
 - If the helper returns `allowed`, continue with that task slice.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact task slice.
-- If the user explicitly approves the protected-branch write, approve the full task-slice scope you intend to use on that branch, including the repo-relative paths and any follow-on git targets that are part of the same slice:
-
-```bash
-featureforge repo-safety approve --stage featureforge:executing-plans --task-id <current-task-slice> --reason "<explicit user approval>" --path <repo-relative-path> --write-target execution-task-slice [--write-target git-commit] [--write-target git-merge] [--write-target git-push]
-featureforge repo-safety check --intent write --stage featureforge:executing-plans --task-id <current-task-slice> --path <repo-relative-path> --write-target execution-task-slice [--write-target git-commit] [--write-target git-merge] [--write-target git-push]
-```
-
-- Continue only if the re-check returns `allowed`.
-- Before a follow-on `git commit`, `git merge`, or `git push` on the same protected-branch task slice, re-run the gate with the same task id, the same repo-relative paths, and the same approved write-target set.
-- If the protected-branch task scope changes, run a new `approve` plus full-scope `check` before continuing.
+- If the user explicitly approves protected-branch writes, approve the full task-slice scope with `featureforge repo-safety approve --stage featureforge:executing-plans --task-id <current-task-slice> --reason "<explicit user approval>" --path <repo-relative-path> --write-target execution-task-slice [--write-target git-commit] [--write-target git-merge] [--write-target git-push]`, then re-check before continuing.
+- Before a follow-on `git commit`, `git merge`, or `git push`, re-run the gate with the same task id, paths, and approved write-target set.
+- If the protected-branch task scope changes, run a new approval plus full-scope check before continuing.
 - Do not treat a worktree on `main`, `master`, `dev`, or `develop` as safe by itself; the branch must be non-protected or explicitly approved.
 
 ### Step 2: Execute Tasks
@@ -137,11 +128,12 @@ For each task:
 6. After the implementation steps for a task are complete, enforce the mandatory task-boundary closure loop before beginning the next task:
    - MUST dispatch dedicated-independent task review in a fresh-context subagent; coordinator or implementer self-review never satisfies this gate
    - if review fails, reopen/remediate/re-review until green
+   - Review findings must use deterministic repair-packet fields: `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail`.
    - when remediation churn reaches 3 cycles for the same task, follow runtime cycle-break handling before retry
    - after review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`
    - Task `N+1` may begin only after Task `N` has a current positive task-closure record
    - dedicated-independent review loops plus verification are required inputs to `close-current-task`; they are not separate begin-time authority once Task `N` has a current positive closure
-   - rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`
+   - rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator
    - workflow/operator must route normal task-boundary closure through `task_closure_recording_ready` / `close-current-task`, not `task_review_dispatch_required`; if a task-review dispatch phase appears, treat it as a runtime diagnostic bug instead of manual low-level command choreography
    - if workflow/operator remains in a `*_dispatch_required` lane after an external review result is ready, keep rerouting through workflow/operator and the intent-level commands; do not expand the normal path into low-level dispatch-lineage management
    - no exceptions: only after close-current-task succeeds may Task `N+1` begin
@@ -153,36 +145,36 @@ For each task:
 For the reviewed-closure mental model, read `docs/featureforge/reference/2026-04-01-review-state-reference.md` before acting on late-stage routing. A current reviewed closure matches the current reviewed state. A superseded closure was valid for earlier reviewed work but is no longer authoritative after later reviewed work lands. A stale-unreviewed state means unreviewed edits exist, so the runtime MUST repair review state before recording another closure or late-stage milestone.
 
 `featureforge workflow operator --plan <approved-plan-path>` is the only normal-path routing authority for reviewed-closure and late-stage progression.
-Treat `featureforge workflow operator --plan <approved-plan-path>` as authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command`.
+Treat `featureforge workflow operator --plan <approved-plan-path>` as authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs`. Treat `recommended_command` as display-only compatibility text.
 Treat `featureforge plan execution status --plan <approved-plan-path>` as optional diagnostic detail.
 
 When an external task-review or final-review result is already in hand, use `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` to expose recording-ready routes. Do not use that hint for release-readiness, document-release, or QA routing.
 
-Do not reconstruct closure routing from memory or duplicate route tables in this skill. Follow operator-reported `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_command`, and `recording_context` directly, with these guardrails:
+Do not reconstruct closure routing from memory or duplicate route tables in this skill. Follow operator-reported `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `required_inputs`, and `recording_context` directly, with these guardrails:
 - `task_closure_recording_ready` requires `recording_context.task_number`.
 - `release_readiness_recording_ready` and `release_blocker_resolution_required` require `recording_context.branch_closure_id`.
 - `final_review_recording_ready` requires `recording_context.branch_closure_id`.
-- Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow/operator `recommended_command`, follow `recommended_command`.
+- Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow/operator `recommended_public_command_argv`, follow the argv from workflow/operator.
 - When `phase_detail=task_closure_recording_ready`, replay is already complete enough for closure refresh; run `close-current-task` and do not reopen the same step again.
-- When workflow/operator reports `review_state_status` as stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
-- After `repair-review-state`, MUST follow the command returned in that command's `recommended_command` before any additional recording commands.
-- The returned `recommended_command` is authoritative for the immediate reroute.
+- When workflow/operator reports `review_state_status` as stale or missing closure context, do not invent a repair command. If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan <approved-plan-path>` only when the non-diagnostic route owns that repair lane.
+- After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` when present before any additional recording commands. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun the route owner. Do not shell-parse or whitespace-split `recommended_command`.
+- The returned `recommended_public_command_argv` is authoritative for the immediate reroute only when present; `recommended_command` is only the human-readable rendering of the same route.
 - Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required.
 - Keep compatibility/debug-only runtime primitives out of the normal path unless explicitly debugging a compatibility boundary.
 - Hidden compatibility/debug command entrypoints are removed from the public CLI; normal routing must use public commands only.
 - In `*_dispatch_required` lanes, request the review and keep rerouting through workflow/operator; do not expand the normal path into low-level dispatch-lineage management.
 - MUST NOT manually edit runtime-owned execution records.
 - MUST NOT manually edit `**Execution Note:**` lines to recover runtime state.
-- MUST NOT manually edit derived markdown artifacts or receipts.
+- MUST NOT manually edit derived markdown projection artifacts.
 - MUST NOT repair runtime progress by editing tracked plan, evidence, review, readiness, QA, or strategy projection files.
 - MUST NOT use the internal task-closure recording service boundary directly.
 - MUST use `close-current-task` for task closure.
 
 Late-stage aggregate command coverage:
 - `featureforge plan execution advance-late-stage --plan <approved-plan-path>`
-- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>`
-- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>`
-- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>`
+- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` is an input shape after substituting concrete values
+- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>` is an input shape after substituting concrete values
+- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>` is an input shape after substituting concrete values
 - Compatibility-only escape hatch: use low-level runtime primitives only when explicitly debugging or preserving compatibility.
 
 ### Step 3: Request Final Review
@@ -200,37 +192,7 @@ After the final review is resolved:
 - **REQUIRED SUB-SKILL:** Use featureforge:finishing-a-development-branch
 - Follow that skill to verify tests, require `qa-only` when browser QA is warranted, require `document-release` for workflow-routed work, present options, and execute the chosen completion path
 
-## When to Stop and Ask for Help
-
-**STOP executing immediately when:**
-- Hit a blocker (missing dependency, test fails, instruction unclear)
-- Plan has critical gaps preventing starting
-- You don't understand an instruction
-- Verification fails repeatedly
-
-**Ask for clarification rather than guessing.**
-
-## When to Revisit Earlier Steps
-
-Do not reopen planning or review just because execution surfaced a runtime problem. Once implementation has started, keep the approved plan fixed, record runtime deviations in authoritative state, and either continue under the runtime-selected topology or stop and ask for clarification when blocked.
-
-## Remember
-- Review plan critically first
-- Start only from an engineering-approved current plan
-- Follow plan steps exactly
-- Don't skip verifications
-- Reference skills when plan says to
-- Stop when blocked, don't guess
-- Never start implementation on a default protected branch (`main`, `master`, `dev`, or `develop`) without explicit user consent
-- When isolated execution is required, `featureforge:using-git-worktrees` is runtime-selected workspace preparation rather than optional prose guidance.
-
-## Integration
-
-**Required workflow skills:**
 - **featureforge:writing-plans** - Creates the plan this skill executes
 - **featureforge:plan-eng-review** - Provides the approved plan and the execution preflight handoff
 - **featureforge:requesting-code-review** - REQUIRED: Final review gate after execution completes
 - **featureforge:finishing-a-development-branch** - Complete development after all tasks
-
-**Optional direct invocation:**
-- **featureforge:using-git-worktrees** - Use when the user explicitly wants isolated workspace management before execution, or when runtime-directed remediation says to prepare the workspace first

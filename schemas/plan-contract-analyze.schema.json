@@ -218,6 +218,96 @@
         "required_worktrees"
       ]
     },
+    "PlanFidelityReviewArtifactTemplate": {
+      "type": "object",
+      "properties": {
+        "artifact_path": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "required_distinct_from_stages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_requirement_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_verified_surfaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "review_stage": {
+          "type": "string"
+        },
+        "review_verdict_options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reviewed_plan_fingerprint": {
+          "type": "string"
+        },
+        "reviewed_plan_path": {
+          "type": "string"
+        },
+        "reviewed_plan_revision": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "reviewed_spec_fingerprint": {
+          "type": "string"
+        },
+        "reviewed_spec_path": {
+          "type": "string"
+        },
+        "reviewed_spec_revision": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "reviewer_id_placeholder": {
+          "type": "string"
+        },
+        "reviewer_source_options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "summary_placeholder": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_path",
+        "content",
+        "review_stage",
+        "review_verdict_options",
+        "reviewed_plan_path",
+        "reviewed_plan_revision",
+        "reviewed_plan_fingerprint",
+        "reviewed_spec_path",
+        "reviewed_spec_revision",
+        "reviewed_spec_fingerprint",
+        "reviewer_source_options",
+        "reviewer_id_placeholder",
+        "required_distinct_from_stages",
+        "required_verified_surfaces",
+        "required_requirement_ids",
+        "summary_placeholder"
+      ]
+    },
     "PlanFidelityReviewReport": {
       "type": "object",
       "properties": {
@@ -235,6 +325,16 @@
           "items": {
             "type": "string"
           }
+        },
+        "required_artifact_template": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanFidelityReviewArtifactTemplate"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "review_artifact_path": {
           "type": "string"

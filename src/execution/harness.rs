@@ -46,20 +46,22 @@ impl HarnessPhase {
 
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ImplementationHandoff => "implementation_handoff",
-            Self::ExecutionPreflight => "execution_preflight",
+            Self::ImplementationHandoff => crate::execution::phase::PHASE_IMPLEMENTATION_HANDOFF,
+            Self::ExecutionPreflight => crate::execution::phase::PHASE_EXECUTION_PREFLIGHT,
             Self::ContractDrafting => "contract_drafting",
             Self::ContractPendingApproval => "contract_pending_approval",
             Self::ContractApproved => "contract_approved",
-            Self::Executing => "executing",
+            Self::Executing => crate::execution::phase::PHASE_EXECUTING,
             Self::Evaluating => "evaluating",
             Self::Repairing => "repairing",
-            Self::PivotRequired => "pivot_required",
-            Self::HandoffRequired => "handoff_required",
-            Self::FinalReviewPending => "final_review_pending",
-            Self::QaPending => "qa_pending",
-            Self::DocumentReleasePending => "document_release_pending",
-            Self::ReadyForBranchCompletion => "ready_for_branch_completion",
+            Self::PivotRequired => crate::execution::phase::PHASE_PIVOT_REQUIRED,
+            Self::HandoffRequired => crate::execution::phase::PHASE_HANDOFF_REQUIRED,
+            Self::FinalReviewPending => crate::execution::phase::PHASE_FINAL_REVIEW_PENDING,
+            Self::QaPending => crate::execution::phase::PHASE_QA_PENDING,
+            Self::DocumentReleasePending => crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING,
+            Self::ReadyForBranchCompletion => {
+                crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION
+            }
         }
     }
 
@@ -79,20 +81,26 @@ impl FromStr for HarnessPhase {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "implementation_handoff" => Ok(Self::ImplementationHandoff),
-            "execution_preflight" => Ok(Self::ExecutionPreflight),
+            crate::execution::phase::PHASE_IMPLEMENTATION_HANDOFF => {
+                Ok(Self::ImplementationHandoff)
+            }
+            crate::execution::phase::PHASE_EXECUTION_PREFLIGHT => Ok(Self::ExecutionPreflight),
             "contract_drafting" => Ok(Self::ContractDrafting),
             "contract_pending_approval" => Ok(Self::ContractPendingApproval),
             "contract_approved" => Ok(Self::ContractApproved),
-            "executing" => Ok(Self::Executing),
+            crate::execution::phase::PHASE_EXECUTING => Ok(Self::Executing),
             "evaluating" => Ok(Self::Evaluating),
             "repairing" => Ok(Self::Repairing),
-            "pivot_required" => Ok(Self::PivotRequired),
-            "handoff_required" => Ok(Self::HandoffRequired),
-            "final_review_pending" => Ok(Self::FinalReviewPending),
-            "qa_pending" => Ok(Self::QaPending),
-            "document_release_pending" => Ok(Self::DocumentReleasePending),
-            "ready_for_branch_completion" => Ok(Self::ReadyForBranchCompletion),
+            crate::execution::phase::PHASE_PIVOT_REQUIRED => Ok(Self::PivotRequired),
+            crate::execution::phase::PHASE_HANDOFF_REQUIRED => Ok(Self::HandoffRequired),
+            crate::execution::phase::PHASE_FINAL_REVIEW_PENDING => Ok(Self::FinalReviewPending),
+            crate::execution::phase::PHASE_QA_PENDING => Ok(Self::QaPending),
+            crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING => {
+                Ok(Self::DocumentReleasePending)
+            }
+            crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION => {
+                Ok(Self::ReadyForBranchCompletion)
+            }
             _ => Err(ParseHarnessPhaseError {
                 invalid_value: value.to_owned(),
             }),
@@ -269,6 +277,15 @@ pub struct WorktreeLeaseBindingSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorktreeLeaseReleaseRecord {
+    pub execution_run_id: String,
+    pub lease_fingerprint: String,
+    pub source_task: u32,
+    pub source_task_closure_record_id: String,
+    pub released_by: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvaluatorSetSnapshot {
     pub required_evaluator_kinds: Vec<EvaluatorKind>,
     pub completed_evaluator_kinds: Vec<EvaluatorKind>,
@@ -334,6 +351,8 @@ pub struct AuthoritativeHarnessState {
     pub active_worktree_lease_fingerprints: Option<Vec<String>>,
     #[serde(default)]
     pub active_worktree_lease_bindings: Option<Vec<WorktreeLeaseBindingSnapshot>>,
+    #[serde(default)]
+    pub released_worktree_lease_records: Option<Vec<WorktreeLeaseReleaseRecord>>,
     pub policy_snapshot: Option<FrozenPolicySnapshot>,
     pub artifact_pointers: AuthoritativeArtifactPointers,
     pub evaluators: EvaluatorSetSnapshot,

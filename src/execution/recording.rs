@@ -6,11 +6,18 @@
 use std::collections::BTreeSet;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::authority::{
+    WorktreeLeaseReleaseDecision, release_active_worktree_leases_with_locked_index,
+};
 use crate::execution::current_truth::current_late_stage_branch_bindings as shared_current_late_stage_branch_bindings;
 use crate::execution::follow_up::RepairFollowUpRecord;
+use crate::execution::harness::WorktreeLeaseReleaseRecord;
 use crate::execution::query::normalize_persisted_follow_up_alias;
 use crate::execution::state::{
-    ExecutionContext, ExecutionRuntime, validated_current_branch_closure_identity,
+    ExecutionContext, ExecutionRuntime,
+    releasable_terminal_worktree_lease_fingerprints_for_task_closure,
+    still_current_task_closure_records_from_authoritative_state,
+    validated_current_branch_closure_identity,
 };
 use crate::execution::transitions::{
     AuthoritativeTransitionState, BranchClosureResultRecord, BrowserQaResultRecord,
@@ -126,27 +133,145 @@ pub(crate) fn resolve_current_task_closure_postconditions(
     closure_record_id: &str,
     reviewed_state_id: &str,
 ) -> Result<bool, JsonFailure> {
-    let resolution = current_task_closure_postcondition_resolution(
+    let state_resolution = current_task_closure_postcondition_resolution(
         authoritative_state,
         task_number,
         closure_record_id,
         reviewed_state_id,
     );
-    if !resolution.would_mutate() {
-        return Ok(false);
-    }
     let mut changed = false;
-    if resolution.clear_cycle_break {
+    if state_resolution.clear_cycle_break {
         let _ = authoritative_state.clear_cycle_break_binding_and_strategy()?;
         authoritative_state.clear_task_cycle_count(task_number)?;
         changed = true;
     }
-    if resolution.clear_repair_follow_up
+    if state_resolution.clear_repair_follow_up
         && authoritative_state.clear_review_state_repair_follow_up()?
     {
         changed = true;
     }
     Ok(changed)
+}
+
+pub(crate) fn resolve_current_task_closure_postconditions_for_current_workspace(
+    context: &ExecutionContext,
+    authoritative_state: &mut AuthoritativeTransitionState,
+    task_number: u32,
+    closure_record_id: Option<&str>,
+) -> Result<Option<String>, JsonFailure> {
+    let current_closure =
+        still_current_task_closure_records_from_authoritative_state(context, authoritative_state)?
+            .into_iter()
+            .find(|record| {
+                record.task == task_number
+                    && closure_record_id
+                        .is_none_or(|record_id| record.closure_record_id == record_id)
+            });
+    let Some(current_closure) = current_closure else {
+        return Ok(None);
+    };
+    if authoritative_state
+        .task_closure_negative_result(task_number)
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let reviewed_state_id = current_closure
+        .semantic_reviewed_state_id
+        .as_deref()
+        .unwrap_or(current_closure.reviewed_state_id.as_str());
+    if resolve_current_task_closure_postconditions(
+        authoritative_state,
+        task_number,
+        &current_closure.closure_record_id,
+        reviewed_state_id,
+    )? {
+        Ok(Some(current_closure.closure_record_id))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) fn resolve_current_task_closure_postconditions_for_current_workspace_and_persist(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    task_number: u32,
+    closure_record_id: Option<&str>,
+) -> Result<Option<String>, JsonFailure> {
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(None);
+    };
+    let resolved_closure_id = resolve_current_task_closure_postconditions_for_current_workspace(
+        context,
+        authoritative_state,
+        task_number,
+        closure_record_id,
+    )?;
+    if resolved_closure_id.is_some() {
+        authoritative_state
+            .persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    }
+    Ok(resolved_closure_id)
+}
+
+pub(crate) fn release_worktree_leases_for_current_task_closures_and_persist(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+) -> Result<Vec<(u32, String)>, JsonFailure> {
+    release_active_worktree_leases_with_locked_index(
+        runtime,
+        |run_identity, active_fingerprints, active_bindings| {
+            let mut authoritative_state = load_authoritative_transition_state(context)?;
+            let Some(authoritative_state) = authoritative_state.as_mut() else {
+                return Ok(WorktreeLeaseReleaseDecision {
+                    released_by: Vec::new(),
+                    lease_fingerprints: BTreeSet::new(),
+                    release_records: Vec::new(),
+                });
+            };
+            let current_closures = still_current_task_closure_records_from_authoritative_state(
+                context,
+                authoritative_state,
+            )?;
+            let execution_run_id = run_identity.execution_run_id.as_str();
+            let mut released_by = Vec::new();
+            let mut release_records = Vec::new();
+            let mut releasable = BTreeSet::new();
+            for closure in current_closures.iter().filter(|closure| {
+                closure.review_result == "pass" && closure.verification_result == "pass"
+            }) {
+                let closure_releasable =
+                    releasable_terminal_worktree_lease_fingerprints_for_task_closure(
+                        context,
+                        Some(execution_run_id),
+                        active_fingerprints,
+                        active_bindings,
+                        closure.task,
+                    );
+                if !closure_releasable.is_empty() {
+                    for lease_fingerprint in closure_releasable {
+                        if releasable.insert(lease_fingerprint.clone()) {
+                            release_records.push(WorktreeLeaseReleaseRecord {
+                                execution_run_id: execution_run_id.to_owned(),
+                                lease_fingerprint,
+                                source_task: closure.task,
+                                source_task_closure_record_id: closure.closure_record_id.clone(),
+                                released_by: String::from("repair_review_state"),
+                            });
+                        }
+                    }
+                    released_by.push((closure.task, closure.closure_record_id.clone()));
+                }
+            }
+            Ok(WorktreeLeaseReleaseDecision {
+                released_by,
+                lease_fingerprints: releasable,
+                release_records,
+            })
+        },
+    )
 }
 
 pub(crate) fn current_task_closure_postconditions_would_mutate(
@@ -155,13 +280,13 @@ pub(crate) fn current_task_closure_postconditions_would_mutate(
     closure_record_id: &str,
     reviewed_state_id: &str,
 ) -> bool {
-    current_task_closure_postcondition_resolution(
+    let state_resolution = current_task_closure_postcondition_resolution(
         authoritative_state,
         task_number,
         closure_record_id,
         reviewed_state_id,
-    )
-    .would_mutate()
+    );
+    state_resolution.would_mutate()
 }
 
 struct CurrentTaskClosurePostconditionResolution {
@@ -179,7 +304,7 @@ fn current_task_closure_postcondition_resolution(
     authoritative_state: &AuthoritativeTransitionState,
     task_number: u32,
     closure_record_id: &str,
-    reviewed_state_id: &str,
+    _reviewed_state_id: &str,
 ) -> CurrentTaskClosurePostconditionResolution {
     let Some(current_closure) = authoritative_state.current_task_closure_result(task_number) else {
         return CurrentTaskClosurePostconditionResolution {
@@ -189,10 +314,6 @@ fn current_task_closure_postcondition_resolution(
     };
     let current_positive_closure_on_current_reviewed_state = current_closure.closure_record_id
         == closure_record_id
-        && (current_closure.reviewed_state_id == reviewed_state_id
-            || authoritative_state
-                .current_task_closure_result(task_number)
-                .is_some_and(|record| record.closure_record_id == closure_record_id))
         && current_closure.review_result == "pass"
         && current_closure.verification_result == "pass"
         && current_closure
@@ -269,11 +390,14 @@ pub(crate) fn record_current_task_closure(
         verification_result: input.verification_result,
         verification_summary_hash: input.verification_summary_hash,
     })?;
+    let reviewed_state_id = input
+        .semantic_reviewed_state_id
+        .unwrap_or(input.reviewed_state_id);
     let _ = resolve_current_task_closure_postconditions(
         authoritative_state,
         input.task,
         input.closure_record_id,
-        input.reviewed_state_id,
+        reviewed_state_id,
     )?;
     authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "close_current_task")
 }

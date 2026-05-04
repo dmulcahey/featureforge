@@ -29,7 +29,7 @@ _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
 
-Use three lenses:
+Use three lenses, then decide from local repo truth:
 - Layer 1: tried-and-true / built-ins / existing repo-native solutions
 - Layer 2: current practice and known footguns
 - Layer 3: first-principles reasoning for this repo and this problem
@@ -52,6 +52,8 @@ Per-skill instructions may add additional formatting rules on top of this baseli
 
 Report-only browser QA for web applications. Test like a user, gather evidence, score health, and never fix anything.
 
+Extended exploration and scoring examples live in `$_FEATUREFORGE_ROOT/references/execution-review-qa-examples.md`.
+
 ## Browser prerequisite
 
 This skill depends on browser automation support from `playwright` or `playwright-interactive`.
@@ -65,18 +67,7 @@ If neither skill nor equivalent browser automation support is available, STOP an
 
 ## Setup
 
-Parse these parameters from the request:
-
-| Parameter | Default | Example |
-|-----------|---------|---------|
-| Target URL | auto-detect or required | `https://app.example.com`, `http://127.0.0.1:3000` |
-| Tier | Standard | `Standard`, `Exhaustive` |
-| Mode | full | `--quick`, `--regression <baseline>` |
-| Output dir | `.featureforge/qa-reports/` | `Output to /tmp/qa` |
-| Scope | Diff or full app | `Focus on billing` |
-| Auth | none | `Use staging login` |
-
-Treat `quick` as a mode, not a tier.
+Parse target URL, tier, mode, output directory, scope, and auth from the request. Treat `quick` as a mode, not a tier.
 
 Map the parsed "Output dir" to `QA_OUTPUT_DIR` when the user provided one, then create the local output directory:
 
@@ -167,40 +158,7 @@ Load a previous baseline report or saved scorecard and compare score and issue d
 
 ## Workflow
 
-### Phase 1: Initialize
-
-1. Resolve URL or auto-detect the local app
-2. Create the local report skeleton from `$_FEATUREFORGE_ROOT/qa/templates/qa-report-template.md` when available
-3. Start a timer for duration tracking
-
-### Phase 2: Orient
-
-Use the browser automation skill to get a map of the app:
-- initial page load
-- interactive controls
-- console or failed-request health
-- framework clues
-
-### Phase 3: Explore
-
-For each affected page or route:
-- take a screenshot
-- check interactive elements
-- test forms and validation
-- test navigation in and out
-- check loading, empty, and error states
-- run a mobile pass if relevant
-
-Use the taxonomy in `$_FEATUREFORGE_ROOT/qa/references/issue-taxonomy.md` to classify each issue.
-
-### Phase 4: Document
-
-Document issues immediately. Every issue needs:
-- severity
-- category
-- URL or route
-- repro steps
-- evidence
+Resolve target, orient in the browser, explore affected routes, capture evidence, and document issues immediately. Every issue needs severity, category, URL or route, repro steps, and evidence. Use `$_FEATUREFORGE_ROOT/qa/references/issue-taxonomy.md` when available.
 
 ### Optional ecosystem issue lookup
 
@@ -213,38 +171,14 @@ Rules:
 - do not block the report if search is unavailable
 - preserve report-only posture
 
-### Phase 5: Score Health
-
-Score the run across:
-- Console
-- Links
-- Visual
-- Functional
-- UX
-- Performance
-- Accessibility
-
-Use the shared rubric from the current template and state the final Health Score explicitly.
-
-### Phase 6: Write reports
+### Write reports
 
 Write the local report to:
 - `$REPORT_DIR/qa-report-{domain}-{YYYY-MM-DD}.md`
 
 When a current-branch test-plan artifact exists, runtime emits a project-scoped outcome artifact:
 
-```bash
-_SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
-if [ -n "$_SLUG_ENV" ]; then
-  eval "$_SLUG_ENV"
-fi
-unset _SLUG_ENV
-USER=$(whoami)
-DATETIME=$(date +%Y%m%d-%H%M%S)
-mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
-```
-
-Use this snippet only to inspect runtime-emitted artifact locations after recording; do not use it to hand-write finish-gate artifacts.
+Inspect runtime-emitted artifact locations after recording only when needed; do not use that as permission to hand-write finish-gate artifacts.
 
 For workflow-routed QA, the runtime writes the derived companion artifact to:
 - `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/featureforge-{safe-branch}-test-outcome-{datetime}.md`
@@ -284,14 +218,6 @@ Allowed `**Result:**` values:
 - `blocked`
 
 For ad-hoc QA without workflow-routed recording, keep the local `qa-report` as the authoritative output and say explicitly that no workflow-routed finish-gate artifact was produced.
-
-## Output structure
-
-```
-$REPORT_DIR/
-├── qa-report-{domain}-{YYYY-MM-DD}.md
-└── screenshots/
-```
 
 Regression mode compares against an existing baseline artifact. `qa-only` should not invent or overwrite one implicitly.
 

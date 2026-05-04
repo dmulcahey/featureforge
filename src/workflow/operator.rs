@@ -9,7 +9,11 @@ use serde::{Deserialize, Serialize};
 use crate::cli::workflow::OperatorArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
+use crate::execution::closure_diagnostics::merge_status_projection_diagnostics;
+use crate::execution::command_eligibility::PublicCommandInputRequirement;
 use crate::execution::harness::EvaluatorKind;
+use crate::execution::phase;
+use crate::execution::public_command_types::RecommendedPublicCommandArgv;
 use crate::execution::query::{
     ExecutionRoutingState, query_workflow_routing_state, query_workflow_routing_state_for_runtime,
     task_review_result_requires_verification,
@@ -38,6 +42,7 @@ pub struct DoctorArgs {
 enum WorkflowOperatorPhaseSchema {
     Blocked,
     Executing,
+    ExecutionPreflight,
     TaskClosurePending,
     DocumentReleasePending,
     FinalReviewPending,
@@ -52,6 +57,7 @@ enum WorkflowOperatorPhaseSchema {
 enum WorkflowOperatorPhaseDetailSchema {
     BlockedRuntimeBug,
     ExecutionInProgress,
+    ExecutionPreflightRequired,
     ExecutionReentryRequired,
     TaskReviewResultPending,
     TaskClosureRecordingReady,
@@ -85,6 +91,7 @@ enum WorkflowOperatorStateKindSchema {
     WaitingExternalInput,
     Terminal,
     BlockedRuntimeBug,
+    RuntimeReconcileRequired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -97,6 +104,8 @@ enum WorkflowOperatorNextActionSchema {
     CloseCurrentTask,
     #[serde(rename = "continue execution")]
     ContinueExecution,
+    #[serde(rename = "runtime diagnostic required")]
+    RuntimeDiagnosticRequired,
     #[serde(rename = "request final review")]
     RequestFinalReview,
     #[serde(rename = "execution reentry required")]
@@ -147,6 +156,10 @@ pub struct WorkflowDoctor {
     pub next_step: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocking_scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -190,6 +203,10 @@ pub struct WorkflowHandoff {
     pub next_action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[schemars(with = "WorkflowOperatorStateKindSchema")]
     pub state_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -239,6 +256,10 @@ pub struct WorkflowOperator {
     pub next_action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_argv: RecommendedPublicCommandArgv,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,6 +322,8 @@ struct OperatorContext {
     operator_execution_command_context: Option<WorkflowOperatorExecutionCommandContext>,
     operator_next_action: String,
     operator_recommended_command: Option<String>,
+    operator_recommended_public_command_argv: RecommendedPublicCommandArgv,
+    operator_required_inputs: Vec<PublicCommandInputRequirement>,
     operator_base_branch: Option<String>,
     operator_blocking_scope: Option<String>,
     operator_blocking_task: Option<u32>,
@@ -508,6 +531,8 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
         next_action: next_action_for_context(&context).to_owned(),
         next_step: next_step_text(&context),
         recommended_command: context.operator_recommended_command.clone(),
+        recommended_public_command_argv: context.operator_recommended_public_command_argv.clone(),
+        required_inputs: context.operator_required_inputs.clone(),
         blocking_scope: context.operator_blocking_scope.clone(),
         blocking_task: context.operator_blocking_task,
         external_wait_state: context.operator_external_wait_state.clone(),
@@ -589,6 +614,7 @@ fn doctor_gate_review(context: &OperatorContext) -> Option<GateResult> {
             .finish_review_gate_pass_branch_closure_id
             .clone(),
         recommended_command: context.operator_recommended_command.clone(),
+        required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
     })
 }
@@ -739,7 +765,7 @@ fn handoff_from_context(
         )
     } else {
         match context.phase.as_str() {
-            "executing" => {
+            phase::PHASE_EXECUTING => {
                 let skill = context
                     .execution_status
                     .as_ref()
@@ -752,8 +778,8 @@ fn handoff_from_context(
                     ),
                 )
             }
-            "implementation_handoff" => (String::new(), reason_text(&context)),
-            "final_review_pending" if review_requires_execution_reentry(&context) => {
+            phase::PHASE_IMPLEMENTATION_HANDOFF => (String::new(), reason_text(&context)),
+            phase::PHASE_FINAL_REVIEW_PENDING if review_requires_execution_reentry(&context) => {
                 let skill = context
                     .execution_status
                     .as_ref()
@@ -761,28 +787,34 @@ fn handoff_from_context(
                     .unwrap_or_default();
                 (skill, reason_text(&context))
             }
-            "final_review_pending" => (
+            phase::PHASE_FINAL_REVIEW_PENDING => (
                 String::from("featureforge:requesting-code-review"),
                 reason_text(&context),
             ),
-            "qa_pending" if context.operator_phase_detail == "test_plan_refresh_required" => (
-                String::from("featureforge:plan-eng-review"),
-                reason_text(&context),
-            ),
-            "qa_pending" => (String::from("featureforge:qa-only"), reason_text(&context)),
-            "document_release_pending" => (
+            phase::PHASE_QA_PENDING
+                if context.operator_phase_detail == phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED =>
+            {
+                (
+                    String::from("featureforge:plan-eng-review"),
+                    reason_text(&context),
+                )
+            }
+            phase::PHASE_QA_PENDING => {
+                (String::from("featureforge:qa-only"), reason_text(&context))
+            }
+            phase::PHASE_DOCUMENT_RELEASE_PENDING => (
                 String::from("featureforge:document-release"),
                 reason_text(&context),
             ),
-            "ready_for_branch_completion" => (
+            phase::PHASE_READY_FOR_BRANCH_COMPLETION => (
                 String::from("featureforge:finishing-a-development-branch"),
                 reason_text(&context),
             ),
-            "pivot_required" => (
+            phase::PHASE_PIVOT_REQUIRED => (
                 String::from("featureforge:writing-plans"),
                 reason_text(&context),
             ),
-            "task_closure_pending" => {
+            phase::PHASE_TASK_CLOSURE_PENDING => {
                 let skill = context
                     .execution_status
                     .as_ref()
@@ -822,6 +854,8 @@ fn handoff_from_context(
         execution_started,
         next_action: next_action_for_context(&context).to_owned(),
         recommended_command: context.operator_recommended_command.clone(),
+        recommended_public_command_argv: context.operator_recommended_public_command_argv.clone(),
+        required_inputs: context.operator_required_inputs.clone(),
         state_kind: context.operator_state_kind.clone(),
         next_public_action: context.operator_next_public_action.clone(),
         blockers: context.operator_blockers.clone(),
@@ -893,6 +927,8 @@ fn operator_from_context(context: OperatorContext, args: &OperatorArgs) -> Workf
         execution_command_context: context.operator_execution_command_context.clone(),
         next_action: context.operator_next_action.clone(),
         recommended_command: context.operator_recommended_command.clone(),
+        recommended_public_command_argv: context.operator_recommended_public_command_argv.clone(),
+        required_inputs: context.operator_required_inputs.clone(),
         base_branch: context.operator_base_branch.clone(),
         blocking_scope: context.operator_blocking_scope.clone(),
         blocking_task: context.operator_blocking_task,
@@ -1160,7 +1196,7 @@ fn build_context_from_routing(
         review_state_status,
         qa_requirement,
         finish_review_gate_pass_branch_closure_id,
-        recording_context,
+        recording_context: _,
         execution_command_context,
         next_action: _,
         recommended_command: _,
@@ -1173,7 +1209,7 @@ fn build_context_from_routing(
         diagnostic_reason_codes,
         task_review_dispatch_id,
         final_review_dispatch_id,
-        current_branch_closure_id,
+        current_branch_closure_id: _,
         ..
     } = routing;
     let operator_phase = execution_status
@@ -1188,66 +1224,18 @@ fn build_context_from_routing(
         .as_ref()
         .map(|status| status.next_action.clone())
         .unwrap_or_else(|| route_decision.next_action.clone());
-    let operator_recommended_command = execution_status
-        .as_ref()
-        .map(|status| status.recommended_command.clone())
-        .unwrap_or_else(|| route_decision.recommended_command.clone());
-    let status_recording_context = execution_status
-        .as_ref()
-        .and_then(|status| status.recording_context.as_ref());
-    let operator_recording_context = match operator_phase_detail.as_str() {
-        "final_review_recording_ready" => {
-            current_branch_closure_id.as_ref().map(|branch_closure_id| {
-                WorkflowOperatorRecordingContext {
-                    task_number: None,
-                    dispatch_id: final_review_dispatch_id.clone(),
-                    branch_closure_id: Some(branch_closure_id.clone()),
-                }
-            })
-        }
-        "task_closure_recording_ready" => {
-            if let Some(context) = status_recording_context {
-                Some(WorkflowOperatorRecordingContext {
-                    task_number: context.task_number,
-                    dispatch_id: context
-                        .dispatch_id
-                        .clone()
-                        .or(task_review_dispatch_id.clone()),
-                    branch_closure_id: context.branch_closure_id.clone(),
-                })
-            } else {
-                recording_context.map(|context| WorkflowOperatorRecordingContext {
-                    task_number: context.task_number,
-                    dispatch_id: context.dispatch_id.or(task_review_dispatch_id.clone()),
-                    branch_closure_id: context.branch_closure_id,
-                })
-            }
-        }
-        "release_readiness_recording_ready" | "release_blocker_resolution_required" => {
-            current_branch_closure_id.as_ref().map(|branch_closure_id| {
-                WorkflowOperatorRecordingContext {
-                    task_number: None,
-                    dispatch_id: None,
-                    branch_closure_id: Some(branch_closure_id.clone()),
-                }
-            })
-        }
-        _ => {
-            if let Some(context) = status_recording_context {
-                Some(WorkflowOperatorRecordingContext {
-                    task_number: context.task_number,
-                    dispatch_id: context.dispatch_id.clone(),
-                    branch_closure_id: context.branch_closure_id.clone(),
-                })
-            } else {
-                recording_context.map(|context| WorkflowOperatorRecordingContext {
-                    task_number: context.task_number,
-                    dispatch_id: context.dispatch_id,
-                    branch_closure_id: context.branch_closure_id,
-                })
-            }
-        }
-    };
+    let operator_recommended_command = route_decision.recommended_command.clone();
+    let operator_recommended_public_command_argv = route_decision.public_command_argv();
+    let operator_required_inputs = route_decision.required_inputs.clone();
+    let operator_recording_context =
+        route_decision
+            .recording_context
+            .as_ref()
+            .map(|context| WorkflowOperatorRecordingContext {
+                task_number: context.task_number,
+                dispatch_id: context.dispatch_id.clone(),
+                branch_closure_id: context.branch_closure_id.clone(),
+            });
     let operator_execution_command_context = execution_status
         .as_ref()
         .and_then(|status| status.execution_command_context.as_ref())
@@ -1266,18 +1254,18 @@ fn build_context_from_routing(
     let preflight_not_started = execution_status
         .as_ref()
         .is_some_and(|status| status.execution_started != "yes");
-    let display_phase = if route.status == "implementation_ready"
+    let display_phase = if route.status == phase::WORKFLOW_STATUS_IMPLEMENTATION_READY
         && preflight_not_started
         && matches!(
             routing_phase.as_str(),
-            "implementation_handoff" | "execution_preflight"
+            phase::PHASE_IMPLEMENTATION_HANDOFF | phase::PHASE_EXECUTION_PREFLIGHT
         ) {
-        String::from("execution_preflight")
-    } else if operator_phase == "pivot_required"
+        String::from(phase::PHASE_EXECUTION_PREFLIGHT)
+    } else if operator_phase == phase::PHASE_PIVOT_REQUIRED
         || execution_status
             .as_ref()
             .is_some_and(|status| status.execution_started == "yes")
-        || routing_phase != "implementation_handoff"
+        || routing_phase != phase::PHASE_IMPLEMENTATION_HANDOFF
     {
         operator_phase.clone()
     } else {
@@ -1304,25 +1292,25 @@ fn build_context_from_routing(
         .as_ref()
         .map(|status| status.blocking_reason_codes.clone())
         .unwrap_or(blocking_reason_codes);
-    let mut operator_diagnostic_reason_codes = diagnostic_reason_codes;
-    if let Some(status) = execution_status.as_ref() {
-        for reason_code in &status.projection_diagnostics {
-            if !operator_diagnostic_reason_codes
-                .iter()
-                .any(|existing| existing == reason_code)
-            {
-                operator_diagnostic_reason_codes.push(reason_code.clone());
-            }
-        }
-    }
-    if operator_phase_detail == "execution_reentry_required"
+    let operator_diagnostic_reason_codes = execution_status
+        .as_ref()
+        .map(|status| merge_status_projection_diagnostics(diagnostic_reason_codes.clone(), status))
+        .unwrap_or(diagnostic_reason_codes);
+    if operator_phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         && let Some(task_number) = operator_execution_command_context
             .as_ref()
             .and_then(|context| context.task_number)
     {
         operator_blocking_scope = Some(String::from("task"));
         operator_blocking_task = Some(task_number);
-    } else if operator_phase_detail == "task_closure_recording_ready"
+    } else if operator_phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
+        && let Some(task_number) = execution_status
+            .as_ref()
+            .and_then(task_blocking_record_task)
+    {
+        operator_blocking_scope = Some(String::from("task"));
+        operator_blocking_task = Some(task_number);
+    } else if operator_phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
         && let Some(task_number) = operator_recording_context
             .as_ref()
             .and_then(|context| context.task_number)
@@ -1356,7 +1344,7 @@ fn build_context_from_routing(
                 None,
             )
         });
-    let plan_contract = if route.status == "implementation_ready" {
+    let plan_contract = if route.status == phase::WORKFLOW_STATUS_IMPLEMENTATION_READY {
         analyze_plan_if_available(&route).map_err(JsonFailure::from)?
     } else {
         None
@@ -1378,6 +1366,8 @@ fn build_context_from_routing(
         operator_execution_command_context,
         operator_next_action,
         operator_recommended_command,
+        operator_recommended_public_command_argv,
+        operator_required_inputs,
         operator_base_branch,
         operator_blocking_scope,
         operator_blocking_task,
@@ -1397,6 +1387,22 @@ fn build_context_from_routing(
     })
 }
 
+fn task_blocking_record_task(status: &PlanExecutionStatus) -> Option<u32> {
+    status.blocking_records.iter().find_map(|record| {
+        if record.scope_type != "task" {
+            return None;
+        }
+        let raw = record.scope_key.strip_prefix("task-")?;
+        let digits = raw
+            .chars()
+            .take_while(|character| character.is_ascii_digit())
+            .collect::<String>();
+        (!digits.is_empty())
+            .then(|| digits.parse::<u32>().ok())
+            .flatten()
+    })
+}
+
 fn operator_plan_path(context: &OperatorContext, args: &OperatorArgs) -> String {
     if !context.route.plan_path.is_empty() {
         context.route.plan_path.clone()
@@ -1408,27 +1414,27 @@ fn operator_plan_path(context: &OperatorContext, args: &OperatorArgs) -> String 
 }
 
 fn doctor_phase_for_context(context: &OperatorContext) -> String {
-    if context.route.status == "implementation_ready"
+    if context.route.status == phase::WORKFLOW_STATUS_IMPLEMENTATION_READY
         && context
             .execution_status
             .as_ref()
             .is_some_and(|status| status.execution_started != "yes")
         && matches!(
             context.phase.as_str(),
-            "implementation_handoff" | "execution_preflight"
+            phase::PHASE_IMPLEMENTATION_HANDOFF | phase::PHASE_EXECUTION_PREFLIGHT
         )
     {
-        return String::from("execution_preflight");
+        return String::from(phase::PHASE_EXECUTION_PREFLIGHT);
     }
 
-    if context.phase == "handoff_required"
-        && context.operator_phase_detail == "execution_in_progress"
+    if context.phase == phase::PHASE_HANDOFF_REQUIRED
+        && context.operator_phase_detail == phase::DETAIL_EXECUTION_IN_PROGRESS
         && context
             .execution_status
             .as_ref()
             .is_some_and(|status| status.execution_started == "yes")
     {
-        return String::from("executing");
+        return String::from(phase::PHASE_EXECUTING);
     }
 
     context.phase.clone()
@@ -1452,8 +1458,8 @@ fn analyze_plan_if_available(
 }
 
 fn next_step_text(context: &OperatorContext) -> String {
-    if context.phase == "qa_pending"
-        && context.operator_phase_detail == "test_plan_refresh_required"
+    if context.phase == phase::PHASE_QA_PENDING
+        && context.operator_phase_detail == phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED
     {
         if context.route.plan_path.is_empty() {
             return String::from(
@@ -1492,14 +1498,14 @@ fn next_text_for_phase(
     next_skill: &str,
 ) -> String {
     match phase {
-        "execution_preflight" | "implementation_handoff" => {
+        phase::PHASE_EXECUTION_PREFLIGHT | phase::PHASE_IMPLEMENTATION_HANDOFF => {
             if plan_path.is_empty() {
                 String::from("Return to execution preflight for the approved plan.")
             } else {
                 format!("Return to execution preflight for the approved plan: {plan_path}")
             }
         }
-        "executing" => {
+        phase::PHASE_EXECUTING => {
             if plan_path.is_empty() {
                 String::from("Return to the current execution flow for the approved plan.")
             } else {
@@ -1510,22 +1516,22 @@ fn next_text_for_phase(
         | "contract_pending_approval"
         | "contract_approved"
         | "evaluating"
-        | "task_closure_pending"
-        | "handoff_required" => {
+        | phase::PHASE_TASK_CLOSURE_PENDING
+        | phase::PHASE_HANDOFF_REQUIRED => {
             if plan_path.is_empty() {
                 String::from("Return to the current execution flow for the approved plan.")
             } else {
                 format!("Return to the current execution flow for the approved plan: {plan_path}")
             }
         }
-        "pivot_required" => {
+        phase::PHASE_PIVOT_REQUIRED => {
             if plan_path.is_empty() {
                 String::from("Update and re-approve the plan before continuing execution.")
             } else {
                 format!("Update and re-approve the plan before continuing execution: {plan_path}")
             }
         }
-        "final_review_pending" => {
+        phase::PHASE_FINAL_REVIEW_PENDING => {
             if plan_path.is_empty() {
                 String::from("Use featureforge:requesting-code-review for the final review gate.")
             } else {
@@ -1534,13 +1540,13 @@ fn next_text_for_phase(
                 )
             }
         }
-        "qa_pending" => String::from(
+        phase::PHASE_QA_PENDING => String::from(
             "Run featureforge:qa-only and return with a fresh QA result artifact before branch completion.",
         ),
-        "document_release_pending" => String::from(
+        phase::PHASE_DOCUMENT_RELEASE_PENDING => String::from(
             "Run featureforge:document-release and return with a fresh release-readiness artifact before branch completion.",
         ),
-        "ready_for_branch_completion" => {
+        phase::PHASE_READY_FOR_BRANCH_COMPLETION => {
             String::from("Use featureforge:finishing-a-development-branch.")
         }
         _ => {
@@ -1557,10 +1563,10 @@ fn next_text_for_phase(
 
 fn reason_text(context: &OperatorContext) -> String {
     match context.phase.as_str() {
-        "execution_preflight" => String::from(
+        phase::PHASE_EXECUTION_PREFLIGHT => String::from(
             "The approved plan matches the latest approved spec and preflight is the next safe boundary.",
         ),
-        "implementation_handoff" => context
+        phase::PHASE_IMPLEMENTATION_HANDOFF => context
             .execution_preflight_block_reason
             .clone()
             .unwrap_or_else(|| {
@@ -1568,15 +1574,15 @@ fn reason_text(context: &OperatorContext) -> String {
                     "The approved plan is ready, but execution preflight is still blocked by the current workspace state.",
                 )
             }),
-        "executing" => task_boundary_reason_text(context).unwrap_or_else(|| {
+        phase::PHASE_EXECUTING => task_boundary_reason_text(context).unwrap_or_else(|| {
             String::from(
                 "Execution already started for the approved plan and should continue through the current execution flow.",
             )
         }),
-        "pivot_required" => {
+        phase::PHASE_PIVOT_REQUIRED => {
             String::from("Execution is blocked pending an approved plan revision.")
         }
-        "task_closure_pending" => {
+        phase::PHASE_TASK_CLOSURE_PENDING => {
             task_boundary_reason_text(context).unwrap_or_else(|| {
                 String::from(
                     "Execution already started for the approved plan and should continue through the current execution flow.",
@@ -1587,19 +1593,19 @@ fn reason_text(context: &OperatorContext) -> String {
         | "contract_pending_approval"
         | "contract_approved"
         | "evaluating"
-        | "handoff_required" => String::from(
+        | phase::PHASE_HANDOFF_REQUIRED => String::from(
             "Execution already started for the approved plan and should continue through the current execution flow.",
         ),
-        "final_review_pending" => gate_first_diagnostic_message(context.gate_review.as_ref())
+        phase::PHASE_FINAL_REVIEW_PENDING => gate_first_diagnostic_message(context.gate_review.as_ref())
             .or_else(|| gate_first_diagnostic_message(context.gate_finish.as_ref()))
             .unwrap_or_else(|| {
                 String::from("Execution is blocked on the final review gate for the approved plan.")
             }),
-        "qa_pending" | "document_release_pending" => {
+        phase::PHASE_QA_PENDING | phase::PHASE_DOCUMENT_RELEASE_PENDING => {
             gate_first_diagnostic_message(context.gate_finish.as_ref())
                 .unwrap_or_else(|| context.route.reason.clone())
         }
-        "ready_for_branch_completion" => {
+        phase::PHASE_READY_FOR_BRANCH_COMPLETION => {
             String::from("All required late-stage artifacts are fresh for the current HEAD.")
         }
         _ => context.route.reason.clone(),
@@ -1650,8 +1656,8 @@ fn next_action_for_context(context: &OperatorContext) -> &str {
 }
 
 fn review_requires_execution_reentry(context: &OperatorContext) -> bool {
-    context.phase == "final_review_pending"
-        && context.operator_phase_detail != "final_review_dispatch_required"
+    context.phase == phase::PHASE_FINAL_REVIEW_PENDING
+        && context.operator_phase_detail != phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
         && context
             .gate_review
             .as_ref()
@@ -1664,7 +1670,7 @@ fn task_boundary_reason_text(context: &OperatorContext) -> Option<String> {
         "task_review_dispatch_required" => format!(
             "Task {blocking_task} closure reached a retired task-review dispatch lane. Rerun workflow/operator after repairing runtime routing; normal task closure must use close-current-task."
         ),
-        "task_review_result_pending" => {
+        phase::DETAIL_TASK_REVIEW_RESULT_PENDING => {
             if task_review_result_pending_requires_verification(context) {
                 format!(
                     "Task {blocking_task} closure cannot be recorded/refreshed yet. Run verification and then record task closure for Task {blocking_task}."
@@ -1682,7 +1688,7 @@ fn task_boundary_reason_text(context: &OperatorContext) -> Option<String> {
                 )
             }
         }
-        "task_closure_recording_ready" => {
+        phase::DETAIL_TASK_CLOSURE_RECORDING_READY => {
             if operator_blocking_reason_present(context, "task_closure_baseline_bridge_ready") {
                 format!(
                     "Task {blocking_task} execution replay is already complete enough to refresh closure truth. Record/refresh Task {blocking_task} closure now. Do not reopen the step again."
@@ -1693,7 +1699,7 @@ fn task_boundary_reason_text(context: &OperatorContext) -> Option<String> {
                 )
             }
         }
-        "execution_reentry_required" => {
+        phase::DETAIL_EXECUTION_REENTRY_REQUIRED => {
             if operator_blocking_reason_present(context, "prior_task_review_not_green") {
                 format!(
                     "Task {blocking_task} closure cannot be recorded/refreshed yet because the latest dedicated-independent review is not green. Reenter execution to remediate Task {blocking_task}, then rerun review and record task closure."
@@ -1735,9 +1741,9 @@ fn task_boundary_next_step_text(context: &OperatorContext) -> Option<String> {
 
 fn task_boundary_guidance_applies(context: &OperatorContext) -> bool {
     context.phase == "repairing"
-        || context.phase == "task_closure_pending"
-        || (context.phase == "executing"
-            && context.operator_phase_detail == "execution_reentry_required"
+        || context.phase == phase::PHASE_TASK_CLOSURE_PENDING
+        || (context.phase == phase::PHASE_EXECUTING
+            && context.operator_phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
             && context.operator_blocking_task.is_some())
 }
 
@@ -1871,6 +1877,7 @@ fn optional_text(value: Option<&str>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::command_eligibility::PublicCommandInputKind;
     use crate::workflow::status::WorkflowRoute;
 
     fn task_boundary_context(
@@ -1881,7 +1888,7 @@ mod tests {
         OperatorContext {
             route: WorkflowRoute {
                 schema_version: 3,
-                status: String::from("implementation_ready"),
+                status: String::from(phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
                 next_skill: String::from("featureforge:executing-plans"),
                 spec_path: String::from("docs/featureforge/specs/example.md"),
                 plan_path: String::from("docs/featureforge/plans/example.md"),
@@ -1903,14 +1910,16 @@ mod tests {
             gate_review: None,
             gate_finish: None,
             execution_preflight_block_reason: None,
-            phase: String::from("task_closure_pending"),
-            operator_phase: String::from("task_closure_pending"),
+            phase: String::from(phase::PHASE_TASK_CLOSURE_PENDING),
+            operator_phase: String::from(phase::PHASE_TASK_CLOSURE_PENDING),
             operator_phase_detail: String::from(phase_detail),
             operator_review_state_status: String::from("clean"),
             operator_recording_context: None,
             operator_execution_command_context: None,
             operator_next_action: String::from("wait for external review result"),
             operator_recommended_command: recommended_command.map(str::to_owned),
+            operator_recommended_public_command_argv: None,
+            operator_required_inputs: Vec::new(),
             operator_base_branch: Some(String::from("main")),
             operator_blocking_scope: Some(String::from("task")),
             operator_blocking_task: Some(1),
@@ -1937,8 +1946,8 @@ mod tests {
     fn render_operator_surfaces_public_contract_fields() {
         let rendered = render_operator(WorkflowOperator {
             schema_version: 1,
-            phase: String::from("executing"),
-            phase_detail: String::from("execution_in_progress"),
+            phase: String::from(phase::PHASE_EXECUTING),
+            phase_detail: String::from(phase::DETAIL_EXECUTION_IN_PROGRESS),
             review_state_status: String::from("clean"),
             qa_requirement: Some(String::from("required")),
             finish_review_gate_pass_branch_closure_id: Some(String::from("branch-closure-1")),
@@ -1953,9 +1962,15 @@ mod tests {
                 step_id: Some(2),
             }),
             next_action: String::from("continue execution"),
-            recommended_command: Some(String::from(
-                "featureforge plan execution complete --plan docs/featureforge/plans/sample.md --task 1 --step 2 --source featureforge:executing-plans --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint abcdef",
-            )),
+            recommended_command: None,
+            recommended_public_command_argv: None,
+            required_inputs: vec![PublicCommandInputRequirement {
+                name: String::from("claim"),
+                kind: PublicCommandInputKind::Text,
+                values: Vec::new(),
+                must_exist: false,
+                required_when: None,
+            }],
             base_branch: Some(String::from("main")),
             blocking_scope: Some(String::from("task")),
             blocking_task: Some(1),
@@ -2001,7 +2016,7 @@ mod tests {
     #[test]
     fn task_boundary_reason_text_uses_verification_language_when_verification_is_missing() {
         let context = task_boundary_context(
-            "task_review_result_pending",
+            phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
             &["prior_task_verification_missing"],
             Some(
                 "featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",

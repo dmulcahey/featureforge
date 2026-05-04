@@ -8,7 +8,10 @@ use serde::Serialize;
 
 use crate::cli::plan_execution::StatusArgs;
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::closure_diagnostics::public_task_boundary_decision;
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
+use crate::execution::command_eligibility::PublicCommand;
+use crate::execution::current_closure_projection::project_current_task_closures;
 #[cfg(test)]
 use crate::execution::current_truth::late_stage_stale_unreviewed as shared_late_stage_stale_unreviewed;
 use crate::execution::current_truth::{
@@ -22,7 +25,7 @@ use crate::execution::current_truth::{
     late_stage_review_blocked as shared_late_stage_review_blocked,
     late_stage_review_truth_blocked as shared_late_stage_review_truth_blocked,
     normalized_plan_qa_requirement as shared_normalized_plan_qa_requirement,
-    public_task_boundary_decision, task_review_result_requires_verification_reason_codes,
+    task_review_result_requires_verification_reason_codes,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
     task_scope_stale_review_state_reason_present as shared_task_scope_stale_review_state_reason_present,
 };
@@ -37,11 +40,18 @@ use crate::execution::follow_up::{
 };
 use crate::execution::harness::HarnessPhase;
 #[cfg(test)]
-use crate::execution::next_action::{NextActionDecision, NextActionKind, public_next_action_text};
+use crate::execution::next_action::{
+    NextActionDecision, NextActionKind, compute_next_action_decision, public_next_action_text,
+};
+use crate::execution::phase;
 use crate::execution::reducer::{RuntimeState, reduce_execution_read_scope};
 use crate::execution::router::{
     RouteDecision, project_non_runtime_workflow_routing_state, project_runtime_routing_state,
     required_follow_up_from_route_decision, route_decision_from_routing,
+};
+use crate::execution::stale_target_projection::{
+    ReviewStateStaleClosureProjection, ReviewStateStaleClosureProjectionInputs,
+    project_review_state_stale_unreviewed_closures,
 };
 use crate::execution::state::{
     ExecutionContext, ExecutionReadScope, ExecutionRuntime, GateResult, PlanExecutionStatus,
@@ -49,15 +59,13 @@ use crate::execution::state::{
     apply_shared_routing_projection_to_read_scope_with_routing,
     current_branch_closure_structural_review_state_reason, load_execution_read_scope,
     missing_derived_review_state_fields, qa_pending_requires_test_plan_refresh,
-    shared_repair_review_state_reroute_decision, still_current_task_closure_records,
-    task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
+    shared_repair_review_state_reroute_decision, task_scope_review_state_repair_reason,
+    task_scope_structural_review_state_reason,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
 #[cfg(test)]
-use crate::execution::state::{
-    load_execution_context, load_execution_context_for_exact_plan,
-    resolve_exact_execution_command_from_context,
-};
+use crate::execution::state::{load_execution_context, load_execution_context_for_exact_plan};
+use crate::execution::status::PublicReviewStateTaskClosure;
 use crate::git::discover_slug_identity_and_head;
 use crate::workflow::late_stage_precedence::{
     GateState, LateStageSignals, resolve as resolve_late_stage_precedence,
@@ -68,14 +76,7 @@ use crate::workflow::status::{
     WorkflowRoute, WorkflowRuntime, explicit_plan_override_route as resolve_explicit_plan_override,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ReviewStateTaskClosure {
-    pub task: u32,
-    pub closure_record_id: String,
-    pub reviewed_state_id: String,
-    pub contract_identity: String,
-    pub effective_reviewed_surface_paths: Vec<String>,
-}
+pub type ReviewStateTaskClosure = PublicReviewStateTaskClosure;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReviewStateBranchClosure {
@@ -155,6 +156,8 @@ pub struct ExecutionRoutingState {
     pub recording_context: Option<ExecutionRoutingRecordingContext>,
     pub execution_command_context: Option<ExecutionRoutingExecutionCommandContext>,
     pub next_action: String,
+    #[serde(skip)]
+    pub recommended_public_command: Option<PublicCommand>,
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocking_scope: Option<String>,
@@ -173,6 +176,25 @@ pub struct ExecutionRoutingState {
     pub base_branch: Option<String>,
 }
 
+impl ExecutionRoutingState {
+    pub(crate) fn bind_public_command(
+        &mut self,
+        command: PublicCommand,
+        execution_command_context: Option<ExecutionRoutingExecutionCommandContext>,
+    ) {
+        let recommended_command = command
+            .to_invocation()
+            .map(|_| command.to_display_command());
+        if let Some(route_decision) = self.route_decision.as_mut() {
+            route_decision.bind_public_command(Some(command.clone()));
+            route_decision.execution_command_context = execution_command_context.clone();
+        }
+        self.recommended_command = recommended_command;
+        self.recommended_public_command = Some(command);
+        self.execution_command_context = execution_command_context;
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WorkflowRoutingDecision {
     pub(crate) phase: String,
@@ -181,6 +203,7 @@ pub(crate) struct WorkflowRoutingDecision {
     pub(crate) recording_context: Option<ExecutionRoutingRecordingContext>,
     pub(crate) execution_command_context: Option<ExecutionRoutingExecutionCommandContext>,
     pub(crate) next_action: String,
+    pub(crate) recommended_public_command: Option<PublicCommand>,
     pub(crate) recommended_command: Option<String>,
     pub(crate) blocking_scope: Option<String>,
     pub(crate) blocking_task: Option<u32>,
@@ -254,12 +277,6 @@ fn review_state_snapshot_from_read_scope_with_runtime_state(
     let late_stage_stale_unreviewed = gate_snapshot.late_stage_stale_unreviewed;
     let late_stage_missing_current_closure_public_truth =
         gate_snapshot.missing_current_closure_stale_provenance;
-    let status_reports_stale_unreviewed_closures = !status.stale_unreviewed_closures.is_empty();
-    let late_stage_stale_projection_active = late_stage_stale_unreviewed
-        || late_stage_missing_current_closure_public_truth
-        || (gate_snapshot.branch_closure_tracked_drift
-            && (status.review_state_status != "missing_current_closure"
-                || status_reports_stale_unreviewed_closures));
     let task_scope_stale_unreviewed = task_scope_review_state_is_stale_unreviewed(status);
     let task_scope_structural_reason = task_scope_structural_review_state_reason(status);
     let branch_scope_structural_reason =
@@ -274,19 +291,12 @@ fn review_state_snapshot_from_read_scope_with_runtime_state(
             gate_snapshot.stale_reason_codes.clone(),
         ),
     );
-    let current_task_closures = still_current_task_closure_records(context)?
+    let current_task_closures = project_current_task_closures(context, authoritative_state)?
         .into_iter()
-        .filter(|record| {
+        .filter(|closure| {
             closure_graph
-                .current_task_closure(record.task)
-                .is_none_or(|evaluation| evaluation.identity.record_id == record.closure_record_id)
-        })
-        .map(|record| ReviewStateTaskClosure {
-            task: record.task,
-            closure_record_id: record.closure_record_id,
-            reviewed_state_id: record.reviewed_state_id,
-            contract_identity: record.contract_identity,
-            effective_reviewed_surface_paths: record.effective_reviewed_surface_paths,
+                .current_task_closure(closure.task)
+                .is_none_or(|evaluation| evaluation.identity.record_id == closure.closure_record_id)
         })
         .collect::<Vec<_>>();
     let current_branch_closure = closure_graph.current_branch_closure().map(|evaluation| {
@@ -321,23 +331,16 @@ fn review_state_snapshot_from_read_scope_with_runtime_state(
             .cmp(&closure_graph.superseded_by(right))
             .then(left.cmp(right))
     });
-    let late_stage_stale_unreviewed_closures = if status.stale_unreviewed_closures.is_empty() {
-        closure_graph.stale_unreviewed_record_ids()
-    } else {
-        status.stale_unreviewed_closures.clone()
-    };
-    let reducer_task_stale_record_ids = gate_snapshot.task_stale_record_ids();
-    let stale_unreviewed_closures = if task_scope_structural_reason.is_some() {
-        reducer_task_stale_record_ids.clone()
-    } else if late_stage_stale_projection_active {
-        late_stage_stale_unreviewed_closures
-    } else if branch_scope_structural_reason.is_some() {
-        Vec::new()
-    } else if task_scope_stale_unreviewed {
-        reducer_task_stale_record_ids
-    } else {
-        Vec::new()
-    };
+    let ReviewStateStaleClosureProjection {
+        late_stage_stale_projection_active,
+        stale_unreviewed_closures,
+    } = project_review_state_stale_unreviewed_closures(ReviewStateStaleClosureProjectionInputs {
+        status,
+        gate_snapshot,
+        task_scope_stale_unreviewed,
+        task_scope_structural_reason_present: task_scope_structural_reason.is_some(),
+        branch_scope_structural_reason_present: branch_scope_structural_reason.is_some(),
+    });
     let missing_derived_overlays =
         missing_derived_review_state_fields(authoritative_state, overlay);
     let missing_derived_overlays_present = !missing_derived_overlays.is_empty();
@@ -585,24 +588,6 @@ fn query_workflow_routing_state_internal(
     preloaded_read_scope: Option<&ExecutionReadScope>,
     _require_exact_execution_command: bool,
 ) -> Result<ExecutionRoutingState, JsonFailure> {
-    if let (Some(runtime), Some(plan_override)) = (runtime_override, plan_override) {
-        if let Some(read_scope) = preloaded_read_scope {
-            let (mut routing, _) =
-                project_runtime_routing_state(runtime, read_scope, external_review_result_ready)?;
-            apply_read_surface_invariants_to_routing(&mut routing);
-            return Ok(routing);
-        }
-        let mut read_scope = load_execution_read_scope(runtime, plan_override, true)?;
-        let (mut routing, _) = apply_shared_routing_projection_to_read_scope_with_routing(
-            &mut read_scope,
-            external_review_result_ready,
-            false,
-        )?;
-        routing.execution_status = Some(read_scope.status);
-        apply_read_surface_invariants_to_routing(&mut routing);
-        return Ok(routing);
-    }
-
     let (fallback_identity, fallback_head_sha) = discover_slug_identity_and_head(current_dir);
     let workflow = if let Some(runtime) = runtime_override {
         WorkflowRuntime::discover_read_only_for_state_dir(&runtime.repo_root, &runtime.state_dir)
@@ -635,8 +620,12 @@ fn query_workflow_routing_state_internal(
         route = explicit_route_for_plan_override(&workflow, &route, plan_override)?;
     }
     let explicit_plan_query = plan_override.is_some();
+    let engineering_approval_fidelity_blocked =
+        route_is_engineering_approval_fidelity_blocked(&route);
     let should_load_execution_state = !route.plan_path.is_empty()
-        && (route.status == "implementation_ready" || explicit_plan_query);
+        && (route.status == phase::WORKFLOW_STATUS_IMPLEMENTATION_READY
+            || explicit_plan_query
+            || engineering_approval_fidelity_blocked);
     if should_load_execution_state {
         let runtime = runtime_override
             .cloned()
@@ -644,6 +633,20 @@ fn query_workflow_routing_state_internal(
         if let Some(read_scope) = preloaded_read_scope {
             let (mut routing, _) =
                 project_runtime_routing_state(&runtime, read_scope, external_review_result_ready)?;
+            if engineering_approval_fidelity_blocked
+                && projected_runtime_route_is_before_execution_entry(&routing)
+            {
+                let (routing, _) = project_non_runtime_workflow_routing_state(
+                    route,
+                    external_review_result_ready,
+                )?;
+                return Ok(routing);
+            }
+            if route.status == phase::WORKFLOW_STATUS_IMPLEMENTATION_READY
+                || engineering_approval_fidelity_blocked
+            {
+                routing.route = route;
+            }
             apply_read_surface_invariants_to_routing(&mut routing);
             return Ok(routing);
         }
@@ -658,6 +661,18 @@ fn query_workflow_routing_state_internal(
             false,
         )?;
         routing.execution_status = Some(read_scope.status);
+        if engineering_approval_fidelity_blocked
+            && projected_runtime_route_is_before_execution_entry(&routing)
+        {
+            let (routing, _) =
+                project_non_runtime_workflow_routing_state(route, external_review_result_ready)?;
+            return Ok(routing);
+        }
+        if route.status == phase::WORKFLOW_STATUS_IMPLEMENTATION_READY
+            || engineering_approval_fidelity_blocked
+        {
+            routing.route = route;
+        }
         apply_read_surface_invariants_to_routing(&mut routing);
         return Ok(routing);
     }
@@ -713,6 +728,9 @@ fn sync_routing_surface_from_status(
     });
     routing.next_action.clone_from(&status.next_action);
     routing
+        .recommended_public_command
+        .clone_from(&status.recommended_public_command);
+    routing
         .recommended_command
         .clone_from(&status.recommended_command);
     routing.blocking_scope.clone_from(&status.blocking_scope);
@@ -730,25 +748,25 @@ pub(crate) fn default_phase_for_status(status: &PlanExecutionStatus) -> String {
         status.harness_phase,
         HarnessPhase::ContractDrafting | HarnessPhase::PivotRequired
     ) {
-        String::from("pivot_required")
+        String::from(phase::PHASE_PIVOT_REQUIRED)
     } else if status.harness_phase == HarnessPhase::HandoffRequired
-        || (status.phase_detail == "execution_in_progress"
+        || (status.phase_detail == phase::DETAIL_EXECUTION_IN_PROGRESS
             && status.execution_command_context.is_some())
     {
-        String::from("handoff_required")
+        String::from(phase::PHASE_HANDOFF_REQUIRED)
     } else if (status.harness_phase == HarnessPhase::Executing
         && matches!(
             status.phase_detail.as_str(),
-            "handoff_recording_required"
-                | "planning_reentry_required"
-                | "execution_reentry_required"
+            phase::DETAIL_HANDOFF_RECORDING_REQUIRED
+                | phase::DETAIL_PLANNING_REENTRY_REQUIRED
+                | phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         ))
         || (status.execution_started == "yes"
-            && status.phase_detail == "execution_in_progress"
+            && status.phase_detail == phase::DETAIL_EXECUTION_IN_PROGRESS
             && status.execution_command_context.is_none())
     {
-        String::from("executing")
-    } else if status.phase_detail == "execution_preflight_required"
+        String::from(phase::PHASE_EXECUTING)
+    } else if status.phase_detail == phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED
         && status.harness_phase != HarnessPhase::ExecutionPreflight
     {
         status.harness_phase.to_string()
@@ -765,43 +783,57 @@ pub(crate) fn canonical_phase_for_shared_decision(
     phase_detail: &str,
 ) -> String {
     match phase_detail {
-        "task_review_result_pending" | "task_closure_recording_ready" => {
-            String::from("task_closure_pending")
+        phase::DETAIL_TASK_REVIEW_RESULT_PENDING | phase::DETAIL_TASK_CLOSURE_RECORDING_READY => {
+            String::from(phase::PHASE_TASK_CLOSURE_PENDING)
         }
-        "branch_closure_recording_required_for_release_readiness"
-        | "release_readiness_recording_ready"
-        | "release_blocker_resolution_required" => String::from("document_release_pending"),
-        "final_review_dispatch_required" if default_phase == "document_release_pending" => {
-            String::from("document_release_pending")
+        phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
+        | phase::DETAIL_RELEASE_READINESS_RECORDING_READY
+        | phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => {
+            String::from(phase::PHASE_DOCUMENT_RELEASE_PENDING)
         }
-        "final_review_dispatch_required"
-        | "final_review_outcome_pending"
-        | "final_review_recording_ready" => String::from("final_review_pending"),
-        "qa_recording_required" | "test_plan_refresh_required" => String::from("qa_pending"),
-        "finish_review_gate_ready" | "finish_completion_gate_ready" => {
-            String::from("ready_for_branch_completion")
+        phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+            if default_phase == phase::PHASE_DOCUMENT_RELEASE_PENDING =>
+        {
+            String::from(phase::PHASE_DOCUMENT_RELEASE_PENDING)
         }
-        "execution_preflight_required" => {
-            if matches!(default_phase, "pivot_required" | "handoff_required") {
+        phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+        | phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
+        | phase::DETAIL_FINAL_REVIEW_RECORDING_READY => {
+            String::from(phase::PHASE_FINAL_REVIEW_PENDING)
+        }
+        phase::DETAIL_QA_RECORDING_REQUIRED | phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED => {
+            String::from(phase::PHASE_QA_PENDING)
+        }
+        phase::DETAIL_FINISH_REVIEW_GATE_READY | phase::DETAIL_FINISH_COMPLETION_GATE_READY => {
+            String::from(phase::PHASE_READY_FOR_BRANCH_COMPLETION)
+        }
+        phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED => {
+            if matches!(
+                default_phase,
+                phase::PHASE_PIVOT_REQUIRED | phase::PHASE_HANDOFF_REQUIRED
+            ) {
                 default_phase.to_owned()
             } else {
-                String::from("execution_preflight")
+                String::from(phase::PHASE_EXECUTION_PREFLIGHT)
             }
         }
-        "execution_reentry_required" => String::from("executing"),
-        "execution_in_progress" => {
-            if matches!(default_phase, "execution_preflight" | "handoff_required") {
+        phase::DETAIL_EXECUTION_REENTRY_REQUIRED => String::from(phase::PHASE_EXECUTING),
+        phase::DETAIL_EXECUTION_IN_PROGRESS => {
+            if matches!(
+                default_phase,
+                phase::PHASE_EXECUTION_PREFLIGHT | phase::PHASE_HANDOFF_REQUIRED
+            ) {
                 default_phase.to_owned()
             } else {
-                String::from("executing")
+                String::from(phase::PHASE_EXECUTING)
             }
         }
-        "planning_reentry_required" => String::from("pivot_required"),
-        "handoff_recording_required" => {
-            if default_phase == "executing" {
-                String::from("executing")
+        phase::DETAIL_PLANNING_REENTRY_REQUIRED => String::from(phase::PHASE_PIVOT_REQUIRED),
+        phase::DETAIL_HANDOFF_RECORDING_REQUIRED => {
+            if default_phase == phase::PHASE_EXECUTING {
+                String::from(phase::PHASE_EXECUTING)
             } else {
-                String::from("handoff_required")
+                String::from(phase::PHASE_HANDOFF_REQUIRED)
             }
         }
         _ => default_phase.to_owned(),
@@ -815,27 +847,39 @@ pub(crate) fn blocking_scope_for_phase_detail(
     review_state_status: &str,
 ) -> Option<String> {
     let scope = match phase_detail {
-        "task_review_result_pending" | "task_closure_recording_ready" => Some("task"),
-        "branch_closure_recording_required_for_release_readiness"
-        | "release_readiness_recording_ready"
-        | "release_blocker_resolution_required"
-        | "final_review_dispatch_required"
-        | "final_review_outcome_pending"
-        | "final_review_recording_ready"
-        | "qa_recording_required"
-        | "test_plan_refresh_required"
-        | "finish_review_gate_ready"
-        | "finish_completion_gate_ready" => Some("branch"),
-        "planning_reentry_required" => Some("workflow"),
-        "handoff_recording_required" => {
+        phase::DETAIL_TASK_REVIEW_RESULT_PENDING | phase::DETAIL_TASK_CLOSURE_RECORDING_READY => {
+            Some("task")
+        }
+        phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
+        | phase::DETAIL_RELEASE_READINESS_RECORDING_READY
+        | phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED
+        | phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+        | phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
+        | phase::DETAIL_FINAL_REVIEW_RECORDING_READY
+        | phase::DETAIL_QA_RECORDING_REQUIRED
+        | phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED
+        | phase::DETAIL_FINISH_REVIEW_GATE_READY
+        | phase::DETAIL_FINISH_COMPLETION_GATE_READY => Some("branch"),
+        phase::DETAIL_PLANNING_REENTRY_REQUIRED => Some("workflow"),
+        phase::DETAIL_HANDOFF_RECORDING_REQUIRED => {
             if blocking_task.is_some() {
                 Some("task")
             } else {
                 Some("workflow")
             }
         }
-        "execution_reentry_required" => {
-            if matches!(
+        phase::DETAIL_EXECUTION_REENTRY_REQUIRED => {
+            if review_state_status == "stale_unreviewed"
+                && let Some(task) = blocking_task
+                && status.is_some_and(|status| status_has_task_blocking_record(status, task))
+            {
+                Some("task")
+            } else if review_state_status == "stale_unreviewed"
+                && blocking_task.is_some()
+                && status.is_some_and(|status| !status.stale_unreviewed_closures.is_empty())
+            {
+                Some("task")
+            } else if matches!(
                 review_state_status,
                 "missing_current_closure" | "stale_unreviewed"
             ) || status.is_some_and(|status| {
@@ -854,6 +898,24 @@ pub(crate) fn blocking_scope_for_phase_detail(
     scope.map(str::to_owned)
 }
 
+fn status_has_task_blocking_record(status: &PlanExecutionStatus, task: u32) -> bool {
+    status.blocking_records.iter().any(|record| {
+        record.scope_type == "task"
+            && record
+                .scope_key
+                .strip_prefix("task-")
+                .and_then(|raw| {
+                    let digits = raw
+                        .chars()
+                        .take_while(|character| character.is_ascii_digit())
+                        .collect::<String>();
+                    (!digits.is_empty()).then_some(digits)
+                })
+                .and_then(|digits| digits.parse::<u32>().ok())
+                == Some(task)
+    })
+}
+
 pub(crate) fn external_wait_state_for_phase_detail(
     phase_detail: &str,
     blocking_reason_codes: &[String],
@@ -863,14 +925,16 @@ pub(crate) fn external_wait_state_for_phase_detail(
         return None;
     }
     match phase_detail {
-        "task_review_result_pending"
+        phase::DETAIL_TASK_REVIEW_RESULT_PENDING
             if !task_review_result_requires_verification(
                 blocking_reason_codes.iter().map(String::as_str),
             ) =>
         {
             Some(String::from("waiting_for_external_review_result"))
         }
-        "final_review_outcome_pending" => Some(String::from("waiting_for_external_review_result")),
+        phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING => {
+            Some(String::from("waiting_for_external_review_result"))
+        }
         _ => None,
     }
 }
@@ -896,16 +960,16 @@ pub(crate) fn compact_operator_reason_codes(
     if let Some(status) = status {
         if matches!(
             phase_detail,
-            "task_closure_recording_ready"
-                | "task_review_result_pending"
-                | "execution_reentry_required"
+            phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+                | phase::DETAIL_TASK_REVIEW_RESULT_PENDING
+                | phase::DETAIL_EXECUTION_REENTRY_REQUIRED
         ) {
             let boundary_decision = public_task_boundary_decision(status);
             for code in boundary_decision.public_reason_codes {
                 push_unique_reason(&mut reason_codes, &code);
             }
         }
-        if phase_detail == "task_closure_recording_ready"
+        if phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
             && status.blocking_task.is_some()
             && status.blocking_step.is_none()
             && status.active_task.is_none()
@@ -915,7 +979,7 @@ pub(crate) fn compact_operator_reason_codes(
         {
             push_unique_reason(&mut reason_codes, "task_closure_baseline_repair_candidate");
         }
-        if phase_detail == "execution_reentry_required" {
+        if phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED {
             for code in [
                 "prior_task_current_closure_invalid",
                 "prior_task_current_closure_reviewed_state_malformed",
@@ -932,8 +996,11 @@ pub(crate) fn compact_operator_reason_codes(
                 }
             }
         }
-        if phase_detail == "final_review_dispatch_required" {
-            push_unique_reason(&mut reason_codes, "final_review_dispatch_required");
+        if phase_detail == phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED {
+            push_unique_reason(
+                &mut reason_codes,
+                phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED,
+            );
         }
         if status
             .reason_codes
@@ -979,10 +1046,10 @@ pub(crate) fn late_stage_observability_for_phase(
 ) -> (String, Vec<String>) {
     if !matches!(
         phase,
-        "document_release_pending"
-            | "final_review_pending"
-            | "qa_pending"
-            | "ready_for_branch_completion"
+        phase::PHASE_DOCUMENT_RELEASE_PENDING
+            | phase::PHASE_FINAL_REVIEW_PENDING
+            | phase::PHASE_QA_PENDING
+            | phase::PHASE_READY_FOR_BRANCH_COMPLETION
     ) {
         return (String::new(), Vec::new());
     }
@@ -1034,10 +1101,10 @@ fn late_stage_repair_review_state_status(
 ) -> Option<&'static str> {
     if !matches!(
         workflow_phase,
-        "document_release_pending"
-            | "final_review_pending"
-            | "qa_pending"
-            | "ready_for_branch_completion"
+        phase::PHASE_DOCUMENT_RELEASE_PENDING
+            | phase::PHASE_FINAL_REVIEW_PENDING
+            | phase::PHASE_QA_PENDING
+            | phase::PHASE_READY_FOR_BRANCH_COMPLETION
     ) {
         return None;
     }
@@ -1073,6 +1140,19 @@ fn explicit_route_for_plan_override(
         .map_err(JsonFailure::from)
 }
 
+fn route_is_engineering_approval_fidelity_blocked(route: &WorkflowRoute) -> bool {
+    route.status == "plan_review_required"
+        && route.next_skill == "featureforge:plan-eng-review"
+        && route
+            .reason_codes
+            .iter()
+            .any(|code| code.starts_with("engineering_approval_"))
+}
+
+fn projected_runtime_route_is_before_execution_entry(routing: &ExecutionRoutingState) -> bool {
+    routing.phase_detail == phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED
+}
+
 fn task_scope_review_state_is_stale_unreviewed(status: &PlanExecutionStatus) -> bool {
     shared_task_scope_stale_review_state_reason_present(task_scope_review_state_repair_reason(
         status,
@@ -1099,15 +1179,22 @@ fn required_execution_command_for_routing(
     } else {
         load_execution_context(&runtime, &plan_path_buf)?
     };
-    let resolved = resolve_exact_execution_command_from_context(&context, status, plan_path)
+    let decision = compute_next_action_decision(&context, status, plan_path)
+        .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
+    let command = decision
+        .recommended_public_command
+        .as_ref()
+        .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
+    let request = command
+        .to_mutation_request()
         .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
     Ok((
         ExecutionRoutingExecutionCommandContext {
-            command_kind: String::from(resolved.command_kind),
-            task_number: Some(resolved.task_number),
-            step_id: resolved.step_id,
+            command_kind: request.command_name.to_owned(),
+            task_number: request.task,
+            step_id: request.step,
         },
-        resolved.recommended_command,
+        command.to_display_command(),
     ))
 }
 
@@ -1214,8 +1301,8 @@ mod routing_helper_tests {
             preflight: None,
             gate_review: None,
             gate_finish: None,
-            workflow_phase: String::from("executing"),
-            phase: String::from("task_closure_pending"),
+            workflow_phase: String::from(phase::PHASE_EXECUTING),
+            phase: String::from(phase::PHASE_TASK_CLOSURE_PENDING),
             phase_detail: phase_detail.to_owned(),
             review_state_status: String::from("clean"),
             qa_requirement: None,
@@ -1223,6 +1310,7 @@ mod routing_helper_tests {
             recording_context: None,
             execution_command_context: None,
             next_action: String::new(),
+            recommended_public_command: None,
             recommended_command: None,
             blocking_scope: Some(String::from("task")),
             blocking_task: Some(1),
@@ -1298,10 +1386,13 @@ mod routing_helper_tests {
     #[test]
     fn required_follow_up_from_routing_keeps_non_green_review_in_execution_reentry_lane() {
         let routing = routing_state_for_follow_up(
-            "execution_reentry_required",
+            phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
             vec![String::from("prior_task_review_not_green")],
         );
         let routing = ExecutionRoutingState {
+            recommended_public_command: Some(PublicCommand::RepairReviewState {
+                plan: String::from("<approved-plan-path>"),
+            }),
             recommended_command: Some(String::from(
                 "featureforge plan execution repair-review-state --plan <approved-plan-path>",
             )),
@@ -1316,7 +1407,7 @@ mod routing_helper_tests {
     #[test]
     fn required_follow_up_from_routing_requires_verification_for_verification_blockers() {
         let routing = routing_state_for_follow_up(
-            "task_review_result_pending",
+            phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
             vec![String::from("prior_task_verification_missing")],
         );
         assert_eq!(
@@ -1328,7 +1419,7 @@ mod routing_helper_tests {
     #[test]
     fn verification_blockers_align_task_review_pending_follow_up_with_public_next_action() {
         let routing = routing_state_for_follow_up(
-            "task_review_result_pending",
+            phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
             vec![String::from("prior_task_verification_missing_legacy")],
         );
         assert_eq!(
@@ -1337,14 +1428,14 @@ mod routing_helper_tests {
         );
         let decision = NextActionDecision {
             kind: NextActionKind::WaitForTaskReviewResult,
-            phase: String::from("task_closure_pending"),
-            phase_detail: String::from("task_review_result_pending"),
+            phase: String::from(phase::PHASE_TASK_CLOSURE_PENDING),
+            phase_detail: String::from(phase::DETAIL_TASK_REVIEW_RESULT_PENDING),
             review_state_status: String::from("clean"),
             task_number: Some(1),
             step_number: None,
             blocking_task: Some(1),
             blocking_reason_codes: routing.blocking_reason_codes.clone(),
-            recommended_command: None,
+            recommended_public_command: None,
         };
         assert_eq!(public_next_action_text(&decision), "run verification");
     }
@@ -1353,7 +1444,7 @@ mod routing_helper_tests {
     fn external_wait_state_omits_external_review_wait_for_verification_blockers() {
         assert_eq!(
             external_wait_state_for_phase_detail(
-                "task_review_result_pending",
+                phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
                 &[String::from("prior_task_verification_missing")],
                 false,
             ),
@@ -1361,7 +1452,7 @@ mod routing_helper_tests {
         );
         assert_eq!(
             external_wait_state_for_phase_detail(
-                "task_review_result_pending",
+                phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
                 &[String::from("prior_task_review_not_green")],
                 false,
             )
@@ -1375,7 +1466,7 @@ mod routing_helper_tests {
         let (_repo_dir, _runtime, context, plan_rel) = unresolved_execution_context();
         let mut status = unresolved_status();
         status.execution_started = String::from("yes");
-        status.phase_detail = String::from("task_closure_recording_ready");
+        status.phase_detail = String::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY);
         status.blocking_task = Some(1);
         status.blocking_step = None;
         status.reason_codes = vec![
@@ -1400,7 +1491,10 @@ mod routing_helper_tests {
         .expect("routing derivation should succeed")
         .expect("diagnostic verification blockers should still produce a routing decision");
 
-        assert_ne!(routing.phase_detail, "task_review_result_pending");
+        assert_ne!(
+            routing.phase_detail,
+            phase::DETAIL_TASK_REVIEW_RESULT_PENDING
+        );
         assert_ne!(routing.next_action, "run verification");
     }
 
@@ -1411,7 +1505,7 @@ mod routing_helper_tests {
 
         assert!(
             late_stage_repair_review_state_status(
-                "final_review_pending",
+                phase::PHASE_FINAL_REVIEW_PENDING,
                 Some(&status),
                 None,
                 None,
@@ -1430,7 +1524,7 @@ mod routing_helper_tests {
 
         assert_eq!(
             late_stage_repair_review_state_status(
-                "final_review_pending",
+                phase::PHASE_FINAL_REVIEW_PENDING,
                 Some(&status),
                 None,
                 None,
@@ -1490,7 +1584,7 @@ mirror **Generated By:** featureforge:workflow-record-pivot\n",
             branch_name: &context.runtime.branch_name,
             plan_path: &plan_rel,
             head_sha: Some(&head_sha),
-            workflow_phase: Some("pivot_required"),
+            workflow_phase: Some(phase::PHASE_PIVOT_REQUIRED),
             harness_phase: None,
             handoff_required: false,
             handoff_decision_scope: None,
