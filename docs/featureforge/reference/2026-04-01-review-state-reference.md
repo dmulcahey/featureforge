@@ -54,19 +54,31 @@ The reviewed-closure runtime should expose a small preferred aggregate command l
 
 The authoritative public workflow query surface is:
 
-- `featureforge workflow operator --plan <path>`
-- `featureforge workflow operator --plan <path> --external-review-result-ready` when the caller already has the external task-review or final-review result in hand and needs workflow/operator to surface the matching recording-ready substate
+- `$_FEATUREFORGE_BIN workflow operator --plan <path>`
+- `$_FEATUREFORGE_BIN workflow operator --plan <path> --external-review-result-ready` when the caller already has the external task-review or final-review result in hand and needs workflow/operator to surface the matching recording-ready substate
 
-`featureforge plan execution status --plan <path>` is a supporting diagnostic surface. It must consume the same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `required_inputs`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`. Any disagreement is a runtime bug. `recommended_command` is display-only compatibility text; `recommended_public_command_argv` is the exact machine-invocation representation when present.
+For live FeatureForge-on-FeatureForge work, those commands run through the
+installed control plane: `~/.featureforge/install/bin/featureforge` plus
+installed skills from `~/.featureforge/install/skills`. Workspace binaries such
+as `./bin/featureforge`, `target/debug/featureforge`, or `cargo run -- ...` are
+test subjects only and must use isolated temp/fixture state. Workspace skills
+under `<repo>/skills/*` are generated artifacts, not active instruction roots.
+
+`$_FEATUREFORGE_BIN plan execution status --plan <path>` is a supporting diagnostic surface. It must consume the same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `required_inputs`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`. Any disagreement is a runtime bug. `recommended_command` is display-only compatibility text; `recommended_public_command_argv` is the exact machine-invocation representation when present.
 
 Parity checks must use matching routing inputs. Compare `status --plan <path>` to `workflow operator --plan <path>` for baseline parity, and compare `status --plan <path> --external-review-result-ready` to `workflow operator --plan <path> --external-review-result-ready` when asserting external-review-result-ready recording routes.
 
 Explicit usage rule:
 
-- agents SHOULD run `featureforge workflow operator --plan <path>` first for normal routing
-- agents SHOULD run `featureforge plan execution status --plan <path>` only when deeper diagnostics are needed
-- when workflow/operator reports stale or missing closure context, agents SHOULD NOT invent a repair command; if `recommended_public_command_argv` is present, invoke it exactly, if argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic, otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan <path>` only when the non-diagnostic route owns that repair lane
+- agents SHOULD run `$_FEATUREFORGE_BIN workflow operator --plan <path>` first for normal routing
+- agents SHOULD run `$_FEATUREFORGE_BIN plan execution status --plan <path>` only when deeper diagnostics are needed
+- when workflow/operator reports stale or missing closure context, agents SHOULD NOT invent a repair command; if `recommended_public_command_argv` is present, invoke it exactly except for installed-control-plane rebinding (`featureforge` argv[0] executes as `~/.featureforge/install/bin/featureforge`), if argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic, otherwise satisfy `required_inputs` or run `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <path>` only when the non-diagnostic route owns that repair lane
 - after `repair-review-state`, the command’s own `recommended_public_command_argv` is authoritative for the immediate reroute when present; if argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, rerun the route owner, and do not shell-parse or whitespace-split `recommended_command`
+
+Agents can inspect the active runtime/skill boundary with
+`featureforge doctor self-hosting --json`. Workspace-runtime live mutation is
+blocked by default; `FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION=1` is
+an explicit, auditable override that should almost never be used.
 
 When workflow/operator returns a recording-ready substate, it must surface only the runtime-known ids the current recommended command still needs directly, plus any documented transparency-only identifiers that remain exposed:
 
@@ -87,23 +99,23 @@ When workflow/operator reports `phase=qa_pending` with `phase_detail=test_plan_r
 
 - `next_action` becomes `refresh test plan`
 - `recommended_public_command_argv` and `recommended_command` remain omitted until the current-branch test-plan artifact is refreshed
-- the agent must route through `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before rerunning `featureforge workflow operator --plan <path>` or invoking `advance-late-stage`
+- the agent must route through `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before rerunning `$_FEATUREFORGE_BIN workflow operator --plan <path>` or invoking `advance-late-stage`
 
 The command strings in this table that contain placeholders are input shapes only. Runtime output must use `recommended_public_command_argv` only for fully bound argv; otherwise it exposes `required_inputs` and the caller reruns the route owner after supplying them.
 
 | operator intent | preferred aggregate command or input shape | lower-level primitive or service boundary |
 | --- | --- | --- |
-| request task review | request external review, rerun `featureforge workflow operator --plan <path> --external-review-result-ready`, then follow operator-reported recording-ready closure command | `ReviewDispatchService` compatibility/debug boundary only |
-| close reviewed task work | `featureforge plan execution close-current-task --plan <path> --task <n> --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` | `TaskClosureRecordingService` internal boundary only; not a first-slice public CLI fallback |
-| repair review-state truth | `featureforge plan execution repair-review-state --plan <path>` | internal diagnostic boundaries only; normal-path guidance stays on operator + repair |
-| record missing reviewed branch closure | `featureforge plan execution advance-late-stage --plan <path>` | internal late-stage recording boundary only |
-| record release-readiness after branch closure is current | `featureforge plan execution advance-late-stage --plan <path> --result ready|blocked --summary-file <path>` | internal late-stage recording boundary only |
-| request final review | request external final review, rerun `featureforge workflow operator --plan <path> --external-review-result-ready`, then follow operator-reported recording-ready late-stage command | `ReviewDispatchService` compatibility/debug boundary only |
-| record final-review outcome after dispatch is current and the same branch closure already has a current release-readiness result `ready` | `featureforge plan execution advance-late-stage --plan <path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>` | internal late-stage recording boundary only |
-| record QA outcome once current branch closure, current release-readiness result `ready`, and current final-review result `pass` are already current for the same branch closure and `QA Requirement: required` | `featureforge plan execution advance-late-stage --plan <path> --result pass|fail --summary-file <path>` | internal late-stage recording boundary only |
-| refresh the current-branch test plan before QA recording when workflow/operator stays in `qa_pending` with `phase_detail=test_plan_refresh_required` | `featureforge:plan-eng-review`, then rerun `featureforge workflow operator --plan <path>` | current-branch test-plan regeneration lane |
-| record required handoff | `featureforge plan execution transfer --plan <path> --scope <task|branch> --to <owner> --reason <reason>` | execution transfer surface |
-| record required pivot | `featureforge plan execution repair-review-state --plan <path>` | pivot reentry remains aggregated behind repair-review-state |
+| request task review | request external review, rerun `$_FEATUREFORGE_BIN workflow operator --plan <path> --external-review-result-ready`, then follow operator-reported recording-ready closure command | `ReviewDispatchService` compatibility/debug boundary only |
+| close reviewed task work | `$_FEATUREFORGE_BIN plan execution close-current-task --plan <path> --task <n> --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` | `TaskClosureRecordingService` internal boundary only; not a first-slice public CLI fallback |
+| repair review-state truth | `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <path>` | internal diagnostic boundaries only; normal-path guidance stays on operator + repair |
+| record missing reviewed branch closure | `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <path>` | internal late-stage recording boundary only |
+| record release-readiness after branch closure is current | `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <path> --result ready|blocked --summary-file <path>` | internal late-stage recording boundary only |
+| request final review | request external final review, rerun `$_FEATUREFORGE_BIN workflow operator --plan <path> --external-review-result-ready`, then follow operator-reported recording-ready late-stage command | `ReviewDispatchService` compatibility/debug boundary only |
+| record final-review outcome after dispatch is current and the same branch closure already has a current release-readiness result `ready` | `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>` | internal late-stage recording boundary only |
+| record QA outcome once current branch closure, current release-readiness result `ready`, and current final-review result `pass` are already current for the same branch closure and `QA Requirement: required` | `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <path> --result pass|fail --summary-file <path>` | internal late-stage recording boundary only |
+| refresh the current-branch test plan before QA recording when workflow/operator stays in `qa_pending` with `phase_detail=test_plan_refresh_required` | `featureforge:plan-eng-review`, then rerun `$_FEATUREFORGE_BIN workflow operator --plan <path>` | current-branch test-plan regeneration lane |
+| record required handoff | `$_FEATUREFORGE_BIN plan execution transfer --plan <path> --scope <task|branch> --to <owner> --reason <reason>` | execution transfer surface |
+| record required pivot | `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <path>` | pivot reentry remains aggregated behind repair-review-state |
 
 ## Status Vocabulary
 
@@ -198,20 +210,20 @@ Markdown outputs can still exist, but they are generated from authoritative reco
 
 ### Late-Stage Branch Flow
 
-1. `featureforge plan execution advance-late-stage --plan <path>` records or refreshes the current reviewed branch closure when workflow/operator routes to the branch-closure lane.
+1. `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <path>` records or refreshes the current reviewed branch closure when workflow/operator routes to the branch-closure lane.
 2. Release-readiness is recorded.
 3. External final review is requested when workflow/operator reports `phase_detail=final_review_dispatch_required`.
 4. Final review is recorded independently only after the same branch closure already has a current release-readiness result `ready` and workflow/operator reports `phase_detail=final_review_recording_ready`.
 5. If `QA Requirement: required`, workflow/operator may first route to `qa_pending` with `phase_detail=test_plan_refresh_required`; in that lane the agent must reroute through `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before any QA recording attempt.
-6. Once workflow/operator reports `qa_pending` with `phase_detail=qa_recording_required`, QA is recorded through `featureforge plan execution advance-late-stage --plan <path> --result pass|fail --summary-file <path>` only after current branch closure, current release-readiness result `ready`, and current final-review result `pass` all exist for the same branch closure.
-7. If another change lands, late-stage milestones become stale until `featureforge plan execution repair-review-state --plan <path>` reroutes either to execution reentry or, when drift is confined to `Late-Stage Surface`, back to `featureforge plan execution advance-late-stage --plan <path>`.
+6. Once workflow/operator reports `qa_pending` with `phase_detail=qa_recording_required`, QA is recorded through `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <path> --result pass|fail --summary-file <path>` only after current branch closure, current release-readiness result `ready`, and current final-review result `pass` all exist for the same branch closure.
+7. If another change lands, late-stage milestones become stale until `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <path>` reroutes either to execution reentry or, when drift is confined to `Late-Stage Surface`, back to `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <path>`.
 
 ## Workflow Contract Summary
 
 The public workflow contract should be read like this:
 
-- `featureforge workflow operator --plan <path>` is the authoritative public query surface
-- `featureforge plan execution status --plan <path>` is a supporting status/detail surface, not a second routing authority
+- `$_FEATUREFORGE_BIN workflow operator --plan <path>` is the authoritative public query surface
+- `$_FEATUREFORGE_BIN plan execution status --plan <path>` is a supporting status/detail surface, not a second routing authority
 - `phase` says where the workflow is
 - `phase_detail` says which substate inside the phase is active
 - `review_state_status` says whether current reviewed state is usable

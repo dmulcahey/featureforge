@@ -4,7 +4,7 @@ use std::process::Command;
 use featureforge::execution::state::ExecutionRuntime;
 use serde_json::Value;
 
-use crate::process_support::run;
+use crate::process_support::{assert_workspace_runtime_uses_temp_state, run};
 
 pub fn discover_execution_runtime(
     repo: &Path,
@@ -37,6 +37,7 @@ pub fn run_featureforge_json_real_cli(
     args: &[&str],
     context: &str,
 ) -> Value {
+    assert_workspace_runtime_uses_temp_state(Some(repo), Some(state_dir), None, false, context);
     let mut command = Command::new(env!("CARGO_BIN_EXE_featureforge"));
     command
         .current_dir(repo)

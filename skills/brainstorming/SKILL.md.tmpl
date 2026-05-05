@@ -166,7 +166,7 @@ digraph brainstorming {
 Before writing or updating the spec file on disk, run the shared repo-safety preflight for the exact spec-writing scope:
 
 ```bash
-featureforge repo-safety check --intent write --stage featureforge:brainstorming --task-id <current-spec-write> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:brainstorming --task-id <current-spec-write> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write
 ```
 
 - If the helper returns `allowed`, continue with the spec write.
@@ -174,8 +174,8 @@ featureforge repo-safety check --intent write --stage featureforge:brainstorming
 - If the user explicitly approves writing this spec on the current protected branch, approve the full protected-branch task scope you intend to use, including the spec path and any follow-on git targets that are part of the same task slice:
 
 ```bash
-featureforge repo-safety approve --stage featureforge:brainstorming --task-id <current-spec-write> --reason "<explicit user approval>" --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write [--write-target git-commit]
-featureforge repo-safety check --intent write --stage featureforge:brainstorming --task-id <current-spec-write> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write [--write-target git-commit]
+$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:brainstorming --task-id <current-spec-write> --reason "<explicit user approval>" --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write [--write-target git-commit]
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:brainstorming --task-id <current-spec-write> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write [--write-target git-commit]
 ```
 
 - Continue only if the re-check returns `allowed`.

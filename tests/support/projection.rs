@@ -80,6 +80,51 @@ pub fn normalize_state_dir_projection_paths_for_parity(value: &mut Value) {
     }
 }
 
+pub fn normalize_runtime_provenance_paths_for_parity(value: &mut Value) {
+    let Some(runtime_provenance) = value
+        .get_mut("runtime_provenance")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    for field in [
+        "repo_root",
+        "state_dir",
+        "installed_skill_root",
+        "workspace_skill_root",
+    ] {
+        if runtime_provenance.contains_key(field) {
+            runtime_provenance.insert(field.to_owned(), Value::String(String::from("<PATH>")));
+        }
+    }
+    let Some(skill_discovery) = runtime_provenance
+        .get_mut("skill_discovery")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    for field in ["installed_skill_root", "workspace_skill_root"] {
+        if skill_discovery.contains_key(field) {
+            skill_discovery.insert(field.to_owned(), Value::String(String::from("<PATH>")));
+        }
+    }
+    if let Some(active_roots) = skill_discovery
+        .get_mut("active_roots")
+        .and_then(Value::as_array_mut)
+    {
+        for root in active_roots {
+            let Some(root_object) = root.as_object_mut() else {
+                continue;
+            };
+            for field in ["configured_path", "resolved_path"] {
+                if root_object.contains_key(field) {
+                    root_object.insert(field.to_owned(), Value::String(String::from("<PATH>")));
+                }
+            }
+        }
+    }
+}
+
 fn repo_relative_projection_suffix(path: &str) -> Option<String> {
     if path.starts_with("docs/featureforge/") {
         return Some(path.to_owned());

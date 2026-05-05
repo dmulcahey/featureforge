@@ -34,6 +34,16 @@ Treat plan-routed review context as completed task packets plus coverage matrix 
 
 **Approved plan path:** {APPROVED_PLAN_PATH}
 **Execution evidence path:** {EXECUTION_EVIDENCE_PATH}
+**Working-tree diff hash:** {WORKING_TREE_DIFF_HASH}
+**Installed runtime path (live routing):** {INSTALLED_RUNTIME_PATH}
+**Installed runtime hash (live routing):** {INSTALLED_RUNTIME_HASH}
+**Workspace runtime hash (tests/fixtures):** {WORKSPACE_RUNTIME_HASH}
+**Live state dir:** {LIVE_STATE_DIR}
+**Active FeatureForge skill source:** {ACTIVE_FEATUREFORGE_SKILL_SOURCE}
+**Active FeatureForge skill roots:** {ACTIVE_FEATUREFORGE_SKILL_ROOTS}
+**Installed skill root:** {INSTALLED_SKILL_ROOT}
+**Workspace skill root:** {WORKSPACE_SKILL_ROOT}
+**Workspace-runtime live-mutation confirmation:** {WORKSPACE_RUNTIME_LIVE_MUTATION_CONFIRMATION}
 
 ## Git Range to Review
 
@@ -105,6 +115,11 @@ cat "$CHECKLIST_PATH"
    - Example allowed exception: generated schema output repeats field names from one source template and identifies the `generated code` exception.
 
 9. Keep the review terse and evidence-based. Do not invent issues outside the reviewed range.
+
+10. For FeatureForge-on-FeatureForge work, enforce runtime provenance:
+   - Fail review if provenance fields above are missing or incomplete.
+   - Fail review if any live workflow mutation used workspace runtime without an explicit approved override record.
+   - Fail review if active FeatureForge skills resolve from the workspace skill root instead of the installed skill root without an explicit approved self-hosting exception.
 
 ## Structured Review Result Metadata
 

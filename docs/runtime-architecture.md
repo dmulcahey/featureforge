@@ -47,6 +47,32 @@ current task closure also appearing as stale.
 They may sanitize and explain invalid derived state, but they should not invent routing
 truth that bypasses the reducer.
 
+## Installed Control Plane Diagnostics
+
+Live FeatureForge workflow control-plane execution is the installed runtime at
+`~/.featureforge/install/bin/featureforge` using installed skills from
+`~/.featureforge/install/skills`. Workspace binaries such as `./bin/featureforge` or
+`target/debug/featureforge` are test subjects only and may be used with isolated temp
+state in fixture and smoke tests. Workspace skills under `<repo>/skills/*` are
+generated product artifacts under test, not active instruction roots.
+
+Agents can inspect the active boundary with:
+
+```bash
+featureforge doctor self-hosting --json
+```
+
+The command is read-only. Its JSON reports installed, invoked, and workspace runtime
+paths and hashes; active skill root classification; state-dir kind; repository context;
+whether live mutation is allowed by the workspace-runtime guard; warnings; and the
+recommended remediation. Review and evidence tooling should use this diagnostic when
+checking installed-vs-workspace separation for FeatureForge-on-FeatureForge work.
+
+Workspace-runtime live mutation is blocked by default. The only override is
+`FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION=1`; it is intentionally
+explicit, must be recorded in evidence/review provenance, and should almost
+never be used.
+
 `src/execution/invariants.rs` owns read-surface fail-closed checks. Invariants are
 defense in depth; they are not a substitute for reducer correctness.
 
@@ -75,7 +101,7 @@ commands before any display string is rendered.
 `recommended_public_command_argv` for machine invocation and may render
 `recommended_command` for human compatibility, but both representations must come from
 the typed public command decision, not from reparsing a hand-written string.
-When `recommended_public_command_argv` is present, consumers invoke it exactly.
+When `recommended_public_command_argv` is present, consumers invoke it exactly, except installed-control-plane rebinding: if argv[0] is `featureforge`, execute `~/.featureforge/install/bin/featureforge` with argv[1..] unchanged.
 When argv is absent, the route must expose typed `required_inputs` or the
 prerequisite named by `next_action`; consumers satisfy those inputs and rerun the
 operator or status command that owns the route. `recommended_command` is

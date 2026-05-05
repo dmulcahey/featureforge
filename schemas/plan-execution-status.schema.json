@@ -55,6 +55,15 @@
       ],
       "type": "string"
     },
+    "ControlPlaneSource": {
+      "enum": [
+        "installed",
+        "workspace",
+        "path",
+        "unknown"
+      ],
+      "type": "string"
+    },
     "DownstreamFreshnessState": {
       "enum": [
         "not_required",
@@ -397,6 +406,142 @@
         "clean",
         "stale_unreviewed",
         "missing_current_closure"
+      ],
+      "type": "string"
+    },
+    "RuntimeProvenance": {
+      "properties": {
+        "binary_path": {
+          "type": "string"
+        },
+        "binary_realpath": {
+          "type": "string"
+        },
+        "control_plane_source": {
+          "$ref": "#/$defs/ControlPlaneSource"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "runtime_root": {
+          "type": "string"
+        },
+        "self_hosting_context": {
+          "$ref": "#/$defs/SelfHostingContext"
+        },
+        "skill_discovery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SkillDiscoveryProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_dir": {
+          "type": "string"
+        },
+        "state_dir_kind": {
+          "$ref": "#/$defs/StateDirKind"
+        },
+        "workspace_runtime_warning": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "binary_path",
+        "binary_realpath",
+        "runtime_root",
+        "repo_root",
+        "state_dir",
+        "state_dir_kind",
+        "control_plane_source",
+        "self_hosting_context"
+      ],
+      "type": "object"
+    },
+    "SelfHostingContext": {
+      "enum": [
+        "featureforge_repo",
+        "non_featureforge_repo",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "SkillDiscoveryProvenance": {
+      "properties": {
+        "active_featureforge_skill_source": {
+          "$ref": "#/$defs/SkillSource"
+        },
+        "active_roots": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SkillDiscoveryRoot"
+          },
+          "type": "array"
+        },
+        "installed_skill_root": {
+          "type": "string"
+        },
+        "warning": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_skill_root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "installed_skill_root",
+        "workspace_skill_root",
+        "active_featureforge_skill_source"
+      ],
+      "type": "object"
+    },
+    "SkillDiscoveryRoot": {
+      "properties": {
+        "channel": {
+          "type": "string"
+        },
+        "configured_path": {
+          "type": "string"
+        },
+        "resolved_path": {
+          "type": "string"
+        },
+        "skill_source": {
+          "$ref": "#/$defs/SkillSource"
+        }
+      },
+      "required": [
+        "channel",
+        "configured_path",
+        "resolved_path",
+        "skill_source"
+      ],
+      "type": "object"
+    },
+    "SkillSource": {
+      "enum": [
+        "installed",
+        "workspace",
+        "custom",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "StateDirKind": {
+      "enum": [
+        "live",
+        "temp",
+        "custom",
+        "unknown"
       ],
       "type": "string"
     },
@@ -1039,6 +1184,16 @@
     },
     "review_state_status": {
       "$ref": "#/$defs/ReviewStateStatusSchema"
+    },
+    "runtime_provenance": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuntimeProvenance"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "schema_version": {
       "format": "uint32",

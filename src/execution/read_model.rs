@@ -672,6 +672,7 @@ pub(crate) fn status_from_context_with_overlay(
         state_kind: String::from("actionable_public_command"),
         next_public_action: None,
         blockers: Vec::new(),
+        runtime_provenance: None,
         semantic_workspace_tree_id: semantic_snapshot.semantic_workspace_tree_id,
         raw_workspace_tree_id: Some(semantic_snapshot.raw_workspace_tree_id),
         next_action: String::from("inspect_workflow"),

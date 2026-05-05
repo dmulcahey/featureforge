@@ -42,14 +42,17 @@ use featureforge::execution::state::{
     current_tracked_tree_sha as runtime_current_tracked_tree_sha, hash_contract_plan,
     load_execution_context,
 };
-use featureforge::git::{discover_repository, discover_slug_identity};
+use featureforge::git::{discover_repo_identity, discover_repository, discover_slug_identity};
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
 };
+use featureforge::workflow::manifest::manifest_path;
 use featureforge::workflow::operator;
 use files_support::write_file;
 use prebuilt_support::write_canonical_prebuilt_layout;
-use process_support::run;
+use process_support::{
+    WORKSPACE_RUNTIME_LIVE_STATE_TEST_ALLOW_ENV, assert_workspace_runtime_uses_temp_state, run,
+};
 use runtime_json_support::{discover_execution_runtime, plan_execution_status_json};
 use runtime_surfaces_support::workflow_operator_json;
 use serde_json::{Value, json};
@@ -809,6 +812,7 @@ fn write_current_pass_plan_fidelity_review_artifact_for_plan(repo: &Path, plan_r
 }
 
 fn run_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
+    assert_workspace_runtime_uses_temp_state(Some(repo), Some(state_dir), None, false, context);
     public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
@@ -825,6 +829,7 @@ fn run_featureforge_real_cli(
     args: &[&str],
     context: &str,
 ) -> Output {
+    assert_workspace_runtime_uses_temp_state(Some(repo), Some(state_dir), None, false, context);
     public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
@@ -842,12 +847,44 @@ fn run_featureforge_with_env(
     extra_env: &[(&str, &str)],
     context: &str,
 ) -> Output {
+    let allow_live_state = extra_env
+        .iter()
+        .any(|(key, value)| *key == WORKSPACE_RUNTIME_LIVE_STATE_TEST_ALLOW_ENV && *value == "1");
+    assert_workspace_runtime_uses_temp_state(
+        Some(repo),
+        Some(state_dir),
+        None,
+        allow_live_state,
+        context,
+    );
     public_featureforge_cli::run_featureforge_with_env_control_real_cli(
         Some(repo),
         Some(state_dir),
         None,
         &[],
         extra_env,
+        args,
+        context,
+    )
+}
+
+fn run_featureforge_live_state_with_env(
+    repo: &Path,
+    home_dir: &Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+    context: &str,
+) -> Output {
+    let mut merged_env = Vec::with_capacity(extra_env.len() + 1);
+    merged_env.extend_from_slice(extra_env);
+    merged_env.push((WORKSPACE_RUNTIME_LIVE_STATE_TEST_ALLOW_ENV, "1"));
+    assert_workspace_runtime_uses_temp_state(Some(repo), None, Some(home_dir), true, context);
+    public_featureforge_cli::run_featureforge_with_env_control_real_cli(
+        Some(repo),
+        None,
+        Some(home_dir),
+        &["FEATUREFORGE_STATE_DIR"],
+        &merged_env,
         args,
         context,
     )
@@ -872,20 +909,43 @@ fn run_featureforge_with_env_json(
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
+fn parse_json_from_output_trailing_line(output: &Output, context: &str) -> Value {
+    let payload = if output.stdout.is_empty() {
+        &output.stderr
+    } else {
+        &output.stdout
+    };
+    if let Ok(value) = serde_json::from_slice(payload) {
+        return value;
+    }
+    let payload_text = String::from_utf8_lossy(payload);
+    let Some(line) = payload_text
+        .lines()
+        .rev()
+        .find(|line| line.trim_start().starts_with('{'))
+    else {
+        panic!(
+            "{context} should emit json output in stdout/stderr\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    serde_json::from_str(line).unwrap_or_else(|error| {
+        panic!(
+            "{context} should emit parseable trailing-line json: {error}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
 fn run_featureforge_json_real_cli(
     repo: &Path,
     state_dir: &Path,
     args: &[&str],
     context: &str,
 ) -> Value {
-    let output = public_featureforge_cli::run_featureforge_real_cli(
-        Some(repo),
-        Some(state_dir),
-        None,
-        &[],
-        args,
-        context,
-    );
+    let output = run_featureforge_real_cli(repo, state_dir, args, context);
     assert!(
         output.status.success(),
         "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -921,14 +981,7 @@ fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = public_featureforge_cli::run_featureforge_real_cli(
-        Some(repo),
-        Some(state_dir),
-        None,
-        &[],
-        &full_args,
-        context,
-    );
+    let output = run_featureforge_real_cli(repo, state_dir, &full_args, context);
     assert!(
         output.status.success(),
         "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -949,14 +1002,7 @@ fn run_plan_execution_json_real_cli(
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = public_featureforge_cli::run_featureforge_real_cli(
-        Some(repo),
-        Some(state_dir),
-        None,
-        &[],
-        &full_args,
-        context,
-    );
+    let output = run_featureforge_real_cli(repo, state_dir, &full_args, context);
     assert!(
         output.status.success(),
         "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -994,14 +1040,7 @@ fn run_plan_execution_failure_json_real_cli(
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = public_featureforge_cli::run_featureforge_real_cli(
-        Some(repo),
-        Some(state_dir),
-        None,
-        &[],
-        &full_args,
-        context,
-    );
+    let output = run_featureforge_real_cli(repo, state_dir, &full_args, context);
     assert!(
         !output.status.success(),
         "{context} should fail closed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -1044,11 +1083,9 @@ fn run_recommended_plan_execution_command_output_real_cli(
         "{context} should expose a plan execution command, got {recommended_command:?}"
     );
     let command_args = parts[3..].iter().map(String::as_str).collect::<Vec<_>>();
-    public_featureforge_cli::run_featureforge_real_cli(
-        Some(repo),
-        Some(state_dir),
-        None,
-        &[],
+    run_featureforge_real_cli(
+        repo,
+        state_dir,
         &["plan", "execution"]
             .into_iter()
             .chain(command_args.iter().copied())
@@ -2960,6 +2997,400 @@ fn run_cutover_check_with_env(repo: &Path, extra_env: &[(&str, &str)]) -> Output
 }
 
 #[test]
+fn workspace_runtime_blocks_live_repair_review_state() {
+    let repo = repo_root();
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+
+    let output = run_featureforge_live_state_with_env(
+        &repo,
+        home_dir.path(),
+        &[
+            "plan",
+            "execution",
+            "repair-review-state",
+            "--plan",
+            "docs/featureforge/plans/workspace-runtime-live-mutation-guard.md",
+        ],
+        &[],
+        "workspace runtime live repair-review-state guard",
+    );
+    assert!(
+        !output.status.success(),
+        "workspace runtime live repair-review-state should fail closed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let failure = parse_json_from_output_trailing_line(
+        &output,
+        "workspace runtime live repair-review-state guard",
+    );
+    assert_eq!(
+        failure["error_class"],
+        Value::from("workspace_runtime_live_mutation_blocked")
+    );
+    let message = failure["message"]
+        .as_str()
+        .expect("guard failure should expose a string message");
+    assert!(
+        message.contains("blocked_command: plan execution repair-review-state"),
+        "guard should report the blocked command, got {failure}"
+    );
+    assert!(
+        message.contains("binary_path:"),
+        "guard should report runtime binary path provenance, got {failure}"
+    );
+    assert!(
+        message.contains("installed_binary_path:"),
+        "guard should report installed runtime path provenance, got {failure}"
+    );
+    assert!(
+        message.contains("state_dir:"),
+        "guard should report live state dir provenance, got {failure}"
+    );
+    assert!(
+        message.contains("rerun through `~/.featureforge/install/bin/featureforge`"),
+        "guard should include installed-runtime remediation, got {failure}"
+    );
+}
+
+#[test]
+fn workspace_runtime_blocks_live_close_current_task() {
+    let repo = repo_root();
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let summary_dir = TempDir::new().expect("summary tempdir should exist");
+    let review_summary = summary_dir.path().join("task-review.md");
+    let verification_summary = summary_dir.path().join("task-verification.md");
+    write_file(&review_summary, "Task review summary.\n");
+    write_file(&verification_summary, "Task verification summary.\n");
+
+    let output = run_featureforge_live_state_with_env(
+        &repo,
+        home_dir.path(),
+        &[
+            "plan",
+            "execution",
+            "close-current-task",
+            "--plan",
+            "docs/featureforge/plans/workspace-runtime-live-mutation-guard.md",
+            "--task",
+            "1",
+            "--review-result",
+            "pass",
+            "--review-summary-file",
+            review_summary
+                .to_str()
+                .expect("review summary path should be utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary
+                .to_str()
+                .expect("verification summary path should be utf-8"),
+        ],
+        &[],
+        "workspace runtime live close-current-task guard",
+    );
+    assert!(
+        !output.status.success(),
+        "workspace runtime live close-current-task should fail closed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let failure = parse_json_from_output_trailing_line(
+        &output,
+        "workspace runtime live close-current-task guard",
+    );
+    assert_eq!(
+        failure["error_class"],
+        Value::from("workspace_runtime_live_mutation_blocked")
+    );
+    assert!(
+        failure["message"].as_str().is_some_and(
+            |message| message.contains("blocked_command: plan execution close-current-task")
+        ),
+        "guard should report close-current-task as blocked command, got {failure}"
+    );
+}
+
+#[test]
+fn workspace_runtime_blocks_live_persisted_task_packet_cache() {
+    let repo = repo_root();
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+
+    let output = run_featureforge_live_state_with_env(
+        &repo,
+        home_dir.path(),
+        &[
+            "plan",
+            "contract",
+            "build-task-packet",
+            "--plan",
+            "docs/featureforge/plans/workspace-runtime-live-mutation-guard.md",
+            "--task",
+            "1",
+            "--persist",
+            "yes",
+        ],
+        &[],
+        "workspace runtime live persisted task-packet guard",
+    );
+    assert!(
+        !output.status.success(),
+        "workspace runtime live persisted task-packet cache should fail closed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let failure = parse_json_from_output_trailing_line(
+        &output,
+        "workspace runtime live persisted task-packet guard",
+    );
+    assert_eq!(
+        failure["error_class"],
+        Value::from("workspace_runtime_live_mutation_blocked")
+    );
+    assert!(
+        failure["message"].as_str().is_some_and(
+            |message| message.contains("blocked_command: plan contract build-task-packet")
+        ),
+        "guard should report persisted task-packet cache as blocked command, got {failure}"
+    );
+}
+
+#[test]
+fn workspace_runtime_live_workflow_status_keeps_corrupt_manifest_read_only() {
+    let repo = repo_root();
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let state_dir = home_dir.path().join(".featureforge");
+    let identity = discover_repo_identity(&repo).expect("repo identity should resolve");
+    let workflow_manifest_path = manifest_path(&identity, &state_dir);
+    let manifest_parent = workflow_manifest_path
+        .parent()
+        .expect("workflow manifest should have a parent directory");
+    fs::create_dir_all(manifest_parent).expect("manifest parent should be creatable");
+    fs::write(&workflow_manifest_path, "{ \"broken\": true\n")
+        .expect("corrupt workflow manifest fixture should be writable");
+    let before = fs::read(&workflow_manifest_path).expect("corrupt manifest should be readable");
+
+    let output = run_featureforge_live_state_with_env(
+        &repo,
+        home_dir.path(),
+        &["workflow", "status", "--json"],
+        &[],
+        "workspace runtime live workflow status read-only manifest inspection",
+    );
+    assert!(
+        output.status.success(),
+        "workflow status should remain a read-only diagnostic command under live state\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload = parse_json_from_output_trailing_line(
+        &output,
+        "workspace runtime live workflow status read-only manifest inspection",
+    );
+    assert!(
+        payload.get("error_class").is_none(),
+        "workflow status should not emit a guard or manifest-repair failure: {payload}"
+    );
+    let after = fs::read(&workflow_manifest_path)
+        .expect("workflow status should leave corrupt manifest in place");
+    assert_eq!(
+        after, before,
+        "workflow status must not repair or rewrite live manifests from a workspace runtime"
+    );
+    let corrupt_backup_prefix = format!(
+        "{}.corrupt-",
+        workflow_manifest_path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .expect("workflow manifest filename should be utf-8")
+    );
+    let backups = fs::read_dir(manifest_parent)
+        .expect("manifest parent should stay readable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|file_name| file_name.starts_with(&corrupt_backup_prefix))
+        .collect::<Vec<_>>();
+    assert!(
+        backups.is_empty(),
+        "workflow status must not create corrupt-manifest backups for live read-only inspection: {backups:?}"
+    );
+}
+
+#[test]
+fn workspace_runtime_allows_fixture_repair_review_state_with_temp_state() {
+    let (repo_dir, state_dir) = init_repo("workspace-runtime-temp-repair-allow");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let output = run_featureforge_real_cli(
+        repo,
+        state,
+        &[
+            "plan",
+            "execution",
+            "repair-review-state",
+            "--plan",
+            WORKFLOW_FIXTURE_PLAN_REL,
+        ],
+        "workspace runtime temp-state repair-review-state guard bypass",
+    );
+    let payload = parse_json_from_output_trailing_line(
+        &output,
+        "workspace runtime temp-state repair-review-state guard bypass",
+    );
+    if output.status.success() {
+        assert!(
+            payload.get("error_class").is_none(),
+            "successful repair-review-state output should not be a guard failure: {payload}"
+        );
+    } else {
+        assert_ne!(
+            payload["error_class"],
+            Value::from("workspace_runtime_live_mutation_blocked"),
+            "temp-state workspace runtime should not trip live-mutation guard: {payload}"
+        );
+    }
+}
+
+#[test]
+fn workspace_runtime_allows_fixture_task_packet_cache_with_temp_state() {
+    let (repo_dir, state_dir) = init_repo("workspace-runtime-temp-task-packet-allow");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    install_full_contract_ready_artifacts(repo);
+
+    let output = run_featureforge_real_cli(
+        repo,
+        state,
+        &[
+            "plan",
+            "contract",
+            "build-task-packet",
+            "--plan",
+            WORKFLOW_FIXTURE_PLAN_REL,
+            "--task",
+            "1",
+            "--format",
+            "json",
+            "--persist",
+            "yes",
+        ],
+        "workspace runtime temp-state persisted task-packet guard bypass",
+    );
+    let payload = parse_json_from_output_trailing_line(
+        &output,
+        "workspace runtime temp-state persisted task-packet guard bypass",
+    );
+    assert!(
+        output.status.success(),
+        "temp-state persisted task-packet should not trip live-mutation guard: {payload}\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(payload["persisted"], Value::Bool(true));
+    assert!(
+        payload
+            .get("workspace_runtime_live_mutation_warning")
+            .is_none(),
+        "temp-state task-packet cache should not emit a live-mutation override warning: {payload}"
+    );
+}
+
+#[test]
+fn workspace_runtime_live_mutation_override_emits_warning_in_json_and_text() {
+    let repo = repo_root();
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+
+    let output = run_featureforge_live_state_with_env(
+        &repo,
+        home_dir.path(),
+        &[
+            "plan",
+            "execution",
+            "repair-review-state",
+            "--plan",
+            "docs/featureforge/plans/workspace-runtime-live-mutation-override.md",
+        ],
+        &[("FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION", "1")],
+        "workspace runtime live mutation override warning",
+    );
+    assert!(
+        !output.status.success(),
+        "override test expects downstream command validation failure after bypassing guard\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let failure = parse_json_from_output_trailing_line(
+        &output,
+        "workspace runtime live mutation override warning",
+    );
+    assert_ne!(
+        failure["error_class"],
+        Value::from("workspace_runtime_live_mutation_blocked"),
+        "override should bypass the live-mutation block and continue to normal validation, got {failure}"
+    );
+    let warning = failure["workspace_runtime_live_mutation_warning"]
+        .as_str()
+        .expect("override should add workspace runtime warning to json output");
+    assert!(
+        warning.contains("FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION=1"),
+        "override warning should mention explicit override env, got {warning}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("workspace_runtime_live_mutation_override_active"),
+        "override warning should also be visible in stderr text, got stderr:\n{stderr}"
+    );
+
+    let packet_output = run_featureforge_live_state_with_env(
+        &repo,
+        home_dir.path(),
+        &[
+            "plan",
+            "contract",
+            "build-task-packet",
+            "--plan",
+            "docs/featureforge/plans/workspace-runtime-live-mutation-override.md",
+            "--task",
+            "1",
+            "--persist",
+            "yes",
+        ],
+        &[("FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION", "1")],
+        "workspace runtime live persisted task-packet override warning",
+    );
+    assert!(
+        !packet_output.status.success(),
+        "task-packet override test expects downstream command validation failure after bypassing guard\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&packet_output.stdout),
+        String::from_utf8_lossy(&packet_output.stderr)
+    );
+    let packet_failure = parse_json_from_output_trailing_line(
+        &packet_output,
+        "workspace runtime live persisted task-packet override warning",
+    );
+    assert_ne!(
+        packet_failure["error_class"],
+        Value::from("workspace_runtime_live_mutation_blocked"),
+        "task-packet override should bypass the live-mutation block and continue to normal validation, got {packet_failure}"
+    );
+    assert!(
+        packet_failure["workspace_runtime_live_mutation_warning"]
+            .as_str()
+            .is_some_and(
+                |warning| warning.contains("FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION=1")
+            ),
+        "task-packet override should add workspace runtime warning to json output: {packet_failure}"
+    );
+    let packet_stderr = String::from_utf8_lossy(&packet_output.stderr);
+    assert!(
+        packet_stderr.contains("workspace_runtime_live_mutation_override_active"),
+        "task-packet override warning should also be visible in stderr text, got stderr:\n{packet_stderr}"
+    );
+}
+
+#[test]
 fn standalone_binary_has_no_separate_workflow_wrapper_files() {
     let bin_dir = repo_root().join("bin");
     let workflow_entries = fs::read_dir(&bin_dir)
@@ -3041,6 +3472,23 @@ fn workflow_public_ready_plan_surface_prefers_operator_and_status_over_removed_h
     assert_eq!(
         operator_json["plan_path"],
         Value::from(String::from(plan_rel))
+    );
+
+    let doctor_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "doctor", "--json"],
+        &[],
+        "workflow doctor public ready-plan route without explicit plan",
+    );
+    assert_eq!(doctor_json["phase"], concat!("execution_pre", "flight"));
+    assert_eq!(
+        doctor_json["plan_path"],
+        Value::from(String::from(plan_rel))
+    );
+    assert!(
+        doctor_json["runtime_provenance"].is_object(),
+        "workflow doctor --json should expose runtime provenance, got {doctor_json}"
     );
 
     let status_json = run_featureforge_with_env_json(
@@ -6972,8 +7420,8 @@ fn workflow_operator_routes_pivot_required_to_public_repair_review_state() {
 }
 
 #[test]
-fn removed_workflow_doctor_and_handoff_commands_fail_at_cli_boundary() {
-    let (repo_dir, state_dir) = init_repo("workflow-removed-doctor-handoff-boundary");
+fn removed_workflow_handoff_and_phase_commands_fail_at_cli_boundary() {
+    let (repo_dir, state_dir) = init_repo("workflow-removed-handoff-phase-boundary");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
@@ -6981,7 +7429,6 @@ fn removed_workflow_doctor_and_handoff_commands_fail_at_cli_boundary() {
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
 
     for args in [
-        &["workflow", "doctor", "--json"][..],
         &["workflow", "handoff", "--json"][..],
         &["workflow", "phase", "--json"][..],
     ] {

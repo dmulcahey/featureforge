@@ -5,6 +5,11 @@ use clap::{CommandFactory, Parser};
 use cli::runtime_root::RuntimeRootFieldCli;
 use cli::{Command, PlanCommand, RepoCommand};
 use diagnostics::{DiagnosticError, FailureClass, JsonFailure};
+use execution::live_mutation_guard::{
+    deny_workspace_runtime_live_mutation,
+    deny_workspace_runtime_live_mutation_for_execution_runtime,
+};
+use execution::runtime_provenance::RuntimeProvenance;
 use serde_json::Value;
 
 pub mod benchmarking;
@@ -19,6 +24,7 @@ pub mod output;
 pub mod paths;
 pub mod repo_safety;
 pub mod runtime_root;
+pub mod self_hosting;
 #[cfg(test)]
 pub mod test_support;
 pub mod update_check;
@@ -51,6 +57,19 @@ pub fn run() -> std::process::ExitCode {
             cli::config::ConfigCommand::Set(args) => emit_text(config::set(&args)),
             cli::config::ConfigCommand::List => emit_text(config::list()),
         },
+        Some(Command::Doctor(doctor_cli)) => match doctor_cli.command {
+            cli::doctor::DoctorCommand::SelfHosting(args) => {
+                let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let diagnostic = self_hosting::diagnose_self_hosting(&current_dir);
+                if args.json {
+                    emit_json::<_, JsonFailure>(Ok(diagnostic))
+                } else {
+                    emit_text::<JsonFailure>(Ok(self_hosting::render_self_hosting_diagnostic(
+                        &diagnostic,
+                    )))
+                }
+            }
+        },
         Some(Command::Plan(plan_cli)) => match plan_cli.command {
             PlanCommand::Contract(plan_contract_cli) => match plan_contract_cli.command {
                 cli::plan_contract::PlanContractCommand::Lint(args) => {
@@ -60,7 +79,27 @@ pub fn run() -> std::process::ExitCode {
                     contracts::runtime::run_analyze_plan(&args)
                 }
                 cli::plan_contract::PlanContractCommand::BuildTaskPacket(args) => {
-                    contracts::runtime::run_build_task_packet(&args)
+                    let guard = if args.persist == cli::plan_contract::PersistMode::Yes {
+                        let current_dir =
+                            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                        let provenance =
+                            contracts::runtime::build_task_packet_runtime_provenance(&current_dir);
+                        match deny_workspace_runtime_live_mutation(
+                            &provenance,
+                            "plan contract build-task-packet",
+                        ) {
+                            Ok(guard) => guard,
+                            Err(error) => return emit_json::<Value, _>(Err(error)),
+                        }
+                    } else {
+                        execution::live_mutation_guard::WorkspaceRuntimeLiveMutationGuardOutcome {
+                            override_warning: None,
+                        }
+                    };
+                    contracts::runtime::run_build_task_packet_with_workspace_runtime_warning(
+                        &args,
+                        guard.override_warning.as_deref(),
+                    )
                 }
             },
             PlanCommand::Execution(plan_execution_cli) => {
@@ -69,40 +108,131 @@ pub fn run() -> std::process::ExitCode {
                 ) {
                     Ok(runtime) => match plan_execution_cli.command {
                         cli::plan_execution::PlanExecutionCommand::Status(args) => {
-                            emit_json(runtime.status(&args))
+                            let runtime_provenance = runtime.runtime_provenance();
+                            emit_json_with_runtime_metadata(
+                                runtime.status(&args),
+                                Some(&runtime_provenance),
+                                None,
+                            )
                         }
                         cli::plan_execution::PlanExecutionCommand::RepairReviewState(args) => {
-                            emit_json(execution::commands::repair_review_state::repair_review_state(
-                                &runtime, &args,
-                            ))
+                            let guard =
+                                match deny_workspace_runtime_live_mutation_for_execution_runtime(
+                                    &runtime,
+                                    "plan execution repair-review-state",
+                                ) {
+                                    Ok(guard) => guard,
+                                    Err(error) => return emit_json::<Value, _>(Err(error)),
+                                };
+                            emit_json_with_workspace_runtime_warning(
+                                execution::commands::repair_review_state::repair_review_state(
+                                    &runtime, &args,
+                                ),
+                                guard.override_warning.as_deref(),
+                            )
                         }
                         cli::plan_execution::PlanExecutionCommand::CloseCurrentTask(args) => {
-                            emit_json(execution::commands::close_current_task::close_current_task(
-                                &runtime, &args,
-                            ))
+                            let guard =
+                                match deny_workspace_runtime_live_mutation_for_execution_runtime(
+                                    &runtime,
+                                    "plan execution close-current-task",
+                                ) {
+                                    Ok(guard) => guard,
+                                    Err(error) => return emit_json::<Value, _>(Err(error)),
+                                };
+                            emit_json_with_workspace_runtime_warning(
+                                execution::commands::close_current_task::close_current_task(
+                                    &runtime, &args,
+                                ),
+                                guard.override_warning.as_deref(),
+                            )
                         }
                         cli::plan_execution::PlanExecutionCommand::AdvanceLateStage(args) => {
-                            emit_json(execution::commands::advance_late_stage::advance_late_stage(
-                                &runtime, &args,
-                            ))
+                            let guard =
+                                match deny_workspace_runtime_live_mutation_for_execution_runtime(
+                                    &runtime,
+                                    "plan execution advance-late-stage",
+                                ) {
+                                    Ok(guard) => guard,
+                                    Err(error) => return emit_json::<Value, _>(Err(error)),
+                                };
+                            emit_json_with_workspace_runtime_warning(
+                                execution::commands::advance_late_stage::advance_late_stage(
+                                    &runtime, &args,
+                                ),
+                                guard.override_warning.as_deref(),
+                            )
                         }
                         cli::plan_execution::PlanExecutionCommand::Begin(args) => {
-                            emit_json(execution::commands::begin::begin(&runtime, &args))
+                            let guard =
+                                match deny_workspace_runtime_live_mutation_for_execution_runtime(
+                                    &runtime,
+                                    "plan execution begin",
+                                ) {
+                                    Ok(guard) => guard,
+                                    Err(error) => return emit_json::<Value, _>(Err(error)),
+                                };
+                            emit_json_with_workspace_runtime_warning(
+                                execution::commands::begin::begin(&runtime, &args),
+                                guard.override_warning.as_deref(),
+                            )
                         }
                         cli::plan_execution::PlanExecutionCommand::Complete(args) => {
-                            emit_json(execution::commands::complete::complete(&runtime, &args))
+                            let guard =
+                                match deny_workspace_runtime_live_mutation_for_execution_runtime(
+                                    &runtime,
+                                    "plan execution complete",
+                                ) {
+                                    Ok(guard) => guard,
+                                    Err(error) => return emit_json::<Value, _>(Err(error)),
+                                };
+                            emit_json_with_workspace_runtime_warning(
+                                execution::commands::complete::complete(&runtime, &args),
+                                guard.override_warning.as_deref(),
+                            )
                         }
                         cli::plan_execution::PlanExecutionCommand::Reopen(args) => {
-                            emit_json(execution::commands::reopen::reopen(&runtime, &args))
+                            let guard =
+                                match deny_workspace_runtime_live_mutation_for_execution_runtime(
+                                    &runtime,
+                                    "plan execution reopen",
+                                ) {
+                                    Ok(guard) => guard,
+                                    Err(error) => return emit_json::<Value, _>(Err(error)),
+                                };
+                            emit_json_with_workspace_runtime_warning(
+                                execution::commands::reopen::reopen(&runtime, &args),
+                                guard.override_warning.as_deref(),
+                            )
                         }
                         cli::plan_execution::PlanExecutionCommand::Transfer(args) => {
-                            emit_json(execution::commands::transfer::transfer(&runtime, &args))
+                            let guard =
+                                match deny_workspace_runtime_live_mutation_for_execution_runtime(
+                                    &runtime,
+                                    "plan execution transfer",
+                                ) {
+                                    Ok(guard) => guard,
+                                    Err(error) => return emit_json::<Value, _>(Err(error)),
+                                };
+                            emit_json_with_workspace_runtime_warning(
+                                execution::commands::transfer::transfer(&runtime, &args),
+                                guard.override_warning.as_deref(),
+                            )
                         }
                         cli::plan_execution::PlanExecutionCommand::MaterializeProjections(args) => {
-                            emit_json(
+                            let guard =
+                                match deny_workspace_runtime_live_mutation_for_execution_runtime(
+                                    &runtime,
+                                    "plan execution materialize-projections",
+                                ) {
+                                    Ok(guard) => guard,
+                                    Err(error) => return emit_json::<Value, _>(Err(error)),
+                                };
+                            emit_json_with_workspace_runtime_warning(
                                 execution::commands::materialize_projections::materialize_projections(
                                     &runtime, &args,
                                 ),
+                                guard.override_warning.as_deref(),
                             )
                         }
                     },
@@ -143,7 +273,17 @@ pub fn run() -> std::process::ExitCode {
                         emit_json(runtime.check(&args))
                     }
                     cli::repo_safety::RepoSafetyCommand::Approve(args) => {
-                        emit_json(runtime.approve(&args))
+                        let guard = match deny_workspace_runtime_live_mutation(
+                            &runtime.runtime_provenance(),
+                            "repo-safety approve",
+                        ) {
+                            Ok(guard) => guard,
+                            Err(error) => return emit_json::<Value, _>(Err(error)),
+                        };
+                        emit_json_with_workspace_runtime_warning(
+                            runtime.approve(&args),
+                            guard.override_warning.as_deref(),
+                        )
                     }
                 },
                 Err(error) => emit_json::<Value, JsonFailure>(Err(error.into())),
@@ -154,13 +294,31 @@ pub fn run() -> std::process::ExitCode {
             let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             match workflow_cli.command {
                 cli::workflow::WorkflowCommand::Status(args) => {
-                    let result = workflow::status::WorkflowRuntime::discover(&current_dir)
-                        .and_then(|runtime| runtime.status())
-                        .map_err(JsonFailure::from);
+                    let result =
+                        workflow::status::WorkflowRuntime::discover_read_only(&current_dir)
+                            .and_then(|runtime| runtime.status())
+                            .map_err(JsonFailure::from);
                     if args.json {
                         emit_json(result)
                     } else {
                         emit_text(result.map(render_workflow_status))
+                    }
+                }
+                cli::workflow::WorkflowCommand::Doctor(args) => {
+                    let doctor_args = workflow::operator::DoctorArgs {
+                        plan: args.plan,
+                        external_review_result_ready: args.external_review_result_ready,
+                    };
+                    if args.json {
+                        emit_json(
+                            workflow::operator::doctor_with_args(&current_dir, &doctor_args)
+                                .map_err(map_read_only_workflow_failure),
+                        )
+                    } else {
+                        emit_text(
+                            workflow::operator::render_doctor_with_args(&current_dir, &doctor_args)
+                                .map_err(map_read_only_workflow_failure),
+                        )
                     }
                 }
                 cli::workflow::WorkflowCommand::Operator(args) => {
@@ -246,6 +404,115 @@ where
                 std::process::ExitCode::from(1)
             }
         },
+    }
+}
+
+fn emit_json_with_workspace_runtime_warning<T, E>(
+    result: Result<T, E>,
+    workspace_runtime_warning: Option<&str>,
+) -> std::process::ExitCode
+where
+    T: serde::Serialize,
+    E: Into<JsonFailure>,
+{
+    emit_json_with_runtime_metadata(result, None, workspace_runtime_warning)
+}
+
+fn emit_json_with_runtime_metadata<T, E>(
+    result: Result<T, E>,
+    runtime_provenance: Option<&RuntimeProvenance>,
+    workspace_runtime_warning: Option<&str>,
+) -> std::process::ExitCode
+where
+    T: serde::Serialize,
+    E: Into<JsonFailure>,
+{
+    match result {
+        Ok(value) => match serde_json::to_value(value)
+            .map_err(|error| format!("Could not serialize workflow output: {error}"))
+            .and_then(|value| {
+                serde_json::to_string(&inject_runtime_metadata(
+                    value,
+                    runtime_provenance,
+                    workspace_runtime_warning,
+                ))
+                .map_err(|error| format!("Could not serialize workflow output: {error}"))
+            }) {
+            Ok(json) => {
+                if let Some(warning) = workspace_runtime_warning {
+                    eprintln!("{warning}");
+                }
+                println!("{json}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::ExitCode::from(1)
+            }
+        },
+        Err(error) => {
+            let failure: JsonFailure = error.into();
+            let value = inject_runtime_metadata(
+                serde_json::to_value(&failure)
+                    .unwrap_or_else(|_| serde_json::json!({"error_class": failure.error_class, "message": failure.message})),
+                runtime_provenance,
+                workspace_runtime_warning,
+            );
+            if let Some(warning) = workspace_runtime_warning {
+                eprintln!("{warning}");
+            }
+            match serde_json::to_string(&value) {
+                Ok(json) => {
+                    eprintln!("{json}");
+                    std::process::ExitCode::from(1)
+                }
+                Err(serialize_error) => {
+                    eprintln!("Could not serialize error output: {serialize_error}");
+                    std::process::ExitCode::from(1)
+                }
+            }
+        }
+    }
+}
+
+fn inject_runtime_metadata(
+    mut value: Value,
+    runtime_provenance: Option<&RuntimeProvenance>,
+    workspace_runtime_warning: Option<&str>,
+) -> Value {
+    let runtime_provenance_value =
+        runtime_provenance.and_then(|value| serde_json::to_value(value).ok());
+    let warning_value = workspace_runtime_warning.map(|value| Value::String(value.to_owned()));
+    if runtime_provenance_value.is_none() && warning_value.is_none() {
+        return value;
+    }
+    match value {
+        Value::Object(ref mut object) => {
+            if let Some(runtime_provenance_value) = runtime_provenance_value {
+                object.insert(String::from("runtime_provenance"), runtime_provenance_value);
+            }
+            if let Some(warning_value) = warning_value {
+                object.insert(
+                    String::from("workspace_runtime_live_mutation_warning"),
+                    warning_value,
+                );
+            }
+            value
+        }
+        other => {
+            let mut wrapped = serde_json::Map::new();
+            wrapped.insert(String::from("value"), other);
+            if let Some(runtime_provenance_value) = runtime_provenance_value {
+                wrapped.insert(String::from("runtime_provenance"), runtime_provenance_value);
+            }
+            if let Some(workspace_runtime_warning) = workspace_runtime_warning {
+                wrapped.insert(
+                    String::from("workspace_runtime_live_mutation_warning"),
+                    Value::String(workspace_runtime_warning.to_owned()),
+                );
+            }
+            Value::Object(wrapped)
+        }
     }
 }
 

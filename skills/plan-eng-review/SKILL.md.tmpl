@@ -33,7 +33,7 @@ description: Use when a written FeatureForge implementation plan from a CEO-appr
 - Before editing the plan body or changing approval headers on disk, run the shared repo-safety preflight for the exact review-write scope:
 
 ```bash
-featureforge repo-safety check --intent write --stage featureforge:plan-eng-review --task-id <current-plan-review> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:plan-eng-review --task-id <current-plan-review> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
 ```
 
 - When the mutation is specifically an approval-header edit, use the same command shape with `--write-target approval-header-write`.
@@ -41,8 +41,8 @@ featureforge repo-safety check --intent write --stage featureforge:plan-eng-revi
 - If the user explicitly approves the protected-branch review write, run:
 
 ```bash
-featureforge repo-safety approve --stage featureforge:plan-eng-review --task-id <current-plan-review> --reason "<explicit user approval>" --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
-featureforge repo-safety check --intent write --stage featureforge:plan-eng-review --task-id <current-plan-review> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
+$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:plan-eng-review --task-id <current-plan-review> --reason "<explicit user approval>" --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:plan-eng-review --task-id <current-plan-review> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
 ```
 
 - Repeat the same approve -> re-check pattern for `approval-header-write` before flipping `**Workflow State:**` or any other approval header on a protected branch.
@@ -269,7 +269,7 @@ Before presenting the final execution preflight handoff, if `$_FEATUREFORGE_BIN`
 - Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs` as authoritative for public routing. `recommended_command` is display-only compatibility text.
 - If workflow/operator returns `phase` `executing`, present the normal execution preflight handoff below.
 - If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` when present instead of reopening execution preflight; when argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.
-- `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail only; do not let it override workflow/operator routing.
+- `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` is supporting diagnostic detail only; do not let it override workflow/operator routing.
 - Only fall back to manual artifact inspection if the helper is unavailable or fails.
 - Present the runtime-selected execution owner skill as the default path with the approved plan path.
 - During handoff, name the exact approved plan path and approved plan revision, and remind the execution skill to reject draft or stale plans.

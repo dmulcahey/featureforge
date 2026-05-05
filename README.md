@@ -14,13 +14,13 @@ This repository keeps the workflow-first core and extends it with additional rev
 
 Seven layers matter:
 
-- `using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.
+- `using-featureforge` is the human-readable entry router that consults `$_FEATUREFORGE_BIN workflow` directly from repo-visible artifacts.
 - generated skill preambles always invoke the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows), and that runtime resolves the active root through `featureforge repo runtime-root --path` before update checks or contributor-mode lookups.
-- `featureforge workflow` owns product-work routing up to `implementation_ready`.
-- `featureforge workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; run `featureforge plan execution status --plan <approved-plan-path>` only when you need deeper diagnostics.
-- `featureforge repo-safety` owns protected branches and repo-write guarantees.
-- `featureforge plan contract` owns semantic traceability between approved specs, approved plans, and derived task packets.
-- `featureforge plan execution` owns execution state after an approved plan is handed off.
+- `$_FEATUREFORGE_BIN workflow` owns product-work routing up to `implementation_ready`.
+- `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; run `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only when you need deeper diagnostics.
+- `$_FEATUREFORGE_BIN repo-safety` owns protected branches and repo-write guarantees.
+- `$_FEATUREFORGE_BIN plan contract` owns semantic traceability between approved specs, approved plans, and derived task packets.
+- `$_FEATUREFORGE_BIN plan execution` owns execution state after an approved plan is handed off.
 
 Execution authority is event-only:
 
@@ -30,7 +30,7 @@ Execution authority is event-only:
 - once plan execution starts, branch execution truth is the append-only event log under the harness branch root (`execution-harness/events.jsonl`)
 - `state.json`, approved-plan checklist marks, execution evidence, release/readiness/review/QA markdown, and strategy displays are deterministic projections/read models
 - deleting, exporting, or regenerating those projections must not change operator routing, status, review-state repair, or mutator legality
-- use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` for state-dir-only diagnostic projection refreshes; add `--repo-export --confirm-repo-export` only when a repo-local human-readable projection export is explicitly needed; approved plan and evidence files are not modified, and materialization is never required for normal progress
+- use `$_FEATUREFORGE_BIN plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` for state-dir-only diagnostic projection refreshes; add `--repo-export --confirm-repo-export` only when a repo-local human-readable projection export is explicitly needed; approved plan and evidence files are not modified, and materialization is never required for normal progress
 - runtime-owned reviewed-closure, milestone, dispatch-lineage, and strategy facts are reduced from the event log for routing and gates
 - branch-scoped local projections live under `~/.featureforge/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
 
@@ -45,6 +45,38 @@ Shared layout:
 - `~/.copilot/skills -> ~/.featureforge/install/skills`
 - `~/.codex/agents/code-reviewer.toml -> ~/.featureforge/install/.codex/agents/code-reviewer.toml`
 - `~/.copilot/agents/code-reviewer.agent.md -> ~/.featureforge/install/agents/code-reviewer.md`
+
+## Installed Control Plane
+
+Live workflow execution uses the installed control plane only:
+
+- installed runtime: `~/.featureforge/install/bin/featureforge` (or `featureforge.exe` on Windows)
+- installed skills: `~/.featureforge/install/skills`
+- active FeatureForge skill discovery roots must resolve to the installed skills directory
+- `<repo>/skills/*` in this checkout are generated product artifacts under test, not active discovery roots
+
+Workspace-local runtimes are test subjects only. `./bin/featureforge`,
+`target/debug/featureforge`, and `cargo run -- ...` may be used for fixture and
+smoke tests only when `FEATUREFORGE_STATE_DIR` points at isolated temp or
+fixture state.
+
+Workspace-local runtimes must not mutate live workflow state, review state,
+execution state, projections, workflow artifacts, or event logs under
+`~/.featureforge`. The runtime fails closed for live mutating commands when the
+invoked binary is workspace-local. The override
+`FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION=1` is intentionally explicit
+and should almost never be used; any approved use must be visible in execution
+evidence and review provenance.
+
+Inspect the active boundary with:
+
+```bash
+~/.featureforge/install/bin/featureforge doctor self-hosting --json
+```
+
+Runtime diagnostics also expose runtime provenance and skill-root provenance
+under `runtime_provenance.skill_discovery` so workspace-root drift can be
+detected.
 
 Detailed install docs:
 
@@ -73,29 +105,29 @@ Planning chain in plain language:
 
 `brainstorming -> plan-ceo-review -> writing-plans -> plan-eng-review`; `plan-fidelity-review` runs only after engineering-review edits are complete, then `plan-eng-review` performs final approval before implementation.
 
-The generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; if no approved plan path is known, resolve it through the normal planning/review handoff, then route with workflow/operator.
+The generated `using-featureforge` skill routes through `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; if no approved plan path is known, resolve it through the normal planning/review handoff, then route with workflow/operator.
 
 Execution starts from an engineering-approved plan and the exact approved plan path.
-Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level argv vector for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`. Late-stage public JSON reports `intent=advance_late_stage` plus a semantic `operation`; do not infer or invoke lower-level recording primitives from output fields.
+Use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level argv vector for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`. Late-stage public JSON reports `intent=advance_late_stage` plus a semantic `operation`; do not infer or invoke lower-level recording primitives from output fields.
 
-When workflow/operator reports stale or missing closure context, do not invent a repair command. If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan <approved-plan-path>` only when the non-diagnostic route owns that repair lane.
+When workflow/operator reports stale or missing closure context, do not invent a repair command. If `recommended_public_command_argv` is present, invoke it exactly except for installed-control-plane rebinding: when argv[0] is `featureforge`, execute via `~/.featureforge/install/bin/featureforge` while preserving argv[1..]. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <approved-plan-path>` only when the non-diagnostic route owns that repair lane.
 
-After `repair-review-state`, treat that command's own `recommended_public_command_argv` as the immediate reroute when present and complete that follow-up before running any extra command. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy the typed `required_inputs` or prerequisite named by `next_action`, then rerun the command that owns the route. `recommended_command` is display-only compatibility text; do not parse it for invocation. Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
+After `repair-review-state`, treat that command's own `recommended_public_command_argv` as the immediate reroute when present and complete that follow-up before running any extra command. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy the typed `required_inputs` or prerequisite named by `next_action`, then rerun the command that owns the route. `recommended_command` is display-only compatibility text; do not parse it for invocation. Use `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
 Do not manually edit `**Execution Note:**` lines to recover runtime state; execution-note markdown is projection-only.
 Do not repair runtime routing by editing tracked plan, evidence, review, readiness, QA, or strategy projection files. They are export artifacts; the event log and reducer-owned state are authoritative.
 
-`featureforge plan execution` is the execution preflight boundary for the approved plan.
+`$_FEATUREFORGE_BIN plan execution` is the execution preflight boundary for the approved plan.
 
 Task closure is enforced at task boundaries, not only at the end of the full plan:
 
 - Task `N+1` may begin only after Task `N` has a current positive task-closure record.
 - dedicated-independent review loops and verification are inputs to `close-current-task`; they are not separate begin-time authority once a current positive closure exists
-- after implementation steps complete and review plus verification are ready, run `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and use `close-current-task` as the authoritative task-closure command
+- after implementation steps complete and review plus verification are ready, run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` and use `close-current-task` as the authoritative task-closure command
 - if workflow/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep the normal path on workflow/operator plus the intent-level commands; do not route the normal path through low-level dispatch primitives
 - compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
-- `repair-review-state` returns one exact next command as `recommended_public_command_argv` when all inputs are already bound; follow that argv directly, stop when argv is absent with `next_action=runtime diagnostic required`, otherwise satisfy `required_inputs` and rerun the route owner
+- `repair-review-state` returns one exact next command as `recommended_public_command_argv` when all inputs are already bound; follow that argv directly except for installed-control-plane rebinding (`featureforge` argv[0] must execute as `~/.featureforge/install/bin/featureforge`), stop when argv is absent with `next_action=runtime diagnostic required`, otherwise satisfy `required_inputs` and rerun the route owner
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is authorized without per-dispatch user-consent prompts
 
 Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):
@@ -125,7 +157,7 @@ The approved plan path/revision remains fixed during execution. Runtime strategy
 
 The runtime records checkpoint history in the authoritative event log and renders `strategy_checkpoints` into projection state for `plan execution status`. Runtime-owned review projections are trace artifacts only; task advancement is governed by current positive task-closure records and reducer-owned state.
 
-Use `featureforge plan execution status --plan <approved-plan-path>` to inspect:
+Use `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` to inspect:
 
 - `strategy_state`
 - `strategy_checkpoint_kind`
@@ -163,6 +195,12 @@ node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/review-accelerator-contract.eval.mjs
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-targets --all-features --no-fail-fast
+```
+
+Installed-control-plane isolation changes use the dedicated gate:
+
+```bash
+scripts/verify-installed-control-plane-isolation.sh
 ```
 
 Runtime release checks keep public-flow proof separate from internal

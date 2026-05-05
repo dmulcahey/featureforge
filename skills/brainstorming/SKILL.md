@@ -24,7 +24,32 @@ if [ -n "$_FEATUREFORGE_BIN" ]; then
   [ -n "$_FEATUREFORGE_ROOT" ] || _FEATUREFORGE_ROOT=""
 fi
 _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
+_featureforge_exec_public_argv() {
+  if [ "$#" -eq 0 ]; then
+    echo "featureforge: missing command argv to execute" >&2
+    return 2
+  fi
+  if [ "$1" = "featureforge" ]; then
+    if [ -z "$_FEATUREFORGE_BIN" ]; then
+      echo "featureforge: installed runtime not found at $_FEATUREFORGE_INSTALL_ROOT/bin/featureforge" >&2
+      return 1
+    fi
+    shift
+    "$_FEATUREFORGE_BIN" "$@"
+    return $?
+  fi
+  "$@"
+}
 ```
+## Installed Control Plane
+
+Live FeatureForge workflow routing is install-owned:
+- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
+- do not route live workflow commands through `./bin/featureforge`
+- do not route live workflow commands through `target/debug/featureforge`
+- do not route live workflow commands through `cargo run`
+
+When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -208,7 +233,7 @@ digraph brainstorming {
 Before writing or updating the spec file on disk, run the shared repo-safety preflight for the exact spec-writing scope:
 
 ```bash
-featureforge repo-safety check --intent write --stage featureforge:brainstorming --task-id <current-spec-write> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:brainstorming --task-id <current-spec-write> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write
 ```
 
 - If the helper returns `allowed`, continue with the spec write.
@@ -216,8 +241,8 @@ featureforge repo-safety check --intent write --stage featureforge:brainstorming
 - If the user explicitly approves writing this spec on the current protected branch, approve the full protected-branch task scope you intend to use, including the spec path and any follow-on git targets that are part of the same task slice:
 
 ```bash
-featureforge repo-safety approve --stage featureforge:brainstorming --task-id <current-spec-write> --reason "<explicit user approval>" --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write [--write-target git-commit]
-featureforge repo-safety check --intent write --stage featureforge:brainstorming --task-id <current-spec-write> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write [--write-target git-commit]
+$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:brainstorming --task-id <current-spec-write> --reason "<explicit user approval>" --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write [--write-target git-commit]
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:brainstorming --task-id <current-spec-write> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write [--write-target git-commit]
 ```
 
 - Continue only if the re-check returns `allowed`.

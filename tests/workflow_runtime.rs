@@ -51,7 +51,9 @@ use featureforge::workflow::status::WorkflowRuntime;
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{repo_root, run, run_checked};
-use runtime_json_support::{discover_execution_runtime, plan_execution_status_json};
+use runtime_json_support::{
+    discover_execution_runtime, plan_execution_status_json, run_featureforge_json_real_cli,
+};
 use runtime_phase_handoff_support::{workflow_handoff_json, workflow_phase_json};
 use serde_json::{Value, json, to_value};
 use sha2::{Digest, Sha256};
@@ -187,6 +189,52 @@ fn workflow_doctor_json(
         .unwrap_or_else(|error| panic!("{context}: workflow doctor should succeed: {error:?}"));
     to_value(value)
         .unwrap_or_else(|error| panic!("{context}: workflow doctor should serialize: {error}"))
+}
+
+fn assert_runtime_provenance_fields(value: &Value, context: &str) {
+    let runtime_provenance = value
+        .get("runtime_provenance")
+        .unwrap_or_else(|| panic!("{context}: missing runtime_provenance field in {value}"));
+    for field in [
+        "binary_path",
+        "binary_realpath",
+        "runtime_root",
+        "repo_root",
+        "state_dir",
+        "state_dir_kind",
+        "control_plane_source",
+        "self_hosting_context",
+    ] {
+        assert!(
+            runtime_provenance
+                .get(field)
+                .and_then(Value::as_str)
+                .is_some(),
+            "{context}: runtime_provenance.{field} should be a string in {runtime_provenance}",
+        );
+    }
+    let skill_discovery = runtime_provenance
+        .get("skill_discovery")
+        .unwrap_or_else(|| {
+            panic!("{context}: missing runtime_provenance.skill_discovery in {value}")
+        });
+    for field in [
+        "installed_skill_root",
+        "workspace_skill_root",
+        "active_featureforge_skill_source",
+    ] {
+        assert!(
+            skill_discovery.get(field).and_then(Value::as_str).is_some(),
+            "{context}: runtime_provenance.skill_discovery.{field} should be a string in {skill_discovery}",
+        );
+    }
+    assert!(
+        skill_discovery
+            .get("active_roots")
+            .and_then(Value::as_array)
+            .is_some(),
+        "{context}: runtime_provenance.skill_discovery.active_roots should be an array in {skill_discovery}",
+    );
 }
 const FULL_CONTRACT_READY_FIXTURE_SPEC_PATH: &str = "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md";
 
@@ -4660,6 +4708,41 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     assert!(handoff_json.get("session_entry").is_none());
     assert_eq!(handoff_json["schema_version"], 3);
     assert_eq!(handoff_json["route"]["schema_version"], 3);
+}
+
+#[test]
+fn workflow_runtime_surfaces_expose_runtime_provenance_fields() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-provenance-surfaces");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    install_full_contract_ready_artifacts(repo);
+
+    let runtime = discover_execution_runtime(repo, state, "runtime provenance fixture runtime");
+    let status_json = plan_execution_status_json(
+        &runtime,
+        FULL_CONTRACT_READY_PLAN_REL,
+        false,
+        "plan execution status runtime provenance fixture",
+    );
+    assert_runtime_provenance_fields(&status_json, "plan execution status");
+
+    let operator_json = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            FULL_CONTRACT_READY_PLAN_REL,
+            "--json",
+        ],
+        "workflow operator runtime provenance fixture",
+    );
+    assert_runtime_provenance_fields(&operator_json, "workflow operator");
+
+    let doctor_json = workflow_doctor_json(&runtime, "workflow doctor runtime provenance fixture");
+    assert_runtime_provenance_fields(&doctor_json, "workflow doctor");
 }
 
 #[test]

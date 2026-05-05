@@ -49,6 +49,8 @@ use crate::execution::router::{
     RouteDecision, project_non_runtime_workflow_routing_state, project_runtime_routing_state,
     required_follow_up_from_route_decision, route_decision_from_routing,
 };
+use crate::execution::runtime::state_dir as default_state_dir;
+use crate::execution::runtime_provenance::{RuntimeProvenance, runtime_provenance_for_paths};
 use crate::execution::stale_target_projection::{
     ReviewStateStaleClosureProjection, ReviewStateStaleClosureProjectionInputs,
     project_review_state_stale_unreviewed_closures,
@@ -143,6 +145,8 @@ pub struct ExecutionRoutingState {
     pub route: WorkflowRoute,
     #[serde(skip)]
     pub(crate) route_decision: Option<RouteDecision>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_provenance: Option<RuntimeProvenance>,
     pub execution_status: Option<PlanExecutionStatus>,
     pub preflight: Option<GateResult>,
     pub gate_review: Option<GateResult>,
@@ -633,13 +637,15 @@ fn query_workflow_routing_state_internal(
         if let Some(read_scope) = preloaded_read_scope {
             let (mut routing, _) =
                 project_runtime_routing_state(&runtime, read_scope, external_review_result_ready)?;
+            attach_runtime_provenance(&mut routing, Some(&runtime), current_dir);
             if engineering_approval_fidelity_blocked
                 && projected_runtime_route_is_before_execution_entry(&routing)
             {
-                let (routing, _) = project_non_runtime_workflow_routing_state(
+                let (mut routing, _) = project_non_runtime_workflow_routing_state(
                     route,
                     external_review_result_ready,
                 )?;
+                attach_runtime_provenance(&mut routing, Some(&runtime), current_dir);
                 return Ok(routing);
             }
             if route.status == phase::WORKFLOW_STATUS_IMPLEMENTATION_READY
@@ -661,11 +667,13 @@ fn query_workflow_routing_state_internal(
             false,
         )?;
         routing.execution_status = Some(read_scope.status);
+        attach_runtime_provenance(&mut routing, Some(&runtime), current_dir);
         if engineering_approval_fidelity_blocked
             && projected_runtime_route_is_before_execution_entry(&routing)
         {
-            let (routing, _) =
+            let (mut routing, _) =
                 project_non_runtime_workflow_routing_state(route, external_review_result_ready)?;
+            attach_runtime_provenance(&mut routing, Some(&runtime), current_dir);
             return Ok(routing);
         }
         if route.status == phase::WORKFLOW_STATUS_IMPLEMENTATION_READY
@@ -676,9 +684,30 @@ fn query_workflow_routing_state_internal(
         apply_read_surface_invariants_to_routing(&mut routing);
         return Ok(routing);
     }
-    let (routing, _) =
+    let (mut routing, _) =
         project_non_runtime_workflow_routing_state(route, external_review_result_ready)?;
+    attach_runtime_provenance(&mut routing, runtime_override, current_dir);
     Ok(routing)
+}
+
+fn attach_runtime_provenance(
+    routing: &mut ExecutionRoutingState,
+    runtime_override: Option<&ExecutionRuntime>,
+    current_dir: &std::path::Path,
+) {
+    routing.runtime_provenance = runtime_override
+        .map(ExecutionRuntime::runtime_provenance)
+        .or_else(|| {
+            ExecutionRuntime::discover(current_dir)
+                .ok()
+                .map(|runtime| runtime.runtime_provenance())
+        })
+        .or_else(|| {
+            Some(runtime_provenance_for_paths(
+                current_dir,
+                &default_state_dir(),
+            ))
+        });
 }
 
 pub fn apply_read_surface_invariants_to_routing(routing: &mut ExecutionRoutingState) {
@@ -1297,6 +1326,7 @@ mod routing_helper_tests {
                 reason: String::new(),
                 note: String::new(),
             },
+            runtime_provenance: None,
             execution_status: None,
             preflight: None,
             gate_review: None,

@@ -29,7 +29,7 @@ description: Use when a written FeatureForge design or architecture spec needs C
 - Before editing the spec body or changing approval headers on disk, run the shared repo-safety preflight for the exact review-write scope:
 
 ```bash
-featureforge repo-safety check --intent write --stage featureforge:plan-ceo-review --task-id <current-spec-review> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target repo-file-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:plan-ceo-review --task-id <current-spec-review> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target repo-file-write
 ```
 
 - When the mutation is specifically an approval-header edit, use the same command shape with `--write-target approval-header-write`.
@@ -37,8 +37,8 @@ featureforge repo-safety check --intent write --stage featureforge:plan-ceo-revi
 - If the user explicitly approves the protected-branch review write, run:
 
 ```bash
-featureforge repo-safety approve --stage featureforge:plan-ceo-review --task-id <current-spec-review> --reason "<explicit user approval>" --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target repo-file-write
-featureforge repo-safety check --intent write --stage featureforge:plan-ceo-review --task-id <current-spec-review> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target repo-file-write
+$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:plan-ceo-review --task-id <current-spec-review> --reason "<explicit user approval>" --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target repo-file-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:plan-ceo-review --task-id <current-spec-review> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target repo-file-write
 ```
 
 - Repeat the same approve -> re-check pattern for `approval-header-write` before flipping `**Workflow State:**` or any other approval header on a protected branch.

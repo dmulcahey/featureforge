@@ -23,7 +23,9 @@ use featureforge::execution::internal_args::{
 };
 use serde_json::Value;
 
-use crate::process_support::run;
+use crate::process_support::{
+    WORKSPACE_RUNTIME_LIVE_STATE_TEST_ALLOW_ENV, assert_workspace_runtime_uses_temp_state, run,
+};
 
 pub fn internal_only_run_featureforge_direct_or_cli(
     repo: Option<&Path>,
@@ -73,6 +75,11 @@ fn run_featureforge_with_env_control_real_cli(
     args: &[&str],
     context: &str,
 ) -> Output {
+    let allow_live_state = envs
+        .iter()
+        .any(|(key, value)| *key == WORKSPACE_RUNTIME_LIVE_STATE_TEST_ALLOW_ENV && *value == "1");
+    assert_workspace_runtime_uses_temp_state(repo, state_dir, home_dir, allow_live_state, context);
+
     let mut command = Command::new(env!("CARGO_BIN_EXE_featureforge"));
     if let Some(repo) = repo {
         command.current_dir(repo);

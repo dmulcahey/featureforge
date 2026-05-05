@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 
 pub mod config;
+pub mod doctor;
 pub mod plan_contract;
 pub mod plan_execution;
 pub mod repo_safety;
@@ -24,6 +25,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Config(config::ConfigCli),
+    Doctor(doctor::DoctorCli),
     Plan(PlanCli),
     Repo(RepoCli),
     #[command(name = "repo-safety")]

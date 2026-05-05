@@ -256,6 +256,126 @@ fn assert_file_not_contains(path: impl AsRef<Path>, needle: &str) {
     assert_not_contains(&content, needle, &path_ref.display().to_string());
 }
 
+fn source_tree_declares_test(root: &Path, test_name: &str) -> bool {
+    source_tree_declares_test_in_dir(&root.join("src"), test_name)
+        || source_tree_declares_test_in_dir(&root.join("tests"), test_name)
+}
+
+fn source_tree_declares_test_in_dir(dir: &Path, test_name: &str) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            if source_tree_declares_test_in_dir(&path, test_name) {
+                return true;
+            }
+            continue;
+        }
+        if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+            continue;
+        }
+        if declares_rust_test_function(&read_utf8(&path), test_name) {
+            return true;
+        }
+    }
+    false
+}
+
+fn declares_rust_test_function(content: &str, test_name: &str) -> bool {
+    let declaration = format!("fn {test_name}(");
+    let mut saw_test_attr = false;
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line == "#[test]"
+            || line.starts_with("#[tokio::test")
+            || line.starts_with("#[rstest")
+            || line.starts_with("#[case]")
+        {
+            saw_test_attr = true;
+            continue;
+        }
+        if saw_test_attr && line.starts_with(&declaration) {
+            return true;
+        }
+        if !line.is_empty() && !line.starts_with("#[") {
+            saw_test_attr = false;
+        }
+    }
+    false
+}
+
+#[test]
+fn targeted_test_scanner_requires_exact_function_identifier() {
+    assert!(declares_rust_test_function(
+        "#[test]\nfn runtime_provenance_classifies_installed_runtime() {}\n",
+        "runtime_provenance_classifies_installed_runtime",
+    ));
+    assert!(!declares_rust_test_function(
+        "#[test]\nfn runtime_provenance_classifies_installed_runtime_extra() {}\n",
+        "runtime_provenance_classifies_installed_runtime",
+    ));
+}
+
+fn extract_workspace_runtime_guard_commands(content: &str) -> Vec<String> {
+    let lines = content.lines().collect::<Vec<_>>();
+    let mut commands = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !line.contains("deny_workspace_runtime_live_mutation") {
+            continue;
+        }
+        let scan_end = (index + 8).min(lines.len());
+        for candidate in &lines[index..scan_end] {
+            let Some(command) = extract_first_rust_string_literal(candidate) else {
+                continue;
+            };
+            if command.starts_with("plan contract ")
+                || command.starts_with("plan execution ")
+                || command.starts_with("repo-safety ")
+            {
+                commands.push(command);
+                break;
+            }
+        }
+    }
+    commands.sort();
+    commands.dedup();
+    commands
+}
+
+fn extract_first_rust_string_literal(line: &str) -> Option<String> {
+    let start = line.find('"')? + 1;
+    let tail = &line[start..];
+    let end = tail.find('"')?;
+    Some(tail[..end].to_string())
+}
+
+fn extract_js_string_array(content: &str, name: &str) -> Vec<String> {
+    let start_marker = format!("const {name} = [");
+    let start = content
+        .find(&start_marker)
+        .unwrap_or_else(|| panic!("expected JavaScript array declaration for {name}"));
+    let tail = &content[start + start_marker.len()..];
+    let body = tail
+        .split_once("];")
+        .unwrap_or_else(|| panic!("expected JavaScript array declaration for {name} to close"))
+        .0;
+    let mut values = body
+        .lines()
+        .filter_map(extract_single_quoted_js_string)
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn extract_single_quoted_js_string(line: &str) -> Option<String> {
+    let stripped = line.trim().trim_end_matches(',').strip_prefix('\'')?;
+    let end = stripped.find('\'')?;
+    Some(stripped[..end].to_string())
+}
+
 fn hidden_text(parts: &[&str]) -> String {
     parts.concat()
 }
@@ -659,6 +779,21 @@ fn verify_prebuilt_fixture_with_host_target_and_args(
         command.env(key, value);
     }
     run(command, "prebuilt fixture provenance verify")
+}
+
+fn run_workspace_runtime_evidence_lint(
+    lint_repo_root: &Path,
+    scan_paths: &[&Path],
+) -> std::process::Output {
+    let mut command = Command::new("node");
+    command
+        .arg(repo_root().join("scripts/lint-workspace-runtime-evidence.mjs"))
+        .arg("--repo-root")
+        .arg(lint_repo_root);
+    for scan_path in scan_paths {
+        command.arg("--path").arg(scan_path);
+    }
+    run(command, "workspace runtime evidence lint")
 }
 
 fn write_complete_prebuilt_fixture(root: &Path, darwin_body: &str, windows_body: &str) {
@@ -1521,6 +1656,11 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
     );
     assert_contains(
         &docs_testing_content,
+        "node scripts/lint-workspace-runtime-evidence.mjs",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
         "workflow-status snapshot coverage for the ambiguous-spec route lives in `tests/workflow_runtime.rs`",
         "docs/testing.md",
     );
@@ -1568,7 +1708,7 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_ne
     );
     assert_contains(
         &subagent_skill,
-        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` for state-dir-only diagnostic projection refreshes. If the user explicitly needs repo-local human-readable projection exports, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress.",
+        "Use `$_FEATUREFORGE_BIN plan execution materialize-projections --plan <approved-plan-path>` for state-dir-only diagnostic projection refreshes. If the user explicitly needs repo-local human-readable projection exports, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress.",
         "skills/subagent-driven-development/SKILL.md",
     );
     assert_not_contains(
@@ -1583,7 +1723,7 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_ne
     );
     assert_contains(
         &executing_plans_skill,
-        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` for state-dir-only diagnostic projection refreshes. If the user explicitly needs repo-local human-readable projection exports, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress.",
+        "Use `$_FEATUREFORGE_BIN plan execution materialize-projections --plan <approved-plan-path>` for state-dir-only diagnostic projection refreshes. If the user explicitly needs repo-local human-readable projection exports, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress.",
         "skills/executing-plans/SKILL.md",
     );
     assert_not_contains(
@@ -1692,6 +1832,7 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         "review/checklist.md",
         "qa/references/issue-taxonomy.md",
         "qa/templates/qa-report-template.md",
+        "scripts/lint-workspace-runtime-evidence.mjs",
         "tests/runtime_instruction_contracts.rs",
         "tests/using_featureforge_skill.rs",
         "tests/powershell_wrapper_resolution.rs",
@@ -1836,15 +1977,15 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
 
     assert_file_contains(
         root.join("README.md"),
-        "`using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.",
+        "`using-featureforge` is the human-readable entry router that consults `$_FEATUREFORGE_BIN workflow` directly from repo-visible artifacts.",
     );
     assert_file_not_contains(root.join("README.md"), "featureforge session-entry");
     assert_file_not_contains(
         root.join("README.md"),
         "FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY",
     );
-    assert_file_contains(root.join("README.md"), "featureforge repo-safety");
-    assert_file_contains(root.join("README.md"), "featureforge plan contract");
+    assert_file_contains(root.join("README.md"), "$_FEATUREFORGE_BIN repo-safety");
+    assert_file_contains(root.join("README.md"), "$_FEATUREFORGE_BIN plan contract");
     assert_file_contains(root.join("README.md"), "protected branches");
     assert_file_contains(root.join("README.md"), "Seven layers matter:");
     assert_file_contains(
@@ -1881,7 +2022,7 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
-        "`using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.",
+        "`using-featureforge` is the human-readable entry router that consults `$_FEATUREFORGE_BIN workflow` directly from repo-visible artifacts.",
     );
     assert_file_not_contains(
         root.join("docs/README.codex.md"),
@@ -1901,7 +2042,7 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
-        "`using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.",
+        "`using-featureforge` is the human-readable entry router that consults `$_FEATUREFORGE_BIN workflow` directly from repo-visible artifacts.",
     );
     assert_file_not_contains(
         root.join("docs/README.copilot.md"),
@@ -1970,6 +2111,866 @@ fn cutover_script_runs_prebuilt_runtime_provenance_gate() {
         &script,
         "verify --repo-root",
         "scripts/check-featureforge-cutover.sh",
+    );
+}
+
+#[test]
+fn cutover_script_runs_workspace_runtime_evidence_lint_gate() {
+    let script = read_utf8(repo_root().join("scripts/check-featureforge-cutover.sh"));
+
+    assert_contains(
+        &script,
+        "scripts/lint-workspace-runtime-evidence.mjs",
+        "scripts/check-featureforge-cutover.sh",
+    );
+    assert_contains(
+        &script,
+        "workspace-runtime evidence lint failed",
+        "scripts/check-featureforge-cutover.sh",
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_workspace_runtime_live_mutation() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    let forbidden_commands = [
+        "./bin/featureforge plan execution repair-review-state --plan docs/featureforge/plans/example.md",
+        "/Users/example/development/featureforge/bin/featureforge plan execution repair-review-state --plan docs/featureforge/plans/example.md",
+        "./target/debug/featureforge plan execution repair-review-state --plan docs/featureforge/plans/example.md",
+        "cargo run -- plan execution repair-review-state --plan docs/featureforge/plans/example.md",
+        "./bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "/Users/example/development/featureforge/target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "./target/release/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "cargo run -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "cargo -q run -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "cargo --quiet run -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "cargo +stable run -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "cargo r -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "./target/debug/featureforge plan contract build-task-packet --plan docs/featureforge/plans/example.md --task 1 --persist yes",
+        "cargo run -- plan contract build-task-packet --plan docs/featureforge/plans/example.md --task 1 --persist=yes",
+        "cargo run -- plan execution advance-late-stage --plan docs/featureforge/plans/example.md --reviewer-source fresh-context-subagent --reviewer-id 019df56c-0fb2-75f1-866d-97921b961cb5 --result pass --summary-file docs/featureforge/execution-evidence/final-review-summary.md",
+        "cargo run -p featureforge -- plan execution materialize-projections --plan docs/featureforge/plans/example.md",
+        "cargo run -- repo-safety approve --stage featureforge:project-memory --task-id memory-update --reason explicit-approval --path docs/project_notes/decisions.md --write-target repo-file-write",
+    ];
+    for (index, command) in forbidden_commands.iter().enumerate() {
+        write_utf8(
+            &temp.path().join(format!(
+                "docs/featureforge/execution-evidence/live-mutation-{index}.md"
+            )),
+            &format!("Recorded command:\n{command}\n"),
+        );
+    }
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should fail for live mutation commands"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        &stderr,
+        "workspace-runtime evidence lint failed:",
+        "workspace-runtime evidence lint stderr",
+    );
+    assert_contains(
+        &stderr,
+        "docs/featureforge/execution-evidence/live-mutation-0.md",
+        "workspace-runtime evidence lint stderr",
+    );
+    for command in [
+        "./bin/featureforge plan execution repair-review-state",
+        "./target/debug/featureforge plan execution repair-review-state",
+        "cargo run -- plan execution repair-review-state",
+        "./bin/featureforge plan execution close-current-task",
+        "./target/debug/featureforge plan execution close-current-task",
+        "./target/release/featureforge plan execution close-current-task",
+        "cargo run -- plan execution close-current-task",
+        "./target/debug/featureforge plan contract build-task-packet",
+        "cargo run -- plan contract build-task-packet",
+        "cargo run -- plan execution advance-late-stage",
+        "cargo run -- plan execution materialize-projections",
+        "cargo run -- repo-safety approve",
+    ] {
+        assert_contains(&stderr, command, "workspace-runtime evidence lint stderr");
+    }
+}
+
+#[test]
+fn workspace_runtime_evidence_lint_covers_runtime_guarded_live_mutations() {
+    let root = repo_root();
+    let cli_runtime = read_utf8(root.join("src/lib.rs"));
+    let evidence_lint = read_utf8(root.join("scripts/lint-workspace-runtime-evidence.mjs"));
+    let guarded_commands = extract_workspace_runtime_guard_commands(&cli_runtime);
+    let lint_suffixes = extract_js_string_array(&evidence_lint, "LIVE_WORKFLOW_COMMAND_SUFFIXES");
+
+    assert!(
+        !guarded_commands.is_empty(),
+        "src/lib.rs should declare workspace-runtime live-mutation guards"
+    );
+    for command in guarded_commands {
+        assert!(
+            lint_suffixes.contains(&command),
+            "workspace-runtime evidence lint should cover runtime-guarded live mutation command: {command}"
+        );
+    }
+}
+
+#[test]
+fn evidence_lint_rejects_workspace_runtime_live_workflow_routing_commands() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    let forbidden_commands = [
+        "./target/debug/featureforge workflow operator --plan docs/featureforge/plans/example.md --json",
+        "cargo run -- workflow doctor --json",
+        "./target/debug/featureforge workflow status --json",
+        "./bin/featureforge plan execution status --json",
+    ];
+    for (index, command) in forbidden_commands.iter().enumerate() {
+        write_utf8(
+            &temp.path().join(format!(
+                "docs/featureforge/handoffs/live-routing-{index}.md"
+            )),
+            &format!("Recorded live workflow command:\n{command}\n"),
+        );
+    }
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should fail for live workflow routing commands"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for command in [
+        "./target/debug/featureforge workflow operator",
+        "cargo run -- workflow doctor",
+        "./target/debug/featureforge workflow status",
+        "./bin/featureforge plan execution status",
+    ] {
+        assert_contains(&stderr, command, "workspace-runtime evidence lint stderr");
+    }
+}
+
+#[test]
+fn evidence_lint_allows_workspace_runtime_live_workflow_routing_with_temp_state() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join(".featureforge/handoffs/temp-state-routing-safe.md"),
+        "Fixture-only temp-state workflow command:\nFEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" ./target/debug/featureforge workflow operator --plan docs/featureforge/plans/example.md --json\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        output.status.success(),
+        "workspace-runtime evidence lint should allow temp-state workflow routing examples\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn evidence_lint_allows_workspace_runtime_fixture_temp_state_examples() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp.path().join(".featureforge/reviews/temp-state-safe.md"),
+        "Fixture-only temp-state execution:\nFEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        output.status.success(),
+        "workspace-runtime evidence lint should allow fixture/temp-state examples\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn evidence_lint_allows_non_persisted_workspace_task_packet_examples() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join(".featureforge/reviews/read-only-task-packet.md"),
+        "Read-only task-packet inspection:\n./target/debug/featureforge plan contract build-task-packet --plan docs/featureforge/plans/example.md --task 1 --persist no\ncargo run -- plan contract build-task-packet --plan docs/featureforge/plans/example.md --task 1\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        output.status.success(),
+        "workspace-runtime evidence lint should allow non-persisted task-packet examples\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn evidence_lint_allows_persisted_workspace_task_packet_with_temp_state() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join(".featureforge/reviews/temp-task-packet.md"),
+        "Fixture-only temp-state task-packet cache execution:\nFEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" ./target/debug/featureforge plan contract build-task-packet --plan docs/featureforge/plans/example.md --task 1 --persist yes\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        output.status.success(),
+        "workspace-runtime evidence lint should allow persisted task-packet examples with temp state\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn evidence_lint_allows_literal_temp_and_fixture_state_values() {
+    let cases = [
+        (
+            "literal-tmp-inline.md",
+            "FEATUREFORGE_STATE_DIR=\"/tmp/featureforge-fixture-state\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        ),
+        (
+            "literal-fixture-inline.md",
+            "FEATUREFORGE_STATE_DIR=\"tests/fixtures/temp-state\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        ),
+        (
+            "literal-tmp-exported.md",
+            "export FEATUREFORGE_STATE_DIR=\"/private/tmp/featureforge-fixture-state\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        ),
+        (
+            "literal-fixture-exported.md",
+            "export FEATUREFORGE_STATE_DIR=\"tests/fixtures/runtime-state\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        ),
+    ];
+
+    for (file_name, command) in cases {
+        let temp = TempDir::new().expect("lint fixture root should exist");
+        write_utf8(
+            &temp
+                .path()
+                .join(format!(".featureforge/reviews/{file_name}")),
+            &format!("Fixture-only temp-state execution:\n{command}\n"),
+        );
+
+        let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+        assert!(
+            output.status.success(),
+            "workspace-runtime evidence lint should allow literal temp/fixture state value {command}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn evidence_lint_allows_exported_temp_state_for_workspace_runtime_examples() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join(".featureforge/reviews/exported-temp-state-safe.md"),
+        "Fixture-only temp-state execution:\nexport FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        output.status.success(),
+        "workspace-runtime evidence lint should allow exported temp-state examples\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_unexported_split_temp_state_assignment() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    let cases = [
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" && ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"; ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" || ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" echo \"$(./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass)\"",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" echo `./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass`",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" RESULT=$(./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass)",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" true | ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" sleep 1 & ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+    ];
+    for (index, command) in cases.iter().enumerate() {
+        write_utf8(
+            &temp.path().join(format!(
+                ".featureforge/reviews/unexported-temp-state-unsafe-{index}.md"
+            )),
+            &format!("Fixture-only temp-state execution:\n{command}\n"),
+        );
+    }
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should reject split unexported temp-state assignments"
+    );
+    assert_contains(
+        &String::from_utf8_lossy(&output.stderr),
+        "./target/debug/featureforge plan execution close-current-task",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_exported_temp_state_shell_boundaries() {
+    let cases = [
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" | ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" & ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" || ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" && ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"; ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\ntrue | ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\nsleep 1 & ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\nfalse || ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\necho \"$(./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass)\"",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\necho `./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass`",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\nRESULT=$(./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass)",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass | tee out.log",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass &",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass && echo done",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass || echo failed",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass; echo done",
+    ];
+
+    for (index, command) in cases.iter().enumerate() {
+        let temp = TempDir::new().expect("lint fixture root should exist");
+        write_utf8(
+            &temp.path().join(format!(
+                ".featureforge/reviews/exported-temp-state-unsafe-{index}.md"
+            )),
+            &format!("Fixture-only temp-state execution:\n{command}\n"),
+        );
+
+        let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+        assert!(
+            !output.status.success(),
+            "workspace-runtime evidence lint should reject exported temp-state shell boundary {command}"
+        );
+        assert_contains(
+            &String::from_utf8_lossy(&output.stderr),
+            "./target/debug/featureforge plan execution close-current-task",
+            "workspace-runtime evidence lint stderr",
+        );
+    }
+}
+
+#[test]
+fn evidence_lint_rejects_safe_state_rhs_substitution_and_suffix_boundaries() {
+    let cases = [
+        "FEATUREFORGE_STATE_DIR=\"$(echo fixture-state)\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d $(echo nested))\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"$(echo fixture-state)\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"$(mktemp -d $(echo nested))\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass | tee out.log",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass &",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass && echo done",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass || echo failed",
+        "FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass; echo done",
+    ];
+
+    for (index, command) in cases.iter().enumerate() {
+        let temp = TempDir::new().expect("lint fixture root should exist");
+        write_utf8(
+            &temp.path().join(format!(
+                ".featureforge/reviews/state-rhs-or-suffix-unsafe-{index}.md"
+            )),
+            &format!("Fixture-only temp-state execution:\n{command}\n"),
+        );
+
+        let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+        assert!(
+            !output.status.success(),
+            "workspace-runtime evidence lint should reject unsafe state RHS or suffix boundary {command}"
+        );
+        assert_contains(
+            &String::from_utf8_lossy(&output.stderr),
+            "./target/debug/featureforge plan execution close-current-task",
+            "workspace-runtime evidence lint stderr",
+        );
+    }
+}
+
+#[test]
+fn evidence_lint_rejects_malformed_or_wrapped_safe_state_assignments() {
+    let cases = [
+        "export FEATUREFORGE_STATE_DIR = /tmp/featureforge-fixture-state\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR = /tmp/featureforge-fixture-state ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR=\"/tmp/featureforge-fixture-state\" env -u FEATUREFORGE_STATE_DIR ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR=\"/tmp/featureforge-fixture-state\" sudo ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR=\"/tmp/featureforge-fixture-state\" sh -c './target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass'",
+        "export FEATUREFORGE_STATE_DIR=\"/tmp/featureforge-fixture-state\"\nenv -u FEATUREFORGE_STATE_DIR ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"/tmp/featureforge-fixture-state\"\nsudo ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export FEATUREFORGE_STATE_DIR=\"/tmp/featureforge-fixture-state\"\nsh -c './target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass'",
+    ];
+
+    for (index, command) in cases.iter().enumerate() {
+        let temp = TempDir::new().expect("lint fixture root should exist");
+        write_utf8(
+            &temp.path().join(format!(
+                ".featureforge/reviews/state-assignment-bypass-{index}.md"
+            )),
+            &format!("Fixture-only temp-state execution:\n{command}\n"),
+        );
+
+        let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+        assert!(
+            !output.status.success(),
+            "workspace-runtime evidence lint should reject malformed or wrapped state assignment {command}"
+        );
+        assert_contains(
+            &String::from_utf8_lossy(&output.stderr),
+            "./target/debug/featureforge plan execution close-current-task",
+            "workspace-runtime evidence lint stderr",
+        );
+    }
+}
+
+#[test]
+fn evidence_lint_rejects_post_command_temp_state_assignment() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    let cases = [
+        "./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass; FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"",
+        "./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass; export FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"",
+    ];
+    for (index, command) in cases.iter().enumerate() {
+        write_utf8(
+            &temp.path().join(format!(
+                ".featureforge/reviews/post-command-temp-state-{index}.md"
+            )),
+            &format!("Fixture-only temp-state execution:\n{command}\n"),
+        );
+    }
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should reject post-command temp-state assignments"
+    );
+    assert_contains(
+        &String::from_utf8_lossy(&output.stderr),
+        "./target/debug/featureforge plan execution close-current-task",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_fake_temp_state_isolation() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    let cases = [
+        "NOT_FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "FEATUREFORGE_STATE_DIR_BACKUP=\"$(mktemp -d)\" ./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "export NOT_FEATUREFORGE_STATE_DIR=\"$(mktemp -d)\"\n./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        "./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass --state-dir \"$(mktemp -d)\"",
+    ];
+    for (index, command) in cases.iter().enumerate() {
+        write_utf8(
+            &temp
+                .path()
+                .join(format!(".featureforge/reviews/fake-isolation-{index}.md")),
+            &format!("Fixture-only temp-state execution:\n{command}\n"),
+        );
+    }
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should reject fake temp-state isolation"
+    );
+    assert_contains(
+        &String::from_utf8_lossy(&output.stderr),
+        "./target/debug/featureforge plan execution close-current-task",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_workspace_runtime_commands_with_live_state_markers() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join(".featureforge/reviews/live-state-marker.md"),
+        "Fixture-only temp-state execution (invalid override case):\nFEATUREFORGE_STATE_DIR=\"${HOME}/.featureforge\" cargo run -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should fail when temp/fixture context is mixed with live-state markers"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        &stderr,
+        "cargo run -- plan execution close-current-task",
+        "workspace-runtime evidence lint stderr",
+    );
+    assert_contains(
+        &stderr,
+        "mixed with live ~/.featureforge state markers",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_scans_docs_featureforge_reviews_root() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp.path().join("docs/featureforge/reviews/review.md"),
+        "Unsafe review artifact command:\n./bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should scan docs/featureforge/reviews by default"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        &stderr,
+        "docs/featureforge/reviews/review.md",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_workspace_runtime_variant_launch_forms() {
+    let cases = [
+        (
+            "cargo -q run -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "cargo run -- plan execution close-current-task",
+        ),
+        (
+            "cargo --quiet run -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "cargo run -- plan execution close-current-task",
+        ),
+        (
+            "cargo +stable run -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "cargo run -- plan execution close-current-task",
+        ),
+        (
+            "cargo r -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "cargo run -- plan execution close-current-task",
+        ),
+        (
+            "cargo run -q plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "cargo run -- plan execution close-current-task",
+        ),
+        (
+            "cargo -q run plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "cargo run -- plan execution close-current-task",
+        ),
+        (
+            "./target/release/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./target/release/featureforge plan execution close-current-task",
+        ),
+        (
+            "/Users/example/development/featureforge/target/release/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./target/release/featureforge plan execution close-current-task",
+        ),
+        (
+            "../featureforge/target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./target/debug/featureforge plan execution close-current-task",
+        ),
+        (
+            "/Users/example/dev/renamed-worktree/target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./target/debug/featureforge plan execution close-current-task",
+        ),
+        (
+            "/Users/example/dev/renamed-worktree/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./bin/featureforge plan execution close-current-task",
+        ),
+        (
+            "../renamed-worktree/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./bin/featureforge plan execution close-current-task",
+        ),
+        (
+            "renamed-worktree/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./bin/featureforge plan execution close-current-task",
+        ),
+        (
+            "$_REPO_ROOT/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./bin/featureforge plan execution close-current-task",
+        ),
+        (
+            "${REPO_ROOT}/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./bin/featureforge plan execution close-current-task",
+        ),
+        (
+            "$ROOT_DIR/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./bin/featureforge plan execution close-current-task",
+        ),
+        (
+            "${ROOT_DIR}/bin/featureforge workflow status --json",
+            "./bin/featureforge workflow status",
+        ),
+        (
+            "$WORKTREE_ROOT/bin/featureforge workflow status --json",
+            "./bin/featureforge workflow status",
+        ),
+        (
+            "~/dev/renamed-worktree/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./bin/featureforge plan execution close-current-task",
+        ),
+        (
+            "renamed-worktree/target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./target/debug/featureforge plan execution close-current-task",
+        ),
+        (
+            "$ROOT_DIR/target/debug/featureforge workflow status --json",
+            "./target/debug/featureforge workflow status",
+        ),
+        (
+            "${ROOT_DIR}/target/release/featureforge workflow status --json",
+            "./target/release/featureforge workflow status",
+        ),
+        (
+            "~/dev/renamed-worktree/target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./target/debug/featureforge plan execution close-current-task",
+        ),
+        (
+            "RESULT=$(./bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass)",
+            "./bin/featureforge plan execution close-current-task",
+        ),
+        (
+            "true;./bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./bin/featureforge plan execution close-current-task",
+        ),
+        (
+            "true&&./target/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./target/debug/featureforge plan execution close-current-task",
+        ),
+        (
+            "/Users/example/dev/renamed-worktree/target/aarch64-apple-darwin/debug/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./target/<triple>/debug/featureforge plan execution close-current-task",
+        ),
+        (
+            "$WORKTREE_ROOT/target/aarch64-apple-darwin/debug/featureforge workflow status --json",
+            "./target/<triple>/debug/featureforge workflow status",
+        ),
+        (
+            "/Users/example/dev/renamed-worktree/target/x86_64-unknown-linux-gnu/release/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            "./target/<triple>/release/featureforge plan execution close-current-task",
+        ),
+        (
+            "~/dev/renamed-worktree/target/x86_64-unknown-linux-gnu/release/featureforge workflow status --json",
+            "./target/<triple>/release/featureforge workflow status",
+        ),
+    ];
+
+    for (index, (command, expected_marker)) in cases.iter().enumerate() {
+        let temp = TempDir::new().expect("lint fixture root should exist");
+        write_utf8(
+            &temp.path().join(format!(
+                "docs/featureforge/execution-evidence/variant-launch-{index}.md"
+            )),
+            &format!("Unsafe live mutation variant:\n{command}\n"),
+        );
+
+        let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+        assert!(
+            !output.status.success(),
+            "workspace-runtime evidence lint should reject launch variant {command}"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_contains(
+            &stderr,
+            expected_marker,
+            "workspace-runtime evidence lint stderr",
+        );
+    }
+
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    let repo_root_bin = temp.path().join("bin/featureforge");
+    let command = format!(
+        "{} plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+        repo_root_bin.display()
+    );
+    write_utf8(
+        &temp
+            .path()
+            .join("docs/featureforge/execution-evidence/repo-root-bin.md"),
+        &format!("Unsafe live mutation variant:\n{command}\n"),
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should reject repo-root bin launch variant {command}"
+    );
+    assert_contains(
+        &String::from_utf8_lossy(&output.stderr),
+        "./bin/featureforge plan execution close-current-task",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_allows_installed_runtime_live_mutation() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join(".featureforge/reviews/installed-runtime-live-command.md"),
+        "Installed control-plane commands:\n/Users/example/.featureforge/install/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n~/.featureforge/install/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n${FEATUREFORGE_INSTALL_ROOT}/bin/featureforge workflow status --json\n$INSTALL_ROOT/bin/featureforge workflow status --json\n${INSTALLED_ROOT}/bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        output.status.success(),
+        "workspace-runtime evidence lint should not flag installed runtime live mutation commands\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_cargo_run_equals_option_live_mutation() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join(".featureforge/reviews/cargo-equals-unsafe.md"),
+        "Unsafe live mutation command:\ncargo run --package=featureforge -- plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should reject cargo run --flag=value live mutation forms"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        &stderr,
+        "cargo run -- plan execution close-current-task",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_test_only_workspace_runtime_live_mutation_without_temp_state() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join(".featureforge/reviews/test-only-unsafe.md"),
+        "Test-only example:\n./bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should fail for test-only wording without temp/fixture isolation context"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        &stderr,
+        "missing nearby fixture/temp-state isolation context",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_negated_temp_state_prose_without_isolation() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join(".featureforge/reviews/negated-temp-state.md"),
+        "Unsafe example without temp-state isolation:\n./bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should reject negated temp-state prose without explicit isolation"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        &stderr,
+        "missing nearby fixture/temp-state isolation context",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_workspace_runtime_wrapped_live_mutation_commands() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join("docs/featureforge/projections/wrapped-unsafe.md"),
+        "Wrapped unsafe commands:\n./target/debug/featureforge plan execution \\\nrepair-review-state --plan docs/featureforge/plans/example.md\n./bin/featureforge plan execution \\\nclose-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should fail for wrapped multi-line live mutation commands"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        &stderr,
+        "./target/debug/featureforge plan execution repair-review-state",
+        "workspace-runtime evidence lint stderr",
+    );
+    assert_contains(
+        &stderr,
+        "./bin/featureforge plan execution close-current-task",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_workspace_runtime_long_wrapped_live_mutation_commands() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join("docs/featureforge/execution-evidence/long-wrapped-unsafe.md"),
+        "Long wrapped unsafe command:\n./bin/featureforge \\\nplan \\\nexecution \\\nclose-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should fail for long wrapped live mutation commands"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        &stderr,
+        "./bin/featureforge plan execution close-current-task",
+        "workspace-runtime evidence lint stderr",
+    );
+}
+
+#[test]
+fn evidence_lint_rejects_tmp_prefix_sibling_state_dir_paths() {
+    let temp = TempDir::new().expect("lint fixture root should exist");
+    write_utf8(
+        &temp
+            .path()
+            .join(".featureforge/reviews/tmp-prefix-sibling.md"),
+        "Fixture-only temp-state execution:\nFEATUREFORGE_STATE_DIR=\"/tmp-featureforge-liveish\" ./bin/featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass\n",
+    );
+
+    let output = run_workspace_runtime_evidence_lint(temp.path(), &[]);
+    assert!(
+        !output.status.success(),
+        "workspace-runtime evidence lint should reject /tmp-* sibling paths that are not under the temp root"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_contains(
+        &stderr,
+        "missing nearby fixture/temp-state isolation context",
+        "workspace-runtime evidence lint stderr",
     );
 }
 
@@ -2102,8 +3103,8 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
                 "Do not hand-write or edit this artifact.",
                 "workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.",
                 "If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.",
-                "If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path>` with the concrete plan and rerun workflow/operator.",
-                "When workflow/operator reports `phase_detail=release_readiness_recording_ready`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` only after substituting concrete values.",
+                "If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, use input shape `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path>` with the concrete plan and rerun workflow/operator.",
+                "When workflow/operator reports `phase_detail=release_readiness_recording_ready`, use input shape `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` only after substituting concrete values.",
                 "renders `**Result:** pass|blocked` in the derived companion artifact",
             ],
         ),
@@ -2115,9 +3116,9 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
                 "featureforge:document-release",
                 "Conditional Pre-Landing QA Gate",
                 "Required release-readiness pass for workflow-routed work before completion",
-                "featureforge repo-safety check --intent write",
+                "$_FEATUREFORGE_BIN repo-safety check --intent write",
                 "For workflow-routed terminal completion, do not run the terminal review gate in this step. Run it only after `featureforge:document-release` and before any runtime-routed `featureforge:qa-only` handoff.",
-                "If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and the terminal `featureforge:requesting-code-review` gate are current, rerun `featureforge workflow operator --plan <approved-plan-path>` and follow the exact `phase_detail`-driven next finish command before presenting completion options.",
+                "If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and the terminal `featureforge:requesting-code-review` gate are current, rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` and follow the exact `phase_detail`-driven next finish command before presenting completion options.",
                 "If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.",
             ],
         ),
@@ -2133,7 +3134,7 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/document-release/SKILL.md"),
-        "For workflow-routed work, get `BASE_BRANCH` from `workflow operator --json` (`base_branch`) for the concrete approved plan path; any `<approved-plan-path>` command text here is input shape, not exact argv.",
+        "For workflow-routed work, get `BASE_BRANCH` from `$_FEATUREFORGE_BIN workflow operator --json` (`base_branch`) for the concrete approved plan path; any `<approved-plan-path>` command text here is input shape, not exact argv.",
     );
     assert_file_not_contains(
         root.join("skills/document-release/SKILL.md"),
@@ -2233,7 +3234,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/brainstorming/SKILL.md"),
-        "featureforge repo-safety check --intent write",
+        "$_FEATUREFORGE_BIN repo-safety check --intent write",
     );
     assert_file_contains(
         root.join("skills/brainstorming/visual-companion.md"),
@@ -2391,7 +3392,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "Run `featureforge workflow operator --plan <approved-plan-path>` before starting execution.",
+        "Run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` before starting execution.",
     );
     assert_file_not_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -2431,13 +3432,13 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator",
+        "rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
         concat!(
             "When workflow/operator reports `review_state_status` as stale or missing closure context, do not invent a repair command. If `recommended_public_command",
-            "_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan ",
+            "_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `$_FEATUREFORGE_BIN plan execution repair-review-state --plan ",
             "<approved-plan-path>` only when the non-diagnostic route owns that repair lane."
         ),
     );
@@ -2477,7 +3478,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/executing-plans/SKILL.md"),
         &[
             "after review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`",
-            "rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator",
+            "rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator",
             "no exceptions: only after close-current-task succeeds may Task `N+1` begin",
         ],
     );
@@ -2489,13 +3490,37 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/executing-plans/SKILL.md"),
         "`review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically when reviewable dispatch lineage enters remediation and when remediation reopens execution work.",
     );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "For FeatureForge-on-FeatureForge execution, every execution-evidence update must include a runtime provenance section",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "installed runtime path used for live workflow routing",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "installed runtime hash used for live workflow routing",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "state dir used for live workflow commands",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "workspace runtime hash used for tests/fixtures (or `none` when no workspace runtime was used)",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "explicit confirmation that workspace runtime did not mutate live workflow state (or the explicit approved override record when it did)",
+    );
     assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "After each task in subagent-driven development",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "Run `featureforge workflow operator --plan <approved-plan-path>` before dispatching implementation subagents.",
+        "Run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` before dispatching implementation subagents.",
     );
     assert_file_not_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -2519,7 +3544,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator.",
+        "Rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -2533,7 +3558,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/subagent-driven-development/SKILL.md"),
         concat!(
             "When workflow/operator reports `review_state_status` as stale or missing closure context, do not invent a repair command. If `recommended_public_command",
-            "_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan ",
+            "_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `$_FEATUREFORGE_BIN plan execution repair-review-state --plan ",
             "<approved-plan-path>` only when the non-diagnostic route owns that repair lane."
         ),
     );
@@ -2577,7 +3602,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/subagent-driven-development/SKILL.md"),
         &[
             "After review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`.",
-            "Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator.",
+            "Rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator.",
             "No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.",
         ],
     );
@@ -2588,6 +3613,30 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
         "does not require per-dispatch user-consent prompts.",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "For FeatureForge-on-FeatureForge execution, every execution-evidence update must include a runtime provenance section",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "installed runtime path used for live workflow routing",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "installed runtime hash used for live workflow routing",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "state dir used for live workflow commands",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "workspace runtime hash used for tests/fixtures (or `none` when no workspace runtime was used)",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "explicit confirmation that workspace runtime did not mutate live workflow state (or the explicit approved override record when it did)",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -2617,7 +3666,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "For plan-routed completion, use the exact `base_branch` from `featureforge workflow operator --plan <approved-plan-path> --json` instead of redetecting the target branch.",
+        "For plan-routed completion, use the exact `base_branch` from `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` instead of redetecting the target branch.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -2633,7 +3682,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `featureforge plan execution repair-review-state --plan <path>`; do not guess from test-plan prose.",
+        "If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <path>`; do not guess from test-plan prose.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -2933,7 +3982,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "Run `featureforge workflow operator --plan <approved-plan-path>` before dispatching the reviewer.",
+        "Run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` before dispatching the reviewer.",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -2945,7 +3994,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "Do not use PR metadata or repo default-branch APIs as a fallback. For workflow-routed review, require `BASE_BRANCH` from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`). For non-plan-routed review, require an explicitly provided `BASE_BRANCH`.",
+        "Do not use PR metadata or repo default-branch APIs as a fallback. For workflow-routed review, require `BASE_BRANCH` from `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` (`base_branch`). For non-plan-routed review, require an explicitly provided `BASE_BRANCH`.",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -3002,6 +4051,26 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "Pass the exact approved plan path into the reviewer context. When runtime-owned execution evidence or task-packet context is already available from the current workflow handoff, pass it through as supplemental context; do not make the public flow harvest it manually.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "Required review-dispatch provenance for FeatureForge-on-FeatureForge work:",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "base branch, base SHA, head SHA, working-tree diff hash, installed runtime path/hash used for live routing, workspace runtime hash used for tests (if any), live state dir, active FeatureForge skill source/roots, installed skill root, and workspace skill root.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "Reviewers must fail review when live workflow mutation used workspace runtime without an explicit approved override record.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "Reviewers must fail review when active FeatureForge skills resolve from the workspace skill root instead of the installed skill root without an explicit approved self-hosting exception.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "Reviewers must fail review when FeatureForge-on-FeatureForge provenance is missing or incomplete.",
     );
     assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -3070,6 +4139,54 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
         "**Execution evidence path:** {EXECUTION_EVIDENCE_PATH}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "**Working-tree diff hash:** {WORKING_TREE_DIFF_HASH}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "**Installed runtime path (live routing):** {INSTALLED_RUNTIME_PATH}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "**Installed runtime hash (live routing):** {INSTALLED_RUNTIME_HASH}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "**Workspace runtime hash (tests/fixtures):** {WORKSPACE_RUNTIME_HASH}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "**Live state dir:** {LIVE_STATE_DIR}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "**Active FeatureForge skill source:** {ACTIVE_FEATUREFORGE_SKILL_SOURCE}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "**Active FeatureForge skill roots:** {ACTIVE_FEATUREFORGE_SKILL_ROOTS}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "**Installed skill root:** {INSTALLED_SKILL_ROOT}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "**Workspace skill root:** {WORKSPACE_SKILL_ROOT}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "**Workspace-runtime live-mutation confirmation:** {WORKSPACE_RUNTIME_LIVE_MUTATION_CONFIRMATION}",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "Fail review if any live workflow mutation used workspace runtime without an explicit approved override record.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "Fail review if active FeatureForge skills resolve from the workspace skill root instead of the installed skill root without an explicit approved self-hosting exception.",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
@@ -3171,7 +4288,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
-        "`featureforge workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `featureforge plan execution status --plan <approved-plan-path>` only for deeper diagnostics",
+        "`$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only for deeper diagnostics",
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
@@ -3183,7 +4300,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
-        "`featureforge workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `featureforge plan execution status --plan <approved-plan-path>` only for deeper diagnostics",
+        "`$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only for deeper diagnostics",
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
@@ -3669,6 +4786,231 @@ fn generated_skill_preamble_never_executes_repo_or_root_selected_launchers() {
     assert_not_contains(&log, "PACKAGED:config-get", "packaged runtime command log");
     assert_not_contains(&log, "POISON_REPO", "packaged runtime command log");
     assert_not_contains(&log, "POISON_ROOT", "packaged runtime command log");
+}
+
+#[test]
+fn workflow_execution_skill_docs_enforce_installed_control_plane_routing() {
+    assert_generated_skills_use_installed_runtime_for_live_routes();
+}
+
+#[test]
+fn generated_skills_use_installed_runtime_for_live_routes() {
+    assert_generated_skills_use_installed_runtime_for_live_routes();
+}
+
+fn assert_generated_skills_use_installed_runtime_for_live_routes() {
+    let root = repo_root();
+    for relative in [
+        "skills/using-featureforge/SKILL.md",
+        "skills/executing-plans/SKILL.md",
+        "skills/subagent-driven-development/SKILL.md",
+        "skills/requesting-code-review/SKILL.md",
+        "skills/finishing-a-development-branch/SKILL.md",
+    ] {
+        let path = root.join(relative);
+        let label = path.display().to_string();
+        let content = read_utf8(&path);
+        assert_contains(&content, "## Installed Control Plane", &label);
+        assert_contains(
+            &content,
+            "use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands",
+            &label,
+        );
+        assert_contains(
+            &content,
+            "do not route live workflow commands through `./bin/featureforge`",
+            &label,
+        );
+        assert_contains(
+            &content,
+            "do not route live workflow commands through `target/debug/featureforge`",
+            &label,
+        );
+        assert_contains(
+            &content,
+            "do not route live workflow commands through `cargo run`",
+            &label,
+        );
+        assert_contains(
+            &content,
+            "If `recommended_public_command_argv[0] == \"featureforge\"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN`",
+            &label,
+        );
+        for forbidden in [
+            "featureforge workflow",
+            "featureforge plan execution",
+            "featureforge plan contract",
+            "featureforge repo-safety",
+            "`workflow status",
+            "`workflow operator --",
+        ] {
+            assert_not_contains(&content, forbidden, &label);
+        }
+    }
+}
+
+#[test]
+fn recommended_public_command_argv_is_rebound_to_installed_binary() {
+    let root = repo_root();
+    for relative in [
+        "README.md",
+        "docs/README.codex.md",
+        "docs/README.copilot.md",
+        "docs/runtime-architecture.md",
+        "docs/featureforge/reference/2026-04-01-review-state-reference.md",
+    ] {
+        let path = root.join(relative);
+        let content = read_utf8(&path);
+        assert_contains(&content, "featureforge", &path.display().to_string());
+        assert_contains(
+            &content,
+            "~/.featureforge/install/bin/featureforge",
+            &path.display().to_string(),
+        );
+    }
+    for relative in [
+        "skills/using-featureforge/SKILL.md",
+        "skills/executing-plans/SKILL.md",
+        "skills/subagent-driven-development/SKILL.md",
+        "skills/requesting-code-review/SKILL.md",
+        "skills/finishing-a-development-branch/SKILL.md",
+    ] {
+        let path = root.join(relative);
+        assert_file_contains(
+            &path,
+            "If `recommended_public_command_argv[0] == \"featureforge\"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN`",
+        );
+    }
+    assert_file_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "If `recommended_public_command_argv[0] == \"featureforge\"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN`",
+    );
+    assert_file_contains(
+        root.join("docs/runtime-architecture.md"),
+        "if argv[0] is `featureforge`, execute `~/.featureforge/install/bin/featureforge` with argv[1..] unchanged",
+    );
+}
+
+#[test]
+fn operator_docs_document_installed_control_plane_isolation() {
+    let root = repo_root();
+
+    for relative in [
+        "README.md",
+        "docs/README.codex.md",
+        "docs/README.copilot.md",
+        "docs/runtime-architecture.md",
+    ] {
+        let path = root.join(relative);
+        assert_file_contains(&path, "Installed Control Plane");
+        assert_file_contains(&path, "~/.featureforge/install/bin/featureforge");
+        assert_file_contains(&path, "~/.featureforge/install/skills");
+        assert_file_contains(&path, "workspace");
+        assert_file_contains(
+            &path,
+            "FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION=1",
+        );
+        assert_file_contains(&path, "featureforge doctor self-hosting --json");
+    }
+
+    assert_file_contains(
+        root.join("README.md"),
+        "Workspace-local runtimes must not mutate live workflow state",
+    );
+    assert_file_contains(
+        root.join("README.md"),
+        "`FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION=1` is intentionally explicit",
+    );
+    assert_file_contains(
+        root.join("docs/testing.md"),
+        "Workspace binaries must not run live workflow mutations",
+    );
+    assert_file_contains(
+        root.join("docs/testing.md"),
+        "`FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION=1` is explicitly set",
+    );
+    assert_file_contains(
+        root.join("docs/featureforge/reference/2026-04-01-review-state-reference.md"),
+        "installed-control-plane rebinding (`featureforge` argv[0] executes as `~/.featureforge/install/bin/featureforge`)",
+    );
+    assert_file_contains(
+        root.join("docs/featureforge/reference/2026-04-01-review-state-reference.md"),
+        "as `./bin/featureforge`, `target/debug/featureforge`, or `cargo run -- ...`",
+    );
+}
+
+#[test]
+fn installed_control_plane_verification_gate_includes_required_commands() {
+    let root = repo_root();
+    let script = root.join("scripts/verify-installed-control-plane-isolation.sh");
+    let script_content = read_utf8(&script);
+    let docs_testing = read_utf8(root.join("docs/testing.md"));
+
+    assert!(script.is_file(), "{} should exist", script.display());
+    for required in [
+        "cargo fmt --check",
+        "cargo test --test runtime_module_boundaries -- --nocapture",
+        "cargo test --test runtime_instruction_contracts -- --nocapture",
+        "cargo test --test workflow_runtime -- --nocapture",
+        "cargo test --test workflow_shell_smoke -- --nocapture",
+        "cargo test --test workflow_entry_shell_smoke -- --nocapture",
+        "node scripts/gen-skill-docs.mjs --check",
+        "node --test tests/codex-runtime/skill-doc-contracts.test.mjs",
+        "node scripts/lint-workspace-runtime-evidence.mjs",
+        "cargo clippy --all-targets --all-features -- -D warnings",
+        "cargo nextest run --all-targets --all-features --no-fail-fast --status-level fail",
+    ] {
+        assert_contains(
+            &script_content,
+            required,
+            "installed control-plane gate script",
+        );
+        assert_contains(&docs_testing, required, "docs/testing.md");
+    }
+
+    for targeted_test in [
+        "runtime_provenance_classifies_installed_runtime",
+        "runtime_provenance_classifies_workspace_runtime",
+        "workspace_runtime_blocks_live_repair_review_state",
+        "workspace_runtime_blocks_live_close_current_task",
+        "workspace_runtime_allows_fixture_repair_review_state_with_temp_state",
+        "generated_skills_use_installed_runtime_for_live_routes",
+        "recommended_public_command_argv_is_rebound_to_installed_binary",
+        "evidence_lint_rejects_workspace_runtime_live_mutation",
+        "self_hosting_diagnostic_reports_installed_and_workspace_hashes",
+    ] {
+        assert!(
+            source_tree_declares_test(&root, targeted_test),
+            "installed control-plane targeted test should exist: {targeted_test}"
+        );
+    }
+
+    assert_contains(
+        &docs_testing,
+        "evidence linting in the normal verification set",
+        "docs/testing.md",
+    );
+    assert_file_contains(
+        root.join("scripts/verify-source-archive.mjs"),
+        "scripts/verify-installed-control-plane-isolation.sh",
+    );
+}
+
+#[test]
+fn setup_docs_verify_discovery_links_point_to_install() {
+    let root = repo_root();
+    for relative in [
+        ".codex/INSTALL.md",
+        ".copilot/INSTALL.md",
+        "docs/README.codex.md",
+        "docs/README.copilot.md",
+    ] {
+        let path = root.join(relative);
+        assert_file_contains(&path, "readlink");
+        assert_file_contains(&path, "~/.featureforge/install/skills");
+        assert_file_contains(&path, "featureforge doctor self-hosting --json");
+        assert_file_contains(&path, "not to a workspace-local `<repo>/skills` directory");
+    }
 }
 
 #[test]

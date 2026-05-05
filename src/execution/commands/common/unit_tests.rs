@@ -633,6 +633,7 @@ fn task_closure_record_covers_path_respects_directory_surface_entries() {
 fn blocked_follow_up_prefers_shared_repair_route_before_branch_closure_fallback() {
     let operator = ExecutionRoutingState {
         route_decision: None,
+        runtime_provenance: None,
         route: WorkflowRoute {
             schema_version: 3,
             status: String::from("ok"),
@@ -698,6 +699,7 @@ fn advance_late_stage_final_review_with_dispatch_id_requeries_when_dispatch_foll
 {
     let operator = ExecutionRoutingState {
         route_decision: None,
+        runtime_provenance: None,
         route: WorkflowRoute {
             schema_version: 3,
             status: String::from("ok"),
@@ -791,6 +793,7 @@ fn advance_late_stage_final_review_with_dispatch_id_requeries_when_dispatch_foll
 fn advance_late_stage_final_review_with_matching_dispatch_lineage_keeps_dispatch_follow_up() {
     let operator = ExecutionRoutingState {
         route_decision: None,
+        runtime_provenance: None,
         route: WorkflowRoute {
             schema_version: 3,
             status: String::from("ok"),
@@ -869,6 +872,7 @@ fn advance_late_stage_final_review_with_matching_dispatch_lineage_keeps_dispatch
 fn blocked_follow_up_routes_clean_execution_reentry_repair_state_to_repair_review_state() {
     let operator = ExecutionRoutingState {
         route_decision: None,
+        runtime_provenance: None,
         route: WorkflowRoute {
             schema_version: 3,
             status: String::from("ok"),
@@ -937,6 +941,7 @@ fn blocked_follow_up_routes_clean_execution_reentry_repair_state_to_repair_revie
 fn close_current_task_follow_up_preserves_structural_repair_state_lane() {
     let operator = ExecutionRoutingState {
         route_decision: None,
+        runtime_provenance: None,
         route: WorkflowRoute {
             schema_version: 3,
             status: String::from("ok"),
@@ -997,6 +1002,7 @@ fn close_current_task_follow_up_preserves_structural_repair_state_lane() {
 fn close_current_task_follow_up_preserves_stale_repair_state_lane() {
     let operator = ExecutionRoutingState {
         route_decision: None,
+        runtime_provenance: None,
         route: WorkflowRoute {
             schema_version: 3,
             status: String::from("ok"),
@@ -1057,6 +1063,7 @@ fn close_current_task_follow_up_preserves_stale_repair_state_lane() {
 fn close_current_task_follow_up_waits_for_external_review_result_when_task_review_is_pending() {
     let operator = ExecutionRoutingState {
         route_decision: None,
+        runtime_provenance: None,
         route: WorkflowRoute {
             schema_version: 3,
             status: String::from("ok"),
@@ -1115,6 +1122,7 @@ fn close_current_task_follow_up_waits_for_external_review_result_when_task_revie
 fn close_current_task_follow_up_preserves_request_external_review_for_non_task_dispatch_phase() {
     let operator = ExecutionRoutingState {
         route_decision: None,
+        runtime_provenance: None,
         route: WorkflowRoute {
             schema_version: 3,
             status: String::from("ok"),
@@ -1173,6 +1181,7 @@ fn close_current_task_follow_up_preserves_request_external_review_for_non_task_d
 fn close_current_task_follow_up_requires_verification_when_verification_is_missing() {
     let operator = ExecutionRoutingState {
         route_decision: None,
+        runtime_provenance: None,
         route: WorkflowRoute {
             schema_version: 3,
             status: String::from("ok"),
@@ -1240,6 +1249,7 @@ fn blocked_close_current_task_output_from_operator_keeps_shared_follow_up_and_co
     let plan_with_spaces = "docs/featureforge/plans/example plan.md";
     let operator = ExecutionRoutingState {
         route_decision: None,
+        runtime_provenance: None,
         route: WorkflowRoute {
             schema_version: 3,
             status: String::from("ok"),

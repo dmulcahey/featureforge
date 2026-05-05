@@ -108,6 +108,22 @@
           "resume_task": null,
           "review_stack": null,
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -178,6 +194,22 @@
             "0000000000000000000000000000000000000000"
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -335,6 +367,22 @@
             "featureforge:document-release"
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -404,6 +452,22 @@
             }
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -741,6 +805,22 @@
             "featureforge:document-release"
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -814,6 +894,22 @@
             }
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -998,6 +1094,22 @@
             "featureforge:document-release"
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -1071,6 +1183,22 @@
             }
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -1247,6 +1375,22 @@
             "featureforge:document-release"
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -1317,6 +1461,22 @@
             "0000000000000000000000000000000000000000"
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -1491,6 +1651,22 @@
             "featureforge:document-release"
           ],
           "review_state_status": "stale_unreviewed",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [
@@ -1557,6 +1733,22 @@
             "docs/featureforge/plans/runtime-golden-execution-plan.md"
           ],
           "review_state_status": "stale_unreviewed",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -1693,6 +1885,22 @@
           "resume_task": null,
           "review_stack": null,
           "review_state_status": "stale_unreviewed",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -1731,6 +1939,22 @@
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "review_state_status": "stale_unreviewed",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -1855,6 +2079,22 @@
           "resume_task": null,
           "review_stack": null,
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -1892,6 +2132,22 @@
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -2046,6 +2302,22 @@
           "resume_task": null,
           "review_stack": null,
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -2087,6 +2359,22 @@
           "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
           "projection_mode": "",
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -2294,6 +2582,22 @@
           "resume_task": null,
           "review_stack": null,
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -2364,6 +2668,22 @@
             "0000000000000000000000000000000000000000"
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -2547,6 +2867,22 @@
           "resume_task": null,
           "review_stack": null,
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -2615,6 +2951,22 @@
             }
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -2783,6 +3135,22 @@
           "resume_task": null,
           "review_stack": null,
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -2841,6 +3209,22 @@
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -2986,6 +3370,22 @@
           "resume_task": null,
           "review_stack": null,
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -3034,6 +3434,22 @@
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",
@@ -3218,6 +3634,22 @@
           "resume_task": null,
           "review_stack": null,
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "stale_unreviewed_closures": [],
@@ -3290,6 +3722,22 @@
             }
           ],
           "review_state_status": "clean",
+          "runtime_provenance": {
+            "binary_path": "<FEATUREFORGE_BIN>",
+            "binary_realpath": "<FEATUREFORGE_BIN>",
+            "control_plane_source": "path",
+            "repo_root": "<REPO>",
+            "runtime_root": "",
+            "self_hosting_context": "non_featureforge_repo",
+            "skill_discovery": {
+              "active_featureforge_skill_source": "unknown",
+              "active_roots": [],
+              "installed_skill_root": "<REPO>/.runtime-home/.featureforge/install/skills",
+              "workspace_skill_root": "<REPO>/skills"
+            },
+            "state_dir": "<STATE>",
+            "state_dir_kind": "temp"
+          },
           "schema_version": 3,
           "semantic_workspace_tree_id": "semantic_tree:<SHA256>",
           "spec_path": "docs/featureforge/specs/runtime-golden-execution-design.md",

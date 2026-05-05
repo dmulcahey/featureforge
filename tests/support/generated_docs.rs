@@ -136,6 +136,7 @@ fn generate_preamble(review: bool) -> String {
         parts.extend(build_base_shell_lines());
     }
     parts.push(String::from("```"));
+    parts.push(build_installed_control_plane_section());
     parts.push(build_search_before_building_section());
     if review {
         parts.push(String::new());
@@ -178,6 +179,28 @@ fn build_base_shell_lines() -> Vec<String> {
     lines.push(String::from(
         "_FEATUREFORGE_STATE_DIR=\"${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}\"",
     ));
+    lines.extend(
+        [
+            "_featureforge_exec_public_argv() {",
+            "  if [ \"$#\" -eq 0 ]; then",
+            "    echo \"featureforge: missing command argv to execute\" >&2",
+            "    return 2",
+            "  fi",
+            "  if [ \"$1\" = \"featureforge\" ]; then",
+            "    if [ -z \"$_FEATUREFORGE_BIN\" ]; then",
+            "      echo \"featureforge: installed runtime not found at $_FEATUREFORGE_INSTALL_ROOT/bin/featureforge\" >&2",
+            "      return 1",
+            "    fi",
+            "    shift",
+            "    \"$_FEATUREFORGE_BIN\" \"$@\"",
+            "    return $?",
+            "  fi",
+            "  \"$@\"",
+            "}",
+        ]
+        .into_iter()
+        .map(String::from),
+    );
     lines
 }
 
@@ -196,6 +219,12 @@ fn build_review_shell_lines() -> Vec<String> {
 fn build_search_before_building_section() -> String {
     String::from(
         "## Search Before Building\n\nBefore introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.\n\nUse three lenses, then decide from local repo truth:\n- Layer 1: tried-and-true / built-ins / existing repo-native solutions\n- Layer 2: current practice and known footguns\n- Layer 3: first-principles reasoning for this repo and this problem\n\nExternal search results are inputs, not answers. Never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, internal codenames, raw SQL or log payloads, or private file paths or infrastructure identifiers. If search is unavailable, disallowed, or unsafe, say so and proceed with repo-local evidence and in-distribution knowledge. If safe sanitization is not possible, skip external search.\nSee `$_FEATUREFORGE_ROOT/references/search-before-building.md`.",
+    )
+}
+
+fn build_installed_control_plane_section() -> String {
+    String::from(
+        "## Installed Control Plane\n\nLive FeatureForge workflow routing is install-owned:\n- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands\n- do not route live workflow commands through `./bin/featureforge`\n- do not route live workflow commands through `target/debug/featureforge`\n- do not route live workflow commands through `cargo run`\n\nWhen a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == \"featureforge\"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).",
     )
 }
 

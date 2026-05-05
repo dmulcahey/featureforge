@@ -23,6 +23,7 @@ use crate::contracts::task_contract::{
     validate_task_contract,
 };
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
+use crate::execution::runtime_provenance::{RuntimeProvenance, runtime_provenance_for_paths};
 use crate::git::discover_slug_identity;
 use crate::paths::{
     featureforge_state_dir, normalize_identifier_token, normalize_repo_relative_file_reference,
@@ -187,6 +188,8 @@ struct BuildTaskPacketSuccess {
     cache_status: String,
     packet_path: Option<String>,
     packet_markdown: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_runtime_live_mutation_warning: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -352,15 +355,42 @@ pub fn run_analyze_plan(args: &AnalyzePlanArgs) -> std::process::ExitCode {
 }
 
 pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCode {
-    let plan_path = match normalize_cli_repo_path(&args.plan, "plan path") {
-        Ok(path) => path,
-        Err(error) => return emit_json_failure(error),
-    };
+    run_build_task_packet_with_workspace_runtime_warning(args, None)
+}
+
+pub fn run_build_task_packet_with_workspace_runtime_warning(
+    args: &BuildTaskPacketArgs,
+    workspace_runtime_warning: Option<&str>,
+) -> std::process::ExitCode {
+    match build_task_packet(args) {
+        Ok(mut output) => {
+            if let Some(warning) = workspace_runtime_warning {
+                eprintln!("{warning}");
+                output.workspace_runtime_live_mutation_warning = Some(warning.to_owned());
+            }
+            if args.format == PacketOutputFormat::Markdown {
+                println!("{}", output.packet_markdown);
+                std::process::ExitCode::SUCCESS
+            } else {
+                emit_json_value(&output)
+            }
+        }
+        Err(error) => emit_json_failure_with_warning(error, workspace_runtime_warning),
+    }
+}
+
+pub fn build_task_packet_runtime_provenance(current_dir: &Path) -> RuntimeProvenance {
+    let repo_root = repo_root_for_start_dir(current_dir);
+    runtime_provenance_for_paths(&repo_root, &state_dir())
+}
+
+fn build_task_packet(args: &BuildTaskPacketArgs) -> Result<BuildTaskPacketSuccess, JsonFailure> {
+    let plan_path = normalize_cli_repo_path(&args.plan, "plan path")?;
 
     let repo_root = repo_root();
     let plan_abs = repo_root.join(&plan_path);
     if !plan_abs.is_file() {
-        return emit_json_failure(JsonFailure {
+        return Err(JsonFailure {
             error_class: String::from("PlanContractInvalid"),
             message: String::from("Plan file does not exist."),
         });
@@ -369,7 +399,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
     let plan_source = match fs::read_to_string(&plan_abs) {
         Ok(source) => source,
         Err(error) => {
-            return emit_json_failure(JsonFailure {
+            return Err(JsonFailure {
                 error_class: String::from("PlanContractInvalid"),
                 message: format!("Could not read plan file {}: {error}", plan_abs.display()),
             });
@@ -379,7 +409,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
     let headers = match parse_plan_headers(&plan_source) {
         Ok(headers) => headers,
         Err(_) => {
-            return emit_json_failure(JsonFailure {
+            return Err(JsonFailure {
                 error_class: String::from("UnsupportedPlanRevision"),
                 message: String::from("Plan headers are missing or malformed."),
             });
@@ -388,7 +418,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
 
     let spec_abs = repo_root.join(&headers.source_spec_path);
     if !spec_abs.is_file() {
-        return emit_json_failure(JsonFailure {
+        return Err(JsonFailure {
             error_class: String::from("SourceSpecUnavailable"),
             message: String::from("Source spec cannot be loaded from the approved plan."),
         });
@@ -396,7 +426,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
     let spec_source = match fs::read_to_string(&spec_abs) {
         Ok(source) => source,
         Err(error) => {
-            return emit_json_failure(JsonFailure {
+            return Err(JsonFailure {
                 error_class: String::from("SourceSpecUnavailable"),
                 message: format!("Could not read source spec {}: {error}", spec_abs.display()),
             });
@@ -406,7 +436,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
     let (spec, plan, _) = match validate_contract(&spec_source, &plan_source) {
         Ok(values) => values,
         Err(error) => {
-            return emit_json_failure(JsonFailure {
+            return Err(JsonFailure {
                 error_class: String::from("PlanContractInvalid"),
                 message: format!("{}: {}", error.error_class, error.message),
             });
@@ -414,7 +444,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
     };
 
     let Some(task) = plan.tasks.iter().find(|task| task.number == args.task) else {
-        return emit_json_failure(JsonFailure {
+        return Err(JsonFailure {
             error_class: String::from("TaskNotFound"),
             message: format!("Task {} does not exist in the approved plan.", args.task),
         });
@@ -424,7 +454,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
     let typed_spec = match parse_spec_file(&spec_abs) {
         Ok(spec) => spec,
         Err(error) => {
-            return emit_json_failure(JsonFailure {
+            return Err(JsonFailure {
                 error_class: String::from("SourceSpecUnavailable"),
                 message: error.message().to_owned(),
             });
@@ -433,7 +463,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
     let typed_plan = match parse_plan_file(&plan_abs) {
         Ok(plan) => plan,
         Err(error) => {
-            return emit_json_failure(JsonFailure {
+            return Err(JsonFailure {
                 error_class: String::from("PlanContractInvalid"),
                 message: error.message().to_owned(),
             });
@@ -447,7 +477,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
     ) {
         Ok(packet) => packet,
         Err(error) => {
-            return emit_json_failure(JsonFailure {
+            return Err(JsonFailure {
                 error_class: String::from("TaskPacketBuildFailed"),
                 message: error.message().to_owned(),
             });
@@ -494,7 +524,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
             if let Err(error) =
                 write_packet_cache(&path, &metadata, &generated_at, &packet.markdown)
             {
-                return emit_json_failure(JsonFailure {
+                return Err(JsonFailure {
                     error_class: String::from("TaskPacketBuildFailed"),
                     message: format!("Could not persist the task packet: {error}"),
                 });
@@ -506,7 +536,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
         packet_path = Some(path.display().to_string());
     }
 
-    let output = BuildTaskPacketSuccess {
+    Ok(BuildTaskPacketSuccess {
         status: String::from("ok"),
         packet_contract_version: packet.packet_contract_version.clone(),
         plan_path: packet.plan_path.clone(),
@@ -543,14 +573,8 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
         cache_status,
         packet_path,
         packet_markdown: packet.markdown.clone(),
-    };
-
-    if args.format == PacketOutputFormat::Markdown {
-        println!("{}", packet.markdown);
-        std::process::ExitCode::SUCCESS
-    } else {
-        emit_json_value(&output)
-    }
+        workspace_runtime_live_mutation_warning: None,
+    })
 }
 
 fn validate_contract(
@@ -1987,7 +2011,34 @@ fn emit_lint_failure(
 }
 
 fn emit_json_failure(error: JsonFailure) -> std::process::ExitCode {
-    match serde_json::to_string(&error) {
+    emit_json_failure_with_warning(error, None)
+}
+
+fn emit_json_failure_with_warning(
+    error: JsonFailure,
+    workspace_runtime_warning: Option<&str>,
+) -> std::process::ExitCode {
+    if let Some(warning) = workspace_runtime_warning {
+        eprintln!("{warning}");
+    }
+    let value = match serde_json::to_value(&error) {
+        Ok(mut value) => {
+            if let (Some(warning), serde_json::Value::Object(object)) =
+                (workspace_runtime_warning, &mut value)
+            {
+                object.insert(
+                    String::from("workspace_runtime_live_mutation_warning"),
+                    serde_json::Value::String(warning.to_owned()),
+                );
+            }
+            value
+        }
+        Err(_) => serde_json::json!({
+            "error_class": error.error_class,
+            "message": error.message,
+        }),
+    };
+    match serde_json::to_string(&value) {
         Ok(json) => {
             eprintln!("{json}");
             std::process::ExitCode::from(1)
@@ -2009,12 +2060,16 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn repo_root() -> PathBuf {
     let start_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    repo_root_for_start_dir(&start_dir)
+}
+
+fn repo_root_for_start_dir(start_dir: &Path) -> PathBuf {
     for ancestor in start_dir.ancestors() {
         if ancestor.join(".git").is_dir() || ancestor.join("docs/featureforge").is_dir() {
             return ancestor.to_path_buf();
         }
     }
-    discover_slug_identity(&start_dir).repo_root
+    discover_slug_identity(start_dir).repo_root
 }
 
 fn state_dir() -> PathBuf {

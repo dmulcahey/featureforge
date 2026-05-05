@@ -22,6 +22,9 @@ use crate::execution::router::{
     Blocker as RuntimeBlocker, NextPublicAction as RuntimeNextPublicAction,
     RouteDecision as RuntimeRouteDecision, route_decision_from_routing,
 };
+use crate::execution::runtime_provenance::{
+    ControlPlaneSource, RuntimeProvenance, SelfHostingContext, StateDirKind,
+};
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
 use crate::execution::topology::RecommendOutput;
 use crate::workflow::status::{WorkflowPhase, WorkflowRoute};
@@ -173,6 +176,10 @@ pub struct WorkflowDoctor {
     pub contract_state: String,
     pub route: WorkflowRoute,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_provenance: Option<RuntimeProvenance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub self_hosting_warning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_status: Option<PlanExecutionStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_contract: Option<AnalyzePlanReport>,
@@ -284,6 +291,8 @@ pub struct WorkflowOperator {
     pub state_dir_projection_paths: Vec<String>,
     pub tracked_projection_paths: Vec<String>,
     pub tracked_projections_current: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_provenance: Option<RuntimeProvenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -308,6 +317,7 @@ pub struct WorkflowOperatorExecutionCommandContext {
 
 struct OperatorContext {
     route: WorkflowRoute,
+    runtime_provenance: Option<RuntimeProvenance>,
     execution_status: Option<PlanExecutionStatus>,
     plan_contract: Option<AnalyzePlanReport>,
     preflight: Option<GateResult>,
@@ -520,6 +530,8 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
         .map(|report| report.contract_state.clone())
         .unwrap_or_else(|| context.route.contract_state.clone());
     let gate_review = doctor_gate_review(&context);
+    let runtime_provenance = context.runtime_provenance.clone();
+    let self_hosting_warning = doctor_self_hosting_warning(runtime_provenance.as_ref());
 
     WorkflowDoctor {
         schema_version: WORKFLOW_DOCTOR_SCHEMA_VERSION,
@@ -541,6 +553,8 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
         plan_path: context.route.plan_path.clone(),
         contract_state,
         route: context.route,
+        runtime_provenance,
+        self_hosting_warning,
         execution_status: context.execution_status,
         plan_contract: context.plan_contract,
         preflight: context.preflight,
@@ -693,6 +707,9 @@ fn render_doctor_output(doctor: &WorkflowDoctor) -> String {
         display_or_none(&doctor.spec_path),
         display_or_none(&doctor.plan_path)
     );
+    if let Some(warning) = doctor.self_hosting_warning.as_deref() {
+        output.push_str(&format!("Warning: {warning}\n"));
+    }
     if let Some(blocking_scope) = doctor.blocking_scope.as_deref() {
         output.push_str(&format!("Blocking scope: {blocking_scope}\n"));
     }
@@ -945,6 +962,7 @@ fn operator_from_context(context: OperatorContext, args: &OperatorArgs) -> Workf
         state_dir_projection_paths,
         tracked_projection_paths,
         tracked_projections_current,
+        runtime_provenance: context.runtime_provenance,
     }
 }
 
@@ -963,6 +981,9 @@ pub fn render_operator(operator: WorkflowOperator) -> String {
     );
     if let Some(qa_requirement) = operator.qa_requirement {
         output.push_str(&format!("QA requirement: {qa_requirement}\n"));
+    }
+    if let Some(warning) = doctor_self_hosting_warning(operator.runtime_provenance.as_ref()) {
+        output.push_str(&format!("Warning: {warning}\n"));
     }
     if let Some(checkpoint) = operator.finish_review_gate_pass_branch_closure_id {
         output.push_str(&format!("Finish gate checkpoint: {checkpoint}\n"));
@@ -1186,6 +1207,7 @@ fn build_context_from_routing(
     });
     let ExecutionRoutingState {
         route,
+        runtime_provenance,
         execution_status,
         preflight,
         gate_review,
@@ -1352,6 +1374,7 @@ fn build_context_from_routing(
 
     Ok(OperatorContext {
         route,
+        runtime_provenance,
         execution_status,
         plan_contract,
         preflight,
@@ -1385,6 +1408,31 @@ fn build_context_from_routing(
         finish_review_gate_pass_branch_closure_id,
         qa_requirement,
     })
+}
+
+fn doctor_self_hosting_warning(runtime_provenance: Option<&RuntimeProvenance>) -> Option<String> {
+    let provenance = runtime_provenance?;
+    let mut warnings = Vec::new();
+    if provenance.control_plane_source == ControlPlaneSource::Workspace
+        && provenance.state_dir_kind == StateDirKind::Live
+        && provenance.self_hosting_context == SelfHostingContext::FeatureforgeRepo
+    {
+        warnings.push(String::from(
+            "workspace runtime with live FeatureForge state detected; rerun live workflow commands via ~/.featureforge/install/bin/featureforge",
+        ));
+    }
+    if let Some(skill_warning) = provenance
+        .skill_discovery
+        .as_ref()
+        .and_then(|discovery| discovery.warning.as_deref())
+    {
+        warnings.push(skill_warning.to_owned());
+    }
+    if warnings.is_empty() {
+        None
+    } else {
+        Some(warnings.join(" "))
+    }
 }
 
 fn task_blocking_record_task(status: &PlanExecutionStatus) -> Option<u32> {
@@ -1904,6 +1952,7 @@ mod tests {
                 reason: String::new(),
                 note: String::new(),
             },
+            runtime_provenance: None,
             execution_status: None,
             plan_contract: None,
             preflight: None,
@@ -2001,9 +2050,26 @@ mod tests {
                 "docs/featureforge/execution-evidence/sample.md",
             )],
             tracked_projections_current: false,
+            runtime_provenance: Some(RuntimeProvenance {
+                binary_path: String::from("/tmp/workspace/featureforge/target/debug/featureforge"),
+                binary_realpath: String::from(
+                    "/tmp/workspace/featureforge/target/debug/featureforge",
+                ),
+                runtime_root: String::from("/tmp/workspace/featureforge"),
+                repo_root: String::from("/tmp/workspace/featureforge"),
+                state_dir: String::from("/Users/alice/.featureforge"),
+                state_dir_kind: StateDirKind::Live,
+                control_plane_source: ControlPlaneSource::Workspace,
+                self_hosting_context: SelfHostingContext::FeatureforgeRepo,
+                workspace_runtime_warning: Some(String::from("workspace runtime warning")),
+                skill_discovery: None,
+            }),
         });
 
         assert!(rendered.contains("QA requirement: required"));
+        assert!(
+            rendered.contains("Warning: workspace runtime with live FeatureForge state detected")
+        );
         assert!(rendered.contains("Finish gate checkpoint: branch-closure-1"));
         assert!(rendered.contains(
             "Recording context: task_number=1, dispatch_id=dispatch-1, branch_closure_id=branch-closure-1"
@@ -2040,6 +2106,78 @@ mod tests {
         assert!(
             next_step.contains("featureforge plan execution close-current-task"),
             "task-boundary next-step text should still include the routed command for verification-missing blockers, got {next_step}"
+        );
+    }
+
+    #[test]
+    fn doctor_self_hosting_warning_requires_workspace_live_featureforge_context() {
+        let warning = doctor_self_hosting_warning(Some(&RuntimeProvenance {
+            binary_path: String::from("/tmp/workspace/bin/featureforge"),
+            binary_realpath: String::from("/tmp/workspace/bin/featureforge"),
+            runtime_root: String::from("/tmp/workspace"),
+            repo_root: String::from("/tmp/workspace/featureforge"),
+            state_dir: String::from("/Users/alice/.featureforge"),
+            state_dir_kind: StateDirKind::Live,
+            control_plane_source: ControlPlaneSource::Workspace,
+            self_hosting_context: SelfHostingContext::FeatureforgeRepo,
+            workspace_runtime_warning: Some(String::from("workspace runtime warning")),
+            skill_discovery: None,
+        }));
+        assert_eq!(
+            warning.as_deref(),
+            Some(
+                "workspace runtime with live FeatureForge state detected; rerun live workflow commands via ~/.featureforge/install/bin/featureforge",
+            )
+        );
+
+        let no_warning = doctor_self_hosting_warning(Some(&RuntimeProvenance {
+            binary_path: String::from("/tmp/workspace/bin/featureforge"),
+            binary_realpath: String::from("/tmp/workspace/bin/featureforge"),
+            runtime_root: String::from("/tmp/workspace"),
+            repo_root: String::from("/tmp/workspace/featureforge"),
+            state_dir: String::from("/tmp/test-state"),
+            state_dir_kind: StateDirKind::Temp,
+            control_plane_source: ControlPlaneSource::Workspace,
+            self_hosting_context: SelfHostingContext::FeatureforgeRepo,
+            workspace_runtime_warning: Some(String::from("workspace runtime warning")),
+            skill_discovery: None,
+        }));
+        assert!(
+            no_warning.is_none(),
+            "workspace runtime warning should stay compact and only trigger for live self-hosting"
+        );
+    }
+
+    #[test]
+    fn doctor_self_hosting_warning_surfaces_workspace_skill_discovery_guidance() {
+        let warning = doctor_self_hosting_warning(Some(&RuntimeProvenance {
+            binary_path: String::from("/Users/alice/.featureforge/install/bin/featureforge"),
+            binary_realpath: String::from("/Users/alice/.featureforge/install/bin/featureforge"),
+            runtime_root: String::from("/Users/alice/.featureforge/install"),
+            repo_root: String::from("/tmp/workspace/featureforge"),
+            state_dir: String::from("/Users/alice/.featureforge"),
+            state_dir_kind: StateDirKind::Live,
+            control_plane_source: ControlPlaneSource::Installed,
+            self_hosting_context: SelfHostingContext::FeatureforgeRepo,
+            workspace_runtime_warning: None,
+            skill_discovery: Some(
+                crate::execution::runtime_provenance::SkillDiscoveryProvenance {
+                    installed_skill_root: String::from("/Users/alice/.featureforge/install/skills"),
+                    workspace_skill_root: String::from("/tmp/workspace/featureforge/skills"),
+                    active_roots: vec![],
+                    active_featureforge_skill_source:
+                        crate::execution::runtime_provenance::SkillSource::Workspace,
+                    warning: Some(String::from(
+                        "workspace skill discovery root detected in active FeatureForge channels",
+                    )),
+                },
+            ),
+        }));
+        assert!(
+            warning.as_deref().is_some_and(|value| value.contains(
+                "workspace skill discovery root detected in active FeatureForge channels"
+            )),
+            "doctor warning should include workspace skill discovery guidance when present"
         );
     }
 }

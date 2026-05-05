@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
 use featureforge::contracts::spec::parse_spec_file;
@@ -48,20 +49,37 @@ const REQUIRED_SCENARIOS: &[&str] = &[
 struct PublicCli<'a> {
     repo: &'a Path,
     state: &'a Path,
+    home_dir: PathBuf,
+    codex_home: PathBuf,
 }
 
 impl<'a> PublicCli<'a> {
     fn new(repo: &'a Path, state: &'a Path) -> Self {
-        Self { repo, state }
+        let home_dir = repo.join(".runtime-home");
+        let codex_home = home_dir.join(".codex");
+        fs::create_dir_all(&codex_home).expect("runtime golden home should be creatable");
+        Self {
+            repo,
+            state,
+            home_dir,
+            codex_home,
+        }
     }
 
     fn capture(&self, args: &[&str], envs: &[(&str, &str)], context: &str) -> Value {
+        let codex_home = self
+            .codex_home
+            .to_str()
+            .expect("runtime golden CODEX_HOME should be utf-8");
+        let mut merged_envs = Vec::with_capacity(envs.len() + 1);
+        merged_envs.push(("CODEX_HOME", codex_home));
+        merged_envs.extend_from_slice(envs);
         let output = public_featureforge_cli::run_featureforge_with_env_control_real_cli(
             Some(self.repo),
             Some(self.state),
-            None,
+            Some(&self.home_dir),
             &[],
-            envs,
+            &merged_envs,
             args,
             context,
         );
@@ -1162,6 +1180,9 @@ fn normalize_public_argv_string(value: &str) -> String {
 
 fn normalize_string(value: &str, repo: &Path, state: &Path) -> String {
     let mut normalized = value.to_owned();
+    for (path, replacement) in runtime_provenance_path_replacements() {
+        normalized = normalized.replace(path, replacement);
+    }
     let canonical_repo = repo.canonicalize().ok();
     let canonical_state = state.canonicalize().ok();
     for (path, replacement) in [
@@ -1199,6 +1220,44 @@ fn normalize_string(value: &str, repo: &Path, state: &Path) -> String {
     normalized = replace_iso_utc_timestamps(&normalized);
     normalized = replace_hex_runs(&normalized, 64, "<SHA256>");
     replace_hex_runs(&normalized, 40, "<GIT_SHA>")
+}
+
+fn runtime_provenance_path_replacements() -> &'static [(String, &'static str)] {
+    static REPLACEMENTS: OnceLock<Vec<(String, &'static str)>> = OnceLock::new();
+    REPLACEMENTS
+        .get_or_init(|| {
+            let mut replacements = Vec::new();
+            append_runtime_path_replacement(
+                &mut replacements,
+                Path::new(env!("CARGO_BIN_EXE_featureforge")),
+                "<FEATUREFORGE_BIN>",
+            );
+            append_runtime_path_replacement(
+                &mut replacements,
+                Path::new(env!("CARGO_MANIFEST_DIR")),
+                "<FEATUREFORGE_RUNTIME_ROOT>",
+            );
+            replacements.sort_by(|(left_path, _), (right_path, _)| {
+                right_path
+                    .len()
+                    .cmp(&left_path.len())
+                    .then_with(|| left_path.cmp(right_path))
+            });
+            replacements.dedup_by(|(left_path, _), (right_path, _)| left_path == right_path);
+            replacements
+        })
+        .as_slice()
+}
+
+fn append_runtime_path_replacement(
+    replacements: &mut Vec<(String, &'static str)>,
+    path: &Path,
+    replacement: &'static str,
+) {
+    replacements.push((path.to_string_lossy().into_owned(), replacement));
+    if let Ok(canonical) = path.canonicalize() {
+        replacements.push((canonical.to_string_lossy().into_owned(), replacement));
+    }
 }
 
 fn runtime_manifest_user_tokens() -> BTreeSet<String> {

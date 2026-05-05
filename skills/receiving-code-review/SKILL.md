@@ -24,7 +24,32 @@ if [ -n "$_FEATUREFORGE_BIN" ]; then
   [ -n "$_FEATUREFORGE_ROOT" ] || _FEATUREFORGE_ROOT=""
 fi
 _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
+_featureforge_exec_public_argv() {
+  if [ "$#" -eq 0 ]; then
+    echo "featureforge: missing command argv to execute" >&2
+    return 2
+  fi
+  if [ "$1" = "featureforge" ]; then
+    if [ -z "$_FEATUREFORGE_BIN" ]; then
+      echo "featureforge: installed runtime not found at $_FEATUREFORGE_INSTALL_ROOT/bin/featureforge" >&2
+      return 1
+    fi
+    shift
+    "$_FEATUREFORGE_BIN" "$@"
+    return $?
+  fi
+  "$@"
+}
 ```
+## Installed Control Plane
+
+Live FeatureForge workflow routing is install-owned:
+- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
+- do not route live workflow commands through `./bin/featureforge`
+- do not route live workflow commands through `target/debug/featureforge`
+- do not route live workflow commands through `cargo run`
+
+When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.

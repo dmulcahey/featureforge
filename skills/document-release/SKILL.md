@@ -24,7 +24,32 @@ if [ -n "$_FEATUREFORGE_BIN" ]; then
   [ -n "$_FEATUREFORGE_ROOT" ] || _FEATUREFORGE_ROOT=""
 fi
 _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
+_featureforge_exec_public_argv() {
+  if [ "$#" -eq 0 ]; then
+    echo "featureforge: missing command argv to execute" >&2
+    return 2
+  fi
+  if [ "$1" = "featureforge" ]; then
+    if [ -z "$_FEATUREFORGE_BIN" ]; then
+      echo "featureforge: installed runtime not found at $_FEATUREFORGE_INSTALL_ROOT/bin/featureforge" >&2
+      return 1
+    fi
+    shift
+    "$_FEATUREFORGE_BIN" "$@"
+    return $?
+  fi
+  "$@"
+}
 ```
+## Installed Control Plane
+
+Live FeatureForge workflow routing is install-owned:
+- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
+- do not route live workflow commands through `./bin/featureforge`
+- do not route live workflow commands through `target/debug/featureforge`
+- do not route live workflow commands through `cargo run`
+
+When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -64,7 +89,7 @@ Extended audit examples live in `$_FEATUREFORGE_ROOT/references/execution-review
 
 ## Step 0: Require base branch context
 
-For workflow-routed work, get `BASE_BRANCH` from `workflow operator --json` (`base_branch`) for the concrete approved plan path; any `<approved-plan-path>` command text here is input shape, not exact argv.
+For workflow-routed work, get `BASE_BRANCH` from `$_FEATUREFORGE_BIN workflow operator --json` (`base_branch`) for the concrete approved plan path; any `<approved-plan-path>` command text here is input shape, not exact argv.
 
 For non-workflow work, require `BASE_BRANCH` explicitly and keep it stable for this run:
 
@@ -88,7 +113,7 @@ Do not use PR metadata or repo default-branch APIs as a fallback.
 Before editing release-facing docs or metadata on disk, run the shared repo-safety preflight for the exact release-write scope:
 
 ```bash
-featureforge repo-safety check --intent write --stage featureforge:document-release --task-id <current-release-doc-pass> --path <release-doc-path> --write-target release-doc-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:document-release --task-id <current-release-doc-pass> --path <release-doc-path> --write-target release-doc-write
 ```
 
 - If the helper returns `allowed`, continue with the doc or metadata write.
@@ -96,8 +121,8 @@ featureforge repo-safety check --intent write --stage featureforge:document-rele
 - If the user explicitly approves the protected-branch release write, approve the full release-doc scope you intend to use on that branch, including the release-doc path:
 
 ```bash
-featureforge repo-safety approve --stage featureforge:document-release --task-id <current-release-doc-pass> --reason "<explicit user approval>" --path <release-doc-path> --write-target release-doc-write
-featureforge repo-safety check --intent write --stage featureforge:document-release --task-id <current-release-doc-pass> --path <release-doc-path> --write-target release-doc-write
+$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:document-release --task-id <current-release-doc-pass> --reason "<explicit user approval>" --path <release-doc-path> --write-target release-doc-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:document-release --task-id <current-release-doc-pass> --path <release-doc-path> --write-target release-doc-write
 ```
 
 - Continue only if the re-check returns `allowed`.
@@ -192,7 +217,7 @@ If `TODOS.md` exists:
 
 For workflow-routed implementation work, runtime emits a project-scoped release-readiness companion artifact:
 
-- Treat `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` as an input shape only; substitute concrete plan, result, and existing summary file, or invoke `recommended_public_command_argv` exactly when present.
+- Treat `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` as an input shape only; substitute concrete plan, result, and existing summary file, or invoke `recommended_public_command_argv` exactly when present.
 - Derive `Source Plan` and `Source Plan Revision` from that exact approved plan; do not leave placeholders or guess from prose.
 - If the approved plan path or revision is unavailable, stop and return to the current workflow instead of writing a partial artifact.
 - Use the runtime-provided base branch from Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
@@ -240,11 +265,11 @@ Artifact `pass` is the runtime-rendered form of CLI input `--result ready`.
 For workflow-routed implementation work, the derived companion artifact above is not the release gate itself.
 
 - workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.
-- For reviewed-closure late-stage routing, use the workflow/operator input shape `featureforge workflow operator --plan <approved-plan-path>` with the concrete plan; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv`. `recommended_command` is display-only compatibility text.
+- For reviewed-closure late-stage routing, use the workflow/operator input shape `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` with the concrete plan; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv`. `recommended_command` is display-only compatibility text.
 - If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.
 - Confirm the current `phase_detail` before recording release-readiness.
-- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path>` with the concrete plan and rerun workflow/operator.
-- When workflow/operator reports `phase_detail=release_readiness_recording_ready`, use input shape `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` only after substituting concrete values.
+- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, use input shape `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path>` with the concrete plan and rerun workflow/operator.
+- When workflow/operator reports `phase_detail=release_readiness_recording_ready`, use input shape `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` only after substituting concrete values.
 - When workflow/operator reports `phase_detail=release_blocker_resolution_required`, resolve the blocker and then use that same concrete release-readiness input shape.
 - The `advance-late-stage --result ready|blocked` input shape renders `**Result:** pass|blocked` in the derived companion artifact; do not rewrite the artifact to mirror the command input.
 - If workflow/operator reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions.

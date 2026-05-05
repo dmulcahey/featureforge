@@ -80,7 +80,8 @@ pub fn internal_only_try_run_root_output_direct(
                 )),
             }
         }
-        Some(RootCommand::Workflow(_))
+        Some(RootCommand::Doctor(_))
+        | Some(RootCommand::Workflow(_))
         | Some(RootCommand::Plan(_))
         | Some(RootCommand::UpdateCheck(_))
         | None => return Ok(None),

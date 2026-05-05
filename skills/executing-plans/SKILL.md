@@ -24,7 +24,32 @@ if [ -n "$_FEATUREFORGE_BIN" ]; then
   [ -n "$_FEATUREFORGE_ROOT" ] || _FEATUREFORGE_ROOT=""
 fi
 _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
+_featureforge_exec_public_argv() {
+  if [ "$#" -eq 0 ]; then
+    echo "featureforge: missing command argv to execute" >&2
+    return 2
+  fi
+  if [ "$1" = "featureforge" ]; then
+    if [ -z "$_FEATUREFORGE_BIN" ]; then
+      echo "featureforge: installed runtime not found at $_FEATUREFORGE_INSTALL_ROOT/bin/featureforge" >&2
+      return 1
+    fi
+    shift
+    "$_FEATUREFORGE_BIN" "$@"
+    return $?
+  fi
+  "$@"
+}
 ```
+## Installed Control Plane
+
+Live FeatureForge workflow routing is install-owned:
+- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
+- do not route live workflow commands through `./bin/featureforge`
+- do not route live workflow commands through `target/debug/featureforge`
+- do not route live workflow commands through `cargo run`
+
+When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -76,7 +101,7 @@ Use this skill when the runtime-selected topology calls for a separate-session c
    - if the working tree is dirty, stop unless the helper-selected topology and workspace-prepared context explicitly support isolated worktree-backed execution for this run
 7. Do not bulk-clean the workspace ad hoc. If the helper-selected topology or protected-branch gate requires isolated execution, provision or route through a worktree-backed workspace before mutating repo state, and let the runtime-owned barrier flow reconcile reviewed work back onto the active branch and clean temporary worktrees at safe intervals.
 8. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
-9. Run `featureforge workflow operator --plan <approved-plan-path>` before starting execution.
+9. Run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` before starting execution.
 10. If workflow/operator does not report `phase` `executing`, stop and follow the reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of reopening execution through compatibility helpers. Treat `recommended_command` as display-only compatibility text.
 11. If workflow/operator confirms `phase` `executing`, review the plan critically for execution concerns and treat workflow/operator plus `plan execution status` as the live execution surface. Tracked checklist/evidence markdown is an optional materialized export; the event log remains authoritative for routing and gates.
 12. Treat execution start as a hard gate, not a reminder:
@@ -87,14 +112,14 @@ Use this skill when the runtime-selected topology calls for a separate-session c
    - retroactive execution tracking is recovery-only and must never be treated as the normal execution path
    - five-step recovery runbook for dirty-before-begin failures:
      1. reconcile or isolate the workspace
-     2. rerun `workflow operator --plan <approved-plan-path>` and confirm the current route is still `executing` for the current approved plan revision
+     2. rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` and confirm the current route is still `executing` for the current approved plan revision
      3. use that helper-backed route before any recovery mutation
      4. backfill only factual-only completed steps using authoritative helper mutations; never infer completion from dirty diffs
      5. resume from the task-boundary review and verification gate before any next-task `begin`
 
 ## Helper-Owned Execution State
 
-- calls `workflow operator --plan ...` during preflight
+- calls `$_FEATUREFORGE_BIN workflow operator --plan ...` during preflight
 - uses `status --plan ...` only for additional diagnostics when operator output alone is insufficient
 - uses the workflow/operator execution-start handoff instead of separate compatibility-helper choreography before execution starts
 - calls `begin` before starting work on a plan step
@@ -105,7 +130,7 @@ Use this skill when the runtime-selected topology calls for a separate-session c
 - On the first `begin` for a revision whose plan still says `**Execution Mode:** none`, initialize execution with `--execution-mode featureforge:executing-plans`
 - The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.
 - Runtime read models are rendered under the state directory during normal execution. Repo-local projection files under `docs/featureforge/projections/` are optional human-readable exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.
-- Use `featureforge plan execution materialize-projections --plan <approved-plan-path>` for state-dir-only diagnostic projection refreshes. If the user explicitly needs repo-local human-readable projection exports, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress. Add `--scope execution|late-stage|all` only when a non-default export scope is needed.
+- Use `$_FEATUREFORGE_BIN plan execution materialize-projections --plan <approved-plan-path>` for state-dir-only diagnostic projection refreshes. If the user explicitly needs repo-local human-readable projection exports, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress. Add `--scope execution|late-stage|all` only when a non-default export scope is needed.
 
 ## Runtime Strategy Checkpoints (Automatic, Runtime-Owned)
 
@@ -117,7 +142,7 @@ Use this skill when the runtime-selected topology calls for a separate-session c
   - `cycle_break`: required when churn is detected. Runtime records it automatically when the same task hits three review-dispatch/reopen cycles in one run.
 - Cycle-break trigger: cap remediation churn at 3 cycles per task. On the third cycle, transition to `cycle_break` strategy automatically (no human replanning loopback).
 - Reviewers return summaries/results; the controller/runtime binds those results to authoritative state and runtime-owned review projections retain checkpoint fingerprints for traceability. Agents do not search for, repair, or depend on those projection files.
-- Surface and respect runtime strategy status from `featureforge plan execution status --plan ...`:
+- Surface and respect runtime strategy status from `$_FEATUREFORGE_BIN plan execution status --plan ...`:
   - `strategy_state`
   - `strategy_checkpoint_kind`
   - `last_strategy_checkpoint_fingerprint`
@@ -134,13 +159,13 @@ Use this skill when the runtime-selected topology calls for a separate-session c
 Before starting any plan step that mutates repo state, run the shared repo-safety preflight for that exact task slice:
 
 ```bash
-featureforge repo-safety check --intent write --stage featureforge:executing-plans --task-id <current-task-slice> --path <repo-relative-path> --write-target execution-task-slice
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:executing-plans --task-id <current-task-slice> --path <repo-relative-path> --write-target execution-task-slice
 ```
 
 - Use one stable task id per repo-writing task slice and pass the concrete repo-relative paths when they are known.
 - If the helper returns `allowed`, continue with that task slice.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact task slice.
-- If the user explicitly approves protected-branch writes, approve the full task-slice scope with `featureforge repo-safety approve --stage featureforge:executing-plans --task-id <current-task-slice> --reason "<explicit user approval>" --path <repo-relative-path> --write-target execution-task-slice [--write-target git-commit] [--write-target git-merge] [--write-target git-push]`, then re-check before continuing.
+- If the user explicitly approves protected-branch writes, approve the full task-slice scope with `$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:executing-plans --task-id <current-task-slice> --reason "<explicit user approval>" --path <repo-relative-path> --write-target execution-task-slice [--write-target git-commit] [--write-target git-merge] [--write-target git-push]`, then re-check before continuing.
 - Before a follow-on `git commit`, `git merge`, or `git push`, re-run the gate with the same task id, paths, and approved write-target set.
 - If the protected-branch task scope changes, run a new approval plus full-scope check before continuing.
 - Do not treat a worktree on `main`, `master`, `dev`, or `develop` as safe by itself; the branch must be non-protected or explicitly approved.
@@ -167,7 +192,13 @@ For each task:
 3. Use workflow/operator and `plan execution status` as the live step-progress surface for the task's steps; tracked checklist/evidence markdown is optional materialized output and is not routing authority.
 4. Follow each step exactly (plan has bite-sized steps).
 5. Run verifications as specified.
-6. After the implementation steps for a task are complete, enforce the mandatory task-boundary closure loop before beginning the next task:
+6. For FeatureForge-on-FeatureForge execution, every execution-evidence update must include a runtime provenance section with:
+   - installed runtime path used for live workflow routing
+   - installed runtime hash used for live workflow routing
+   - workspace runtime hash used for tests/fixtures (or `none` when no workspace runtime was used)
+   - state dir used for live workflow commands
+   - explicit confirmation that workspace runtime did not mutate live workflow state (or the explicit approved override record when it did)
+7. After the implementation steps for a task are complete, enforce the mandatory task-boundary closure loop before beginning the next task:
    - MUST dispatch dedicated-independent task review in a fresh-context subagent; coordinator or implementer self-review never satisfies this gate
    - if review fails, reopen/remediate/re-review until green
    - Review findings must use deterministic repair-packet fields: `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail`.
@@ -175,22 +206,23 @@ For each task:
    - after review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`
    - Task `N+1` may begin only after Task `N` has a current positive task-closure record
    - dedicated-independent review loops plus verification are required inputs to `close-current-task`; they are not separate begin-time authority once Task `N` has a current positive closure
-   - rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator
+   - rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; when `recommended_public_command_argv` is absent, treat the closure command shape as an input contract and provide concrete review/verification values through `required_inputs` before rerunning workflow/operator
    - workflow/operator must route normal task-boundary closure through `task_closure_recording_ready` / `close-current-task`, not `task_review_dispatch_required`; if a task-review dispatch phase appears, treat it as a runtime diagnostic bug instead of manual low-level command choreography
    - if workflow/operator remains in a `*_dispatch_required` lane after an external review result is ready, keep rerouting through workflow/operator and the intent-level commands; do not expand the normal path into low-level dispatch-lineage management
    - no exceptions: only after close-current-task succeeds may Task `N+1` begin
-7. If the packet is malformed, stale, or still leaves ambiguity unresolved, stop and route back to review instead of guessing.
-8. Call `complete` as soon as a step is truly satisfied so the authoritative event log records the completed step. Do not manually flip tracked plan checkboxes during normal execution.
+8. If the packet is malformed, stale, or still leaves ambiguity unresolved, stop and route back to review instead of guessing.
+9. Call `complete` as soon as a step is truly satisfied so the authoritative event log records the completed step. Do not manually flip tracked plan checkboxes during normal execution.
 
 ### Reviewed-Closure Command Matrix
 
 For the reviewed-closure mental model, read `docs/featureforge/reference/2026-04-01-review-state-reference.md` before acting on late-stage routing. A current reviewed closure matches the current reviewed state. A superseded closure was valid for earlier reviewed work but is no longer authoritative after later reviewed work lands. A stale-unreviewed state means unreviewed edits exist, so the runtime MUST repair review state before recording another closure or late-stage milestone.
 
-`featureforge workflow operator --plan <approved-plan-path>` is the only normal-path routing authority for reviewed-closure and late-stage progression.
-Treat `featureforge workflow operator --plan <approved-plan-path>` as authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs`. Treat `recommended_command` as display-only compatibility text.
-Treat `featureforge plan execution status --plan <approved-plan-path>` as optional diagnostic detail.
+`$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` is the only normal-path routing authority for reviewed-closure and late-stage progression.
+Treat `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` as authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs`. Treat `recommended_command` as display-only compatibility text.
+Treat `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` as optional diagnostic detail.
+When executing `recommended_public_command_argv`, if argv[0] is `featureforge`, run it through `$_FEATUREFORGE_BIN` (or `_featureforge_exec_public_argv`) instead of PATH or workspace-runtime resolution.
 
-When an external task-review or final-review result is already in hand, use `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` to expose recording-ready routes. Do not use that hint for release-readiness, document-release, or QA routing.
+When an external task-review or final-review result is already in hand, use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` to expose recording-ready routes. Do not use that hint for release-readiness, document-release, or QA routing.
 
 Do not reconstruct closure routing from memory or duplicate route tables in this skill. Follow operator-reported `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `required_inputs`, and `recording_context` directly, with these guardrails:
 - `task_closure_recording_ready` requires `recording_context.task_number`.
@@ -198,10 +230,10 @@ Do not reconstruct closure routing from memory or duplicate route tables in this
 - `final_review_recording_ready` requires `recording_context.branch_closure_id`.
 - Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow/operator `recommended_public_command_argv`, follow the argv from workflow/operator.
 - When `phase_detail=task_closure_recording_ready`, replay is already complete enough for closure refresh; run `close-current-task` and do not reopen the same step again.
-- When workflow/operator reports `review_state_status` as stale or missing closure context, do not invent a repair command. If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `featureforge plan execution repair-review-state --plan <approved-plan-path>` only when the non-diagnostic route owns that repair lane.
+- When workflow/operator reports `review_state_status` as stale or missing closure context, do not invent a repair command. If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <approved-plan-path>` only when the non-diagnostic route owns that repair lane.
 - After `repair-review-state`, MUST follow that command's returned `recommended_public_command_argv` when present before any additional recording commands. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun the route owner. Do not shell-parse or whitespace-split `recommended_command`.
 - The returned `recommended_public_command_argv` is authoritative for the immediate reroute only when present; `recommended_command` is only the human-readable rendering of the same route.
-- Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required.
+- Use `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only when additional diagnostics are required.
 - Keep compatibility/debug-only runtime primitives out of the normal path unless explicitly debugging a compatibility boundary.
 - Hidden compatibility/debug command entrypoints are removed from the public CLI; normal routing must use public commands only.
 - In `*_dispatch_required` lanes, request the review and keep rerouting through workflow/operator; do not expand the normal path into low-level dispatch-lineage management.
@@ -213,10 +245,10 @@ Do not reconstruct closure routing from memory or duplicate route tables in this
 - MUST use `close-current-task` for task closure.
 
 Late-stage aggregate command coverage:
-- `featureforge plan execution advance-late-stage --plan <approved-plan-path>`
-- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` is an input shape after substituting concrete values
-- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>` is an input shape after substituting concrete values
-- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>` is an input shape after substituting concrete values
+- `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path>`
+- `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` is an input shape after substituting concrete values
+- `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>` is an input shape after substituting concrete values
+- `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>` is an input shape after substituting concrete values
 - Compatibility-only escape hatch: use low-level runtime primitives only when explicitly debugging or preserving compatibility.
 
 ### Step 3: Request Final Review

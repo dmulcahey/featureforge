@@ -83,6 +83,9 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   // PATH-selected fallback.
   assert.match(baseShell, /repo runtime-root --path/);
   assert.match(baseShell, /_FEATUREFORGE_STATE_DIR="\$\{FEATUREFORGE_STATE_DIR:-\$HOME\/\.featureforge\}"/);
+  assert.match(baseShell, /_featureforge_exec_public_argv\(\)/);
+  assert.match(baseShell, /if \[ "\$1" = "featureforge" \]/);
+  assert.match(baseShell, /"\$_FEATUREFORGE_BIN" "\$@"/);
   assert.doesNotMatch(baseShell, /repo runtime-root --path.*\|\| true/);
   assert.doesNotMatch(baseShell, /\$_REPO_ROOT\/bin\/featureforge/);
   assert.doesNotMatch(baseShell, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/);
@@ -136,6 +139,15 @@ test('generated preambles include the shared Search Before Building section for 
   const reviewPreamble = generatePreamble({ review: true });
 
   for (const preamble of [basePreamble, reviewPreamble]) {
+    assert.match(preamble, /## Installed Control Plane/);
+    assert.match(preamble, /use only `\$_FEATUREFORGE_BIN` for live workflow control-plane commands/);
+    assert.match(preamble, /do not route live workflow commands through `\.\/bin\/featureforge`/);
+    assert.match(preamble, /do not route live workflow commands through `target\/debug\/featureforge`/);
+    assert.match(preamble, /do not route live workflow commands through `cargo run`/);
+    assert.match(
+      preamble,
+      /If `recommended_public_command_argv\[0\] == "featureforge"`, execute through the installed runtime by replacing argv\[0\] with `\$_FEATUREFORGE_BIN`/,
+    );
     assert.match(preamble, /## Search Before Building/);
     assert.match(
       preamble,

@@ -24,10 +24,35 @@ if [ -n "$_FEATUREFORGE_BIN" ]; then
   [ -n "$_FEATUREFORGE_ROOT" ] || _FEATUREFORGE_ROOT=""
 fi
 _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
+_featureforge_exec_public_argv() {
+  if [ "$#" -eq 0 ]; then
+    echo "featureforge: missing command argv to execute" >&2
+    return 2
+  fi
+  if [ "$1" = "featureforge" ]; then
+    if [ -z "$_FEATUREFORGE_BIN" ]; then
+      echo "featureforge: installed runtime not found at $_FEATUREFORGE_INSTALL_ROOT/bin/featureforge" >&2
+      return 1
+    fi
+    shift
+    "$_FEATUREFORGE_BIN" "$@"
+    return $?
+  fi
+  "$@"
+}
 _TODOS_FORMAT=""
 [ -n "$_FEATUREFORGE_ROOT" ] && [ -f "$_FEATUREFORGE_ROOT/review/TODOS-format.md" ] && _TODOS_FORMAT="$_FEATUREFORGE_ROOT/review/TODOS-format.md"
 [ -z "$_TODOS_FORMAT" ] && [ -f "$_REPO_ROOT/review/TODOS-format.md" ] && _TODOS_FORMAT="$_REPO_ROOT/review/TODOS-format.md"
 ```
+## Installed Control Plane
+
+Live FeatureForge workflow routing is install-owned:
+- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
+- do not route live workflow commands through `./bin/featureforge`
+- do not route live workflow commands through `target/debug/featureforge`
+- do not route live workflow commands through `cargo run`
+
+When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -90,7 +115,7 @@ Write at most 3 reports per session under `~/.featureforge/contributor-logs/{slu
 - Before editing the plan body or changing approval headers on disk, run the shared repo-safety preflight for the exact review-write scope:
 
 ```bash
-featureforge repo-safety check --intent write --stage featureforge:plan-eng-review --task-id <current-plan-review> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:plan-eng-review --task-id <current-plan-review> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
 ```
 
 - When the mutation is specifically an approval-header edit, use the same command shape with `--write-target approval-header-write`.
@@ -98,8 +123,8 @@ featureforge repo-safety check --intent write --stage featureforge:plan-eng-revi
 - If the user explicitly approves the protected-branch review write, run:
 
 ```bash
-featureforge repo-safety approve --stage featureforge:plan-eng-review --task-id <current-plan-review> --reason "<explicit user approval>" --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
-featureforge repo-safety check --intent write --stage featureforge:plan-eng-review --task-id <current-plan-review> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
+$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:plan-eng-review --task-id <current-plan-review> --reason "<explicit user approval>" --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:plan-eng-review --task-id <current-plan-review> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
 ```
 
 - Repeat the same approve -> re-check pattern for `approval-header-write` before flipping `**Workflow State:**` or any other approval header on a protected branch.
@@ -326,7 +351,7 @@ Before presenting the final execution preflight handoff, if `$_FEATUREFORGE_BIN`
 - Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs` as authoritative for public routing. `recommended_command` is display-only compatibility text.
 - If workflow/operator returns `phase` `executing`, present the normal execution preflight handoff below.
 - If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` when present instead of reopening execution preflight; when argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.
-- `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail only; do not let it override workflow/operator routing.
+- `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` is supporting diagnostic detail only; do not let it override workflow/operator routing.
 - Only fall back to manual artifact inspection if the helper is unavailable or fails.
 - Present the runtime-selected execution owner skill as the default path with the approved plan path.
 - During handoff, name the exact approved plan path and approved plan revision, and remind the execution skill to reject draft or stale plans.

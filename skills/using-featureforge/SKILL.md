@@ -28,7 +28,32 @@ if [ -n "$_FEATUREFORGE_BIN" ]; then
   [ -n "$_FEATUREFORGE_ROOT" ] || _FEATUREFORGE_ROOT=""
 fi
 _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
+_featureforge_exec_public_argv() {
+  if [ "$#" -eq 0 ]; then
+    echo "featureforge: missing command argv to execute" >&2
+    return 2
+  fi
+  if [ "$1" = "featureforge" ]; then
+    if [ -z "$_FEATUREFORGE_BIN" ]; then
+      echo "featureforge: installed runtime not found at $_FEATUREFORGE_INSTALL_ROOT/bin/featureforge" >&2
+      return 1
+    fi
+    shift
+    "$_FEATUREFORGE_BIN" "$@"
+    return $?
+  fi
+  "$@"
+}
 ```
+## Installed Control Plane
+
+Live FeatureForge workflow routing is install-owned:
+- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
+- do not route live workflow commands through `./bin/featureforge`
+- do not route live workflow commands through `target/debug/featureforge`
+- do not route live workflow commands through `cargo run`
+
+When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -177,13 +202,13 @@ If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$
 - If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.
 - If the JSON result reports `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` using that exact approved plan path.
 - Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs` as the authoritative public routing contract. `recommended_command` is display-only compatibility text for humans.
-- If workflow/operator returns a non-empty `recommended_public_command_argv`, invoke that argv vector exactly. Do not shell-parse or whitespace-split `recommended_command`.
+- If workflow/operator returns a non-empty `recommended_public_command_argv`, invoke that argv vector exactly. If `recommended_public_command_argv[0] == "featureforge"`, replace argv[0] with `$_FEATUREFORGE_BIN` (or execute via `_featureforge_exec_public_argv`) before running it. Do not shell-parse or whitespace-split `recommended_command`.
 - If workflow/operator omits `recommended_public_command_argv`, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator. If `next_action` is `runtime diagnostic required`, stop on that diagnostic instead of inventing repair/reentry commands. Do not infer missing argv by parsing `recommended_command`.
-- Treat `resume_task` and `resume_step` from `featureforge plan execution status --plan <approved-plan-path>` as advisory diagnostics only; if they disagree with workflow/operator `recommended_public_command_argv`, follow the argv from workflow/operator.
+- Treat `resume_task` and `resume_step` from `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` as advisory diagnostics only; if they disagree with workflow/operator `recommended_public_command_argv`, follow the argv from workflow/operator.
 - When workflow/operator reports `phase_detail=task_closure_recording_ready`, the replay lane is complete enough to refresh closure truth; run the routed `close-current-task` command and do not reopen the same step again.
 - Treat human-readable projection artifacts and companion markdown as derived output, not routing authority.
 - Treat repo-local projection exports under `docs/featureforge/projections/` as optional human-readable output. Normal routing comes from workflow/operator and event-authoritative status, not from editing or refreshing projection files.
-- Use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` for state-dir-only diagnostic projection refreshes. If a repo-local human-readable projection export is explicitly requested, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress.
+- Use `$_FEATUREFORGE_BIN plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` for state-dir-only diagnostic projection refreshes. If a repo-local human-readable projection export is explicitly requested, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress.
 - Hidden compatibility/debug command entrypoints are removed from the public CLI; keep normal progression on public commands only.
 - Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.
 - If workflow/operator reports `phase` `executing`, route directly to the runtime-selected execution owner (`featureforge:executing-plans` or `featureforge:subagent-driven-development`) and keep routing anchored to workflow/operator `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv`.
