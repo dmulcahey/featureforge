@@ -98,5 +98,7 @@ fi
 command -v node >/dev/null 2>&1 || fail 'node is required for prebuilt runtime validation'
 node "$SCRIPT_REPO_ROOT/scripts/prebuilt-runtime-provenance.mjs" verify --repo-root "$REPO_ROOT" >/dev/null \
   || fail 'prebuilt runtime validation failed'
+node "$SCRIPT_REPO_ROOT/scripts/lint-workspace-runtime-evidence.mjs" --repo-root "$REPO_ROOT" >/dev/null \
+  || fail 'workspace-runtime evidence lint failed'
 
 printf 'featureforge cutover checks passed\n'

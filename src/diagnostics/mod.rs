@@ -48,6 +48,7 @@ pub enum FailureClass {
     UnsupportedArtifactVersion,
     UpdateCheckStateFailed,
     WorkspaceNotSafe,
+    WorkspaceRuntimeLiveMutationBlocked,
 }
 
 impl FailureClass {
@@ -98,6 +99,7 @@ impl FailureClass {
             Self::UnsupportedArtifactVersion => "UnsupportedArtifactVersion",
             Self::UpdateCheckStateFailed => "UpdateCheckStateFailed",
             Self::WorkspaceNotSafe => "WorkspaceNotSafe",
+            Self::WorkspaceRuntimeLiveMutationBlocked => "workspace_runtime_live_mutation_blocked",
         }
     }
 }

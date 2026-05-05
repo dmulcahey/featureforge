@@ -148,14 +148,15 @@ fn internal_only_compatibility_workflow_help_surface_hides_compatibility_only_co
         );
         let stdout =
             String::from_utf8(output.stdout).expect("workflow help stdout should be utf-8");
-        let command = "operator";
-        assert!(
-            stdout
-                .lines()
-                .any(|line| line.trim_start().starts_with(command)),
-            "workflow --help should expose `{command}` for binary {}, got:\n{stdout}",
-            binary.display()
-        );
+        for command in ["status", "operator"] {
+            assert!(
+                stdout
+                    .lines()
+                    .any(|line| line.trim_start().starts_with(command)),
+                "workflow --help should expose `{command}` for binary {}, got:\n{stdout}",
+                binary.display()
+            );
+        }
         for compatibility_only in [
             "resolve",
             "expect",
@@ -164,7 +165,6 @@ fn internal_only_compatibility_workflow_help_surface_hides_compatibility_only_co
             "artifacts",
             "explain",
             "phase",
-            "doctor",
             "handoff",
             concat!("pre", "flight"),
             "gate",

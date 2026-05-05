@@ -118,6 +118,26 @@ fn run_featureforge_with_env(
     run(command, context)
 }
 
+fn run_featureforge_live_state_with_env(
+    repo: &Path,
+    home_dir: &Path,
+    args: &[&str],
+    context: &str,
+    extra_env: &[(&str, &str)],
+) -> Output {
+    let mut command =
+        Command::cargo_bin("featureforge").expect("featureforge cargo binary should exist");
+    command
+        .current_dir(repo)
+        .env("HOME", home_dir)
+        .env_remove("FEATUREFORGE_STATE_DIR")
+        .args(args);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    run(command, context)
+}
+
 #[test]
 fn internal_only_compatibility_close_current_task_rejects_hidden_dispatch_id_without_internal_flag_env()
  {
@@ -294,6 +314,40 @@ fn internal_only_compatibility_plan_execution_record_review_dispatch_requires_sc
 }
 
 #[test]
+fn internal_only_compatibility_workspace_runtime_live_mutation_guard_blocks_repair_review_state() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+
+    let output = run_featureforge_live_state_with_env(
+        repo,
+        home_dir.path(),
+        &[
+            "plan",
+            "execution",
+            "repair-review-state",
+            "--plan",
+            "docs/featureforge/plans/workspace-runtime-live-mutation-guard.md",
+        ],
+        "workspace runtime live mutation guard at CLI boundary",
+        &[],
+    );
+    let json = parse_failure_json(
+        &output,
+        "workspace runtime live mutation guard at CLI boundary",
+    );
+    assert_eq!(
+        json["error_class"],
+        "workspace_runtime_live_mutation_blocked"
+    );
+    assert!(
+        json["message"].as_str().is_some_and(
+            |message| message.contains("blocked_command: plan execution repair-review-state")
+        ),
+        "workspace runtime live mutation guard should report blocked command, got {json}"
+    );
+}
+
+#[test]
 fn internal_only_compatibility_plan_execution_record_release_readiness_requires_primitive_arguments_at_parse_boundary()
  {
     let (repo_dir, state_dir) = init_repo(concat!("cli-boundary-record", "-release-readiness"));
@@ -402,7 +456,6 @@ fn internal_only_compatibility_workflow_hidden_compatibility_commands_are_remove
         ["workflow", "artifacts"].as_slice(),
         ["workflow", "explain"].as_slice(),
         ["workflow", "phase", "--json"].as_slice(),
-        ["workflow", "doctor", "--json"].as_slice(),
         ["workflow", "handoff", "--json"].as_slice(),
     ] {
         let output = run_featureforge(

@@ -2,13 +2,15 @@
 mod bin_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
 use bin_support::compiled_featureforge_path;
 use featureforge::git::discover_slug_identity;
 use featureforge::paths::harness_state_path;
-use process_support::run;
+use process_support::{assert_workspace_runtime_uses_temp_state, run};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
@@ -162,6 +164,7 @@ fn assert_task_closure_required_inputs(surface: &Value, context: &str) {
 }
 
 fn run_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
+    assert_workspace_runtime_uses_temp_state(Some(repo), Some(state_dir), None, false, context);
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)

@@ -35,7 +35,7 @@ Reuse the seed layouts in `references/` when creating missing files.
 Before editing repo-visible memory files, run the shared repo-safety preflight for the exact paths you will touch:
 
 ```bash
-featureforge repo-safety check --intent write --stage featureforge:project-memory --task-id <current-memory-update> --path <repo-relative-path> --write-target repo-file-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:project-memory --task-id <current-memory-update> --path <repo-relative-path> --write-target repo-file-write
 ```
 
 - If the helper returns `allowed`, continue with the memory write.
@@ -43,8 +43,8 @@ featureforge repo-safety check --intent write --stage featureforge:project-memor
 - If the user explicitly approves the protected-branch memory write, approve the full memory scope you intend to use on that branch, including each repo-relative path you will edit:
 
 ```bash
-featureforge repo-safety approve --stage featureforge:project-memory --task-id <current-memory-update> --reason "<explicit user approval>" --path <repo-relative-path> --write-target repo-file-write
-featureforge repo-safety check --intent write --stage featureforge:project-memory --task-id <current-memory-update> --path <repo-relative-path> --write-target repo-file-write
+$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:project-memory --task-id <current-memory-update> --reason "<explicit user approval>" --path <repo-relative-path> --write-target repo-file-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:project-memory --task-id <current-memory-update> --path <repo-relative-path> --write-target repo-file-write
 ```
 
 - Continue only if the re-check returns `allowed`.

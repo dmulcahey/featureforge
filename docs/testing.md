@@ -56,6 +56,68 @@ Use that matrix to prove the intended surfaces directly. It does not replace
 the branch gate: after focused validation passes, still run
 `cargo nextest run --all-targets --all-features --no-fail-fast`.
 
+## Installed Control Plane Isolation Gate
+
+Changes that touch runtime provenance, workflow routing, generated skills,
+workspace-runtime mutation guards, shell-smoke helpers, evidence linting, or
+installed-control-plane docs must run the installed-control-plane isolation gate:
+
+```bash
+scripts/verify-installed-control-plane-isolation.sh
+```
+
+The script runs the durable gate in this order:
+
+```bash
+cargo fmt --check
+cargo test --test runtime_module_boundaries -- --nocapture
+cargo test --test runtime_instruction_contracts -- --nocapture
+cargo test --test workflow_runtime -- --nocapture
+cargo test --test workflow_shell_smoke -- --nocapture
+cargo test --test workflow_entry_shell_smoke -- --nocapture
+node scripts/gen-skill-docs.mjs --check
+node --test tests/codex-runtime/skill-doc-contracts.test.mjs
+node scripts/lint-workspace-runtime-evidence.mjs
+cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run --all-targets --all-features --no-fail-fast --status-level fail
+```
+
+This gate keeps the targeted public contracts and the full Rust suite together.
+It must keep evidence linting in the normal verification set so recorded
+evidence and review artifacts cannot regress to workspace-runtime live
+mutations.
+
+### Workspace Runtime State Isolation
+
+Shell-smoke and fixture tests use the workspace-compiled binary as a test
+subject only. They must set `FEATUREFORGE_STATE_DIR` to an isolated temp or
+fixture state path.
+
+- Test runtime: workspace binary (`target/debug/featureforge` or equivalent) +
+  temp/fixture `FEATUREFORGE_STATE_DIR`
+- Live control plane: installed binary (`~/.featureforge/install/bin/featureforge`) +
+  live `~/.featureforge` state
+
+The shared shell helpers enforce this boundary with
+`assert_workspace_runtime_uses_temp_state`. Live-state execution with workspace
+binaries is blocked by default in shell-smoke paths and only permitted for
+explicit guard-coverage tests that opt in to the live-state assertion bypass.
+
+Workspace binaries must not run live workflow mutations against
+`~/.featureforge`. The runtime guard blocks live mutation commands from
+workspace-local `./bin/featureforge`, `target/debug/featureforge`, and
+`cargo run -- ...` unless
+`FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION=1` is explicitly set. That
+override is intentionally auditable and should almost never be used; if it is
+approved for self-hosting recovery, record it in execution evidence and review
+provenance.
+
+Use the installed diagnostic when checking a session boundary:
+
+```bash
+~/.featureforge/install/bin/featureforge doctor self-hosting --json
+```
+
 ## Public And Internal Runtime Gates
 
 Public-flow proof and internal runtime compatibility are separate gates. Record
@@ -283,6 +345,7 @@ npm --prefix tests/brainstorm-server test
 node scripts/verify-source-archive.mjs
 scripts/run-public-runtime-flow-tests.sh
 scripts/run-internal-runtime-compatibility-tests.sh
+node scripts/lint-workspace-runtime-evidence.mjs
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --test liveness_model_checker
 cargo nextest run --all-targets --all-features --no-fail-fast
@@ -333,14 +396,14 @@ and repo-local projection exports untouched. Runtime read models live under the
 state directory. Diagnostic materialization is state-dir-only by default:
 
 ```bash
-featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all
+$_FEATUREFORGE_BIN plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all
 ```
 
 Repo-local human-readable projection exports are Git-visible and require an
 explicit confirmed export:
 
 ```bash
-featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all --repo-export --confirm-repo-export
+$_FEATUREFORGE_BIN plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all --repo-export --confirm-repo-export
 ```
 
 Materialization is never required for normal progress. Confirmed repo exports
@@ -353,6 +416,7 @@ Historical final-remediation plans used targeted Rust subsets while closing spec
 node scripts/gen-skill-docs.mjs
 node scripts/gen-agent-docs.mjs
 node scripts/run-codex-runtime-tests.mjs
+node scripts/lint-workspace-runtime-evidence.mjs
 node --test tests/evals/review-accelerator-contract.eval.mjs
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-targets --all-features --no-fail-fast

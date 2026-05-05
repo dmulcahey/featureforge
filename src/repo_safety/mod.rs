@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::cli::repo_safety::{RepoSafetyApproveArgs, RepoSafetyCheckArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
+use crate::execution::runtime_provenance::{RuntimeProvenance, runtime_provenance_for_paths};
 use crate::git::{
     derive_repo_slug, discover_repo_context, short_sha256_hex, stored_repo_root_matches_current,
 };
@@ -212,6 +213,10 @@ impl RepoSafetyRuntime {
         self.write_approval_record(&scope.canonical_approval_path, &record)?;
 
         Ok(self.result("allowed", "write", &scope, "", "approval_recorded", ""))
+    }
+
+    pub fn runtime_provenance(&self) -> RuntimeProvenance {
+        runtime_provenance_for_paths(&self.repo_root, &self.state_dir)
     }
 
     fn prepare_scope(

@@ -38,11 +38,11 @@ For late-stage phase/action/skill grounding, reference `review/late-stage-preced
 **1. If this review is for plan-routed work, capture execution state first:**
 
 - For plan-routed final review, require the exact approved plan path and exact approved spec path from the current execution preflight handoff or session context.
-- Run `featureforge plan contract analyze-plan --spec <approved-spec-path> --plan <approved-plan-path> --format json` before dispatching the reviewer.
+- Run `$_FEATUREFORGE_BIN plan contract analyze-plan --spec <approved-spec-path> --plan <approved-plan-path> --format json` before dispatching the reviewer.
 - If `contract_state != valid` or `packet_buildable_tasks != task_count`, stop and return to the current execution flow; do not review stale or malformed approved artifacts.
-- Run `featureforge workflow operator --plan <approved-plan-path>` before dispatching the reviewer.
+- Run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` before dispatching the reviewer.
 - If workflow/operator fails, stop and return to the current execution flow; do not guess the public late-stage route from raw execution state.
-- Run `featureforge plan execution status --plan <approved-plan-path>` only when you need extra execution-dirty or strategy-checkpoint diagnostics from the current workflow context.
+- Run `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only when you need extra execution-dirty or strategy-checkpoint diagnostics from the current workflow context.
 - If diagnostic status fails when those fields are required, stop and return to the current execution flow; do not dispatch review against guessed plan state.
 - When diagnostic status is required, parse `active_task`, `blocking_task`, and `resume_task` from that status JSON.
 - When diagnostic status is required, if any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`.
@@ -53,15 +53,15 @@ For late-stage phase/action/skill grounding, reference `review/late-stage-preced
 - For terminal whole-diff review, if workflow/operator already reports `phase_detail=final_review_outcome_pending`, do not dispatch a second reviewer; wait for the current final-review result or return to the current execution flow.
 - For terminal whole-diff review, when workflow/operator reports `final_review_dispatch_required`, keep the normal path operator-led and treat low-level dispatch commands as compatibility/debug-only.
 - For terminal whole-diff review, do not route the normal path through low-level compatibility/debug dispatch primitives; stay on workflow/operator plus the intent-level commands.
-- For terminal whole-diff review, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` after the external review result is ready and require `phase_detail=final_review_recording_ready` before recording final-review outcome.
-- After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`; when it reports `phase_detail=final_review_recording_ready`, execute that response's `recommended_public_command_argv` when present. If argv is absent, satisfy the typed `required_inputs` with the concrete reviewer source, reviewer id, result, and summary path, then rerun workflow/operator. Treat `recommended_command` as display-only input-shape text.
+- For terminal whole-diff review, rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` after the external review result is ready and require `phase_detail=final_review_recording_ready` before recording final-review outcome.
+- After the independent reviewer returns a final-review result, rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready`; when it reports `phase_detail=final_review_recording_ready`, execute that response's `recommended_public_command_argv` when present. If `recommended_public_command_argv[0] == "featureforge"`, run it through `$_FEATUREFORGE_BIN` (or `_featureforge_exec_public_argv`) instead of PATH/workspace-runtime resolution. If argv is absent, satisfy the typed `required_inputs` with the concrete reviewer source, reviewer id, result, and summary path, then rerun workflow/operator. Treat `recommended_command` as display-only input-shape text.
 - For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: low-level compatibility/debug dispatch commands are not normal intent-level progression.
 - If operator/status diagnostics surface warning-only compatibility codes such as `legacy_evidence_format`, keep them in review context but do not treat them as blockers while authoritative runtime/operator gate outputs remain non-blocking.
 - Pass the exact approved plan path into the reviewer context. When runtime-owned execution evidence or task-packet context is already available from the current workflow handoff, pass it through as supplemental context; do not make the public flow harvest it manually.
 - If the current review is not governed by an approved FeatureForge plan, skip this execution-state gate and continue with the normal diff review.
 
 **2. Use the provided base branch context and derive the review range:**
-Keep base-branch selection runtime-aligned and stable for this review. For plan-routed final review, `BASE_BRANCH` must come from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`) and stay aligned with the runtime-owned release lineage/document-release context. For non-plan-routed review, provide `BASE_BRANCH` explicitly before running this step. Do not redetect it here.
+Keep base-branch selection runtime-aligned and stable for this review. For plan-routed final review, `BASE_BRANCH` must come from `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` (`base_branch`) and stay aligned with the runtime-owned release lineage/document-release context. For non-plan-routed review, provide `BASE_BRANCH` explicitly before running this step. Do not redetect it here.
 
 ```bash
 if [ -z "$BASE_BRANCH" ]; then
@@ -77,7 +77,7 @@ fi
 HEAD_SHA=$(git rev-parse HEAD)
 ```
 
-Do not use PR metadata or repo default-branch APIs as a fallback. For workflow-routed review, require `BASE_BRANCH` from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`). For non-plan-routed review, require an explicitly provided `BASE_BRANCH`.
+Do not use PR metadata or repo default-branch APIs as a fallback. For workflow-routed review, require `BASE_BRANCH` from `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` (`base_branch`). For non-plan-routed review, require an explicitly provided `BASE_BRANCH`.
 
 The reviewer MUST use the shared review checklist from `review/checklist.md` in the repo when available, otherwise fall back to the installed FeatureForge copy.
 
@@ -101,7 +101,24 @@ If the approved plan already called out a likely external-pattern target, you ma
 - `{BASE_BRANCH}` - The runtime-provided or explicitly supplied base branch name
 - `{BASE_SHA}` - Starting commit
 - `{HEAD_SHA}` - Ending commit
+- `{WORKING_TREE_DIFF_HASH}` - Hash of `git diff` for the review scope
+- `{INSTALLED_RUNTIME_PATH}` - Installed runtime path used for live workflow routing
+- `{INSTALLED_RUNTIME_HASH}` - Installed runtime hash used for live workflow routing
+- `{WORKSPACE_RUNTIME_HASH}` - Workspace runtime hash used for tests/fixtures, or `none`
+- `{LIVE_STATE_DIR}` - State directory used for live workflow commands
+- `{ACTIVE_FEATUREFORGE_SKILL_SOURCE}` - Active FeatureForge skill source from runtime provenance, for example `installed`, `workspace`, `mixed`, `unknown`, or `none`
+- `{ACTIVE_FEATUREFORGE_SKILL_ROOTS}` - Active FeatureForge skill discovery roots from runtime provenance, or `none`
+- `{INSTALLED_SKILL_ROOT}` - Installed skill root from runtime provenance, normally `$HOME/.featureforge/install/skills`
+- `{WORKSPACE_SKILL_ROOT}` - Workspace skill root from runtime provenance, normally `<repo>/skills`
+- `{WORKSPACE_RUNTIME_LIVE_MUTATION_CONFIRMATION}` - Confirm workspace runtime did not mutate live state, or record explicit approved override
 - `{DESCRIPTION}` - Brief summary
+
+**3.5. Required review-dispatch provenance for FeatureForge-on-FeatureForge work:**
+- Before dispatch, include a provenance section in the review handoff with: base branch, base SHA, head SHA, working-tree diff hash, installed runtime path/hash used for live routing, workspace runtime hash used for tests (if any), live state dir, active FeatureForge skill source/roots, installed skill root, and workspace skill root.
+- If any required provenance field is missing, stop and treat review dispatch as blocked until the missing provenance is provided.
+- Reviewers must fail review when live workflow mutation used workspace runtime without an explicit approved override record.
+- Reviewers must fail review when active FeatureForge skills resolve from the workspace skill root instead of the installed skill root without an explicit approved self-hosting exception.
+- Reviewers must fail review when FeatureForge-on-FeatureForge provenance is missing or incomplete.
 
 **4. Act on feedback:**
 - Fix Critical issues immediately
@@ -121,7 +138,7 @@ If the approved plan already called out a likely external-pattern target, you ma
 - Cycle-break trigger: cap review churn at 3 cycles per task. On the third cycle, runtime enters `cycle_break` strategy automatically (no human replanning loopback required).
 - Keep plan/scope fixed during remediation. Runtime strategy may change topology, lane ownership, worktree allocation, subagent assignment, and remediation order, but must not change approved scope or source plan revision.
 - Carry the active runtime checkpoint fingerprint into review-result metadata so remediation and final review can be tied to the exact runtime strategy state.
-- Check and surface runtime strategy status through `featureforge plan execution status --plan ...`:
+- Check and surface runtime strategy status through `$_FEATUREFORGE_BIN plan execution status --plan ...`:
   - `strategy_state`
   - `strategy_checkpoint_kind`
   - `last_strategy_checkpoint_fingerprint`
@@ -177,7 +194,7 @@ See `$_FEATUREFORGE_ROOT/references/execution-review-qa-examples.md` for example
 
 - rejects final review if the plan has invalid execution state or required unfinished work not truthfully represented
 - when diagnostic status is required, treats non-null `active_task`, `blocking_task`, or `resume_task` as execution-dirty and rejects final review until execution returns to a clean state
-- uses `workflow operator --plan ...` as the authoritative late-stage route, requests external final review when operator reports `final_review_dispatch_required`, and records final-review outcome through the operator response's `recommended_public_command_argv` when present, using the explicit `advance-late-stage` shape only after `--external-review-result-ready` exposes `final_review_recording_ready`
+- uses `$_FEATUREFORGE_BIN workflow operator --plan ...` as the authoritative late-stage route, requests external final review when operator reports `final_review_dispatch_required`, and records final-review outcome through the operator response's `recommended_public_command_argv` when present, using the explicit `advance-late-stage` shape only after `--external-review-result-ready` exposes `final_review_recording_ready`
 - accepts runtime-provided supplemental review context when the current workflow handoff already includes it, but does not require manual status/evidence/task-packet harvesting in the normal path
 - treats any derived reviewer projection metadata or provenance artifacts as runtime-owned output, not routing authority
 - must fail closed when it detects a missed reopen or stale evidence, but must not call `reopen` itself

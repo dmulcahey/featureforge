@@ -3,6 +3,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+use featureforge::execution::runtime_provenance::{StateDirKind, classify_state_dir_kind_for_path};
+
+#[allow(dead_code)]
+pub const WORKSPACE_RUNTIME_LIVE_STATE_TEST_ALLOW_ENV: &str =
+    "FEATUREFORGE_TEST_ALLOW_WORKSPACE_RUNTIME_LIVE_STATE";
+
 #[allow(dead_code)]
 pub fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -66,4 +72,54 @@ pub fn run_checked(command: Command, context: &str) -> Output {
         String::from_utf8_lossy(&output.stderr)
     );
     output
+}
+
+#[allow(dead_code)]
+pub fn assert_workspace_runtime_uses_temp_state(
+    repo: Option<&Path>,
+    state_dir: Option<&Path>,
+    home_dir: Option<&Path>,
+    allow_live_state: bool,
+    context: &str,
+) {
+    if !is_workspace_runtime_binary() || repo.is_none() {
+        return;
+    }
+
+    let Some(state_dir) = state_dir else {
+        if allow_live_state {
+            return;
+        }
+        panic!(
+            "{context}: workspace runtime shell-smoke commands must set FEATUREFORGE_STATE_DIR to an isolated temp state directory"
+        );
+    };
+
+    if allow_live_state {
+        return;
+    }
+
+    let state_dir_kind = classify_state_dir_kind_for_path(state_dir, home_dir, true);
+    if state_dir_kind == StateDirKind::Live {
+        panic!(
+            "{context}: workspace runtime shell-smoke commands must not use live ~/.featureforge state: {}",
+            state_dir.display()
+        );
+    }
+    if state_dir_kind != StateDirKind::Temp {
+        panic!(
+            "{context}: workspace runtime shell-smoke commands must use temp/fixture FEATUREFORGE_STATE_DIR, got {}",
+            state_dir.display()
+        );
+    }
+}
+
+fn is_workspace_runtime_binary() -> bool {
+    let binary = canonicalize_or_self(Path::new(env!("CARGO_BIN_EXE_featureforge")));
+    let root = canonicalize_or_self(Path::new(env!("CARGO_MANIFEST_DIR")));
+    !binary.as_os_str().is_empty() && !root.as_os_str().is_empty() && binary.starts_with(root)
+}
+
+fn canonicalize_or_self(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }

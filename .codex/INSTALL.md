@@ -40,9 +40,11 @@ Enable FeatureForge skills in Codex via native skill discovery. Codex and GitHub
 
 ```bash
 ls -la ~/.agents/skills/featureforge
+readlink ~/.agents/skills/featureforge
 ls -la ~/.featureforge/install/skills
 ls -la ~/.codex/agents/code-reviewer.toml
 ls -la ~/.featureforge/install/.codex/agents/code-reviewer.toml
+~/.featureforge/install/bin/featureforge doctor self-hosting --json
 ```
 
 **Windows (PowerShell):**
@@ -54,6 +56,7 @@ Get-Item "$env:USERPROFILE\.featureforge\install\.codex\agents\code-reviewer.tom
 ```
 
 You should see a symlink (or junction on Windows) for the skills plus the installed `code-reviewer` agent.
+The Codex skills discovery link must point to `~/.featureforge/install/skills`, not to a workspace-local `<repo>/skills` directory.
 
 ## Codex Subagents
 
@@ -77,7 +80,14 @@ Runtime helper state lives in `~/.featureforge/`. Generated skill preambles use 
 
 Generated skill preambles always invoke the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows). That packaged install binary resolves the active runtime root through `featureforge repo runtime-root --path`, so repo checkouts and `~/.featureforge/install` use the same runtime-owned contract without swapping executables.
 
-Supported first-turn entry goes through the human-readable `using-featureforge` router, which consults `featureforge workflow` directly from repo-visible artifacts. Spawned subagents do not require session-entry flags or opt-in markers because active routing no longer passes through the removed session-entry gate.
+Live workflow control-plane commands must continue through the installed binary.
+Workspace-local `./bin/featureforge`, `target/debug/featureforge`, and
+`cargo run -- ...` are test subjects only and must use isolated temp or fixture
+`FEATUREFORGE_STATE_DIR` values. The override
+`FEATUREFORGE_ALLOW_WORKSPACE_RUNTIME_LIVE_MUTATION=1` is intentionally
+auditable and should almost never be used.
+
+Supported first-turn entry goes through the human-readable `using-featureforge` router, which consults workflow state through the installed control-plane runtime (`~/.featureforge/install/bin/featureforge workflow`) and repo-visible artifacts. Spawned subagents do not require session-entry flags or opt-in markers because active routing no longer passes through the removed session-entry gate.
 
 Optional: enable contributor mode for future sessions with:
 

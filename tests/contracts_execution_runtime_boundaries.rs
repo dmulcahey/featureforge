@@ -1504,6 +1504,8 @@ fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct
     let (mut operator_real, repair_real) = run_case("compiled-cli", true);
     projection_support::normalize_state_dir_projection_paths_for_parity(&mut operator_direct);
     projection_support::normalize_state_dir_projection_paths_for_parity(&mut operator_real);
+    projection_support::normalize_runtime_provenance_paths_for_parity(&mut operator_direct);
+    projection_support::normalize_runtime_provenance_paths_for_parity(&mut operator_real);
     assert_eq!(
         operator_direct, operator_real,
         "FS-04 direct and compiled-cli operator outputs must stay semantically aligned"

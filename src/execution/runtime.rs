@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::diagnostics::JsonFailure;
+use crate::execution::runtime_provenance::{RuntimeProvenance, runtime_provenance};
 use crate::git::{derive_repo_slug, discover_repo_context};
 use crate::paths::{branch_storage_key, featureforge_state_dir};
 
@@ -27,6 +28,10 @@ impl ExecutionRuntime {
             safe_branch: branch_storage_key(&identity.branch_name),
             state_dir: state_dir(),
         })
+    }
+
+    pub fn runtime_provenance(&self) -> RuntimeProvenance {
+        runtime_provenance(self)
     }
 }
 

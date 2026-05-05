@@ -47,7 +47,7 @@ use featureforge::paths::{
 };
 use files_support::write_file;
 use internal_only_direct_helpers::internal_runtime_direct;
-use process_support::run;
+use process_support::{assert_workspace_runtime_uses_temp_state, run};
 use runtime_json_support::{discover_execution_runtime, plan_execution_status_json};
 use runtime_surfaces_support::workflow_operator_json;
 use serde_json::Value;
@@ -1061,6 +1061,7 @@ fn close_two_task_fixture_task_1(repo: &Path, state_dir: &Path, plan_rel: &str) 
 }
 
 fn run_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
+    assert_workspace_runtime_uses_temp_state(Some(repo), Some(state_dir), None, false, context);
     public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
@@ -1078,6 +1079,7 @@ fn run_featureforge_with_env(
     extra_env: &[(&str, &str)],
     context: &str,
 ) -> Output {
+    assert_workspace_runtime_uses_temp_state(Some(repo), Some(state_dir), None, false, context);
     public_featureforge_cli::run_featureforge_with_env_control_real_cli(
         Some(repo),
         Some(state_dir),
@@ -1141,6 +1143,7 @@ fn run_featureforge_json_real_cli(
     args: &[&str],
     context: &str,
 ) -> Value {
+    assert_workspace_runtime_uses_temp_state(Some(repo), Some(state_dir), None, false, context);
     let output = public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state_dir),
@@ -1184,14 +1187,7 @@ fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = public_featureforge_cli::run_featureforge_real_cli(
-        Some(repo),
-        Some(state_dir),
-        None,
-        &[],
-        &full_args,
-        context,
-    );
+    let output = run_featureforge(repo, state_dir, &full_args, context);
     assert!(
         output.status.success(),
         "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -1470,14 +1466,7 @@ fn internal_only_plan_execution_failure_json(
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = public_featureforge_cli::run_featureforge_real_cli(
-        Some(repo),
-        Some(state_dir),
-        None,
-        &[],
-        &full_args,
-        context,
-    );
+    let output = run_featureforge(repo, state_dir, &full_args, context);
     assert!(
         !output.status.success(),
         "{context} should fail closed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -1517,14 +1506,7 @@ fn run_plan_execution_json_real_cli(
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = public_featureforge_cli::run_featureforge_real_cli(
-        Some(repo),
-        Some(state_dir),
-        None,
-        &[],
-        &full_args,
-        context,
-    );
+    let output = run_featureforge(repo, state_dir, &full_args, context);
     assert!(
         output.status.success(),
         "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -1814,14 +1796,7 @@ fn run_plan_execution_failure_json_real_cli(
     let mut full_args = Vec::with_capacity(args.len() + 2);
     full_args.extend(["plan", "execution"]);
     full_args.extend_from_slice(args);
-    let output = public_featureforge_cli::run_featureforge_real_cli(
-        Some(repo),
-        Some(state_dir),
-        None,
-        &[],
-        &full_args,
-        context,
-    );
+    let output = run_featureforge(repo, state_dir, &full_args, context);
     assert!(
         !output.status.success(),
         "{context} should fail closed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -4452,6 +4427,7 @@ fn internal_only_compatibility_workflow_help_outside_repo_mentions_the_public_su
     assert!(stdout.contains("Usage: featureforge workflow <COMMAND>"));
     assert!(stdout.contains("Commands:"));
     assert!(stdout.contains("status"));
+    assert!(stdout.contains("doctor"));
     assert!(stdout.contains("operator"));
     assert!(stdout.contains("help"));
     for hidden in [
@@ -4463,7 +4439,6 @@ fn internal_only_compatibility_workflow_help_outside_repo_mentions_the_public_su
         "artifacts",
         "explain",
         "phase",
-        "doctor",
         "handoff",
         concat!("pre", "flight"),
         "gate",

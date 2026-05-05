@@ -24,7 +24,32 @@ if [ -n "$_FEATUREFORGE_BIN" ]; then
   [ -n "$_FEATUREFORGE_ROOT" ] || _FEATUREFORGE_ROOT=""
 fi
 _FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
+_featureforge_exec_public_argv() {
+  if [ "$#" -eq 0 ]; then
+    echo "featureforge: missing command argv to execute" >&2
+    return 2
+  fi
+  if [ "$1" = "featureforge" ]; then
+    if [ -z "$_FEATUREFORGE_BIN" ]; then
+      echo "featureforge: installed runtime not found at $_FEATUREFORGE_INSTALL_ROOT/bin/featureforge" >&2
+      return 1
+    fi
+    shift
+    "$_FEATUREFORGE_BIN" "$@"
+    return $?
+  fi
+  "$@"
+}
 ```
+## Installed Control Plane
+
+Live FeatureForge workflow routing is install-owned:
+- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
+- do not route live workflow commands through `./bin/featureforge`
+- do not route live workflow commands through `target/debug/featureforge`
+- do not route live workflow commands through `cargo run`
+
+When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -67,7 +92,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 Before writing or updating the plan file on disk, run the shared repo-safety preflight for the exact plan-writing scope:
 
 ```bash
-featureforge repo-safety check --intent write --stage featureforge:writing-plans --task-id <current-plan-write> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:writing-plans --task-id <current-plan-write> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
 ```
 
 - If the helper returns `allowed`, continue with the plan write.
@@ -75,8 +100,8 @@ featureforge repo-safety check --intent write --stage featureforge:writing-plans
 - If the user explicitly approves writing this plan on the current protected branch, approve the full protected-branch task scope you intend to use, including the plan path and any follow-on git targets that are part of the same task slice:
 
 ```bash
-featureforge repo-safety approve --stage featureforge:writing-plans --task-id <current-plan-write> --reason "<explicit user approval>" --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write [--write-target git-commit]
-featureforge repo-safety check --intent write --stage featureforge:writing-plans --task-id <current-plan-write> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write [--write-target git-commit]
+$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:writing-plans --task-id <current-plan-write> --reason "<explicit user approval>" --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write [--write-target git-commit]
+$_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:writing-plans --task-id <current-plan-write> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write [--write-target git-commit]
 ```
 
 - Continue only if the re-check returns `allowed`.
@@ -100,7 +125,7 @@ Before writing the plan, inspect the selected spec and validate these exact head
 An approved spec may also include a trailing `## CEO Review Summary`. Treat that block as additive context only:
 
 - the approved spec headers and parseable `## Requirement Index` remain the prerequisite gate
-- the summary does not replace repo-visible approval truth or `featureforge plan contract` checks
+- the summary does not replace repo-visible approval truth or `$_FEATUREFORGE_BIN plan contract` checks
 - absence of the summary must not become a prerequisite failure
 - if the summary conflicts with the approved spec body or headers, trust the approved spec body and headers
 
@@ -172,7 +197,7 @@ See `$_FEATUREFORGE_ROOT/references/writing-plans-examples.md` for expanded task
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For Codex and GitHub Copilot workers:** REQUIRED: Use `featureforge workflow operator --plan <approved-plan-path>` as routing authority after engineering approval, and follow the runtime-selected execution owner skill; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For Codex and GitHub Copilot workers:** REQUIRED: Use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` as routing authority after engineering approval, and follow the runtime-selected execution owner skill; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Workflow State:** Draft
 **Plan Revision:** 1
