@@ -2719,11 +2719,23 @@ fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
         inputs.post_repair_route_action.review_state_status == "stale_unreviewed";
     let task_scope_stale_target_present = inputs.closure_graph_stale_target.is_some()
         || !inputs.execution_reentry_targets.stale_tasks.is_empty();
+    // Branch reroute is only legal for branch-scope stale truth. Task-scope blockers
+    // must preserve their concrete execution reentry target.
+    let task_scope_repair_blocker = matches!(
+        blocker_kind,
+        Some(
+            RepairBlockerKind::TaskScopeStructural
+                | RepairBlockerKind::UnrecoverableTaskScope
+                | RepairBlockerKind::TaskClosureBaselineBridge
+                | RepairBlockerKind::MissingDerivedTaskScope
+        )
+    );
     let stale_unreviewed_branch_reroute_available =
         (!inputs.snapshot.stale_unreviewed_closures.is_empty() || stale_unreviewed_status_present)
             && (inputs.branch_rerecording_supported
                 || inputs.empty_lineage_branch_reroute_repairable)
             && !task_scope_stale_target_present
+            && !task_scope_repair_blocker
             && inputs.status_target_task.is_none()
             && inputs.task_scope_structural_reason.is_none()
             && !inputs.task_scope_structural_blocking_record_present
@@ -3115,19 +3127,10 @@ fn repair_follow_up_target_record_id(
     match kind {
         RepairFollowUpKind::RecordBranchClosure
         | RepairFollowUpKind::AdvanceLateStage
-        | RepairFollowUpKind::ResolveReleaseBlocker => phase_bundle
-            .snapshot
-            .current_branch_closure
-            .as_ref()
-            .map(|closure| closure.branch_closure_id.clone())
-            .or_else(|| phase_bundle.status.current_branch_closure_id.clone())
-            .or_else(|| {
-                phase_bundle
-                    .snapshot
-                    .stale_unreviewed_closures
-                    .first()
-                    .cloned()
-            }),
+        | RepairFollowUpKind::ResolveReleaseBlocker => branch_follow_up_target_record_id(
+            phase_bundle.snapshot.current_branch_closure.as_ref(),
+            phase_bundle.status.current_branch_closure_id.as_deref(),
+        ),
         RepairFollowUpKind::ExecutionReentry => target_task
             .and_then(|task| {
                 stale_reentry_repair_plan
@@ -3189,6 +3192,15 @@ fn repair_follow_up_target_record_id(
             .and_then(|state| state.current_qa_record_id()),
         RepairFollowUpKind::RepairReviewState | RepairFollowUpKind::RecordHandoff => None,
     }
+}
+
+fn branch_follow_up_target_record_id(
+    current_branch_closure: Option<&ReviewStateBranchClosure>,
+    status_current_branch_closure_id: Option<&str>,
+) -> Option<String> {
+    current_branch_closure
+        .map(|closure| closure.branch_closure_id.clone())
+        .or_else(|| status_current_branch_closure_id.map(ToOwned::to_owned))
 }
 
 fn first_task_number(candidates: &[u32]) -> Option<u32> {
@@ -3486,6 +3498,17 @@ fn recommended_branch_closure_command(args: &StatusArgs) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::path::Path;
+    use std::sync::OnceLock;
+
+    use crate::contracts::plan::{PlanDocument, PlanStep, PlanTask, TaskFileEntry};
+    use crate::execution::command_eligibility::PublicCommandInvocation;
+    use crate::execution::context::EvidenceSourceOrigin;
+    use crate::execution::state::{
+        EvidenceAttempt, EvidenceFormat, ExecutionEvidence, PlanStepState,
+    };
 
     fn empty_review_state_snapshot() -> ReviewStateSnapshot {
         ReviewStateSnapshot {
@@ -3496,6 +3519,174 @@ mod tests {
             missing_derived_overlays: Vec::new(),
             branch_drift_confined_to_late_stage_surface: false,
             trace_summary: String::new(),
+        }
+    }
+
+    fn test_runtime(root: &Path) -> ExecutionRuntime {
+        ExecutionRuntime {
+            repo_root: root.to_path_buf(),
+            git_dir: root.join(".git"),
+            branch_name: String::from("feature/test"),
+            repo_slug: String::from("featureforge"),
+            safe_branch: String::from("feature-test"),
+            state_dir: root.join("state"),
+        }
+    }
+
+    fn test_task(number: u32, step_number: u32) -> PlanTask {
+        PlanTask {
+            number,
+            title: format!("Task {number}"),
+            spec_coverage: vec![String::from("DR-TEST")],
+            goal: String::from("Exercise repair routing behavior."),
+            context: Vec::new(),
+            constraints: Vec::new(),
+            done_when: Vec::new(),
+            files: vec![TaskFileEntry {
+                action: String::from("Modify"),
+                path: format!("src/task-{number}.rs"),
+            }],
+            steps: vec![PlanStep {
+                number: step_number,
+                text: format!("Step {step_number}"),
+            }],
+        }
+    }
+
+    fn test_context(root: &Path) -> ExecutionContext {
+        let task = test_task(1, 3);
+        let tasks_by_number = [(1, task.clone())].into_iter().collect::<BTreeMap<_, _>>();
+        ExecutionContext {
+            runtime: test_runtime(root),
+            plan_rel: String::from("docs/featureforge/plans/plan.md"),
+            plan_abs: root.join("docs/featureforge/plans/plan.md"),
+            plan_document: PlanDocument {
+                path: String::from("docs/featureforge/plans/plan.md"),
+                workflow_state: String::from("Engineering Approved"),
+                plan_revision: 1,
+                execution_mode: String::from("featureforge:executing-plans"),
+                source_spec_path: String::from("docs/featureforge/specs/spec.md"),
+                source_spec_revision: 1,
+                last_reviewed_by: String::from("plan-eng-review"),
+                qa_requirement: None,
+                coverage_matrix: BTreeMap::new(),
+                tasks: vec![task],
+                source: String::new(),
+            },
+            plan_source: String::new(),
+            steps: vec![PlanStepState {
+                task_number: 1,
+                step_number: 3,
+                title: String::from("Step 3"),
+                checked: true,
+                note_state: None,
+                note_summary: String::new(),
+            }],
+            local_execution_progress_markers_present: false,
+            legacy_open_step_projection_present: false,
+            tasks_by_number,
+            evidence_rel: String::from("docs/featureforge/execution-evidence/plan-r1-evidence.md"),
+            evidence_abs: root.join("docs/featureforge/execution-evidence/plan-r1-evidence.md"),
+            evidence: ExecutionEvidence {
+                format: EvidenceFormat::Empty,
+                plan_path: String::from("docs/featureforge/plans/plan.md"),
+                plan_revision: 1,
+                plan_fingerprint: None,
+                source_spec_path: String::from("docs/featureforge/specs/spec.md"),
+                source_spec_revision: 1,
+                source_spec_fingerprint: None,
+                attempts: vec![EvidenceAttempt {
+                    task_number: 1,
+                    step_number: 3,
+                    attempt_number: 1,
+                    status: String::from("Completed"),
+                    recorded_at: String::from("2026-05-04T00:00:00Z"),
+                    execution_source: String::from("featureforge:executing-plans"),
+                    claim: String::from("Task 1 Step 3 was attempted."),
+                    files: Vec::new(),
+                    file_proofs: Vec::new(),
+                    verify_command: None,
+                    verification_summary: String::from("verified"),
+                    invalidation_reason: String::new(),
+                    packet_fingerprint: None,
+                    head_sha: None,
+                    base_sha: None,
+                    source_contract_path: None,
+                    source_contract_fingerprint: None,
+                    source_evaluation_report_fingerprint: None,
+                    evaluator_verdict: None,
+                    failing_criterion_ids: Vec::new(),
+                    source_handoff_fingerprint: None,
+                    repo_state_baseline_head_sha: None,
+                    repo_state_baseline_worktree_fingerprint: None,
+                }],
+                source: None,
+                source_origin: EvidenceSourceOrigin::Empty,
+                tracked_progress_present: false,
+                tracked_source: None,
+            },
+            authoritative_evidence_projection_fingerprint: None,
+            source_spec_source: String::new(),
+            source_spec_path: root.join("docs/featureforge/specs/spec.md"),
+            execution_fingerprint: String::from("fingerprint"),
+            tracked_tree_sha_cache: OnceLock::new(),
+            semantic_workspace_snapshot_cache: OnceLock::new(),
+            reviewed_tree_sha_cache: RefCell::new(BTreeMap::new()),
+            head_sha_cache: OnceLock::new(),
+            release_base_branch_cache: OnceLock::new(),
+            tracked_worktree_changes_excluding_execution_evidence_cache: OnceLock::new(),
+        }
+    }
+
+    fn repair_review_state_route_action() -> RepairRouteAction {
+        let command = PublicCommand::RepairReviewState {
+            plan: String::from("docs/featureforge/plans/plan.md"),
+        };
+        RepairRouteAction {
+            kind: RepairRouteActionKind::RepairReviewState,
+            phase_detail: String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
+            review_state_status: String::from("stale_unreviewed"),
+            task_number: None,
+            step_number: None,
+            blocking_task: None,
+            blocking_reason_codes: vec![
+                String::from("prior_task_current_closure_stale"),
+                String::from("stale_unreviewed"),
+            ],
+            recommends_execution_reentry: false,
+            recommended_public_command: Some(command.clone()),
+            recommended_command: Some(command.to_display_command()),
+            recommended_public_command_argv: Some(command.to_argv()),
+            required_inputs: Vec::new(),
+        }
+    }
+
+    fn repair_review_state_route_decision() -> RouteDecision {
+        let command = PublicCommand::RepairReviewState {
+            plan: String::from("docs/featureforge/plans/plan.md"),
+        };
+        RouteDecision {
+            state_kind: String::from("actionable_public_command"),
+            phase: String::from(crate::execution::phase::PHASE_EXECUTING),
+            phase_detail: String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
+            review_state_status: String::from("stale_unreviewed"),
+            next_action: String::from("repair review state / reenter execution"),
+            blocking_reason_codes: vec![
+                String::from("prior_task_current_closure_stale"),
+                String::from("stale_unreviewed"),
+            ],
+            recommended_command: Some(command.to_display_command()),
+            recommended_public_command: Some(command.clone()),
+            invocation: Some(PublicCommandInvocation {
+                argv: command.to_argv(),
+            }),
+            required_inputs: Vec::new(),
+            required_follow_up: Some(String::from("repair_review_state")),
+            next_public_action: None,
+            blockers: Vec::new(),
+            public_repair_targets: Vec::new(),
+            execution_command_context: None,
+            recording_context: None,
         }
     }
 
@@ -3598,5 +3789,84 @@ mod tests {
         assert_eq!(output.recommended_public_command_argv, None);
         assert_eq!(output.authoritative_next_action, None);
         assert_repair_output_recommendation_has_argv(&output);
+    }
+
+    #[test]
+    fn unrecoverable_task_scope_stale_repair_requires_execution_reentry_not_branch_reroute() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        let context = test_context(temp.path());
+        let mut snapshot = empty_review_state_snapshot();
+        snapshot.branch_drift_confined_to_late_stage_surface = true;
+        let execution_reentry_targets = ExecutionReentryCurrentTaskClosureTargets {
+            stale_tasks: Vec::new(),
+            structural_tasks: Vec::new(),
+            structural_scope_keys: Vec::new(),
+        };
+        let route_decision = repair_review_state_route_decision();
+
+        let repair_plan = analyze_repair_plan(RepairAnalysisInputs {
+            snapshot: &snapshot,
+            post_repair_route_action: repair_review_state_route_action(),
+            post_repair_route_decision: &route_decision,
+            task_closure_baseline_bridge_target: None,
+            closure_graph_stale_target: None,
+            branch_stale_source_task: None,
+            status_target_task: None,
+            task_scope_structural_blocking_record_present: false,
+            branch_rerecording_supported: true,
+            empty_lineage_branch_reroute_repairable: false,
+            plan_complete: true,
+            execution_reentry_targets: &execution_reentry_targets,
+            task_scope_structural_reason: None,
+            branch_scope_structural_reason: None,
+            unrecoverable_task_scope_task: Some(1),
+            overlay_restore_available: false,
+            context: &context,
+        });
+
+        assert_eq!(
+            repair_plan.blocker_kind,
+            Some(RepairBlockerKind::UnrecoverableTaskScope)
+        );
+        assert_eq!(repair_plan.target_task, Some(1));
+        assert_eq!(repair_plan.target_step, Some(3));
+        assert_eq!(
+            repair_plan.required_follow_up.as_deref(),
+            Some("execution_reentry"),
+            "task-scope stale repair must not be promoted into branch late-stage reroute"
+        );
+        assert!(
+            repair_plan.actions_to_perform.iter().any(|action| {
+                matches!(
+                    action,
+                    RepairAction::ReentryTask {
+                        blocking_task: Some(1)
+                    }
+                )
+            }),
+            "task-scope stale repair should clear the stale task for execution reentry: {repair_plan:?}"
+        );
+    }
+
+    #[test]
+    fn branch_follow_up_target_record_id_uses_only_branch_closure_truth() {
+        let branch_closure = ReviewStateBranchClosure {
+            branch_closure_id: String::from("branch-closure-current"),
+            reviewed_state_id: None,
+            contract_identity: None,
+        };
+        assert_eq!(
+            branch_follow_up_target_record_id(None, None),
+            None,
+            "branch follow-up target ids must come from branch closure truth, not task stale-closure ids"
+        );
+        assert_eq!(
+            branch_follow_up_target_record_id(Some(&branch_closure), None),
+            Some(String::from("branch-closure-current"))
+        );
+        assert_eq!(
+            branch_follow_up_target_record_id(None, Some("branch-closure-status")),
+            Some(String::from("branch-closure-status"))
+        );
     }
 }
