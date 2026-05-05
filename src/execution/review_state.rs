@@ -2397,6 +2397,7 @@ fn unrecoverable_task_scope_authority_loss_task_from_read_scope(
         && authoritative_state
             .current_task_closure_result(task_number)
             .is_none()
+        && !authoritative_state.task_closure_history_contains_task(task_number)
         && authoritative_state
             .task_closure_negative_result(task_number)
             .is_none()
@@ -2716,10 +2717,13 @@ fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
     .flatten();
     let stale_unreviewed_status_present =
         inputs.post_repair_route_action.review_state_status == "stale_unreviewed";
+    let task_scope_stale_target_present = inputs.closure_graph_stale_target.is_some()
+        || !inputs.execution_reentry_targets.stale_tasks.is_empty();
     let stale_unreviewed_branch_reroute_available =
         (!inputs.snapshot.stale_unreviewed_closures.is_empty() || stale_unreviewed_status_present)
             && (inputs.branch_rerecording_supported
                 || inputs.empty_lineage_branch_reroute_repairable)
+            && !task_scope_stale_target_present
             && inputs.status_target_task.is_none()
             && inputs.task_scope_structural_reason.is_none()
             && !inputs.task_scope_structural_blocking_record_present

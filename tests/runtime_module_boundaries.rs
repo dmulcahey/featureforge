@@ -78,6 +78,78 @@ fn read_model_boundary_sources() -> Vec<(String, String)> {
         .collect()
 }
 
+#[test]
+fn completed_task_closure_preemption_predicate_has_single_authoritative_definition() {
+    let function_name = "completed_task_closure_preempts_execution_reentry";
+    let mut definitions = rust_source_files(&repo_root().join("src/execution"))
+        .into_iter()
+        .filter_map(|path| {
+            let rel = repo_relative(&path);
+            let source = read_repo_file(&rel);
+            source
+                .contains(&format!("fn {function_name}("))
+                .then_some(rel)
+        })
+        .collect::<Vec<_>>();
+    definitions.sort();
+
+    assert_eq!(
+        definitions,
+        vec![String::from("src/execution/repair_target_selection.rs")],
+        "completed-task closure preemption is shared routing truth; define it once in repair_target_selection and call that predicate from route surfaces"
+    );
+    for rel in ["src/execution/next_action.rs", "src/execution/router.rs"] {
+        let source = read_repo_file(rel);
+        assert!(
+            source.contains(&format!("{function_name}(")),
+            "{rel} must call the shared completed-task closure preemption predicate"
+        );
+    }
+}
+
+#[test]
+fn execution_reentry_close_preemption_targets_specific_task_closure() {
+    let router_source = read_repo_file("src/execution/router.rs");
+    assert!(
+        !router_source.contains(
+            "seed.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED\n            && status.current_task_closures.is_empty()"
+        ),
+        "execution-reentry close-current-task preemption must check whether the target task already has a current closure, not whether all task closures are absent"
+    );
+}
+
+#[test]
+fn review_dispatch_cycle_target_honors_public_close_route_before_stale_fallback() {
+    let source = read_repo_file("src/execution/closure_dispatch.rs");
+    let public_route_index = source
+        .find("public_close_current_task_cycle_target(context, status)")
+        .expect("closure dispatch target selection must have an explicit public close-current-task route preemption helper");
+    let stale_fallback_index = source
+        .find("let earliest_stale_boundary_task")
+        .expect("closure dispatch target selection should still mention stale fallback targeting");
+    assert!(
+        public_route_index < stale_fallback_index,
+        "close-current-task dispatch refresh must honor the same public route/operator task before consulting pre-reducer stale fallback targets"
+    );
+}
+
+#[test]
+fn execution_reentry_target_honors_earlier_resume_before_later_stale_target() {
+    let source = read_repo_file("src/execution/repair_target_selection.rs");
+    let resume_preemption_index = source
+        .find("resume_step_preempts_later_stale_target(status, authority_inputs.authoritative_stale_target)")
+        .expect("execution reentry target selection must explicitly preempt later stale reopen targets with an earlier parked resume step");
+    let stale_target_index = source
+        .find("if let Some(target) = authority_inputs.authoritative_stale_target")
+        .expect(
+            "execution reentry target selection should still consult authoritative stale targets",
+        );
+    assert!(
+        resume_preemption_index < stale_target_index,
+        "execution reentry routing must not recommend reopening a later stale target while an earlier interrupted resume step is parked"
+    );
+}
+
 fn expanded_use_paths(source: &str) -> Vec<String> {
     rust_source_scan::expanded_use_paths(source)
 }

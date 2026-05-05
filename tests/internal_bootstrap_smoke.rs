@@ -148,7 +148,7 @@ fn internal_only_compatibility_workflow_help_surface_hides_compatibility_only_co
         );
         let stdout =
             String::from_utf8(output.stdout).expect("workflow help stdout should be utf-8");
-        for command in ["status", "operator"] {
+        for command in ["status", "doctor", "operator"] {
             assert!(
                 stdout
                     .lines()

@@ -17,7 +17,7 @@ Seven layers matter:
 - `using-featureforge` is the human-readable entry router that consults `$_FEATUREFORGE_BIN workflow` directly from repo-visible artifacts.
 - generated skill preambles always invoke the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows), and that runtime resolves the active root through `featureforge repo runtime-root --path` before update checks or contributor-mode lookups.
 - `$_FEATUREFORGE_BIN workflow` owns product-work routing up to `implementation_ready`.
-- `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; run `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only when you need deeper diagnostics.
+- `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` is the first orientation/diagnosis surface after handoff; `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` remains the authoritative routing surface, and `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` is for deeper diagnostics.
 - `$_FEATUREFORGE_BIN repo-safety` owns protected branches and repo-write guarantees.
 - `$_FEATUREFORGE_BIN plan contract` owns semantic traceability between approved specs, approved plans, and derived task packets.
 - `$_FEATUREFORGE_BIN plan execution` owns execution state after an approved plan is handed off.
@@ -105,10 +105,10 @@ Planning chain in plain language:
 
 `brainstorming -> plan-ceo-review -> writing-plans -> plan-eng-review`; `plan-fidelity-review` runs only after engineering-review edits are complete, then `plan-eng-review` performs final approval before implementation.
 
-The generated `using-featureforge` skill routes through `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; if no approved plan path is known, resolve it through the normal planning/review handoff, then route with workflow/operator.
+The generated `using-featureforge` skill calls `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` first when an approved plan path is already known, then calls `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` for authoritative routing. If no approved plan path is known, resolve it through the normal planning/review handoff before invoking doctor/operator.
 
 Execution starts from an engineering-approved plan and the exact approved plan path.
-Use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level argv vector for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`. Late-stage public JSON reports `intent=advance_late_stage` plus a semantic `operation`; do not infer or invoke lower-level recording primitives from output fields.
+Use `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path>` for the compact human dashboard and `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` for headless diagnostics; use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` as the normal routing authority, then follow the recommended intent-level argv vector for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`. Late-stage public JSON reports `intent=advance_late_stage` plus a semantic `operation`; do not infer or invoke lower-level recording primitives from output fields.
 
 When workflow/operator reports stale or missing closure context, do not invent a repair command. If `recommended_public_command_argv` is present, invoke it exactly except for installed-control-plane rebinding: when argv[0] is `featureforge`, execute via `~/.featureforge/install/bin/featureforge` while preserving argv[1..]. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <approved-plan-path>` only when the non-diagnostic route owns that repair lane.
 

@@ -109,6 +109,77 @@ fn assert_public_route_parity(operator: &Value, status: &Value, doctor: Option<&
     }
 }
 
+fn assert_doctor_resolution(
+    doctor: &Value,
+    expected_kind: &str,
+    expected_command_available: bool,
+    expected_stop_reasons: &[&str],
+) {
+    let resolution = doctor
+        .get("resolution")
+        .and_then(Value::as_object)
+        .unwrap_or_else(|| panic!("workflow doctor should expose resolution object: {doctor}"));
+    assert_eq!(
+        resolution.get("kind").and_then(Value::as_str),
+        Some(expected_kind),
+        "workflow doctor resolution kind should be deterministic: {doctor}"
+    );
+    assert_eq!(
+        resolution.get("command_available").and_then(Value::as_bool),
+        Some(expected_command_available),
+        "workflow doctor resolution command availability should match argv presence: {doctor}"
+    );
+    let stop_reasons = resolution
+        .get("stop_reasons")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!("workflow doctor should expose resolution stop_reasons: {doctor}")
+        })
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .unwrap_or_else(|| panic!("stop_reasons entries should be strings: {doctor}"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stop_reasons, expected_stop_reasons,
+        "workflow doctor resolution stop reasons should preserve canonical order: {doctor}"
+    );
+}
+
+fn assert_doctor_json_does_not_route_to_recover(doctor: &Value, context: &str) {
+    assert!(
+        !value_contains_recover_route(doctor),
+        "{context} workflow doctor JSON must not route to nonexistent `plan execution recover`: {doctor}"
+    );
+}
+
+fn assert_doctor_text_does_not_route_to_recover(text: &str, context: &str) {
+    assert!(
+        !text.contains("plan execution recover"),
+        "{context} workflow doctor text must not route to nonexistent `plan execution recover`:\n{text}"
+    );
+}
+
+fn value_contains_recover_route(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.contains("plan execution recover"),
+        Value::Array(values) => {
+            values.iter().take(4).map(Value::as_str).collect::<Vec<_>>()
+                == [
+                    Some("featureforge"),
+                    Some("plan"),
+                    Some("execution"),
+                    Some("recover"),
+                ]
+                || values.iter().any(value_contains_recover_route)
+        }
+        Value::Object(map) => map.values().any(value_contains_recover_route),
+        _ => false,
+    }
+}
+
 fn assert_parity_probe_budget(scenario_id: &str, consumed_probe_commands: usize, max: usize) {
     assert!(
         consumed_probe_commands <= max,
@@ -176,8 +247,45 @@ fn run_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str)
     run(command, context)
 }
 
+fn run_featureforge_with_env(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+    context: &str,
+) -> Output {
+    let mut command = Command::new(compiled_featureforge_path());
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
+        .args(args);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    run(command, context)
+}
+
 fn run_featureforge_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
     let output = run_featureforge(repo, state_dir, args, context);
+    assert!(
+        output.status.success(),
+        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
+}
+
+fn run_featureforge_json_with_env(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+    context: &str,
+) -> Value {
+    let output = run_featureforge_with_env(repo, state_dir, args, extra_env, context);
     assert!(
         output.status.success(),
         "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -232,6 +340,33 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
     .expect("harness state should be writable");
     featureforge::execution::event_log::sync_fixture_event_log_for_tests(&state_path, payload)
         .expect("workflow-entry harness fixture should sync typed event authority");
+}
+
+fn rust_function_body<'a>(source: &'a str, signature: &str) -> &'a str {
+    let signature_start = source
+        .find(signature)
+        .unwrap_or_else(|| panic!("source should contain function signature `{signature}`"));
+    let after_signature = &source[signature_start..];
+    let body_open_offset = after_signature
+        .find('{')
+        .unwrap_or_else(|| panic!("function `{signature}` should contain an opening brace"));
+    let body_start = signature_start + body_open_offset;
+    let mut depth = 0usize;
+    for (offset, character) in source[body_start..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth
+                    .checked_sub(1)
+                    .unwrap_or_else(|| panic!("function `{signature}` has unbalanced braces"));
+                if depth == 0 {
+                    return &source[body_start + 1..body_start + offset];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("function `{signature}` body should close");
 }
 
 fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
@@ -585,4 +720,293 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
         &operator,
         "FS-09 workflow operator after stale reroute cleanup",
     );
+
+    let doctor = run_featureforge_json(
+        repo,
+        state,
+        &["workflow", "doctor", "--plan", plan_rel, "--json"],
+        "FS-09 workflow doctor should expose task-closure resolution after repair",
+    );
+    assert_public_route_parity(&operator, &status, Some(&doctor));
+    assert_task_closure_required_inputs(
+        &doctor,
+        "FS-09 workflow doctor after stale reroute cleanup",
+    );
+    assert_doctor_resolution(&doctor, "actionable_public_command", false, &[]);
+    assert_doctor_json_does_not_route_to_recover(&doctor, "FS-09 task-closure recording route");
+
+    let doctor_external_ready = run_featureforge_json(
+        repo,
+        state,
+        &[
+            "workflow",
+            "doctor",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+            "--json",
+        ],
+        "FS-09 workflow doctor external-ready task-closure route should not recover",
+    );
+    assert_eq!(
+        doctor_external_ready["phase"],
+        Value::from("task_closure_pending"),
+        "FS-09 external-ready doctor should remain on the task-closure recording route: {doctor_external_ready}"
+    );
+    assert_doctor_json_does_not_route_to_recover(
+        &doctor_external_ready,
+        "FS-09 external-ready task-closure recording route",
+    );
+
+    let doctor_external_ready_text = run_featureforge(
+        repo,
+        state,
+        &[
+            "workflow",
+            "doctor",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+        ],
+        "FS-09 workflow doctor external-ready task-closure text should not recover",
+    );
+    assert!(
+        doctor_external_ready_text.status.success(),
+        "FS-09 external-ready workflow doctor text should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        doctor_external_ready_text.status,
+        String::from_utf8_lossy(&doctor_external_ready_text.stdout),
+        String::from_utf8_lossy(&doctor_external_ready_text.stderr)
+    );
+    assert_doctor_text_does_not_route_to_recover(
+        &String::from_utf8_lossy(&doctor_external_ready_text.stdout),
+        "FS-09 external-ready task-closure recording route",
+    );
+}
+
+#[test]
+fn fs15_doctor_resolution_marks_non_actionable_runtime_diagnostic_stop_reasons() {
+    let (repo_dir, state_dir) = init_repo("workflow-entry-runtime-remediation-fs15");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    install_full_contract_ready_artifacts(repo);
+    prepare_preflight_acceptance_workspace(repo, "workflow-entry-runtime-remediation-fs15");
+    let env = [(
+        "FEATUREFORGE_PLAN_EXECUTION_READ_INVARIANT_TEST_INJECTION",
+        "hidden_recommended_command",
+    )];
+
+    let status = run_featureforge_json_with_env(
+        repo,
+        state,
+        &["plan", "execution", "status", "--plan", plan_rel],
+        &env,
+        "FS-15 plan execution status hidden-command invariant",
+    );
+    let operator = run_featureforge_json_with_env(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        &env,
+        "FS-15 workflow operator hidden-command invariant",
+    );
+    let doctor = run_featureforge_json_with_env(
+        repo,
+        state,
+        &["workflow", "doctor", "--plan", plan_rel, "--json"],
+        &env,
+        "FS-15 workflow doctor hidden-command invariant",
+    );
+
+    assert_public_route_parity(&operator, &status, Some(&doctor));
+    for (label, surface) in [
+        ("status", &status),
+        ("operator", &operator),
+        ("doctor", &doctor),
+    ] {
+        let state_kind = if label == "doctor" {
+            &surface["execution_status"]["state_kind"]
+        } else {
+            &surface["state_kind"]
+        };
+        assert_eq!(
+            state_kind,
+            &Value::from("blocked_runtime_bug"),
+            "{label} should classify the invariant as a runtime diagnostic: {surface}"
+        );
+        assert_eq!(
+            surface["next_action"],
+            Value::from("runtime diagnostic required"),
+            "{label} should fail closed on the diagnostic route: {surface}"
+        );
+        assert!(
+            surface["recommended_command"].is_null(),
+            "{label} must not expose a display command for diagnostic-only states: {surface}"
+        );
+        assert!(
+            surface
+                .get("recommended_public_command_argv")
+                .is_none_or(Value::is_null),
+            "{label} must not expose executable argv for diagnostic-only states: {surface}"
+        );
+        assert!(
+            surface["required_inputs"]
+                .as_array()
+                .is_none_or(Vec::is_empty),
+            "{label} must not convert diagnostic-only states into input prompts: {surface}"
+        );
+    }
+    assert_eq!(
+        doctor["blocking_reason_codes"],
+        json!(["recommended_command_hidden_or_debug"]),
+        "doctor blocker reason-code array should stay deterministic: {doctor}"
+    );
+    assert_doctor_resolution(
+        &doctor,
+        "runtime_diagnostic_required",
+        false,
+        &["recommended_command_hidden_or_debug"],
+    );
+    assert_doctor_json_does_not_route_to_recover(&doctor, "FS-15 runtime diagnostic route");
+
+    let doctor_text = run_featureforge_with_env(
+        repo,
+        state,
+        &["workflow", "doctor", "--plan", plan_rel],
+        &env,
+        "FS-15 workflow doctor text hidden-command invariant",
+    );
+    assert!(
+        doctor_text.status.success(),
+        "FS-15 workflow doctor text should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        doctor_text.status,
+        String::from_utf8_lossy(&doctor_text.stdout),
+        String::from_utf8_lossy(&doctor_text.stderr)
+    );
+    let text = String::from_utf8_lossy(&doctor_text.stdout);
+    assert!(
+        text.contains("Resolution kind: runtime_diagnostic_required"),
+        "doctor text should expose the runtime diagnostic classification marker, got:\n{text}"
+    );
+    assert!(
+        text.contains("Command available: no"),
+        "doctor text should expose the non-actionable command marker, got:\n{text}"
+    );
+    assert!(
+        text.contains("recommended_command_hidden_or_debug - "),
+        "doctor text blockers should include canonical stop reason plus action text, got:\n{text}"
+    );
+    assert_doctor_text_does_not_route_to_recover(&text, "FS-15 runtime diagnostic route");
+}
+
+#[test]
+fn fs16_doctor_text_sanitizes_control_payload_plan_path_without_mutating_json() {
+    let (repo_dir, state_dir) = init_repo("workflow-entry-runtime-remediation-fs16");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let poisoned_plan_rel = "docs/featureforge/plans/doctor-\u{1b}[31mred\u{7}-plan.md";
+    install_full_contract_ready_artifacts(repo);
+    fs::copy(repo.join(plan_rel), repo.join(poisoned_plan_rel))
+        .expect("poisoned plan-path fixture should copy from canonical plan");
+
+    let doctor_json = run_featureforge_json(
+        repo,
+        state,
+        &["workflow", "doctor", "--plan", poisoned_plan_rel, "--json"],
+        "FS-16 workflow doctor json for poisoned plan path",
+    );
+    assert_eq!(
+        doctor_json["plan_path"],
+        Value::from(poisoned_plan_rel),
+        "doctor JSON should preserve authoritative raw plan path: {doctor_json}"
+    );
+    assert!(
+        doctor_json["plan_path"]
+            .as_str()
+            .is_some_and(|path| path.contains('\u{1b}') && path.contains('\u{7}')),
+        "doctor JSON should keep raw control payloads for machine consumers: {doctor_json}"
+    );
+
+    let doctor_text = run_featureforge(
+        repo,
+        state,
+        &["workflow", "doctor", "--plan", poisoned_plan_rel],
+        "FS-16 workflow doctor text for poisoned plan path",
+    );
+    assert!(
+        doctor_text.status.success(),
+        "FS-16 workflow doctor text should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        doctor_text.status,
+        String::from_utf8_lossy(&doctor_text.stdout),
+        String::from_utf8_lossy(&doctor_text.stderr)
+    );
+    let text = String::from_utf8_lossy(&doctor_text.stdout);
+    assert!(
+        !text.contains('\u{1b}') && !text.contains('\u{7}'),
+        "doctor text should render control payloads inert, got:\n{text}"
+    );
+    assert!(
+        text.contains("doctor-red -plan.md"),
+        "doctor text should preserve readable sanitized path semantics, got:\n{text}"
+    );
+}
+
+#[test]
+fn fs17_doctor_public_entrypoints_keep_single_context_build_path() {
+    let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/workflow/operator.rs");
+    let source = fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("operator source should be readable: {error}"));
+
+    let doctor_with_args = rust_function_body(&source, "pub fn doctor_with_args(");
+    assert_eq!(
+        doctor_with_args.matches("build_context_with_plan(").count(),
+        1,
+        "doctor_with_args should build one route context for one invocation:\n{doctor_with_args}"
+    );
+    for forbidden in [
+        "operator_with_args(",
+        "workflow_operator_requery",
+        "render_operator",
+        "query_workflow_routing_state(",
+    ] {
+        assert!(
+            !doctor_with_args.contains(forbidden),
+            "doctor_with_args must not requery through `{forbidden}`:\n{doctor_with_args}"
+        );
+    }
+
+    let render_doctor_with_args = rust_function_body(&source, "pub fn render_doctor_with_args(");
+    assert_eq!(
+        render_doctor_with_args.matches("doctor_with_args(").count(),
+        1,
+        "render_doctor_with_args should render from one prebuilt doctor DTO:\n{render_doctor_with_args}"
+    );
+    assert!(
+        !render_doctor_with_args.contains("build_context_with_plan"),
+        "render_doctor_with_args must not rebuild route context during text emission:\n{render_doctor_with_args}"
+    );
+
+    let doctor_for_runtime_with_args =
+        rust_function_body(&source, "pub fn doctor_for_runtime_with_args(");
+    assert_eq!(
+        doctor_for_runtime_with_args
+            .matches("build_context_with_plan_for_runtime(")
+            .count(),
+        1,
+        "doctor_for_runtime_with_args should build one runtime route context:\n{doctor_for_runtime_with_args}"
+    );
+
+    let doctor_from_context = rust_function_body(&source, "fn doctor_from_context(");
+    for forbidden in [
+        "build_context",
+        "query_workflow_routing_state",
+        "operator_with_args(",
+        "workflow_operator_requery",
+    ] {
+        assert!(
+            !doctor_from_context.contains(forbidden),
+            "doctor_from_context must stay projection-only and not call `{forbidden}`:\n{doctor_from_context}"
+        );
+    }
 }

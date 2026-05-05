@@ -217,6 +217,10 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
         "If helper calls fail:",
         "Do not re-derive `phase`, `phase_detail`, readiness, or late-stage precedence from markdown headers.",
         "Do not invent or continue a parallel manual routing graph.",
+        "If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` first for orientation/diagnosis, then call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` for authoritative routing.",
+        "Use `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path>` when the user asks for diagnosis or orientation and show the compact dashboard directly.",
+        "Do not fall back from doctor to the legacy workflow-status route; if doctor fails, fail closed and repair the doctor/operator route path.",
+        "Do not introduce or route to `$_FEATUREFORGE_BIN plan execution recover`; recovery remains on existing operator-routed public commands.",
         "If helper routing still cannot be recovered, fail closed to the earlier safe stage (`featureforge:brainstorming`) or remain in the current execution flow; do not route directly into implementation or late-stage recording from fallback logic.",
         "Treat human-readable projection artifacts and companion markdown as derived output, not routing authority.",
         "Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.",
@@ -284,6 +288,16 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
     assert!(
         explicit_memory_route_index < implementation_ready_index,
         "explicit project-memory routing should be documented before the implementation-ready handoff rule"
+    );
+    let doctor_orientation_index = content
+        .find("call `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` first for orientation/diagnosis")
+        .expect("using-featureforge skill should document doctor-first orientation");
+    let operator_authority_index = content
+        .find("Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs` as the authoritative public routing contract.")
+        .expect("using-featureforge skill should document operator route authority");
+    assert!(
+        doctor_orientation_index < operator_authority_index,
+        "doctor-first orientation should be documented before the operator authority contract"
     );
 
     let preamble = extract_bash_block(&content, "## Preamble (run first)");

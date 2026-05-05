@@ -360,6 +360,56 @@ fn assert_public_route_parity(operator: &Value, status: &Value, doctor: Option<&
     }
 }
 
+fn assert_doctor_resolution(
+    doctor: &Value,
+    expected_kind: &str,
+    expected_command_available: bool,
+    expected_stop_reasons: &[&str],
+) {
+    let resolution = doctor
+        .get("resolution")
+        .and_then(Value::as_object)
+        .unwrap_or_else(|| panic!("workflow doctor should expose resolution object: {doctor}"));
+    assert_eq!(
+        resolution.get("kind").and_then(Value::as_str),
+        Some(expected_kind),
+        "workflow doctor resolution kind should be deterministic: {doctor}"
+    );
+    assert_eq!(
+        resolution.get("command_available").and_then(Value::as_bool),
+        Some(expected_command_available),
+        "workflow doctor resolution command availability should match argv presence: {doctor}"
+    );
+    let stop_reasons = resolution
+        .get("stop_reasons")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!("workflow doctor should expose resolution stop_reasons: {doctor}")
+        })
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .unwrap_or_else(|| panic!("stop_reasons entries should be strings: {doctor}"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stop_reasons, expected_stop_reasons,
+        "workflow doctor resolution stop reasons should preserve canonical order: {doctor}"
+    );
+}
+
+fn assert_text_markers_in_order(text: &str, markers: &[&str]) {
+    let mut cursor = 0usize;
+    for marker in markers {
+        let remaining = &text[cursor..];
+        let offset = remaining.find(marker).unwrap_or_else(|| {
+            panic!("expected marker `{marker}` after byte {cursor} in:\n{text}")
+        });
+        cursor += offset + marker.len();
+    }
+}
+
 fn assert_follow_up_blocker_parity_with_operator(
     operator: &Value,
     follow_up: &Value,
@@ -1087,6 +1137,105 @@ fn read_surface_invariant_blocks_current_stale_overlap_on_public_status_and_oper
                 .iter()
                 .any(|code| code == "current_stale_closure_overlap")),
         "operator should expose the shared overlap invariant code: {operator_json}"
+    );
+
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--plan", plan_rel, "--json"],
+            &env,
+            "public doctor current/stale invariant injection",
+        ),
+        "public doctor current/stale invariant injection",
+    );
+    assert_public_route_parity(&operator_json, &status_json, Some(&doctor_json));
+    assert_eq!(
+        doctor_json["execution_status"]["state_kind"],
+        "blocked_runtime_bug"
+    );
+    assert_eq!(doctor_json["phase_detail"], "blocked_runtime_bug");
+    assert_eq!(doctor_json["next_action"], "runtime diagnostic required");
+    assert_doctor_resolution(
+        &doctor_json,
+        "runtime_diagnostic_required",
+        false,
+        &[
+            "release_docs_state_missing",
+            "final_review_state_missing",
+            "current_stale_closure_overlap",
+            "execution_reentry_target_missing",
+            "recommended_mutation_command_rejected",
+        ],
+    );
+}
+
+#[test]
+fn workflow_doctor_text_renders_compact_dashboard_from_runtime_snapshot() {
+    let (repo_dir, state_dir) = init_repo("workflow-doctor-text-compact-dashboard");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    let env = [(
+        "FEATUREFORGE_PLAN_EXECUTION_READ_INVARIANT_TEST_INJECTION",
+        "current_stale_overlap",
+    )];
+
+    let output = run_rust_featureforge_with_env(
+        repo,
+        state,
+        &["workflow", "doctor", "--plan", plan_rel],
+        &env,
+        "public doctor compact dashboard text invariant fixture",
+    );
+    assert!(
+        output.status.success(),
+        "workflow doctor text should succeed for compact dashboard fixture, got stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_text_markers_in_order(
+        &text,
+        &[
+            "Workflow doctor",
+            "Header",
+            "Next Move",
+            "Artifacts",
+            "Execution",
+            "Blockers",
+        ],
+    );
+    for required_label in [
+        "Phase:",
+        "Phase detail:",
+        "Review state:",
+        "Route status:",
+        "Next action:",
+        "Next step:",
+        "Resolution kind:",
+        "Command available:",
+        "Spec:",
+        "Plan:",
+        "Contract state:",
+    ] {
+        assert!(
+            text.contains(required_label),
+            "compact dashboard should include required label `{required_label}`, got:\n{text}"
+        );
+    }
+    assert!(
+        text.contains("Resolution kind: runtime_diagnostic_required"),
+        "compact dashboard should render doctor resolution kind, got:\n{text}"
+    );
+    assert!(
+        text.contains("Command available: no"),
+        "compact dashboard should render command availability as a stable label, got:\n{text}"
+    );
+    assert!(
+        text.contains("current_stale_closure_overlap - "),
+        "blockers should include canonical reason code plus action text, got:\n{text}"
     );
 }
 
@@ -4831,6 +4980,7 @@ fn canonical_workflow_doctor_exposes_harness_state_before_execution_starts() {
     );
     assert_eq!(doctor_json["route_status"], "implementation_ready");
     assert_eq!(doctor_json["next_action"], "continue execution");
+    assert_doctor_resolution(&doctor_json, "actionable_public_command", true, &[]);
     assert_eq!(doctor_json["execution_status"]["execution_started"], "no");
     assert_eq!(doctor_json["gate_review"], Value::Null);
     assert_eq!(doctor_json["gate_finish"], Value::Null);
@@ -5138,6 +5288,12 @@ fn canonical_workflow_operator_surfaces_pivot_required_plan_revision_block_phase
     assert_eq!(handoff_json["phase"], expected_phase);
     assert_eq!(phase_json["next_action"], "pivot / return to planning");
     assert_eq!(doctor_json["next_action"], "pivot / return to planning");
+    assert_doctor_resolution(&doctor_json, "actionable_public_command", true, &[]);
+    assert_eq!(
+        doctor_json["diagnostic_reason_codes"],
+        json!([]),
+        "workflow doctor should expose a deterministic diagnostic reason-code array without duplicating actionable blocker codes: {doctor_json}"
+    );
     assert_eq!(handoff_json["next_action"], "pivot / return to planning");
     let execution_mode = doctor_json["execution_status"]["execution_mode"]
         .as_str()

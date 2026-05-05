@@ -107,6 +107,7 @@ pub(crate) use crate::execution::read_model_support::{
     task_closure_baseline_candidate_can_preempt_stale_target,
     task_closure_baseline_repair_candidate_with_stale_target,
     task_closures_are_non_branch_contributing, task_completion_lineage_fingerprint,
+    task_latest_attempts_are_completed,
 };
 pub use crate::execution::runtime::{ExecutionRuntime, state_dir};
 use crate::execution::semantic_identity::{

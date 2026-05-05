@@ -476,3 +476,34 @@ fn internal_only_compatibility_workflow_hidden_compatibility_commands_are_remove
         assert!(message.contains("unrecognized subcommand"));
     }
 }
+
+#[test]
+fn internal_only_compatibility_workflow_doctor_requires_public_plan_argument_at_parse_boundary() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-workflow-doctor-missing-plan");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let output = run_featureforge(
+        repo,
+        state,
+        &["workflow", "doctor", "--json"],
+        "workflow doctor missing plan parse boundary",
+    );
+    let json = parse_failure_json(&output, "workflow doctor missing plan parse boundary");
+
+    assert_eq!(
+        json["error_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
+    let message = json["message"]
+        .as_str()
+        .expect("failure message should stay a string");
+    assert!(
+        message.contains("--plan"),
+        "workflow doctor missing plan failure should name --plan, got {json}"
+    );
+    assert!(
+        !message.contains("unrecognized subcommand"),
+        "workflow doctor should be a public subcommand, got {json}"
+    );
+}

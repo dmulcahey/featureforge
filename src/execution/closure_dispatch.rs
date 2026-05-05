@@ -11,10 +11,12 @@ use crate::execution::internal_args::{RecordReviewDispatchArgs, ReviewDispatchSc
 use crate::execution::leases::{
     StatusAuthoritativeOverlay, load_status_authoritative_overlay_checked,
 };
+use crate::execution::phase;
 use crate::execution::read_model::{
     final_review_dispatch_still_current_for_gates, has_authoritative_late_stage_progress,
     is_late_stage_phase, normalize_optional_overlay_value, parse_harness_phase,
-    status_from_context, usable_current_branch_closure_identity,
+    public_status_from_supplied_context_with_shared_routing, status_from_context,
+    usable_current_branch_closure_identity,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
 use crate::execution::read_model_support::{
@@ -24,6 +26,7 @@ use crate::execution::read_model_support::{
     task_completion_lineage_fingerprint,
 };
 use crate::execution::semantic_identity::semantic_workspace_snapshot;
+use crate::execution::status::PlanExecutionStatus;
 use crate::execution::transitions::{
     AuthoritativeTransitionState, load_authoritative_transition_state,
 };
@@ -565,7 +568,15 @@ fn format_dispatch_id_mismatch_message(detail: &str) -> String {
 fn review_dispatch_task_boundary_target(
     context: &ExecutionContext,
 ) -> Option<ReviewDispatchCycleTarget> {
-    let status = status_from_context(context).ok();
+    let status = public_status_from_supplied_context_with_shared_routing(context, false)
+        .or_else(|_| status_from_context(context))
+        .ok();
+    if let Some(public_close_target) = status
+        .as_ref()
+        .and_then(|status| public_close_current_task_cycle_target(context, status))
+    {
+        return Some(public_close_target);
+    }
     let earliest_stale_boundary_task = status
         .as_ref()
         .and_then(|status| pre_reducer_earliest_unresolved_stale_task(context, status));
@@ -632,6 +643,39 @@ fn review_dispatch_task_boundary_target(
                 .is_some()
             })
     })?;
+    let step_number = latest_attempted_step_for_task(context, task_number).or_else(|| {
+        context
+            .steps
+            .iter()
+            .filter(|step| step.task_number == task_number)
+            .map(|step| step.step_number)
+            .max()
+    })?;
+    Some(ReviewDispatchCycleTarget::Bound(task_number, step_number))
+}
+
+fn public_close_current_task_cycle_target(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+) -> Option<ReviewDispatchCycleTarget> {
+    let close_current_task_route = status.phase_detail
+        == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+        || status.next_action == "close current task";
+    if !close_current_task_route {
+        return None;
+    }
+    let task_number = status
+        .public_repair_targets
+        .iter()
+        .find(|target| target.command_kind == "close-current-task")
+        .and_then(|target| target.task)
+        .or_else(|| {
+            status
+                .recording_context
+                .as_ref()
+                .and_then(|context| context.task_number)
+        })
+        .or(status.blocking_task)?;
     let step_number = latest_attempted_step_for_task(context, task_number).or_else(|| {
         context
             .steps

@@ -64,16 +64,20 @@ as `./bin/featureforge`, `target/debug/featureforge`, or `cargo run -- ...` are
 test subjects only and must use isolated temp/fixture state. Workspace skills
 under `<repo>/skills/*` are generated artifacts, not active instruction roots.
 
-`$_FEATUREFORGE_BIN plan execution status --plan <path>` is a supporting diagnostic surface. It must consume the same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `required_inputs`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`. Any disagreement is a runtime bug. `recommended_command` is display-only compatibility text; `recommended_public_command_argv` is the exact machine-invocation representation when present.
+`$_FEATUREFORGE_BIN plan execution status --plan <path>` is a supporting diagnostic surface. `$_FEATUREFORGE_BIN workflow doctor --plan <path> --json` is the read-only orientation/diagnostic companion to workflow/operator. Both status and doctor must consume the same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `required_inputs`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`. Any disagreement is a runtime bug. `recommended_command` is display-only compatibility text; `recommended_public_command_argv` is the exact machine-invocation representation when present.
 
-Parity checks must use matching routing inputs. Compare `status --plan <path>` to `workflow operator --plan <path>` for baseline parity, and compare `status --plan <path> --external-review-result-ready` to `workflow operator --plan <path> --external-review-result-ready` when asserting external-review-result-ready recording routes.
+Parity checks must use matching routing inputs. Compare `status --plan <path>` and `workflow doctor --plan <path> --json` to `workflow operator --plan <path>` for baseline parity, and compare `status --plan <path> --external-review-result-ready` plus `workflow doctor --plan <path> --external-review-result-ready --json` to `workflow operator --plan <path> --external-review-result-ready` when asserting external-review-result-ready recording routes.
 
 Explicit usage rule:
 
-- agents SHOULD run `$_FEATUREFORGE_BIN workflow operator --plan <path>` first for normal routing
+- agents SHOULD run `$_FEATUREFORGE_BIN workflow doctor --plan <path> --json` first for orientation/diagnosis when an approved plan path is known
+- agents SHOULD run `$_FEATUREFORGE_BIN workflow operator --plan <path>` for authoritative normal routing after doctor orientation
+- agents SHOULD run `$_FEATUREFORGE_BIN workflow doctor --plan <path>` directly when the user asks for human-facing diagnosis/orientation and should show the compact dashboard output
 - agents SHOULD run `$_FEATUREFORGE_BIN plan execution status --plan <path>` only when deeper diagnostics are needed
+- agents SHOULD NOT fall back from doctor to the legacy workflow-status route; if doctor fails, fail closed and repair the doctor/operator route path
 - when workflow/operator reports stale or missing closure context, agents SHOULD NOT invent a repair command; if `recommended_public_command_argv` is present, invoke it exactly except for installed-control-plane rebinding (`featureforge` argv[0] executes as `~/.featureforge/install/bin/featureforge`), if argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic, otherwise satisfy `required_inputs` or run `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <path>` only when the non-diagnostic route owns that repair lane
 - after `repair-review-state`, the command’s own `recommended_public_command_argv` is authoritative for the immediate reroute when present; if argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, rerun the route owner, and do not shell-parse or whitespace-split `recommended_command`
+- Do not add or route through `featureforge plan execution recover`; recovery remains on existing workflow/operator-routed public command families.
 
 Agents can inspect the active runtime/skill boundary with
 `featureforge doctor self-hosting --json`. Workspace-runtime live mutation is

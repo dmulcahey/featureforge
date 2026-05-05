@@ -1163,6 +1163,20 @@ pub(crate) fn latest_attempted_step_for_task(
     })
 }
 
+pub(crate) fn task_latest_attempts_are_completed(
+    context: &ExecutionContext,
+    task_number: u32,
+) -> bool {
+    let Some(task) = context.tasks_by_number.get(&task_number) else {
+        return false;
+    };
+    !task.steps.is_empty()
+        && task.steps.iter().all(|step| {
+            latest_attempt_for_step(&context.evidence, task_number, step.number)
+                .is_some_and(|attempt| attempt.status == "Completed")
+        })
+}
+
 pub(crate) fn task_completion_lineage_fingerprint(
     context: &ExecutionContext,
     task_number: u32,
