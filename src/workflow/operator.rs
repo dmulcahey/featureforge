@@ -27,6 +27,10 @@ use crate::execution::runtime_provenance::{
 };
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
 use crate::execution::topology::RecommendOutput;
+use crate::workflow::doctor_dashboard::render_doctor_dashboard;
+use crate::workflow::doctor_resolution::{
+    DoctorResolution, DoctorResolutionInput, derive_doctor_resolution,
+};
 use crate::workflow::status::{WorkflowPhase, WorkflowRoute};
 
 const WORKFLOW_PHASE_SCHEMA_VERSION: u32 = 3;
@@ -163,6 +167,8 @@ pub struct WorkflowDoctor {
     pub recommended_public_command_argv: RecommendedPublicCommandArgv,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
+    pub resolution: DoctorResolution,
+    pub diagnostic_reason_codes: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocking_scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -532,6 +538,14 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
     let gate_review = doctor_gate_review(&context);
     let runtime_provenance = context.runtime_provenance.clone();
     let self_hosting_warning = doctor_self_hosting_warning(runtime_provenance.as_ref());
+    let resolution = derive_doctor_resolution(DoctorResolutionInput {
+        command_available: context.operator_recommended_public_command_argv.is_some(),
+        required_input_count: context.operator_required_inputs.len(),
+        external_wait_state: context.operator_external_wait_state.as_deref(),
+        blocking_reason_codes: &context.operator_blocking_reason_codes,
+        diagnostic_reason_codes: &context.diagnostic_reason_codes,
+        state_kind: &context.operator_state_kind,
+    });
 
     WorkflowDoctor {
         schema_version: WORKFLOW_DOCTOR_SCHEMA_VERSION,
@@ -545,6 +559,8 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
         recommended_command: context.operator_recommended_command.clone(),
         recommended_public_command_argv: context.operator_recommended_public_command_argv.clone(),
         required_inputs: context.operator_required_inputs.clone(),
+        resolution,
+        diagnostic_reason_codes: context.diagnostic_reason_codes.clone(),
         blocking_scope: context.operator_blocking_scope.clone(),
         blocking_task: context.operator_blocking_task,
         external_wait_state: context.operator_external_wait_state.clone(),
@@ -694,59 +710,7 @@ pub fn render_doctor_for_runtime_with_args(
 }
 
 fn render_doctor_output(doctor: &WorkflowDoctor) -> String {
-    let mut output = format!(
-        "Workflow doctor\nPhase: {}\nPhase detail: {}\nReview state: {}\nRoute status: {}\nNext action: {}\nDisplay command summary: {}\nCommand execution authority: Use JSON recommended_public_command_argv for execution.\nNext: {}\nContract state: {}\nSpec: {}\nPlan: {}\n",
-        doctor.phase,
-        doctor.phase_detail,
-        doctor.review_state_status,
-        doctor.route_status,
-        doctor.next_action,
-        optional_text(doctor.recommended_command.as_deref()),
-        doctor.next_step,
-        doctor.contract_state,
-        display_or_none(&doctor.spec_path),
-        display_or_none(&doctor.plan_path)
-    );
-    if let Some(warning) = doctor.self_hosting_warning.as_deref() {
-        output.push_str(&format!("Warning: {warning}\n"));
-    }
-    if let Some(blocking_scope) = doctor.blocking_scope.as_deref() {
-        output.push_str(&format!("Blocking scope: {blocking_scope}\n"));
-    }
-    if let Some(blocking_task) = doctor.blocking_task {
-        output.push_str(&format!("Blocking task: {blocking_task}\n"));
-    }
-    if let Some(external_wait_state) = doctor.external_wait_state.as_deref() {
-        output.push_str(&format!("External wait: {external_wait_state}\n"));
-    }
-    if !doctor.blocking_reason_codes.is_empty() {
-        output.push_str(&format!(
-            "Blocking reason codes: {}\n",
-            reason_codes_text(&doctor.blocking_reason_codes)
-        ));
-    }
-    if let Some(execution_status) = doctor.execution_status.as_ref() {
-        append_execution_status_metadata(&mut output, execution_status);
-    }
-    if let Some(preflight) = doctor.preflight.as_ref() {
-        output.push_str(&format!(
-            "Preflight reason codes: {}\n",
-            reason_codes_text(&preflight.reason_codes)
-        ));
-    }
-    if let Some(gate_review) = doctor.gate_review.as_ref() {
-        output.push_str(&format!(
-            "Review gate reason codes: {}\n",
-            reason_codes_text(&gate_review.reason_codes)
-        ));
-    }
-    if let Some(gate_finish) = doctor.gate_finish.as_ref() {
-        output.push_str(&format!(
-            "Finish gate reason codes: {}\n",
-            reason_codes_text(&gate_finish.reason_codes)
-        ));
-    }
-    output
+    render_doctor_dashboard(doctor)
 }
 
 pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
@@ -2164,6 +2128,40 @@ mod tests {
                 "workspace skill discovery root detected in active FeatureForge channels"
             )),
             "doctor warning should include workspace skill discovery guidance when present"
+        );
+    }
+
+    #[test]
+    fn doctor_resolution_tracks_external_wait_from_operator_context() {
+        let mut context =
+            task_boundary_context(phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING, &[], None);
+        context.phase = String::from(phase::PHASE_FINAL_REVIEW_PENDING);
+        context.operator_phase = String::from(phase::PHASE_FINAL_REVIEW_PENDING);
+        context.operator_next_action = String::from("wait for external review result");
+        context.operator_blocking_scope = Some(String::from("branch"));
+        context.operator_blocking_task = None;
+        context.operator_external_wait_state =
+            Some(String::from("waiting_for_external_review_result"));
+        context.operator_state_kind = String::from("waiting_external_input");
+        context.task_review_dispatch_id = None;
+        context.final_review_dispatch_id = Some(String::from("dispatch-final-review"));
+
+        let doctor = doctor_from_context(context);
+
+        assert_eq!(doctor.phase, phase::PHASE_FINAL_REVIEW_PENDING);
+        assert_eq!(
+            doctor.phase_detail,
+            phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
+        );
+        assert_eq!(
+            doctor.external_wait_state.as_deref(),
+            Some("waiting_for_external_review_result")
+        );
+        assert_eq!(doctor.resolution.kind, "waiting_external_input");
+        assert!(!doctor.resolution.command_available);
+        assert_eq!(
+            doctor.resolution.stop_reasons,
+            ["waiting_for_external_review_result"]
         );
     }
 }

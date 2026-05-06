@@ -12,7 +12,7 @@ pub enum WorkflowCommand {
         about = "Workflow status: public workflow routing without execution-only operator gates."
     )]
     Status(StatusArgs),
-    #[command(about = "Workflow doctor: diagnostic routing with runtime provenance.")]
+    #[command(about = "Workflow doctor: read-only workflow diagnostics and orientation.")]
     Doctor(DoctorCliArgs),
     #[command(about = "Workflow operator: the normal public routing authority.")]
     Operator(OperatorArgs),
@@ -27,7 +27,7 @@ pub struct StatusArgs {
 #[derive(Debug, Clone, Args)]
 pub struct DoctorCliArgs {
     #[arg(long)]
-    pub plan: Option<std::path::PathBuf>,
+    pub plan: std::path::PathBuf,
     #[arg(long = "external-review-result-ready", default_value_t = false)]
     pub external_review_result_ready: bool,
     #[arg(long, default_value_t = false)]

@@ -16,6 +16,8 @@ mod projection_support;
 mod runtime_json_support;
 #[path = "support/runtime_phase_handoff.rs"]
 mod runtime_phase_handoff_support;
+#[path = "support/workflow_plan.rs"]
+mod workflow_plan_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
@@ -57,6 +59,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 use tempfile::TempDir;
+use workflow_plan_support::discover_workflow_plan_rel;
 use workflow_support::{
     copy_workflow_fixture, init_repo as init_workflow_repo, workflow_fixture_root,
 };
@@ -177,10 +180,11 @@ fn workflow_doctor_json(
     runtime: &featureforge::execution::state::ExecutionRuntime,
     context: &str,
 ) -> Value {
+    let plan = discover_workflow_plan_rel(runtime, context);
     run_featureforge_json_real_cli(
         &runtime.repo_root,
         &runtime.state_dir,
-        &["workflow", "doctor", "--json"],
+        &["workflow", "doctor", "--plan", plan.as_str(), "--json"],
         context,
     )
 }
@@ -357,6 +361,56 @@ fn assert_public_route_parity(operator: &Value, status: &Value, doctor: Option<&
             operator_route, doctor_route,
             "workflow doctor top-level route must match workflow operator"
         );
+    }
+}
+
+fn assert_doctor_resolution(
+    doctor: &Value,
+    expected_kind: &str,
+    expected_command_available: bool,
+    expected_stop_reasons: &[&str],
+) {
+    let resolution = doctor
+        .get("resolution")
+        .and_then(Value::as_object)
+        .unwrap_or_else(|| panic!("workflow doctor should expose resolution object: {doctor}"));
+    assert_eq!(
+        resolution.get("kind").and_then(Value::as_str),
+        Some(expected_kind),
+        "workflow doctor resolution kind should be deterministic: {doctor}"
+    );
+    assert_eq!(
+        resolution.get("command_available").and_then(Value::as_bool),
+        Some(expected_command_available),
+        "workflow doctor resolution command availability should match argv presence: {doctor}"
+    );
+    let stop_reasons = resolution
+        .get("stop_reasons")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!("workflow doctor should expose resolution stop_reasons: {doctor}")
+        })
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .unwrap_or_else(|| panic!("stop_reasons entries should be strings: {doctor}"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stop_reasons, expected_stop_reasons,
+        "workflow doctor resolution stop reasons should preserve canonical order: {doctor}"
+    );
+}
+
+fn assert_text_markers_in_order(text: &str, markers: &[&str]) {
+    let mut cursor = 0usize;
+    for marker in markers {
+        let remaining = &text[cursor..];
+        let offset = remaining.find(marker).unwrap_or_else(|| {
+            panic!("expected marker `{marker}` after byte {cursor} in:\n{text}")
+        });
+        cursor += offset + marker.len();
     }
 }
 
@@ -1087,6 +1141,105 @@ fn read_surface_invariant_blocks_current_stale_overlap_on_public_status_and_oper
                 .iter()
                 .any(|code| code == "current_stale_closure_overlap")),
         "operator should expose the shared overlap invariant code: {operator_json}"
+    );
+
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--plan", plan_rel, "--json"],
+            &env,
+            "public doctor current/stale invariant injection",
+        ),
+        "public doctor current/stale invariant injection",
+    );
+    assert_public_route_parity(&operator_json, &status_json, Some(&doctor_json));
+    assert_eq!(
+        doctor_json["execution_status"]["state_kind"],
+        "blocked_runtime_bug"
+    );
+    assert_eq!(doctor_json["phase_detail"], "blocked_runtime_bug");
+    assert_eq!(doctor_json["next_action"], "runtime diagnostic required");
+    assert_doctor_resolution(
+        &doctor_json,
+        "runtime_diagnostic_required",
+        false,
+        &[
+            "release_docs_state_missing",
+            "final_review_state_missing",
+            "current_stale_closure_overlap",
+            "execution_reentry_target_missing",
+            "recommended_mutation_command_rejected",
+        ],
+    );
+}
+
+#[test]
+fn workflow_doctor_text_renders_compact_dashboard_from_runtime_snapshot() {
+    let (repo_dir, state_dir) = init_repo("workflow-doctor-text-compact-dashboard");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    let env = [(
+        "FEATUREFORGE_PLAN_EXECUTION_READ_INVARIANT_TEST_INJECTION",
+        "current_stale_overlap",
+    )];
+
+    let output = run_rust_featureforge_with_env(
+        repo,
+        state,
+        &["workflow", "doctor", "--plan", plan_rel],
+        &env,
+        "public doctor compact dashboard text invariant fixture",
+    );
+    assert!(
+        output.status.success(),
+        "workflow doctor text should succeed for compact dashboard fixture, got stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_text_markers_in_order(
+        &text,
+        &[
+            "Workflow doctor",
+            "Header",
+            "Next Move",
+            "Artifacts",
+            "Execution",
+            "Blockers",
+        ],
+    );
+    for required_label in [
+        "Phase:",
+        "Phase detail:",
+        "Review state:",
+        "Route status:",
+        "Next action:",
+        "Next step:",
+        "Resolution kind:",
+        "Command available:",
+        "Spec:",
+        "Plan:",
+        "Contract state:",
+    ] {
+        assert!(
+            text.contains(required_label),
+            "compact dashboard should include required label `{required_label}`, got:\n{text}"
+        );
+    }
+    assert!(
+        text.contains("Resolution kind: runtime_diagnostic_required"),
+        "compact dashboard should render doctor resolution kind, got:\n{text}"
+    );
+    assert!(
+        text.contains("Command available: no"),
+        "compact dashboard should render command availability as a stable label, got:\n{text}"
+    );
+    assert!(
+        text.contains("current_stale_closure_overlap - "),
+        "blockers should include canonical reason code plus action text, got:\n{text}"
     );
 }
 
@@ -2446,21 +2599,11 @@ fn canonical_workflow_expect_and_sync_preserve_missing_spec_semantics() {
     assert_eq!(status_json["reason"], "missing_expected_spec");
     assert_eq!(status_json["reason_codes"][0], "missing_expected_spec");
 
-    let runtime = discover_execution_runtime(
-        repo,
-        state,
-        "rust canonical workflow phase after missing-spec sync",
-    );
-    let phase_json = workflow_phase_json(
-        &runtime,
-        "rust canonical workflow phase after missing-spec sync",
-    );
     assert_eq!(
-        phase_json["phase"], "pivot_required",
-        "phase JSON should preserve authoritative contract-drafting pivot route, got {phase_json}"
+        status_json["status"], "needs_brainstorming",
+        "status JSON should preserve the no-plan missing-spec route, got {status_json}"
     );
-    assert_eq!(phase_json["next_skill"], "featureforge:brainstorming");
-    assert_eq!(phase_json["next_action"], "pivot / return to planning");
+    assert_eq!(status_json["next_skill"], "featureforge:brainstorming");
 }
 
 #[test]
@@ -4330,6 +4473,7 @@ fn canonical_workflow_phase_omits_session_entry_from_public_json() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-canonical-session-entry");
     let repo = repo_dir.path();
     let state = state_dir.path();
+    install_full_contract_ready_artifacts(repo);
 
     let runtime = discover_execution_runtime(
         repo,
@@ -4709,21 +4853,12 @@ fn canonical_workflow_phase_routes_enabled_stale_plan_to_plan_writing() {
         &repo.join("docs/featureforge/plans/2026-01-22-document-review-system.md"),
         "# Approved Plan, Stale Source Path\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source path case\n\n**Spec Coverage:** REQ-001\n**Goal:** The plan remains structurally valid while its source-spec path goes stale.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The plan remains structurally valid while its source-spec path goes stale.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source path**\n",
     );
-    let runtime = discover_execution_runtime(
-        repo,
-        state,
-        "rust canonical workflow phase should route stale plans to plan writing",
-    );
-    let phase_json = workflow_phase_json(
-        &runtime,
-        "rust canonical workflow phase should route stale plans to plan writing",
-    );
+    let status_json = workflow_status_json(repo, state);
 
-    assert_eq!(phase_json["route_status"], "stale_plan");
-    assert_eq!(phase_json["phase"], "pivot_required");
-    assert_eq!(phase_json["next_action"], "pivot / return to planning");
-    assert_eq!(phase_json["next_skill"], "featureforge:writing-plans");
-    assert!(phase_json.get("session_entry").is_none());
+    assert_eq!(status_json["status"], "stale_plan");
+    assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
+    assert_eq!(status_json["contract_state"], "stale");
+    assert_eq!(status_json["reason_codes"][0], "stale_spec_plan_linkage");
 }
 
 #[test]
@@ -4831,6 +4966,7 @@ fn canonical_workflow_doctor_exposes_harness_state_before_execution_starts() {
     );
     assert_eq!(doctor_json["route_status"], "implementation_ready");
     assert_eq!(doctor_json["next_action"], "continue execution");
+    assert_doctor_resolution(&doctor_json, "actionable_public_command", true, &[]);
     assert_eq!(doctor_json["execution_status"]["execution_started"], "no");
     assert_eq!(doctor_json["gate_review"], Value::Null);
     assert_eq!(doctor_json["gate_finish"], Value::Null);
@@ -4993,7 +5129,7 @@ fn canonical_workflow_handoff_rejects_legacy_pre_harness_cutover_state() {
     let output = run_featureforge_real_cli(
         repo,
         state,
-        &["workflow", "doctor", "--json"],
+        &["workflow", "doctor", "--plan", plan_rel, "--json"],
         "workflow doctor for legacy pre-harness cutover fixture",
     );
     assert!(
@@ -5138,6 +5274,12 @@ fn canonical_workflow_operator_surfaces_pivot_required_plan_revision_block_phase
     assert_eq!(handoff_json["phase"], expected_phase);
     assert_eq!(phase_json["next_action"], "pivot / return to planning");
     assert_eq!(doctor_json["next_action"], "pivot / return to planning");
+    assert_doctor_resolution(&doctor_json, "actionable_public_command", true, &[]);
+    assert_eq!(
+        doctor_json["diagnostic_reason_codes"],
+        json!([]),
+        "workflow doctor should expose a deterministic diagnostic reason-code array without duplicating actionable blocker codes: {doctor_json}"
+    );
     assert_eq!(handoff_json["next_action"], "pivot / return to planning");
     let execution_mode = doctor_json["execution_status"]["execution_mode"]
         .as_str()

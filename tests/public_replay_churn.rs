@@ -3237,6 +3237,115 @@ fn public_replay_repaired_final_review_dispatch_drift_executes_public_advance_la
 }
 
 #[test]
+fn public_replay_stale_current_closure_ignores_superseded_dispatch_lineage_without_loop() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-stale-superseded-lineage");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    let mut loop_detector = PublicRouteLoopDetector::default();
+    complete_task_1_without_closure(&mut cli, repo);
+    let close_task_1 = close_task_1(&mut cli, repo, "superseded lineage initial close task 1");
+    assert_eq!(close_task_1["action"], "recorded");
+
+    let status_before_task_2 = status(&mut cli, "superseded lineage status before task 2");
+    let begin_task_2 = begin_task(
+        &mut cli,
+        2,
+        status_before_task_2["execution_fingerprint"]
+            .as_str()
+            .expect("status before task 2 should expose execution fingerprint"),
+        "superseded lineage begin task 2",
+    );
+    append_repo_file(
+        repo,
+        "docs/public-replay-followup.md",
+        "Task 2 changed before superseded lineage stale repair.",
+    );
+    complete_task_for_plan(
+        &mut cli,
+        EXEC_PLAN_REL,
+        2,
+        1,
+        "docs/public-replay-followup.md",
+        begin_task_2["execution_fingerprint"]
+            .as_str()
+            .expect("begin task 2 should expose execution fingerprint"),
+        "superseded lineage complete task 2",
+    );
+    let close_task_2 = close_task_for_plan(
+        &mut cli,
+        repo,
+        EXEC_PLAN_REL,
+        2,
+        "superseded lineage close task 2",
+    );
+    assert_eq!(close_task_2["action"], "recorded");
+
+    update_state_fields(
+        repo,
+        state,
+        &[(
+            "strategy_review_dispatch_lineage",
+            json!({
+                "task-1": {
+                    "dispatch_id": "superseded-task-1-dispatch",
+                    "source_task": 1,
+                    "source_step": 1,
+                    "record_status": "current",
+                    "status": "current"
+                }
+            }),
+        )],
+    );
+    append_repo_file(
+        repo,
+        "docs/public-replay-followup.md",
+        "Post task-2 closure drift should repair without replaying superseded Task 1 lineage.",
+    );
+
+    let stale_operator =
+        workflow_operator(&mut cli, EXEC_PLAN_REL, "superseded lineage stale operator");
+    assert!(
+        stale_operator["recommended_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("repair-review-state")),
+        "stale current closure should route through public repair-review-state: {stale_operator}"
+    );
+    let repair = invoke_recommended_public_command_and_check_progress(
+        &mut cli,
+        &mut loop_detector,
+        &stale_operator,
+        "superseded lineage repair-review-state",
+    );
+    assert_public_json_excludes_hidden_tokens(&repair, "superseded lineage repair output");
+    assert_recommended_public_command_targets_task(
+        &repair,
+        "close-current-task",
+        2,
+        "superseded lineage next recommended command",
+    );
+    assert_json_text_excludes(
+        &repair,
+        "unrecoverable_task_scope",
+        "superseded lineage repair output",
+    );
+    let close = close_task_for_plan(
+        &mut cli,
+        repo,
+        EXEC_PLAN_REL,
+        2,
+        "superseded lineage close-current-task after repair",
+    );
+    assert!(
+        matches!(
+            close["action"].as_str(),
+            Some("recorded" | "already_current")
+        ),
+        "runtime-routed close-current-task should execute after repair-review-state without returning to a stale dispatch target: {close}"
+    );
+}
+
+#[test]
 fn public_replay_normal_progress_keeps_projection_materialization_explicit() {
     let (repo_dir, state_dir) = setup_execution_fixture("public-replay-projection-export");
     let repo = repo_dir.path();

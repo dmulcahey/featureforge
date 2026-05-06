@@ -2088,6 +2088,9 @@ fn derive_public_phase_detail(
     task_review_dispatch_id: Option<&str>,
     final_review_dispatch_id: Option<&str>,
 ) -> String {
+    if execution_reentry_requires_review_state_repair(Some(context), status) {
+        return String::from(phase::DETAIL_EXECUTION_REENTRY_REQUIRED);
+    }
     if status.harness_phase != HarnessPhase::PivotRequired
         && task_closure_baseline_repair_candidate_reason_present(status)
         && status.blocking_step.is_none()
@@ -2103,9 +2106,6 @@ fn derive_public_phase_detail(
         })
     {
         return String::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY);
-    }
-    if execution_reentry_requires_review_state_repair(Some(context), status) {
-        return String::from(phase::DETAIL_EXECUTION_REENTRY_REQUIRED);
     }
     if task_review_result_pending_task(status, task_review_dispatch_id).is_some() {
         return String::from(phase::DETAIL_TASK_REVIEW_RESULT_PENDING);

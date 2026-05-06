@@ -1,6 +1,7 @@
 use crate::execution::command_eligibility::public_execution_mutation_is_authorized;
 use crate::execution::current_truth::{
-    BranchRerecordingAssessment, task_boundary_block_reason_code,
+    BranchRerecordingAssessment, late_stage_missing_task_closure_baseline_bridge_supported,
+    task_boundary_block_reason_code,
 };
 use crate::execution::stale_target_projection::{
     AuthoritativeStaleTarget, AuthoritativeStaleTargetScope, AuthoritativeStaleTargetSource,
@@ -10,6 +11,7 @@ use crate::execution::state::{
     latest_attempted_step_for_task, resolve_execution_command_route_target,
     task_closure_baseline_candidate_can_preempt_stale_target,
     task_closure_baseline_repair_candidate_with_stale_target,
+    task_closures_are_non_branch_contributing, task_latest_attempts_are_completed,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,10 +99,6 @@ impl<'a> AuthoritativeStaleReentryTarget<'a> {
             source_record_id: self.source_record_id.map(str::to_owned),
         }
     }
-
-    pub(crate) fn allows_task_closure_bridge(self) -> bool {
-        self.task_closure_bridge_allowed
-    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -133,7 +131,7 @@ impl<'a> NextActionAuthorityInputs<'a> {
             if target.task < task_number {
                 return false;
             }
-            target.task > task_number || target.allows_task_closure_bridge()
+            target.task > task_number || target.task_closure_bridge_allowed
         })
     }
 
@@ -141,6 +139,80 @@ impl<'a> NextActionAuthorityInputs<'a> {
         self.authoritative_stale_target
             .is_some_and(|target| target.source == AuthoritativeStaleTargetSource::BaselineBridge)
     }
+}
+
+pub(crate) fn missing_current_closure_allows_task_closure_baseline_route(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    authority_inputs: NextActionAuthorityInputs<'_>,
+    review_state_status: &str,
+) -> bool {
+    let completed_plan_missing_current_branch_closure = status.current_branch_closure_id.is_none()
+        && context.steps.iter().all(|step| step.checked)
+        && status.active_task.is_none()
+        && status.resume_task.is_none()
+        && status.blocking_step.is_none();
+    if !completed_plan_missing_current_branch_closure
+        && (review_state_status != "missing_current_closure"
+            || status.current_branch_closure_id.is_some())
+    {
+        return true;
+    }
+    if task_closures_are_non_branch_contributing(status) {
+        return false;
+    }
+    authority_inputs
+        .branch_rerecording_assessment
+        .is_some_and(late_stage_missing_task_closure_baseline_bridge_supported)
+}
+
+pub(crate) fn completed_task_closure_preempts_execution_reentry(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    authority_inputs: NextActionAuthorityInputs<'_>,
+    review_state_status: &str,
+    task_number: u32,
+) -> bool {
+    let clean_review_state = review_state_status == "clean";
+    let completed_stale_target_missing_current_closure = review_state_status == "stale_unreviewed"
+        && status.blocking_task == Some(task_number)
+        && status.blocking_step.is_none()
+        && status.active_task.is_none()
+        && status.resume_task.is_none()
+        && !prior_task_current_closure_requires_repair(status)
+        && authority_inputs
+            .authoritative_stale_target
+            .is_some_and(|target| target.task == task_number && target.task_closure_bridge_allowed);
+    (clean_review_state || completed_stale_target_missing_current_closure)
+        && status.current_branch_closure_id.is_none()
+        && status
+            .current_task_closures
+            .iter()
+            .all(|closure| closure.task != task_number)
+        && closure_baseline_candidate_task(context) == Some(task_number)
+        && task_latest_attempts_are_completed(context, task_number)
+        && (completed_stale_target_missing_current_closure
+            || missing_current_closure_allows_task_closure_baseline_route(
+                context,
+                status,
+                authority_inputs,
+                review_state_status,
+            ))
+}
+
+fn prior_task_current_closure_requires_repair(status: &PlanExecutionStatus) -> bool {
+    status
+        .reason_codes
+        .iter()
+        .chain(status.blocking_reason_codes.iter())
+        .any(|reason_code| {
+            matches!(
+                reason_code.as_str(),
+                "prior_task_current_closure_stale"
+                    | "prior_task_current_closure_invalid"
+                    | "prior_task_current_closure_reviewed_state_malformed"
+            )
+        })
 }
 
 pub(crate) fn task_boundary_blocking_task(status: &PlanExecutionStatus) -> Option<u32> {
@@ -237,6 +309,11 @@ pub(crate) fn execution_reentry_target(
     {
         return Some(target);
     }
+    if let Some(target) =
+        resume_step_preempts_later_stale_target(status, authority_inputs.authoritative_stale_target)
+    {
+        return Some(target);
+    }
     if let Some(target) = authority_inputs.authoritative_stale_target
         && !authoritative_stale_target_is_current_task_closure(status, target)
     {
@@ -285,6 +362,29 @@ pub(crate) fn execution_reentry_target(
         ));
     }
     None
+}
+
+fn resume_step_preempts_later_stale_target(
+    status: &PlanExecutionStatus,
+    stale_target: Option<AuthoritativeStaleReentryTarget<'_>>,
+) -> Option<ExecutionReentryTarget> {
+    let resume_task = status.resume_task?;
+    let resume_step = status.resume_step?;
+    let target_task = stale_target
+        .map(|target| target.task)
+        .or(status.blocking_task)?;
+    let target_step = stale_target.and_then(|target| target.step);
+    let resume_is_earlier = resume_task < target_task
+        || (resume_task == target_task
+            && target_step.is_some_and(|stale_step| resume_step < stale_step));
+    resume_is_earlier.then(|| {
+        ExecutionReentryTarget::new(
+            resume_task,
+            Some(resume_step),
+            ExecutionReentryTargetSource::ResumeStep,
+            "resume_step_preempts_later_stale_target",
+        )
+    })
 }
 
 pub(crate) fn task_closure_baseline_reentry_target(

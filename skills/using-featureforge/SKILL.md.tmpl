@@ -130,14 +130,17 @@ Artifact-state routing requirements:
 
 ### Helper-first routing
 
-If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing. If no approved plan path is known, resolve the plan path through the normal planning/review handoff rather than calling removed workflow status surfaces.
+If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` first for orientation/diagnosis, then call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` for authoritative routing. If no approved plan path is known, resolve the plan path through the normal planning/review handoff rather than calling removed workflow status surfaces.
 
 - If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.
+- Use `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path>` when the user asks for diagnosis or orientation and show the compact dashboard directly.
+- Do not fall back from doctor to the legacy workflow-status route; if doctor fails, fail closed and repair the doctor/operator route path.
 - If the JSON result reports `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` using that exact approved plan path.
 - Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs` as the authoritative public routing contract. `recommended_command` is display-only compatibility text for humans.
 - If workflow/operator returns a non-empty `recommended_public_command_argv`, invoke that argv vector exactly. If `recommended_public_command_argv[0] == "featureforge"`, replace argv[0] with `$_FEATUREFORGE_BIN` (or execute via `_featureforge_exec_public_argv`) before running it. Do not shell-parse or whitespace-split `recommended_command`.
 - If workflow/operator omits `recommended_public_command_argv`, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator. If `next_action` is `runtime diagnostic required`, stop on that diagnostic instead of inventing repair/reentry commands. Do not infer missing argv by parsing `recommended_command`.
 - Treat `resume_task` and `resume_step` from `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` as advisory diagnostics only; if they disagree with workflow/operator `recommended_public_command_argv`, follow the argv from workflow/operator.
+- Do not introduce or route to `$_FEATUREFORGE_BIN plan execution recover`; recovery remains on existing operator-routed public commands.
 - When workflow/operator reports `phase_detail=task_closure_recording_ready`, the replay lane is complete enough to refresh closure truth; run the routed `close-current-task` command and do not reopen the same step again.
 - Treat human-readable projection artifacts and companion markdown as derived output, not routing authority.
 - Treat repo-local projection exports under `docs/featureforge/projections/` as optional human-readable output. Normal routing comes from workflow/operator and event-authoritative status, not from editing or refreshing projection files.

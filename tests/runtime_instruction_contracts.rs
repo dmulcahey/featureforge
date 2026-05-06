@@ -3259,7 +3259,19 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing. If no approved plan path is known, resolve the plan path through the normal planning/review handoff rather than calling removed workflow status surfaces.",
+        "If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` first for orientation/diagnosis, then call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` for authoritative routing. If no approved plan path is known, resolve the plan path through the normal planning/review handoff rather than calling removed workflow status surfaces.",
+    );
+    assert_file_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "Use `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path>` when the user asks for diagnosis or orientation and show the compact dashboard directly.",
+    );
+    assert_file_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "Do not fall back from doctor to the legacy workflow-status route; if doctor fails, fail closed and repair the doctor/operator route path.",
+    );
+    assert_file_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "Do not introduce or route to `$_FEATUREFORGE_BIN plan execution recover`; recovery remains on existing operator-routed public commands.",
     );
     assert_file_not_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -3753,12 +3765,17 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("docs/featureforge/reference")
             .join("2026-04-01-review-state-reference.md"),
-        "compare `status --plan <path> --external-review-result-ready` to `workflow operator --plan <path> --external-review-result-ready`",
+        "compare `status --plan <path> --external-review-result-ready` plus `workflow doctor --plan <path> --external-review-result-ready --json` to `workflow operator --plan <path> --external-review-result-ready`",
     );
-    assert_file_not_contains(
+    assert_file_contains(
         root.join("docs/featureforge/reference")
             .join("2026-04-01-review-state-reference.md"),
-        "compare `workflow doctor --plan <path> --external-review-result-ready`",
+        "`workflow doctor --plan <path> --external-review-result-ready --json`",
+    );
+    assert_file_contains(
+        root.join("docs/featureforge/reference")
+            .join("2026-04-01-review-state-reference.md"),
+        "Do not add or route through `featureforge plan execution recover`; recovery remains on existing workflow/operator-routed public command families.",
     );
 
     assert_file_not_contains(
@@ -4292,7 +4309,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
-        "`$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only for deeper diagnostics",
+        "`$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` is the first orientation/diagnosis surface after handoff; `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` remains the authoritative routing surface, and `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` is only for deeper diagnostics",
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
@@ -4304,7 +4321,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
-        "`$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only for deeper diagnostics",
+        "`$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` is the first orientation/diagnosis surface after handoff; `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` remains the authoritative routing surface, and `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` is only for deeper diagnostics",
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),

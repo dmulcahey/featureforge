@@ -3544,9 +3544,9 @@ fn workflow_public_ready_plan_surface_prefers_operator_and_status_over_removed_h
     let doctor_json = run_featureforge_with_env_json(
         repo,
         state,
-        &["workflow", "doctor", "--json"],
+        &["workflow", "doctor", "--plan", plan_rel, "--json"],
         &[],
-        "workflow doctor public ready-plan route without explicit plan",
+        "workflow doctor public ready-plan route",
     );
     assert_eq!(doctor_json["phase"], concat!("execution_pre", "flight"));
     assert_eq!(
@@ -4628,13 +4628,13 @@ fn workflow_phase_text_and_json_surfaces_match_harness_downstream_freshness() {
         let doctor_json = run_featureforge_json_real_cli(
             repo,
             state,
-            &["workflow", "doctor", "--json"],
+            &["workflow", "doctor", "--plan", plan_rel, "--json"],
             "workflow_shell_smoke late-stage doctor JSON",
         );
         let doctor_text_output = run_featureforge_real_cli(
             repo,
             state,
-            &["workflow", "doctor"],
+            &["workflow", "doctor", "--plan", plan_rel],
             "workflow_shell_smoke late-stage doctor text",
         );
         assert!(
@@ -4653,10 +4653,10 @@ fn workflow_phase_text_and_json_surfaces_match_harness_downstream_freshness() {
 
         let next_step = doctor_text
             .lines()
-            .find_map(|line| line.strip_prefix("Next: "))
+            .find_map(|line| line.strip_prefix("Next step: "))
             .unwrap_or_else(|| {
                 panic!(
-                    "workflow doctor text should expose Next line for case {}",
+                    "workflow doctor text should expose Next step line for case {}",
                     case.name
                 )
             });
@@ -4869,6 +4869,43 @@ fn workflow_operator_routes_closure_baseline_candidate_when_clean_execution_has_
                 .any(|code| { code.as_str() == Some("task_closure_baseline_repair_candidate") })),
         "workflow operator should surface task_closure_baseline_repair_candidate when closure-baseline repair is required, got {operator_json}"
     );
+}
+
+#[test]
+fn workflow_operator_status_share_completed_task_closure_preemption_gating() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("workflow-completed-task-closure-preemption-parity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    append_tracked_repo_line(
+        repo,
+        "README.md",
+        "completed-task closure preemption parity fixture drift",
+    );
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("harness_phase", Value::from("executing")),
+            ("latest_authoritative_sequence", Value::from(1)),
+        ],
+    );
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for completed-task closure preemption parity",
+    );
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        &[],
+        "workflow operator for completed-task closure preemption parity",
+    );
+    assert_public_route_parity(&operator_json, &status_json, None);
 }
 
 #[test]
@@ -7589,13 +7626,83 @@ fn workflow_operator_routes_pivot_required_to_public_repair_review_state() {
 }
 
 #[test]
-fn removed_workflow_handoff_and_phase_commands_fail_at_cli_boundary() {
-    let (repo_dir, state_dir) = init_repo("workflow-removed-handoff-phase-boundary");
+fn workflow_doctor_is_public_and_handoff_phase_remain_removed_at_cli_boundary() {
+    let (repo_dir, state_dir) = init_repo("workflow-removed-doctor-handoff-boundary");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
+
+    let doctor_text = run_featureforge_with_env(
+        repo,
+        state,
+        &["workflow", "doctor", "--plan", plan_rel],
+        &[],
+        "workflow doctor public text boundary",
+    );
+    assert!(
+        doctor_text.status.success(),
+        "workflow doctor text should succeed with --plan, got stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&doctor_text.stdout),
+        String::from_utf8_lossy(&doctor_text.stderr)
+    );
+    let doctor_text_stdout = String::from_utf8_lossy(&doctor_text.stdout);
+    assert!(
+        doctor_text_stdout.contains("Workflow doctor"),
+        "workflow doctor text should render the doctor surface, got:\n{doctor_text_stdout}"
+    );
+
+    let doctor_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "doctor", "--plan", plan_rel, "--json"],
+        &[],
+        "workflow doctor public json boundary",
+    );
+    assert_eq!(doctor_json["schema_version"], Value::from(3));
+    assert_eq!(doctor_json["plan_path"], Value::from(plan_rel));
+
+    let doctor_external_ready_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &[
+            "workflow",
+            "doctor",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+            "--json",
+        ],
+        &[],
+        "workflow doctor external-review-ready json boundary",
+    );
+    assert_eq!(doctor_external_ready_json["schema_version"], Value::from(3));
+    assert_eq!(
+        doctor_external_ready_json["plan_path"],
+        Value::from(plan_rel)
+    );
+
+    let missing_plan = run_featureforge_with_env(
+        repo,
+        state,
+        &["workflow", "doctor", "--json"],
+        &[],
+        "workflow doctor missing plan boundary",
+    );
+    assert!(
+        !missing_plan.status.success(),
+        "workflow doctor --json without --plan should fail"
+    );
+    let missing_plan_stderr = String::from_utf8_lossy(&missing_plan.stderr);
+    assert!(
+        missing_plan_stderr.contains("--plan"),
+        "workflow doctor missing plan should name --plan, got {missing_plan_stderr}"
+    );
+    assert!(
+        !missing_plan_stderr.contains("unrecognized subcommand"),
+        "workflow doctor should fail on missing --plan, not as an unknown command, got {missing_plan_stderr}"
+    );
 
     for args in [
         &["workflow", "handoff", "--json"][..],
@@ -8660,6 +8767,37 @@ fn fs14_recovery_to_close_current_task_uses_only_public_intent_commands() {
         "FS14-CLOSE-CURRENT-TASK-BUDGET",
         runtime_management_commands,
         2,
+    );
+}
+
+#[test]
+fn repair_review_state_close_task_output_matches_next_operator_route() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("repair-review-state-close-task-operator-parity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    prepare_missing_task_closure_baseline_close_fixture(repo, state, plan_rel, "main");
+
+    let repair_json = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["repair-review-state", "--plan", plan_rel],
+        "repair-review-state close-task parity fixture",
+    );
+    let operator_json = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "operator after repair-review-state close-task parity fixture",
+    );
+
+    assert_eq!(
+        repair_json["phase_detail"], operator_json["phase_detail"],
+        "repair-review-state output must not advertise a different legal next action than workflow operator: repair={repair_json}, operator={operator_json}",
+    );
+    assert_eq!(
+        repair_json["required_inputs"], operator_json["required_inputs"],
+        "repair-review-state and workflow operator should agree on closure input requirements when repair promotes close-current-task",
     );
 }
 

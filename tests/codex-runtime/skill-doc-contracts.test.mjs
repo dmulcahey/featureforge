@@ -2393,7 +2393,19 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   );
   assert.match(
     usingFeatureForge,
-    /If `\$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `\$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing\. If no approved plan path is known, resolve the plan path through the normal planning\/review handoff rather than calling removed workflow status surfaces\./,
+    /If `\$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `\$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` first for orientation\/diagnosis, then call `\$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` for authoritative routing\. If no approved plan path is known, resolve the plan path through the normal planning\/review handoff rather than calling removed workflow status surfaces\./,
+  );
+  assert.match(
+    usingFeatureForge,
+    /Use `\$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path>` when the user asks for diagnosis or orientation and show the compact dashboard directly\./,
+  );
+  assert.match(
+    usingFeatureForge,
+    /Do not fall back from doctor to the legacy workflow-status route; if doctor fails, fail closed and repair the doctor\/operator route path\./,
+  );
+  assert.match(
+    usingFeatureForge,
+    /Do not introduce or route to `\$_FEATUREFORGE_BIN plan execution recover`; recovery remains on existing operator-routed public commands\./,
   );
   assert.doesNotMatch(usingFeatureForge, /If the JSON result is not `implementation_ready` and contains a non-empty `next_skill`, use that route as compatibility fallback\./);
   assert.match(
@@ -2773,7 +2785,7 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     codexReadme,
-    /`\$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `\$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only for deeper diagnostics/,
+    /`\$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` is the first orientation\/diagnosis surface after handoff; `\$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` remains the authoritative routing surface, and `\$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` is only for deeper diagnostics/,
   );
 
   const copilotReadme = readUtf8(path.join(REPO_ROOT, 'docs/README.copilot.md'));
@@ -2787,7 +2799,7 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     copilotReadme,
-    /`\$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `\$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only for deeper diagnostics/,
+    /`\$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` is the first orientation\/diagnosis surface after handoff; `\$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` remains the authoritative routing surface, and `\$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` is only for deeper diagnostics/,
   );
 
   const lateStageReference = readUtf8(path.join(REPO_ROOT, 'review/late-stage-precedence-reference.md'));

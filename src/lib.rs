@@ -306,7 +306,7 @@ pub fn run() -> std::process::ExitCode {
                 }
                 cli::workflow::WorkflowCommand::Doctor(args) => {
                     let doctor_args = workflow::operator::DoctorArgs {
-                        plan: args.plan,
+                        plan: Some(args.plan),
                         external_review_result_ready: args.external_review_result_ready,
                     };
                     if args.json {

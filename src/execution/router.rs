@@ -22,9 +22,9 @@ use crate::execution::follow_up::{
 use crate::execution::harness::HarnessPhase;
 use crate::execution::next_action::{
     NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED, NextActionAuthorityInputs, NextActionDecision,
-    NextActionRequestInputs, compute_next_action_decision_with_authority_inputs,
-    diagnostic_next_action_for_route, repair_review_state_public_command,
-    select_authoritative_stale_reentry_target,
+    NextActionRequestInputs, canonical_review_state_status,
+    compute_next_action_decision_with_authority_inputs, diagnostic_next_action_for_route,
+    repair_review_state_public_command, select_authoritative_stale_reentry_target,
 };
 use crate::execution::phase;
 use crate::execution::public_command_types::RecommendedPublicCommandArgv;
@@ -47,6 +47,7 @@ use crate::execution::reentry_reconcile::{
     TARGETLESS_STALE_RECONCILE_PHASE_DETAIL, TARGETLESS_STALE_RECONCILE_REASON_CODE,
     TargetlessStaleReconcile,
 };
+use crate::execution::repair_target_selection::completed_task_closure_preempts_execution_reentry;
 use crate::execution::state::{
     ExecutionReadScope, ExecutionRuntime, PlanExecutionStatus, PublicRepairTarget,
     StatusBlockingRecord, current_branch_closure_structural_review_state_reason,
@@ -461,6 +462,20 @@ fn route_decision_from_runtime_state_with_inputs(
     let authoritative_stale_target_bound = runtime_state
         .gate_snapshot
         .has_authoritative_stale_binding(status);
+    let route_authority_inputs = NextActionAuthorityInputs {
+        persisted_repair_follow_up: runtime_state.persisted_repair_follow_up.as_deref(),
+        branch_rerecording_assessment: runtime_state.branch_rerecording_assessment.as_ref(),
+        gate_finish: runtime_state.gate_snapshot.gate_finish.as_ref(),
+        has_authoritative_stale_target: authoritative_stale_target_bound,
+        authoritative_stale_target: actionable_stale_reentry_target,
+        ..NextActionAuthorityInputs::default()
+    };
+    let route_review_state_status = canonical_review_state_status(status);
+    let handoff_route_active = status.handoff_required
+        || status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code == phase::PHASE_HANDOFF_REQUIRED);
     if status.review_state_status == "missing_current_closure"
         && status.current_branch_closure_id.is_none()
         && !status.current_task_closures.is_empty()
@@ -492,6 +507,38 @@ fn route_decision_from_runtime_state_with_inputs(
                 .or_else(|| blocking_task_from_status_records(status)),
             TARGETLESS_STALE_RECONCILE_REASON_CODE,
         );
+    }
+    if let Some(reason_code) = task_scope_structural_review_state_reason(status) {
+        return repair_review_state_route_decision(
+            runtime_state,
+            status,
+            status
+                .blocking_task
+                .or_else(|| blocking_task_from_status_records(status))
+                .or_else(|| {
+                    status
+                        .current_task_closures
+                        .first()
+                        .map(|closure| closure.task)
+                }),
+            reason_code,
+        );
+    }
+    if !handoff_route_active
+        && let Some(task_number) = status
+            .active_task
+            .or(status.resume_task)
+            .or(status.blocking_task)
+            .or_else(|| runtime_state.context.tasks_by_number.keys().copied().max())
+        && completed_task_closure_preempts_execution_reentry(
+            &runtime_state.context,
+            status,
+            route_authority_inputs,
+            route_review_state_status.as_str(),
+            task_number,
+        )
+    {
+        return close_current_task_route_decision(runtime_state, status, task_number);
     }
     if status.review_state_status == "stale_unreviewed"
         && !authoritative_stale_target_bound
@@ -579,6 +626,21 @@ fn route_decision_from_runtime_state_with_inputs(
         }
         let (recommended_command, invocation, required_inputs) =
             PublicRouteDecision::command_surfaces(recommended_public_command.as_ref());
+        if !handoff_route_active
+            && seed.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
+            && let Some(task_number) = execution_command_context
+                .as_ref()
+                .and_then(|context| context.task_number)
+            && completed_task_closure_preempts_execution_reentry(
+                &runtime_state.context,
+                status,
+                route_authority_inputs,
+                route_review_state_status.as_str(),
+                task_number,
+            )
+        {
+            return close_current_task_route_decision(runtime_state, status, task_number);
+        }
         let next_public_action = synthesize_next_public_action(
             recommended_public_command.as_ref(),
             &seed.phase_detail,
@@ -640,12 +702,12 @@ fn route_decision_from_runtime_state_with_inputs(
             execution_command_context.as_ref(),
         );
         if seed.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
-            && status.current_task_closures.is_empty()
             && let Some(task_number) = status.blocking_task.or(seed.blocking_task).or_else(|| {
                 execution_command_context
                     .as_ref()
                     .and_then(|context| context.task_number)
             })
+            && !current_task_closure_present_for_task(status, task_number)
             && (task_closure_baseline_bridge_route_ready(runtime_state, status)
                 || (reducer_stale_target_allows_task_closure_bridge(runtime_state, task_number)
                     && close_current_task_public_repair_target_candidate_present(
@@ -709,6 +771,10 @@ fn command_context_reopens_current_task_closure(
     let Some(task_number) = context.task_number else {
         return false;
     };
+    current_task_closure_present_for_task(status, task_number)
+}
+
+fn current_task_closure_present_for_task(status: &PlanExecutionStatus, task_number: u32) -> bool {
     status
         .current_task_closures
         .iter()
@@ -784,6 +850,11 @@ fn task_closure_baseline_bridge_route_ready(
     runtime_state: &RuntimeState,
     status: &PlanExecutionStatus,
 ) -> bool {
+    if task_scope_review_state_repair_reason(status).is_some()
+        || task_scope_structural_review_state_reason(status).is_some()
+    {
+        return false;
+    }
     status.blocking_task.is_some_and(|task_number| {
         if !reducer_stale_target_allows_task_closure_bridge(runtime_state, task_number) {
             return false;
