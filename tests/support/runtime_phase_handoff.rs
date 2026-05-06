@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::process::Command;
 
 use crate::process_support::run;
+use crate::workflow_plan_support::discover_workflow_plan_rel;
 
 pub fn workflow_phase_json(runtime: &ExecutionRuntime, context: &str) -> Value {
     workflow_doctor_json(runtime, &format!("{context}: workflow phase projection"))
@@ -13,11 +14,12 @@ pub fn workflow_handoff_json(runtime: &ExecutionRuntime, context: &str) -> Value
 }
 
 fn workflow_doctor_json(runtime: &ExecutionRuntime, context: &str) -> Value {
+    let plan = discover_workflow_plan_rel(runtime, context);
     let mut command = Command::new(env!("CARGO_BIN_EXE_featureforge"));
     command
         .current_dir(&runtime.repo_root)
         .env("FEATUREFORGE_STATE_DIR", &runtime.state_dir)
-        .args(["workflow", "doctor", "--json"]);
+        .args(["workflow", "doctor", "--plan", plan.as_str(), "--json"]);
     let output = run(command, context);
     assert!(
         output.status.success(),

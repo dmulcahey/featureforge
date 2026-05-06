@@ -4628,13 +4628,13 @@ fn workflow_phase_text_and_json_surfaces_match_harness_downstream_freshness() {
         let doctor_json = run_featureforge_json_real_cli(
             repo,
             state,
-            &["workflow", "doctor", "--json"],
+            &["workflow", "doctor", "--plan", plan_rel, "--json"],
             "workflow_shell_smoke late-stage doctor JSON",
         );
         let doctor_text_output = run_featureforge_real_cli(
             repo,
             state,
-            &["workflow", "doctor"],
+            &["workflow", "doctor", "--plan", plan_rel],
             "workflow_shell_smoke late-stage doctor text",
         );
         assert!(
@@ -4653,10 +4653,10 @@ fn workflow_phase_text_and_json_surfaces_match_harness_downstream_freshness() {
 
         let next_step = doctor_text
             .lines()
-            .find_map(|line| line.strip_prefix("Next: "))
+            .find_map(|line| line.strip_prefix("Next step: "))
             .unwrap_or_else(|| {
                 panic!(
-                    "workflow doctor text should expose Next line for case {}",
+                    "workflow doctor text should expose Next step line for case {}",
                     case.name
                 )
             });

@@ -1993,6 +1993,12 @@ fn explicit_internal_helper_scope_exception_reason(
         ) => Some(
             "late-stage fixture setup seeds dispatched branch review artifact before public QA-routing assertions",
         ),
+        (
+            "tests/workflow_entry_shell_smoke.rs",
+            "fs17_doctor_public_entrypoints_keep_single_context_build_path",
+        ) => Some(
+            "source-level doctor architecture scan inspects direct runtime helper bodies without executing them as public-flow routing",
+        ),
         _ => None,
     }
 }

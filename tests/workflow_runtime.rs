@@ -16,6 +16,8 @@ mod projection_support;
 mod runtime_json_support;
 #[path = "support/runtime_phase_handoff.rs"]
 mod runtime_phase_handoff_support;
+#[path = "support/workflow_plan.rs"]
+mod workflow_plan_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
@@ -57,6 +59,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 use tempfile::TempDir;
+use workflow_plan_support::discover_workflow_plan_rel;
 use workflow_support::{
     copy_workflow_fixture, init_repo as init_workflow_repo, workflow_fixture_root,
 };
@@ -177,10 +180,11 @@ fn workflow_doctor_json(
     runtime: &featureforge::execution::state::ExecutionRuntime,
     context: &str,
 ) -> Value {
+    let plan = discover_workflow_plan_rel(runtime, context);
     run_featureforge_json_real_cli(
         &runtime.repo_root,
         &runtime.state_dir,
-        &["workflow", "doctor", "--json"],
+        &["workflow", "doctor", "--plan", plan.as_str(), "--json"],
         context,
     )
 }
@@ -2595,21 +2599,11 @@ fn canonical_workflow_expect_and_sync_preserve_missing_spec_semantics() {
     assert_eq!(status_json["reason"], "missing_expected_spec");
     assert_eq!(status_json["reason_codes"][0], "missing_expected_spec");
 
-    let runtime = discover_execution_runtime(
-        repo,
-        state,
-        "rust canonical workflow phase after missing-spec sync",
-    );
-    let phase_json = workflow_phase_json(
-        &runtime,
-        "rust canonical workflow phase after missing-spec sync",
-    );
     assert_eq!(
-        phase_json["phase"], "pivot_required",
-        "phase JSON should preserve authoritative contract-drafting pivot route, got {phase_json}"
+        status_json["status"], "needs_brainstorming",
+        "status JSON should preserve the no-plan missing-spec route, got {status_json}"
     );
-    assert_eq!(phase_json["next_skill"], "featureforge:brainstorming");
-    assert_eq!(phase_json["next_action"], "pivot / return to planning");
+    assert_eq!(status_json["next_skill"], "featureforge:brainstorming");
 }
 
 #[test]
@@ -4479,6 +4473,7 @@ fn canonical_workflow_phase_omits_session_entry_from_public_json() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-canonical-session-entry");
     let repo = repo_dir.path();
     let state = state_dir.path();
+    install_full_contract_ready_artifacts(repo);
 
     let runtime = discover_execution_runtime(
         repo,
@@ -4858,21 +4853,12 @@ fn canonical_workflow_phase_routes_enabled_stale_plan_to_plan_writing() {
         &repo.join("docs/featureforge/plans/2026-01-22-document-review-system.md"),
         "# Approved Plan, Stale Source Path\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source path case\n\n**Spec Coverage:** REQ-001\n**Goal:** The plan remains structurally valid while its source-spec path goes stale.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The plan remains structurally valid while its source-spec path goes stale.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source path**\n",
     );
-    let runtime = discover_execution_runtime(
-        repo,
-        state,
-        "rust canonical workflow phase should route stale plans to plan writing",
-    );
-    let phase_json = workflow_phase_json(
-        &runtime,
-        "rust canonical workflow phase should route stale plans to plan writing",
-    );
+    let status_json = workflow_status_json(repo, state);
 
-    assert_eq!(phase_json["route_status"], "stale_plan");
-    assert_eq!(phase_json["phase"], "pivot_required");
-    assert_eq!(phase_json["next_action"], "pivot / return to planning");
-    assert_eq!(phase_json["next_skill"], "featureforge:writing-plans");
-    assert!(phase_json.get("session_entry").is_none());
+    assert_eq!(status_json["status"], "stale_plan");
+    assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
+    assert_eq!(status_json["contract_state"], "stale");
+    assert_eq!(status_json["reason_codes"][0], "stale_spec_plan_linkage");
 }
 
 #[test]
@@ -5143,7 +5129,7 @@ fn canonical_workflow_handoff_rejects_legacy_pre_harness_cutover_state() {
     let output = run_featureforge_real_cli(
         repo,
         state,
-        &["workflow", "doctor", "--json"],
+        &["workflow", "doctor", "--plan", plan_rel, "--json"],
         "workflow doctor for legacy pre-harness cutover fixture",
     );
     assert!(

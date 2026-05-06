@@ -12,6 +12,8 @@ mod repo_template_support;
 mod runtime_json_support;
 #[path = "support/runtime_phase_handoff.rs"]
 mod runtime_phase_handoff_support;
+#[path = "support/workflow_plan.rs"]
+mod workflow_plan_support;
 
 use bin_support::compiled_featureforge_path;
 use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
