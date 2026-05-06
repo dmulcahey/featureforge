@@ -15,7 +15,10 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
-use workflow_support::{init_repo, install_full_contract_ready_artifacts};
+use workflow_support::{
+    init_repo, install_full_contract_ready_artifacts,
+    write_current_pass_plan_fidelity_review_artifact_for_plan,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PublicRouteSnapshot {
@@ -235,6 +238,7 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
     install_full_contract_ready_artifacts(repo);
     fs::write(repo.join(plan_rel), task_boundary_blocked_plan_source())
         .expect("task-boundary blocked plan fixture should write");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
     prepare_preflight_acceptance_workspace(repo, "workflow-entry-task-boundary-blocked");
 
     let status_before_begin = run_plan_execution_json(
@@ -493,6 +497,7 @@ fn fs02_entry_route_surfaces_share_parity_and_budget() {
         ),
     )
     .expect("FS-02 fixture plan should be writable for late-stage drift setup");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 
     let mut runtime_management_commands = 0usize;
     runtime_management_commands += 1;

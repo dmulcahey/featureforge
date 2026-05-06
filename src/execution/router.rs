@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::contracts::plan::is_engineering_approval_fidelity_reason_code;
 use crate::diagnostics::JsonFailure;
 use crate::execution::closure_diagnostics::{
     merge_task_boundary_projection_diagnostics, public_task_boundary_decision,
@@ -34,10 +35,12 @@ pub(crate) use crate::execution::public_route_selection::{
     SharedNextActionRoutingInputs, shared_next_action_seed_from_decision,
 };
 use crate::execution::query::{
-    ExecutionRoutingExecutionCommandContext, ExecutionRoutingRecordingContext,
-    ExecutionRoutingState, WorkflowRoutingDecision, blocking_scope_for_phase_detail,
+    ExecutionBlockingProjectionInputs, ExecutionRoutingExecutionCommandContext,
+    ExecutionRoutingRecordingContext, ExecutionRoutingState, WorkflowRoutingDecision,
+    blocking_scope_for_phase_detail, blocking_task_from_status_records,
     canonical_phase_for_shared_decision, compact_operator_reason_codes, default_phase_for_status,
     external_wait_state_for_phase_detail, late_stage_observability_for_phase,
+    project_execution_blocking, task_number_from_task_scope_key,
 };
 use crate::execution::reducer::{RuntimeState, reduce_execution_read_scope};
 use crate::execution::reentry_reconcile::{
@@ -264,7 +267,7 @@ pub(crate) fn project_non_runtime_workflow_routing_state(
                 None,
             ),
         };
-    let blocking_reason_codes = compact_operator_reason_codes(None, &phase_detail, "clean");
+    let blocking_reason_codes = non_runtime_blocking_reason_codes(&route, &phase_detail);
     let external_wait_state = external_wait_state_for_phase_detail(
         &phase_detail,
         &blocking_reason_codes,
@@ -274,6 +277,7 @@ pub(crate) fn project_non_runtime_workflow_routing_state(
         late_stage_observability_for_phase(&workflow_phase, None, None);
     let (recommended_command, _, _) =
         PublicRouteDecision::command_surfaces(recommended_public_command.as_ref());
+    let blocking_scope = non_runtime_blocking_scope(&route, &phase_detail);
     let mut routing = ExecutionRoutingState {
         route,
         route_decision: None,
@@ -293,7 +297,7 @@ pub(crate) fn project_non_runtime_workflow_routing_state(
         next_action,
         recommended_public_command,
         recommended_command,
-        blocking_scope: None,
+        blocking_scope,
         blocking_task: None,
         external_wait_state,
         blocking_reason_codes,
@@ -308,6 +312,34 @@ pub(crate) fn project_non_runtime_workflow_routing_state(
     let route_decision = route_decision_from_routing(&routing, &[]);
     routing.route_decision = Some(route_decision.clone());
     Ok((routing, route_decision))
+}
+
+fn non_runtime_blocking_reason_codes(route: &WorkflowRoute, phase_detail: &str) -> Vec<String> {
+    let mut reason_codes = compact_operator_reason_codes(None, phase_detail, "clean");
+    if route_is_engineering_approval_fidelity_blocked(route) {
+        for code in &route.reason_codes {
+            if !reason_codes.iter().any(|existing| existing == code) {
+                reason_codes.push(code.clone());
+            }
+        }
+    }
+    reason_codes
+}
+
+fn non_runtime_blocking_scope(route: &WorkflowRoute, phase_detail: &str) -> Option<String> {
+    if route_is_engineering_approval_fidelity_blocked(route) {
+        return Some(String::from("workflow"));
+    }
+    blocking_scope_for_phase_detail(phase_detail, None, None, "clean")
+}
+
+pub(crate) fn route_is_engineering_approval_fidelity_blocked(route: &WorkflowRoute) -> bool {
+    route.status == "plan_review_required"
+        && route.next_skill == "featureforge:plan-eng-review"
+        && route
+            .reason_codes
+            .iter()
+            .any(|code| is_engineering_approval_fidelity_reason_code(code))
 }
 
 fn non_runtime_workflow_phase(route_status: &str) -> String {
@@ -856,29 +888,10 @@ fn compact_route_reason_codes(
     compact_operator_reason_codes(Some(&projected_status), phase_detail, review_state_status)
 }
 
-fn task_number_from_scope_key(scope_key: &str) -> Option<u32> {
-    let raw = scope_key.strip_prefix("task-")?;
-    let digits = raw
-        .chars()
-        .take_while(|character| character.is_ascii_digit())
-        .collect::<String>();
-    (!digits.is_empty())
-        .then(|| digits.parse::<u32>().ok())
-        .flatten()
-}
-
-fn blocking_task_from_status_records(status: &PlanExecutionStatus) -> Option<u32> {
-    status.blocking_records.iter().find_map(|record| {
-        (record.scope_type == "task")
-            .then(|| task_number_from_scope_key(&record.scope_key))
-            .flatten()
-    })
-}
-
 fn blocking_task_from_blockers(blockers: &[Blocker]) -> Option<u32> {
     blockers.iter().find_map(|blocker| {
         (blocker.scope_type == "task")
-            .then(|| task_number_from_scope_key(&blocker.scope_key))
+            .then(|| task_number_from_task_scope_key(&blocker.scope_key))
             .flatten()
     })
 }
@@ -1181,8 +1194,17 @@ fn final_review_dispatch_route_for_repaired_late_stage_drift(
     }
     let branch_closure_id = status.current_branch_closure_id.as_ref()?;
     let phase_detail = String::from(phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED);
-    let next_public_action =
-        synthesize_next_public_action(None, &phase_detail, &runtime_state.context.plan_rel);
+    let recommended_public_command = Some(PublicCommand::AdvanceLateStage {
+        plan: runtime_state.context.plan_rel.clone(),
+        mode: PublicAdvanceLateStageMode::FinalReviewDispatch,
+    });
+    let (recommended_command, invocation, required_inputs) =
+        PublicRouteDecision::command_surfaces(recommended_public_command.as_ref());
+    let next_public_action = synthesize_next_public_action(
+        recommended_public_command.as_ref(),
+        &phase_detail,
+        &runtime_state.context.plan_rel,
+    );
     let blockers = vec![Blocker {
         category: String::from("late_stage"),
         scope_type: String::from("branch"),
@@ -1197,22 +1219,17 @@ fn final_review_dispatch_route_for_repaired_late_stage_drift(
     }];
     let blocking_reason_codes = compact_operator_reason_codes(Some(status), &phase_detail, "clean");
     Some(RouteDecision {
-        state_kind: derive_state_kind_from_seed(
-            None,
-            HarnessPhase::FinalReviewPending,
-            &phase_detail,
-            None,
-        ),
+        state_kind: String::from("actionable_public_command"),
         phase: String::from(phase::PHASE_FINAL_REVIEW_PENDING),
         phase_detail,
         review_state_status: String::from("clean"),
         next_action: String::from("request final review"),
         blocking_reason_codes,
-        recommended_command: None,
-        recommended_public_command: None,
-        invocation: None,
-        required_inputs: Vec::new(),
-        required_follow_up: Some(String::from("request_external_review")),
+        recommended_command,
+        recommended_public_command,
+        invocation,
+        required_inputs,
+        required_follow_up: Some(String::from("advance_late_stage")),
         next_public_action,
         blockers,
         public_repair_targets: Vec::new(),
@@ -1723,8 +1740,6 @@ fn project_routing_from_runtime_state(
     );
     let diagnostic_reason_codes =
         merge_task_boundary_projection_diagnostics(diagnostic_reason_codes, &status);
-    let mut blocking_scope = status.blocking_scope.clone();
-    let mut blocking_task = status.blocking_task;
     let recording_context = match route_decision.phase_detail.as_str() {
         phase::DETAIL_FINAL_REVIEW_RECORDING_READY => runtime_state
             .authoritative_current_branch_closure_id
@@ -1759,36 +1774,21 @@ fn project_routing_from_runtime_state(
     };
     route_decision.recording_context = recording_context.clone();
     let execution_command_context = route_decision.execution_command_context.clone();
-    if route_decision.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
-        && let Some(task_number) = execution_command_context
+    let blocking_projection = project_execution_blocking(ExecutionBlockingProjectionInputs {
+        phase_detail: &route_decision.phase_detail,
+        review_state_status: &route_decision.review_state_status,
+        status: Some(&status),
+        fallback_scope: status.blocking_scope.as_deref(),
+        fallback_task: status.blocking_task,
+        execution_command_task: execution_command_context
             .as_ref()
-            .and_then(|context| context.task_number)
-            .or_else(|| blocking_task_from_blockers(&route_decision.blockers))
-            .or_else(|| blocking_task_from_status_records(&status))
-    {
-        blocking_scope = Some(String::from("task"));
-        blocking_task = Some(task_number);
-    } else if route_decision.phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
-        && let Some(task_number) = recording_context
+            .and_then(|context| context.task_number),
+        recording_task: recording_context
             .as_ref()
-            .and_then(|context| context.task_number)
-    {
-        blocking_scope = Some(String::from("task"));
-        blocking_task = Some(task_number);
-    } else if route_decision.phase_detail
-        == phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
-    {
-        blocking_scope = Some(String::from("branch"));
-        blocking_task = None;
-    }
+            .and_then(|context| context.task_number),
+        blocker_task: blocking_task_from_blockers(&route_decision.blockers),
+    });
     let blocking_reason_codes = route_decision.blocking_reason_codes.clone();
-    let blocking_scope = blocking_scope_for_phase_detail(
-        &route_decision.phase_detail,
-        blocking_task,
-        Some(&status),
-        &route_decision.review_state_status,
-    )
-    .or(blocking_scope);
     let external_wait_state = external_wait_state_for_phase_detail(
         &route_decision.phase_detail,
         &blocking_reason_codes,
@@ -1824,8 +1824,8 @@ fn project_routing_from_runtime_state(
         next_action: route_decision.next_action.clone(),
         recommended_public_command: route_decision.recommended_public_command.clone(),
         recommended_command: route_decision.recommended_command.clone(),
-        blocking_scope,
-        blocking_task,
+        blocking_scope: blocking_projection.scope,
+        blocking_task: blocking_projection.task,
         external_wait_state,
         blocking_reason_codes,
         reason_family,
@@ -2012,6 +2012,7 @@ fn synthesize_next_public_action(
             PublicCommand::WorkflowOperator {
                 plan: plan_path.to_owned(),
                 external_review_result_ready: false,
+                json: false,
             }
             .to_display_command()
         }
@@ -2093,6 +2094,7 @@ fn public_command_for_phase_detail(phase_detail: &str, plan_path: &str) -> Optio
             Some(PublicCommand::WorkflowOperator {
                 plan: plan_path.to_owned(),
                 external_review_result_ready: false,
+                json: false,
             })
         }
         phase::DETAIL_EXECUTION_REENTRY_REQUIRED | phase::DETAIL_PLANNING_REENTRY_REQUIRED => {
@@ -2142,6 +2144,7 @@ fn public_command_for_required_follow_up(
         | "run_verification" => Some(PublicCommand::WorkflowOperator {
             plan: plan_path.to_owned(),
             external_review_result_ready: false,
+            json: false,
         }),
         "close_current_task" | "gate_review" | "gate_finish" => None,
         _ => None,

@@ -66,6 +66,27 @@ pub fn internal_only_run_featureforge_with_env_control_direct_or_cli(
     )
 }
 
+pub fn internal_only_run_featureforge_direct_output(
+    repo: Option<&Path>,
+    state_dir: Option<&Path>,
+    home_dir: Option<&Path>,
+    env_remove: &[&str],
+    envs: &[(&str, &str)],
+    args: &[&str],
+    context: &str,
+) -> Output {
+    let allow_live_state = envs
+        .iter()
+        .any(|(key, value)| *key == WORKSPACE_RUNTIME_LIVE_STATE_TEST_ALLOW_ENV && *value == "1");
+    assert_workspace_runtime_uses_temp_state(repo, state_dir, home_dir, allow_live_state, context);
+    try_direct_featureforge_output_with_env_control(
+        repo, state_dir, home_dir, env_remove, envs, args, context,
+    )
+    .unwrap_or_else(|| {
+        panic!("{context} does not have a direct in-process FeatureForge helper for {args:?}")
+    })
+}
+
 fn run_featureforge_with_env_control_real_cli(
     repo: Option<&Path>,
     state_dir: Option<&Path>,

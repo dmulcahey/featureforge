@@ -67,15 +67,15 @@ an additional lower-level runtime/shared-truth test.
 - `tests/plan_execution.rs`
 - `tests/contracts_execution_runtime_boundaries.rs`
 
-### FS-06 — `a196` helper-path passes, real CLI path drifts
+### FS-06 — `a196` hidden-helper path masks shipped CLI behavior
 
-**Broken pattern:** helper-backed tests pass but compiled CLI behavior differs.
+**Broken pattern:** helper-backed tests pass but compiled CLI behavior differs; helper-backed tests passed even though the shipped CLI boundary behaved differently.
 
-**Expected fixed behavior:** compiled CLI and helper-path behavior match, with compiled CLI treated as authoritative.
+**Expected fixed behavior:** compiled CLI coverage is the public contract; hidden-helper behavior is quarantined in explicitly internal compatibility tests.
 
 **Primary tests:**
 
-- `tests/workflow_shell_smoke.rs`
+- `tests/internal_workflow_shell_smoke.rs`
 
 ### FS-07 — `b83b` status truthful, operator stale
 
@@ -163,8 +163,8 @@ an additional lower-level runtime/shared-truth test.
 
 **Tests to add:**
 
-- `tests/workflow_runtime.rs::runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin_and_operator`
-- `tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_preflight`
+- `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin_and_operator`
+- `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_preflight`
 - `tests/workflow_shell_smoke.rs::fs12_recovery_path_does_not_require_hidden_preflight_when_run_identity_exists`
 
 ### FS-13 — Later parked interrupted note masks an earlier stale repair boundary
@@ -211,8 +211,8 @@ an additional lower-level runtime/shared-truth test.
 
 **Tests to add:**
 
-- `tests/workflow_runtime.rs::runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry`
-- `tests/plan_execution.rs::runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch`
+- `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry`
+- `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch`
 - `tests/workflow_shell_smoke.rs::fs14_recovery_to_close_current_task_uses_only_public_intent_commands`
 
 ### FS-15 — False later reopen target after earlier repair
@@ -233,7 +233,7 @@ an additional lower-level runtime/shared-truth test.
 **Tests to add:**
 
 - `tests/workflow_runtime.rs::runtime_remediation_fs15_earliest_stale_boundary_beats_latest_overlay_target`
-- `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task`
+- `tests/internal_contracts_execution_runtime_boundaries.rs::internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task`
 
 ### FS-16 — Current positive task closure allows next-task begin even if receipt projections later drift
 
@@ -254,8 +254,8 @@ an additional lower-level runtime/shared-truth test.
 
 **Tests to add:**
 
-- `tests/workflow_runtime.rs::runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin_even_if_receipts_need_projection_refresh`
-- `tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts`
+- `tests/public_replay_churn.rs::public_replay_fs16_current_closure_allows_next_begin_after_projection_drift`
+- `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts`
 
 ### FS-17 — Truthful replay must converge to closure recording
 
@@ -274,7 +274,7 @@ an additional lower-level runtime/shared-truth test.
 **Primary tests:**
 
 - `tests/workflow_runtime.rs::fs17_stale_unreviewed_truthful_replay_promotes_to_task_closure_recording_ready`
-- `tests/plan_execution.rs::fs17_close_current_task_converges_after_truthful_replay_without_second_reopen`
+- `tests/internal_plan_execution.rs::internal_only_compatibility_fs17_close_current_task_converges_after_truthful_replay_without_second_reopen`
 
 ### FS-18 — Cycle-break is task-scoped and clears after bound task reclose
 
@@ -292,7 +292,7 @@ an additional lower-level runtime/shared-truth test.
 **Primary tests:**
 
 - `tests/workflow_runtime.rs::fs18_cycle_break_binding_is_task_scoped_not_global`
-- `tests/plan_execution.rs::fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed`
+- `tests/internal_plan_execution.rs::internal_only_compatibility_fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed`
 
 ### FS-19 — Superseded stale history must stop routing
 
@@ -360,7 +360,7 @@ an additional lower-level runtime/shared-truth test.
 **Primary tests:**
 
 - `tests/workflow_runtime.rs::fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_cleanup`
-- `tests/plan_execution.rs::fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists`
+- `tests/internal_plan_execution.rs::internal_only_compatibility_fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists`
 
 | Scenario | Source | Setup Summary | Expected Fixed Behavior | Probe Command Target (informational unless listed under Task 12 gates) |
 |---|---|---|---|---|
@@ -369,7 +369,7 @@ an additional lower-level runtime/shared-truth test.
 | `FS-03` | session `a196` | stale prior-task redispatch while later task is active | blocking task target and accepted mutation target match | `<=3` |
 | `FS-04` | session `a196` | repair/rebuild path with stale prior dispatch and resume overlays | repair yields one authoritative next action; no wrong blocker survives | `<=3` |
 | `FS-05` | session `a196` | unsupported field request on mutation commands | fail before mutation; authoritative digest unchanged | `<=1` |
-| `FS-06` | session `a196` | helper/direct path compared to compiled CLI path | compiled CLI remains contract oracle; helper parity enforced | helper-vs-compiled-cli target-mismatch parity lock (`<=2`) |
+| `FS-06` | session `a196` | helper/direct path compared to compiled CLI path | compiled CLI remains contract oracle; helper semantics stay quarantined internally | helper cutover boundary lock (`<=2`) |
 | `FS-07` | session `b83b` | status reports dispatch-required while operator advertises begin/reentry | all surfaces share same routing decision fields | covered by task-boundary dispatch-blocked routing regressions; parity-probe budget `<=3` |
 | `FS-08` | session `b83b` | resume overlays plus stale prior-task closure | stale prerequisite remains visible; resume does not hide blocker | `<=1` |
 | `FS-09` | session `b83b` | repair clears one stale condition and should expose next blocker | repair returns post-repair blocker directly | `<=3` |
@@ -398,29 +398,30 @@ an additional lower-level runtime/shared-truth test.
   - `tests/workflow_entry_shell_smoke.rs::fs02_entry_route_surfaces_share_parity_and_budget`
 - `FS-03`:
   - `tests/workflow_runtime.rs::workflow_phase_routes_task_boundary_blocked`
-  - `tests/plan_execution.rs::runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch`
-  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs03_dispatch_target_acceptance_and_mismatch_stay_aligned_between_direct_and_compiled_cli`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch`
+  - `tests/internal_workflow_shell_smoke.rs::internal_only_compatibility_plan_execution_record_review_dispatch_prefers_task_boundary_target_over_interrupted_note_state`
+  - `tests/internal_contracts_execution_runtime_boundaries.rs::internal_only_compatibility_runtime_remediation_fs03_internal_dispatch_target_acceptance_and_mismatch_preserve_mutation_contract`
 - `FS-04`:
-  - `tests/workflow_runtime.rs::runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator`
-  - `tests/workflow_runtime.rs::runtime_remediation_fs04_repair_returns_route_consumed_by_operator`
-  - `tests/plan_execution.rs::runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest`
-  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli`
+  - `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator`
+  - `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs04_repair_returns_route_consumed_by_operator`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest`
+  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_is_compiled_cli_contract`
   - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift`
 - `FS-05`:
-  - `tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
-  - `tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation`
-  - `tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_record_final_review_rejects_unapproved_reviewer_source_before_mutation`
   - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases`
 - `FS-06`:
-  - `tests/workflow_shell_smoke.rs::fs06_helper_and_compiled_cli_target_mismatch_stay_in_parity`
+  - `tests/internal_workflow_shell_smoke.rs::internal_only_fs06_hidden_dispatch_target_mismatch_keeps_helper_semantics_and_cli_cutover_boundary`
 - `FS-07`:
   - `tests/workflow_runtime.rs::workflow_phase_routes_task_boundary_blocked`
   - `tests/execution_query.rs::runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocked`
   - `tests/workflow_shell_smoke.rs::fs07_task_review_dispatch_route_parity_in_compiled_cli_surfaces`
 - `FS-08`:
-  - `tests/workflow_runtime.rs::runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker`
-  - `tests/workflow_runtime.rs::runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker`
-  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direct_and_compiled_cli`
+  - `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker`
+  - `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker`
+  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs08_stale_blocker_visibility_is_compiled_cli_contract`
 - `FS-09`:
   - `tests/workflow_runtime.rs::runtime_remediation_fs09_repair_exposes_next_blocker_immediately`
   - `tests/workflow_entry_shell_smoke.rs::fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli`
@@ -434,33 +435,33 @@ an additional lower-level runtime/shared-truth test.
   - `tests/workflow_shell_smoke.rs::fs11_repair_output_matches_following_public_command_without_hidden_helper`
   - `tests/workflow_shell_smoke.rs::fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers`
 - `FS-12`:
-  - `tests/workflow_runtime.rs::runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin_and_operator`
-  - `tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_preflight`
+  - `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin_and_operator`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_preflight`
   - `tests/workflow_shell_smoke.rs::fs12_recovery_path_does_not_require_hidden_preflight_when_run_identity_exists`
 - `FS-13`:
   - `tests/workflow_runtime.rs::runtime_remediation_fs13_markdown_note_is_projection_not_authority`
-  - `tests/workflow_runtime.rs::runtime_remediation_fs13_hidden_gates_materialize_legacy_open_step_state_when_blocked`
-  - `tests/plan_execution.rs::runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state`
+  - `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_state_when_blocked`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state`
   - `tests/workflow_shell_smoke.rs::fs13_normal_recovery_never_requires_manual_plan_note_edit`
   - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_round_trip`
 - `FS-14`:
-  - `tests/workflow_runtime.rs::runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry`
-  - `tests/workflow_runtime.rs::runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task`
-  - `tests/plan_execution.rs::runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch`
+  - `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry`
+  - `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch`
   - `tests/workflow_shell_smoke.rs::fs14_recovery_to_close_current_task_uses_only_public_intent_commands`
 - `FS-15`:
   - `tests/workflow_runtime.rs::runtime_remediation_fs15_earliest_stale_boundary_beats_latest_overlay_target`
   - `tests/workflow_runtime.rs::runtime_remediation_fs15_repair_never_jumps_to_later_task_when_earlier_boundary_exists`
-  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task`
+  - `tests/internal_contracts_execution_runtime_boundaries.rs::internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task`
 - `FS-16`:
-  - `tests/workflow_runtime.rs::runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin_even_if_receipts_need_projection_refresh`
-  - `tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts`
+  - `tests/public_replay_churn.rs::public_replay_fs16_current_closure_allows_next_begin_after_projection_drift`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts`
 - `FS-17`:
   - `tests/workflow_runtime.rs::fs17_stale_unreviewed_truthful_replay_promotes_to_task_closure_recording_ready`
-  - `tests/plan_execution.rs::fs17_close_current_task_converges_after_truthful_replay_without_second_reopen`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_fs17_close_current_task_converges_after_truthful_replay_without_second_reopen`
 - `FS-18`:
   - `tests/workflow_runtime.rs::fs18_cycle_break_binding_is_task_scoped_not_global`
-  - `tests/plan_execution.rs::fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed`
 - `FS-19`:
   - `tests/workflow_runtime.rs::fs19_superseded_stale_historical_task_closure_is_not_an_unresolved_stale_boundary`
   - `tests/contracts_execution_runtime_boundaries.rs::fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_task`
@@ -475,7 +476,7 @@ an additional lower-level runtime/shared-truth test.
   - `tests/workflow_shell_smoke.rs::fs21_resume_task_is_suppressed_when_earlier_closure_bridge_preempts_it`
 - `FS-22`:
   - `tests/workflow_runtime.rs::fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_cleanup`
-  - `tests/plan_execution.rs::fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists`
+  - `tests/internal_plan_execution.rs::internal_only_compatibility_fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists`
 
 ## Function-Level Traceability
 
@@ -489,30 +490,30 @@ an additional lower-level runtime/shared-truth test.
   - Compiled CLI parity: `tests/workflow_entry_shell_smoke.rs::fs02_entry_route_surfaces_share_parity_and_budget`
 - `FS-03`
   - Shared runtime routing: `tests/workflow_runtime.rs::workflow_phase_routes_task_boundary_blocked`
-  - Compiled CLI mutation acceptance/mismatch: `tests/plan_execution.rs::runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch`
-  - Compiled CLI task-boundary target coherence: `tests/workflow_shell_smoke.rs::plan_execution_record_review_dispatch_prefers_task_boundary_target_over_interrupted_note_state`
-  - Direct-vs-compiled CLI boundary parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs03_dispatch_target_acceptance_and_mismatch_stay_aligned_between_direct_and_compiled_cli`
+  - Compiled CLI mutation acceptance/mismatch: `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch`
+  - Compiled CLI task-boundary target coherence: `tests/internal_workflow_shell_smoke.rs::internal_only_compatibility_plan_execution_record_review_dispatch_prefers_task_boundary_target_over_interrupted_note_state`
+  - Internal compatibility dispatch-target mutation contract: `tests/internal_contracts_execution_runtime_boundaries.rs::internal_only_compatibility_runtime_remediation_fs03_internal_dispatch_target_acceptance_and_mismatch_preserve_mutation_contract`
 - `FS-04`
-  - Shared runtime repair blocker exposure: `tests/workflow_runtime.rs::runtime_remediation_fs04_repair_returns_route_consumed_by_operator`
-  - Compiled CLI repair parity: `tests/workflow_runtime.rs::runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator`
-  - Authoritative digest invariant: `tests/plan_execution.rs::runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest`
-  - Direct-vs-compiled CLI repair-route parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli`
-  - Direct-vs-compiled CLI external-review-ready flag parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift`
+  - Shared runtime repair blocker exposure: `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs04_repair_returns_route_consumed_by_operator`
+  - Compiled CLI repair parity: `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator`
+  - Authoritative digest invariant: `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest`
+  - Compiled CLI repair-route contract: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_is_compiled_cli_contract`
+  - Compiled CLI external-review-ready flag contract: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift`
 - `FS-05`
-  - Plan-execution no-mutation invariants: `tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
-  - Plan-execution no-mutation invariant for final-review scope task-field rejection: `tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation`
-  - Compatibility final-review reviewer-source no-mutation invariant: `tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation`
+  - Plan-execution no-mutation invariants: `tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
+  - Plan-execution no-mutation invariant for final-review scope task-field rejection: `tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation`
+  - Compatibility final-review reviewer-source no-mutation invariant: `tests/internal_plan_execution.rs::internal_only_compatibility_record_final_review_rejects_unapproved_reviewer_source_before_mutation`
   - Compatibility alias no-mutation invariant: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases`
 - `FS-06`
-  - Helper vs compiled CLI parity lock: `tests/workflow_shell_smoke.rs::fs06_helper_and_compiled_cli_target_mismatch_stay_in_parity`
+  - Internal helper semantics and CLI cutover boundary: `tests/internal_workflow_shell_smoke.rs::internal_only_fs06_hidden_dispatch_target_mismatch_keeps_helper_semantics_and_cli_cutover_boundary`
 - `FS-07`
   - Shared runtime blocked-task routing contract: `tests/workflow_runtime.rs::workflow_phase_routes_task_boundary_blocked`
   - Query-surface blocked-task routing parity: `tests/execution_query.rs::runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocked`
   - Compiled CLI route parity across surfaces: `tests/workflow_shell_smoke.rs::fs07_task_review_dispatch_route_parity_in_compiled_cli_surfaces`
 - `FS-08`
-  - Shared runtime stale-blocker visibility: `tests/workflow_runtime.rs::runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker`
-  - Compiled CLI stale-blocker visibility: `tests/workflow_runtime.rs::runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker`
-  - Direct-vs-compiled CLI stale-blocker parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direct_and_compiled_cli`
+  - Shared runtime stale-blocker visibility: `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker`
+  - Compiled CLI stale-blocker visibility: `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker`
+  - Compiled CLI stale-blocker contract: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs08_stale_blocker_visibility_is_compiled_cli_contract`
 - `FS-09`
   - Shared runtime post-repair blocker exposure: `tests/workflow_runtime.rs::runtime_remediation_fs09_repair_exposes_next_blocker_immediately`
   - Compiled CLI post-repair blocker exposure: `tests/workflow_entry_shell_smoke.rs::fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli`
@@ -526,36 +527,36 @@ an additional lower-level runtime/shared-truth test.
   - Compiled CLI repair follow-up parity: `tests/workflow_shell_smoke.rs::fs11_repair_output_matches_following_public_command_without_hidden_helper`
   - Compiled CLI rebase/resume budget cap: `tests/workflow_shell_smoke.rs::fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers`
 - `FS-12`
-  - Shared authoritative run identity routing: `tests/workflow_runtime.rs::runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin_and_operator`
-  - Plan-execution authoritative run identity for closure recording: `tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_preflight`
+  - Shared authoritative run identity routing: `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin_and_operator`
+  - Plan-execution authoritative run identity for closure recording: `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_preflight`
   - Compiled CLI recovery without hidden preflight: `tests/workflow_shell_smoke.rs::fs12_recovery_path_does_not_require_hidden_preflight_when_run_identity_exists`
 - `FS-13`
   - Shared markdown-note projection boundary: `tests/workflow_runtime.rs::runtime_remediation_fs13_markdown_note_is_projection_not_authority`
-  - Shared hidden-gate migration/materialization boundary: `tests/workflow_runtime.rs::runtime_remediation_fs13_hidden_gates_materialize_legacy_open_step_state_when_blocked`
-  - Plan-execution authoritative open-step state updates: `tests/plan_execution.rs::runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state`
+  - Internal hidden-gate non-materialization boundary: `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_state_when_blocked`
+  - Plan-execution authoritative open-step state updates: `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state`
   - Compiled CLI recovery without manual plan-note edits: `tests/workflow_shell_smoke.rs::fs13_normal_recovery_never_requires_manual_plan_note_edit`
-  - Direct-vs-compiled CLI open-step state parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_round_trip`
+  - Compiled CLI open-step state contract: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_round_trip`
 - `FS-14`
-  - Shared closure-baseline repair routing: `tests/workflow_runtime.rs::runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry`
-  - Shared closure-baseline repair-review-state parity: `tests/workflow_runtime.rs::runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task`
-  - Plan-execution closure-baseline regeneration without hidden dispatch: `tests/plan_execution.rs::runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch`
+  - Shared closure-baseline repair routing: `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry`
+  - Shared closure-baseline repair-review-state parity: `tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task`
+  - Plan-execution closure-baseline regeneration without hidden dispatch: `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch`
   - Compiled CLI public-intent closure repair path: `tests/workflow_shell_smoke.rs::fs14_recovery_to_close_current_task_uses_only_public_intent_commands`
 - `FS-15`
   - Shared earliest-stale-boundary precedence: `tests/workflow_runtime.rs::runtime_remediation_fs15_earliest_stale_boundary_beats_latest_overlay_target`
   - Shared repair target parity after earlier cleanup: `tests/workflow_runtime.rs::runtime_remediation_fs15_repair_never_jumps_to_later_task_when_earlier_boundary_exists`
-  - Direct-vs-compiled CLI stale-boundary target parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task`
+  - Compiled CLI stale-boundary target contract: `tests/internal_contracts_execution_runtime_boundaries.rs::internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task`
 - `FS-16`
-  - Shared begin-time closure authority: `tests/workflow_runtime.rs::runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin_even_if_receipts_need_projection_refresh`
-  - Plan-execution begin closure authority independent of receipt projections: `tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts`
+  - Public replay begin-time closure authority: `tests/public_replay_churn.rs::public_replay_fs16_current_closure_allows_next_begin_after_projection_drift`
+  - Plan-execution begin closure authority independent of receipt projections: `tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts`
 - `FS-17`
   - Shared truthful-replay bridge convergence: `tests/workflow_runtime.rs::fs17_stale_unreviewed_truthful_replay_promotes_to_task_closure_recording_ready`
-  - Plan-execution truthful-replay close-current-task budget: `tests/plan_execution.rs::fs17_close_current_task_converges_after_truthful_replay_without_second_reopen`
+  - Plan-execution truthful-replay close-current-task budget: `tests/internal_plan_execution.rs::internal_only_compatibility_fs17_close_current_task_converges_after_truthful_replay_without_second_reopen`
 - `FS-18`
   - Shared cycle-break task-scoping: `tests/workflow_runtime.rs::fs18_cycle_break_binding_is_task_scoped_not_global`
-  - Plan-execution cycle-break clear and begin unblock: `tests/plan_execution.rs::fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed`
+  - Plan-execution cycle-break clear and begin unblock: `tests/internal_plan_execution.rs::internal_only_compatibility_fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed`
 - `FS-19`
   - Shared superseded-stale-history suppression: `tests/workflow_runtime.rs::fs19_superseded_stale_historical_task_closure_is_not_an_unresolved_stale_boundary`
-  - Direct-vs-compiled CLI stale-history suppression parity: `tests/contracts_execution_runtime_boundaries.rs::fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_task`
+  - Compiled CLI stale-history suppression contract: `tests/contracts_execution_runtime_boundaries.rs::fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_task`
 - `FS-20`
   - Shared task-closure freshness under runtime-owned churn: `tests/workflow_runtime.rs::fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_task_closure`
   - Shared branch-closure freshness under runtime-owned churn: `tests/workflow_runtime.rs::fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_branch_closure`
@@ -567,7 +568,7 @@ an additional lower-level runtime/shared-truth test.
   - Compiled CLI resume-hint suppression when preempted: `tests/workflow_shell_smoke.rs::fs21_resume_task_is_suppressed_when_earlier_closure_bridge_preempts_it`
 - `FS-22`
   - Shared bridge-first non-destructive repair routing: `tests/workflow_runtime.rs::fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_cleanup`
-  - Plan-execution dispatch-lineage preservation under bridge-first repair: `tests/plan_execution.rs::fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists`
+  - Plan-execution dispatch-lineage preservation under bridge-first repair: `tests/internal_plan_execution.rs::internal_only_compatibility_fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists`
 
 - Task 12 command-budget gates (compiled CLI):
   - `fs17_close_current_task_converges_after_truthful_replay_without_second_reopen` (`tests/plan_execution.rs`) `<=2`

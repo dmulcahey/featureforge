@@ -7,6 +7,8 @@ mod files_support;
 mod internal_only_direct_helpers;
 #[path = "support/json.rs"]
 mod json_support;
+#[path = "support/plan_fidelity.rs"]
+mod plan_fidelity_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/repo_template.rs"]
@@ -20,6 +22,7 @@ use featureforge::execution::topology::recommend_topology;
 use files_support::write_file;
 use internal_only_direct_helpers::internal_runtime_direct as plan_execution_direct_support;
 use json_support::parse_json;
+use plan_fidelity_support::write_current_pass_plan_fidelity_review_artifact_for_plan;
 use process_support::{run, run_checked};
 use repo_template_support::populate_repo_from_template;
 use serde_json::Value;
@@ -143,6 +146,7 @@ Task 1    Task 2
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn write_single_step_plan(repo: &Path, execution_mode: &str) {
@@ -194,6 +198,7 @@ Task 1
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {

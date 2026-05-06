@@ -169,16 +169,22 @@ pub(in crate::execution::commands) fn blocked_branch_closure_output_for_invalid_
         .into_iter()
         .next()
     {
+        let recovery = public_recovery_contract_for_follow_up(
+            Path::new(&context.plan_rel),
+            None,
+            Some(String::from("repair_review_state")),
+            PublicFollowUpInputProfile::None,
+        );
         return Ok(Some(RecordBranchClosureOutput {
             action: String::from("blocked"),
             branch_closure_id: None,
             code: None,
-            recommended_command: None,
-            recommended_public_command_argv: None,
-            required_inputs: Vec::new(),
-            rederive_via_workflow_operator: None,
+            recommended_command: recovery.recommended_command,
+            recommended_public_command_argv: recovery.recommended_public_command_argv,
+            required_inputs: recovery.required_inputs,
+            rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
             superseded_branch_closure_ids: Vec::new(),
-            required_follow_up: Some(String::from("repair_review_state")),
+            required_follow_up: recovery.required_follow_up,
             trace_summary: format!(
                 "advance-late-stage branch-closure recording failed closed because {}",
                 failure.message

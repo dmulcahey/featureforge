@@ -47,7 +47,6 @@ use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
 };
 use featureforge::workflow::manifest::manifest_path;
-use featureforge::workflow::operator;
 use files_support::write_file;
 use prebuilt_support::write_canonical_prebuilt_layout;
 use process_support::{
@@ -1014,6 +1013,38 @@ fn run_plan_execution_json_real_cli(
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
+fn recommended_public_argv(surface: &Value, context: &str) -> Vec<String> {
+    let argv = surface["recommended_public_command_argv"]
+        .as_array()
+        .unwrap_or_else(|| {
+            panic!("{context} should expose recommended_public_command_argv: {surface}")
+        })
+        .iter()
+        .map(|part| {
+            part.as_str()
+                .unwrap_or_else(|| panic!("{context} argv entries should be strings: {surface}"))
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        argv.first().map(String::as_str),
+        Some("featureforge"),
+        "{context} argv should be rooted at the shipped public binary marker: {argv:?}"
+    );
+    argv
+}
+
+fn run_recommended_public_argv_json(
+    repo: &Path,
+    state_dir: &Path,
+    surface: &Value,
+    context: &str,
+) -> Value {
+    let argv = recommended_public_argv(surface, context);
+    let args = argv.iter().skip(1).map(String::as_str).collect::<Vec<_>>();
+    run_featureforge_with_env_json(repo, state_dir, &args, &[], context)
+}
+
 fn materialize_state_dir_projections(
     repo: &Path,
     state_dir: &Path,
@@ -1634,6 +1665,7 @@ fn complete_workflow_fixture_execution_with_qa_requirement_slow(
     } else if let Some(qa_requirement) = qa_requirement {
         rewrite_plan_qa_requirement(repo, plan_rel, Some(qa_requirement));
     }
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
     write_repo_file(
         repo,
         "tests/workflow_shell_smoke.rs",
@@ -1741,6 +1773,7 @@ fn upsert_plan_header(repo: &Path, plan_rel: &str, header: &str, value: &str) {
             .collect::<Vec<_>>()
             .join("\n");
         write_file(&plan_path, &rewritten);
+        write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
         return;
     }
     let inserted = if source.contains("**QA Requirement:**") {
@@ -1757,6 +1790,7 @@ fn upsert_plan_header(repo: &Path, plan_rel: &str, header: &str, value: &str) {
         )
     };
     write_file(&plan_path, &inserted);
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 }
 
 fn update_authoritative_harness_state(repo: &Path, state_dir: &Path, updates: &[(&str, Value)]) {
@@ -3431,6 +3465,39 @@ fn workflow_operator_json_exposes_ready_plan_route() {
 }
 
 #[test]
+fn workflow_operator_text_labels_display_commands_as_non_authoritative() {
+    let (repo_dir, state_dir) = init_repo("workflow-operator-text-command-summary");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    install_ready_artifacts(repo);
+
+    let output = run_featureforge(
+        repo,
+        state,
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md",
+        ],
+        "workflow operator text",
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Display command summary:"),
+        "workflow/operator text should label display command text as a summary:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Use JSON recommended_public_command_argv for execution"),
+        "workflow/operator text should point agents at JSON argv authority:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Recommended command:"),
+        "workflow/operator text must not present display strings as executable authority:\n{stdout}"
+    );
+}
+
+#[test]
 fn workflow_public_ready_plan_surface_prefers_operator_and_status_over_removed_helpers() {
     let (repo_dir, state_dir) = init_repo("workflow-operator-commands");
     let repo = repo_dir.path();
@@ -3520,6 +3587,7 @@ fn workflow_operator_routes_marker_free_started_execution_to_exact_begin_command
             "**Execution Mode:** featureforge:executing-plans",
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 
     let status_json = run_plan_execution_json(
         repo,
@@ -3574,28 +3642,32 @@ fn workflow_operator_routes_marker_free_started_execution_to_exact_begin_command
 }
 
 #[test]
-fn plan_execution_status_direct_helper_matches_real_cli_smoke() {
+fn plan_execution_status_compiled_cli_smoke() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
-    let (repo_dir, state_dir) = init_repo("plan-execution-status-direct-vs-real-cli");
+    let (repo_dir, state_dir) = init_repo("plan-execution-status-compiled-cli");
     let repo = repo_dir.path();
     let state = state_dir.path();
     install_full_contract_ready_artifacts(repo);
-    prepare_preflight_acceptance_workspace(repo, "plan-execution-status-direct-vs-real-cli");
+    prepare_preflight_acceptance_workspace(repo, "plan-execution-status-compiled-cli");
 
-    let direct = run_plan_execution_json(
+    let status = run_plan_execution_json_real_cli(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "plan execution status via direct helper smoke",
-    );
-    let real_cli = run_plan_execution_json_real_cli(
-        repo,
-        state,
-        &["status", "--plan", plan_rel],
-        "plan execution status via real cli smoke",
+        "plan execution status via compiled CLI smoke",
     );
 
-    assert_eq!(direct, real_cli);
+    assert_eq!(
+        status["phase_detail"],
+        Value::from("execution_preflight_required")
+    );
+    assert_eq!(status["next_action"], Value::from("continue execution"));
+    assert!(
+        status["recommended_public_command_argv"]
+            .as_array()
+            .is_some_and(|argv| argv.iter().any(|arg| arg == plan_rel)),
+        "compiled CLI status should expose typed argv containing the selected plan path, got {status:?}"
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -4553,44 +4625,45 @@ fn workflow_phase_text_and_json_surfaces_match_harness_downstream_freshness() {
 
     for case in cases {
         (case.setup)(repo, state, plan_rel, &base_branch);
-        let runtime =
-            discover_execution_runtime(repo, state, "workflow_shell_smoke late-stage parity");
-        let (doctor, phase_text, next_text) =
-            operator::doctor_phase_and_next_for_runtime_with_args(
-                &runtime,
-                &operator::DoctorArgs {
-                    plan: None,
-                    external_review_result_ready: false,
-                },
-            )
-            .expect("workflow doctor/phase/next for shell-smoke late-stage parity should succeed");
-        let doctor_json =
-            serde_json::to_value(doctor).expect("workflow doctor json should serialize");
+        let doctor_json = run_featureforge_json_real_cli(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            "workflow_shell_smoke late-stage doctor JSON",
+        );
+        let doctor_text_output = run_featureforge_real_cli(
+            repo,
+            state,
+            &["workflow", "doctor"],
+            "workflow_shell_smoke late-stage doctor text",
+        );
+        assert!(
+            doctor_text_output.status.success(),
+            "workflow doctor text should succeed for case {}\nstdout:\n{}\nstderr:\n{}",
+            case.name,
+            String::from_utf8_lossy(&doctor_text_output.stdout),
+            String::from_utf8_lossy(&doctor_text_output.stderr)
+        );
+        let doctor_text = String::from_utf8_lossy(&doctor_text_output.stdout);
 
         assert_eq!(doctor_json["phase"], case.expected_phase);
         assert_eq!(doctor_json["next_action"], case.expected_next_action);
-        assert!(phase_text.contains(&format!("Workflow phase: {}", case.expected_phase)));
-        assert!(phase_text.contains(&format!("Next action: {}", case.expected_next_action)));
-        assert!(next_text.contains(&format!("Next action: {}", case.expected_next_action)));
+        assert!(doctor_text.contains(&format!("Phase: {}", case.expected_phase)));
+        assert!(doctor_text.contains(&format!("Next action: {}", case.expected_next_action)));
 
-        let next_step = phase_text
+        let next_step = doctor_text
             .lines()
             .find_map(|line| line.strip_prefix("Next: "))
             .unwrap_or_else(|| {
                 panic!(
-                    "workflow phase text should expose Next line for case {}",
+                    "workflow doctor text should expose Next line for case {}",
                     case.name
                 )
             });
-        assert!(
-            next_text.contains(next_step),
-            "workflow next text should mirror the same Next step from workflow phase text for case {}",
-            case.name
-        );
         assert_eq!(
             doctor_json["next_step"],
             Value::from(next_step),
-            "workflow doctor json should mirror the same Next step from workflow phase text for case {}",
+            "workflow doctor json should mirror the same Next step from workflow doctor text for case {}",
             case.name
         );
 
@@ -4840,7 +4913,29 @@ fn workflow_operator_routes_ready_branch_completion_to_gate_finish_after_review_
         "branch-release-closure"
     );
     assert_eq!(operator_json["next_action"], "finish branch");
-    assert_eq!(operator_json["recommended_command"], Value::Null);
+    assert_eq!(
+        operator_json["recommended_public_command_argv"],
+        json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            plan_rel
+        ]),
+        "finish-completion route should expose executable public argv: {operator_json}"
+    );
+    let finish_json = run_recommended_public_argv_json(
+        repo,
+        state,
+        &operator_json,
+        "recommended advance-late-stage finish-completion argv should execute",
+    );
+    assert_eq!(finish_json["action"], "completed", "json: {finish_json}");
+    assert_eq!(
+        finish_json["operation"], "validate_finish_completion",
+        "json: {finish_json}"
+    );
 }
 
 #[test]
@@ -4879,7 +4974,56 @@ fn workflow_operator_requires_persisted_gate_review_checkpoint_before_gate_finis
         Value::Null
     );
     assert_eq!(operator_json["next_action"], "finish branch");
-    assert_eq!(operator_json["recommended_command"], Value::Null);
+    assert_eq!(
+        operator_json["recommended_public_command_argv"],
+        json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            plan_rel
+        ]),
+        "finish-review route should expose executable public argv: {operator_json}"
+    );
+    let checkpoint_json = run_recommended_public_argv_json(
+        repo,
+        state,
+        &operator_json,
+        "recommended advance-late-stage finish-review argv should execute",
+    );
+    assert_eq!(
+        checkpoint_json["action"], "recorded",
+        "json: {checkpoint_json}"
+    );
+    assert_eq!(
+        checkpoint_json["operation"], "record_finish_review_gate_checkpoint",
+        "json: {checkpoint_json}"
+    );
+
+    let post_checkpoint_operator = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        &[],
+        "workflow operator should route to finish completion after public finish-review checkpoint",
+    );
+    assert_eq!(
+        post_checkpoint_operator["phase_detail"], "finish_completion_gate_ready",
+        "json: {post_checkpoint_operator}"
+    );
+    assert_eq!(
+        post_checkpoint_operator["recommended_public_command_argv"],
+        json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            plan_rel
+        ]),
+        "finish-completion route should remain executable after public checkpoint: {post_checkpoint_operator}"
+    );
 }
 
 #[test]
@@ -5259,8 +5403,8 @@ fn repair_review_state_honors_external_review_ready_after_restoring_final_review
     assert_eq!(repair["action"], Value::from("blocked"));
     assert_eq!(
         repair["required_follow_up"],
-        Value::from("request_external_review"),
-        "repair-review-state should preserve the routed shared follow-up after restoring overlays"
+        Value::from("advance_late_stage"),
+        "repair-review-state should preserve the executable public late-stage follow-up after restoring overlays"
     );
     let actions = repair["actions_performed"]
         .as_array()
@@ -5278,12 +5422,26 @@ fn repair_review_state_honors_external_review_ready_after_restoring_final_review
         );
     }
     assert!(
-        repair["recommended_command"].is_null(),
-        "repair-review-state should omit the generic operator placeholder from recommended_command in omitted dispatch lanes, got {repair}"
+        repair["recommended_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("advance-late-stage")),
+        "repair-review-state should expose the executable public late-stage command after restoring overlays, got {repair}"
+    );
+    assert_eq!(
+        repair["recommended_public_command_argv"],
+        json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            plan_rel
+        ]),
+        "repair-review-state should expose executable public argv after restoring overlays, got {repair}"
     );
     assert!(
         repair.get("next_public_action").is_none() || repair["next_public_action"].is_null(),
-        "repair-review-state does not project next_public_action; omitted dispatch lanes should stay null-commanded here, got {repair}"
+        "repair-review-state does not project next_public_action directly; executable argv should be carried on recommended_public_command_argv, got {repair}"
     );
 
     let post_repair_operator = run_featureforge_with_env_json(
@@ -5364,18 +5522,16 @@ fn plan_execution_advance_late_stage_final_review_requires_dispatch_follow_up() 
             "--summary-file",
             summary_path.to_str().expect("summary path should be utf-8"),
         ],
-        "advance-late-stage should report final-review dispatch as the required follow-up when no current dispatch lineage exists",
+        "advance-late-stage should bootstrap final-review dispatch and record the review outcome",
     );
-    assert_eq!(review_json["action"], "blocked");
-    assert_eq!(review_json["code"], Value::Null, "json: {review_json}");
+    assert_eq!(review_json["action"], "recorded", "json: {review_json}");
     assert_eq!(
-        review_json["required_follow_up"],
-        Value::from("request_external_review"),
+        review_json["operation"],
+        Value::from("record_final_review_outcome"),
         "json: {review_json}"
     );
-    assert_eq!(
-        review_json["recommended_command"],
-        Value::Null,
+    assert!(
+        review_json["dispatch_id"].as_str().is_some(),
         "json: {review_json}"
     );
 }
@@ -6049,7 +6205,20 @@ fn plan_execution_advance_late_stage_release_readiness_requires_branch_closure_f
     assert_eq!(release_json["required_follow_up"], Value::Null);
     assert_eq!(
         release_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        ))
+    );
+    assert_eq!(
+        release_json["recommended_public_command_argv"],
+        json!([
+            "featureforge",
+            "workflow",
+            "operator",
+            "--plan",
+            plan_rel,
+            "--json"
+        ])
     );
     assert_eq!(
         release_json["rederive_via_workflow_operator"],
@@ -8785,33 +8954,22 @@ fn fs11_operator_and_begin_target_parity_after_rebase_resume() {
     let state = state_dir.path();
     setup_fs11_rebase_resume_parity_fixture(repo, state, plan_rel);
 
-    let operator_direct = run_featureforge_with_env_json(
-        repo,
-        state,
-        &["workflow", "operator", "--plan", plan_rel, "--json"],
-        &[],
-        "FS-11 shell-smoke direct workflow operator",
-    );
-    let operator_real = run_featureforge_json_real_cli(
+    let operator_json = run_featureforge_json_real_cli(
         repo,
         state,
         &["workflow", "operator", "--plan", plan_rel, "--json"],
         "FS-11 shell-smoke compiled-cli workflow operator",
     );
-    assert_eq!(
-        operator_direct, operator_real,
-        "FS-11 shell-smoke operator outputs should stay aligned between direct and compiled-cli routes",
-    );
-    if let Some(blocking_task) = operator_real["blocking_task"].as_u64() {
+    if let Some(blocking_task) = operator_json["blocking_task"].as_u64() {
         assert_eq!(
             blocking_task, 2_u64,
-            "FS-11 shell-smoke operator should target Task 2 as the earliest stale boundary after rebase/resume overlays: {operator_real:?}",
+            "FS-11 shell-smoke operator should target Task 2 as the earliest stale boundary after rebase/resume overlays: {operator_json:?}",
         );
     } else {
         assert_eq!(
-            operator_real["execution_command_context"]["task_number"],
+            operator_json["execution_command_context"]["task_number"],
             Value::from(2_u64),
-            "FS-11 shell-smoke operator should target Task 2 via execution command context when blocker metadata is projected as a concrete command: {operator_real:?}",
+            "FS-11 shell-smoke operator should target Task 2 via execution command context when blocker metadata is projected as a concrete command: {operator_json:?}",
         );
     }
 
@@ -8832,7 +8990,7 @@ fn fs11_operator_and_begin_target_parity_after_rebase_resume() {
         repair_json["required_follow_up"].is_null(),
         "json: {repair_json:?}"
     );
-    let operator_recommended = operator_real["recommended_command"]
+    let operator_recommended = operator_json["recommended_command"]
         .as_str()
         .expect("FS-11 shell-smoke operator should expose recommended command");
     assert_task_closure_required_inputs(&repair_json, 2);
@@ -8877,7 +9035,7 @@ fn fs11_operator_and_begin_target_parity_after_rebase_resume() {
         );
         if operator_follow_up_json["blocking_scope"].is_string() {
             assert_eq!(
-                operator_follow_up_json["blocking_scope"], operator_real["blocking_scope"],
+                operator_follow_up_json["blocking_scope"], operator_json["blocking_scope"],
                 "FS-11 shell-smoke blocked follow-up should preserve the exact blocking scope surfaced by workflow operator when the follow-up remains in the same blocker family"
             );
         }

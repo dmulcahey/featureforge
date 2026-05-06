@@ -37,17 +37,11 @@ use featureforge::execution::semantic_identity::{
 use featureforge::execution::state::{
     current_head_sha as runtime_current_head_sha, load_execution_context_for_mutation,
 };
-use featureforge::git::{
-    RepositoryIdentity, discover_repo_identity, discover_repository, discover_slug_identity,
-};
+use featureforge::git::{discover_repo_identity, discover_repository, discover_slug_identity};
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
 };
-use featureforge::workflow::manifest::{
-    WorkflowManifest, manifest_path, recover_slug_changed_manifest,
-};
-use featureforge::workflow::operator;
-use featureforge::workflow::status::WorkflowRuntime;
+use featureforge::workflow::manifest::{WorkflowManifest, manifest_path};
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{repo_root, run, run_checked};
@@ -59,8 +53,6 @@ use serde_json::{Value, json, to_value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
@@ -185,10 +177,26 @@ fn workflow_doctor_json(
     runtime: &featureforge::execution::state::ExecutionRuntime,
     context: &str,
 ) -> Value {
-    let value = operator::doctor_for_runtime(runtime)
-        .unwrap_or_else(|error| panic!("{context}: workflow doctor should succeed: {error:?}"));
-    to_value(value)
-        .unwrap_or_else(|error| panic!("{context}: workflow doctor should serialize: {error}"))
+    run_featureforge_json_real_cli(
+        &runtime.repo_root,
+        &runtime.state_dir,
+        &["workflow", "doctor", "--json"],
+        context,
+    )
+}
+
+fn workflow_doctor_json_for_plan(
+    runtime: &featureforge::execution::state::ExecutionRuntime,
+    plan: &str,
+    external_review_result_ready: bool,
+    context: &str,
+) -> Value {
+    let mut args = vec!["workflow", "doctor", "--plan", plan];
+    if external_review_result_ready {
+        args.push("--external-review-result-ready");
+    }
+    args.push("--json");
+    run_featureforge_json_real_cli(&runtime.repo_root, &runtime.state_dir, &args, context)
 }
 
 fn assert_runtime_provenance_fields(value: &Value, context: &str) {
@@ -733,15 +741,13 @@ fn write_plan_fidelity_authoring_defect_with_current_pass(
     );
 }
 
-fn workflow_status_refresh_json(repo: &Path, state_dir: &Path) -> Value {
-    let mut runtime = WorkflowRuntime::discover_for_state_dir(repo, state_dir)
-        .expect("workflow runtime should discover fixture repo");
-    to_value(
-        runtime
-            .status_refresh()
-            .expect("workflow status refresh should resolve route"),
+fn workflow_status_json(repo: &Path, state_dir: &Path) -> Value {
+    run_featureforge_json_real_cli(
+        repo,
+        state_dir,
+        &["workflow", "status", "--json"],
+        "workflow status compiled CLI",
     )
-    .expect("workflow route should serialize")
 }
 
 fn assert_no_plan_fidelity_receipt_file_created(repo: &Path, state_dir: &Path) {
@@ -1225,22 +1231,6 @@ fn missing_null_fields(object: &Value, fields: &[&str]) -> Vec<String> {
         .collect()
 }
 
-fn set_remote_url(repo: &Path, url: &str) {
-    let mut git_remote_set = Command::new("git");
-    git_remote_set
-        .args(["remote", "set-url", "origin", url])
-        .current_dir(repo);
-    run_checked(git_remote_set, "git remote set-url origin");
-}
-
-fn remove_origin_remote(repo: &Path) {
-    let mut git_remote_remove = Command::new("git");
-    git_remote_remove
-        .args(["remote", "remove", "origin"])
-        .current_dir(repo);
-    run_checked(git_remote_remove, "git remote remove origin");
-}
-
 fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
     let mut command = Command::new(compiled_featureforge_path());
     command
@@ -1570,6 +1560,7 @@ fn complete_workflow_fixture_execution_with_qa_requirement_slow(
 ) {
     install_full_contract_ready_artifacts(repo);
     set_plan_qa_requirement(repo, plan_rel, qa_requirement);
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
     write_file(
         &repo.join("tests/workflow_runtime.rs"),
         "synthetic route proof\n",
@@ -2270,7 +2261,7 @@ fn shell_workflow_resolve_failures_use_runtime_failure_contract() {
 }
 
 #[test]
-fn direct_workflow_resolve_failures_use_runtime_failure_contract() {
+fn public_cli_workflow_resolve_failures_use_runtime_failure_contract() {
     let outside_repo = TempDir::new().expect("outside repo tempdir should be available");
     let state_dir = TempDir::new().expect("state tempdir should be available");
 
@@ -2278,7 +2269,7 @@ fn direct_workflow_resolve_failures_use_runtime_failure_contract() {
         outside_repo.path(),
         state_dir.path(),
         &["workflow", "resolve"],
-        "direct helper resolve failure contract",
+        "public CLI resolve failure contract",
     );
     assert!(
         !output.status.success(),
@@ -2294,12 +2285,12 @@ fn direct_workflow_resolve_failures_use_runtime_failure_contract() {
         failure["message"]
             .as_str()
             .is_some_and(|message| message.contains("unrecognized subcommand 'resolve'")),
-        "workflow resolve should fail at helper parsing before repo-context inspection, got {failure:?}"
+        "workflow resolve should fail at CLI parsing before repo-context inspection, got {failure:?}"
     );
 }
 
 #[test]
-fn direct_read_only_workflow_failures_preserve_cli_text_contract() {
+fn public_cli_read_only_workflow_failures_preserve_cli_text_contract() {
     let outside_repo = TempDir::new().expect("outside repo tempdir should be available");
     let state_dir = TempDir::new().expect("state tempdir should be available");
 
@@ -2307,7 +2298,7 @@ fn direct_read_only_workflow_failures_preserve_cli_text_contract() {
         outside_repo.path(),
         state_dir.path(),
         &["workflow", "next"],
-        "direct helper read-only workflow failure contract",
+        "public CLI read-only workflow failure contract",
     );
     assert!(
         !output.status.success(),
@@ -2326,7 +2317,7 @@ fn direct_read_only_workflow_failures_preserve_cli_text_contract() {
 }
 
 #[test]
-fn canonical_workflow_status_matches_helper_for_manifest_backed_missing_spec() {
+fn public_cli_workflow_status_routes_manifest_backed_missing_spec() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-manifest-backed");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2353,19 +2344,21 @@ fn canonical_workflow_status_matches_helper_for_manifest_backed_missing_spec() {
         },
     );
 
-    let helper_json = workflow_status_refresh_json(repo, state);
-    let rust_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
-    assert_eq!(rust_json["status"], helper_json["status"]);
-    assert_eq!(rust_json["next_skill"], helper_json["next_skill"]);
-    assert_eq!(rust_json["spec_path"], helper_json["spec_path"]);
-    assert_eq!(rust_json["reason"], helper_json["reason"]);
-    assert_eq!(rust_json["reason_codes"], helper_json["reason_codes"]);
-    assert_eq!(rust_json["diagnostics"], helper_json["diagnostics"]);
+    assert_eq!(status_json["schema_version"], 3);
+    assert_eq!(status_json["status"], "needs_brainstorming");
+    assert_eq!(status_json["next_skill"], "featureforge:brainstorming");
+    assert!(
+        status_json["recommended_public_command_argv"].is_null()
+            || status_json["recommended_public_command_argv"].is_array()
+            || status_json.get("recommended_public_command_argv").is_none(),
+        "workflow status public JSON should not expose an unparsable command authority field, got {status_json:?}"
+    );
 }
 
 #[test]
-fn canonical_workflow_status_matches_helper_for_ambiguous_specs() {
+fn public_cli_workflow_status_routes_ambiguous_specs() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-ambiguity");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2384,17 +2377,13 @@ fn canonical_workflow_status_matches_helper_for_ambiguous_specs() {
     )
     .expect("second fixture spec should copy");
 
-    let _helper_warmup = workflow_status_refresh_json(repo, state);
-    let helper_json = workflow_status_refresh_json(repo, state);
-    let rust_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
-    assert_eq!(rust_json["status"], helper_json["status"]);
-    assert_eq!(rust_json["next_skill"], helper_json["next_skill"]);
-    assert_eq!(rust_json["reason"], helper_json["reason"]);
-    assert_eq!(rust_json["reason_codes"], helper_json["reason_codes"]);
-    assert_eq!(
-        rust_json["spec_candidate_count"],
-        helper_json["spec_candidate_count"]
+    assert_eq!(status_json["schema_version"], 3);
+    assert_eq!(status_json["status"], "spec_draft");
+    assert!(
+        status_json["next_skill"].is_string(),
+        "workflow status public JSON should expose a string next_skill, got {status_json:?}"
     );
 }
 
@@ -2418,7 +2407,7 @@ fn canonical_workflow_status_ambiguous_specs_matches_checked_in_snapshot() {
     )
     .expect("second fixture spec should copy");
 
-    let actual = normalize_workflow_status_snapshot(workflow_status_refresh_json(repo, state));
+    let actual = normalize_workflow_status_snapshot(workflow_status_json(repo, state));
     let expected: Value = serde_json::from_str(
         &fs::read_to_string(repo_root().join("tests/fixtures/differential/workflow-status.json"))
             .expect("checked-in workflow-status snapshot should be readable"),
@@ -2451,7 +2440,7 @@ fn canonical_workflow_expect_and_sync_preserve_missing_spec_semantics() {
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
     assert_eq!(status_json["status"], "needs_brainstorming");
     assert_eq!(status_json["spec_path"], missing_spec);
     assert_eq!(status_json["reason"], "missing_expected_spec");
@@ -2493,7 +2482,7 @@ fn workflow_status_routes_writing_plans_draft_to_eng_review_without_fidelity_art
         "Prepare the draft plan for review",
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
@@ -2532,7 +2521,7 @@ fn canonical_workflow_status_normalizes_dot_slash_source_spec_paths() {
         "Prepare the draft plan for review",
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
@@ -2580,7 +2569,7 @@ fn workflow_status_keeps_engineering_review_owner_after_plan_edits_before_handof
         "Prepare the revised draft plan for review",
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
@@ -2612,7 +2601,7 @@ fn workflow_status_suppresses_current_pass_fidelity_when_authoring_defect_routes
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_plan_fidelity_authoring_defect_with_current_pass(repo, spec_path, plan_path);
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
@@ -2652,7 +2641,7 @@ fn workflow_status_routes_engineering_reviewed_draft_without_fidelity_artifact_t
         "Prepare the final draft plan for fidelity review",
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(
@@ -2754,7 +2743,7 @@ fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_art
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(
@@ -2805,7 +2794,7 @@ fn canonical_workflow_status_routes_draft_plan_with_non_pass_fidelity_artifact_t
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
@@ -2861,7 +2850,7 @@ fn canonical_workflow_status_routes_draft_plan_with_malformed_fidelity_artifact_
     fs::write(&artifact_path, "{not a plan fidelity review artifact")
         .expect("corrupted artifact should be writable");
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(
@@ -2911,7 +2900,7 @@ fn workflow_status_reports_incomplete_plan_fidelity_review_artifacts() {
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(
         status_json["next_skill"],
@@ -3029,7 +3018,7 @@ fn workflow_status_normalizes_dot_slash_plan_fidelity_review_targets() {
         &format!("**Reviewed Spec:** `./{spec_path}`"),
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
     assert_eq!(status_json["plan_fidelity_review"]["state"], "pass");
 }
@@ -3067,7 +3056,7 @@ fn workflow_status_routes_current_pass_fidelity_artifact_back_to_engineering_app
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
@@ -3108,7 +3097,7 @@ fn workflow_status_blocks_engineering_approved_plan_without_fidelity_artifact() 
         "Prepare the approved plan for implementation",
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_review_required");
     assert_ne!(status_json["status"], "implementation_ready");
@@ -3300,7 +3289,7 @@ fn workflow_status_blocks_engineering_approved_plan_with_stale_fidelity_artifact
         "Prepare the changed approved plan for implementation",
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_review_required");
     assert_ne!(status_json["status"], "implementation_ready");
@@ -3350,7 +3339,7 @@ fn workflow_status_blocks_engineering_approved_plan_with_incomplete_fidelity_sur
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_review_required");
     assert_ne!(status_json["status"], "implementation_ready");
@@ -3400,7 +3389,7 @@ fn workflow_status_allows_engineering_approved_plan_with_current_pass_fidelity_a
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "implementation_ready");
     assert_eq!(status_json["next_skill"], "");
@@ -3471,7 +3460,7 @@ fn workflow_status_rejects_stale_review_artifact_fingerprints() {
         "Prepare the changed draft plan for review",
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
     assert_eq!(
         status_json["next_skill"],
         "featureforge:plan-fidelity-review"
@@ -3575,7 +3564,7 @@ fn workflow_status_routes_malformed_spec_requirement_index_to_plan_authoring() {
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
 }
@@ -3612,7 +3601,7 @@ fn workflow_status_rejects_invalid_ceo_review_provenance_on_source_spec() {
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
     assert_eq!(status_json["next_skill"], "featureforge:plan-ceo-review");
 }
 
@@ -3660,42 +3649,7 @@ fn analyze_plan_rejects_out_of_repo_source_spec_paths() {
 }
 
 #[test]
-#[cfg(unix)]
-fn canonical_workflow_status_refresh_preserves_route_when_manifest_write_fails() {
-    let (repo_dir, state_dir) = init_repo("workflow-runtime-manifest-write-conflict");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-
-    install_full_contract_ready_artifacts(repo);
-
-    let original_permissions = fs::metadata(state)
-        .expect("state dir metadata should be readable")
-        .permissions();
-    let mut read_only_permissions = original_permissions.clone();
-    read_only_permissions.set_mode(0o555);
-    fs::set_permissions(state, read_only_permissions).expect("state dir should become read-only");
-
-    let status_json = workflow_status_refresh_json(repo, state);
-    fs::set_permissions(state, original_permissions)
-        .expect("state dir permissions should be restorable");
-
-    assert_eq!(status_json["status"], "implementation_ready");
-    assert_ne!(status_json["next_skill"], "featureforge:brainstorming");
-    assert!(
-        status_json["reason_codes"]
-            .as_array()
-            .expect("reason_codes should stay an array")
-            .iter()
-            .any(|value| value == &Value::String(String::from("manifest_write_conflict")))
-    );
-    assert_eq!(
-        status_json["diagnostics"][0]["code"],
-        Value::String(String::from("manifest_write_conflict"))
-    );
-}
-
-#[test]
-fn canonical_workflow_status_refresh_accepts_active_implementation_target_specs() {
+fn canonical_workflow_status_accepts_active_implementation_target_specs() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-active-implementation-target");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -3723,7 +3677,7 @@ fn canonical_workflow_status_refresh_accepts_active_implementation_target_specs(
         ),
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_ne!(status_json["status"], "stale_plan");
     assert_eq!(status_json["spec_path"], Value::from(spec_rel));
@@ -3745,7 +3699,7 @@ fn canonical_workflow_status_routes_lone_stale_approved_plan_as_stale() {
         "# Approved Plan, Stale Source Path\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source path case\n\n**Spec Coverage:** REQ-001\n**Goal:** The plan remains structurally valid while its source-spec path goes stale.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The plan remains structurally valid while its source-spec path goes stale.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source path**\n",
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "stale_plan");
     assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
@@ -3772,7 +3726,7 @@ fn canonical_workflow_status_routes_stale_source_revision_as_stale() {
         "# Approved Plan, Stale Source Revision\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source revision case\n\n**Spec Coverage:** REQ-001\n**Goal:** The plan remains structurally valid while its source-spec revision goes stale.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The plan remains structurally valid while its source-spec revision goes stale.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source revision**\n",
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "stale_plan");
     assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
@@ -3826,89 +3780,6 @@ fn workflow_status_argv0_alias_no_longer_dispatches_to_canonical_tree() {
         String::from_utf8_lossy(&alias_output.stdout),
         String::from_utf8_lossy(&alias_output.stderr)
     );
-}
-
-#[test]
-fn canonical_workflow_status_refresh_recovers_old_manifest_after_slug_change() {
-    let (repo_dir, state_dir) = init_repo("workflow-runtime-cross-slug-old");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    let spec_path = "docs/featureforge/specs/2026-03-24-cross-slug-design.md";
-    let expected_plan = "docs/featureforge/plans/2026-03-24-cross-slug-plan.md";
-
-    write_file(
-        &repo.join(spec_path),
-        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
-    );
-
-    let old_identity = discover_repo_identity(repo).expect("old repo identity should resolve");
-    let old_manifest_path = manifest_path(&old_identity, state);
-    write_manifest(
-        &old_manifest_path,
-        &WorkflowManifest {
-            version: 1,
-            repo_root: old_identity.repo_root.to_string_lossy().into_owned(),
-            branch: old_identity.branch_name.clone(),
-            expected_spec_path: spec_path.to_owned(),
-            expected_plan_path: expected_plan.to_owned(),
-            status: String::from("spec_approved_needs_plan"),
-            next_skill: String::from("featureforge:writing-plans"),
-            reason: String::from("missing_expected_plan,expect_set"),
-            note: String::from("missing_expected_plan,expect_set"),
-            updated_at: String::from("2026-03-24T00:00:00Z"),
-        },
-    );
-
-    set_remote_url(
-        repo,
-        "https://example.com/example/workflow-runtime-cross-slug-new.git",
-    );
-    let new_identity = discover_repo_identity(repo).expect("new repo identity should resolve");
-    let new_manifest_path = manifest_path(&new_identity, state);
-    assert_ne!(
-        old_manifest_path, new_manifest_path,
-        "slug change should move the manifest path"
-    );
-    let recovered = recover_slug_changed_manifest(&new_identity, state, &new_manifest_path)
-        .expect("cross-slug manifest should be recoverable from sibling state");
-    assert_eq!(recovered.expected_plan_path, expected_plan);
-
-    let route = WorkflowRuntime {
-        identity: new_identity.clone(),
-        state_dir: state.to_path_buf(),
-        manifest_path: new_manifest_path.clone(),
-        manifest: Some(recovered.clone()),
-        manifest_warning: None,
-        manifest_recovery_reasons: vec![String::from("repo_slug_recovered")],
-    }
-    .status()
-    .expect("status should preserve the recovered expected plan path");
-    assert_eq!(route.plan_path, expected_plan);
-
-    let refreshed_route = WorkflowRuntime {
-        identity: new_identity,
-        state_dir: state.to_path_buf(),
-        manifest_path: new_manifest_path.clone(),
-        manifest: Some(recovered),
-        manifest_warning: None,
-        manifest_recovery_reasons: vec![String::from("repo_slug_recovered")],
-    }
-    .status_refresh()
-    .expect("status refresh should preserve recovery metadata and write the new manifest");
-
-    assert_eq!(refreshed_route.status, "spec_approved_needs_plan");
-    assert_eq!(refreshed_route.plan_path, expected_plan);
-    assert!(refreshed_route.reason.contains("repo_slug_recovered"));
-    assert!(
-        refreshed_route
-            .reason_codes
-            .iter()
-            .any(|value| value == "repo_slug_recovered")
-    );
-
-    let new_manifest_json = fs::read_to_string(&new_manifest_path)
-        .expect("recovered manifest should be written at the new slug path");
-    assert!(new_manifest_json.contains(expected_plan));
 }
 
 #[test]
@@ -3981,78 +3852,6 @@ fn canonical_manifest_path_uses_canonical_repo_slug_directory() {
 }
 
 #[test]
-fn canonical_workflow_status_refresh_limits_cross_slug_manifest_recovery_scan() {
-    let (repo_dir, state_dir) = init_repo("workflow-runtime-cross-slug-budget");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    let spec_path = "docs/featureforge/specs/2026-03-24-budget-limit-design.md";
-    let expected_plan = "docs/featureforge/plans/2026-03-24-budget-limit-plan.md";
-
-    write_file(
-        &repo.join(spec_path),
-        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
-    );
-
-    let current_identity =
-        discover_repo_identity(repo).expect("current repo identity should resolve");
-    let current_manifest_path = manifest_path(&current_identity, state);
-    let manifest_name = current_manifest_path
-        .file_name()
-        .expect("manifest path should have a file name")
-        .to_owned();
-
-    for index in 1..=12 {
-        let decoy_dir = state.join("projects").join(format!("decoy-{index:02}"));
-        write_manifest(
-            &decoy_dir.join(&manifest_name),
-            &WorkflowManifest {
-                version: 1,
-                repo_root: format!("/tmp/not-the-current-repo-{index:02}"),
-                branch: current_identity.branch_name.clone(),
-                expected_spec_path: String::new(),
-                expected_plan_path: String::new(),
-                status: String::from("needs_brainstorming"),
-                next_skill: String::from("featureforge:brainstorming"),
-                reason: String::from("decoy"),
-                note: String::from("decoy"),
-                updated_at: String::from("2026-03-24T00:00:00Z"),
-            },
-        );
-    }
-
-    write_manifest(
-        &state.join("projects/zzz-old-slug").join(&manifest_name),
-        &WorkflowManifest {
-            version: 1,
-            repo_root: current_identity.repo_root.to_string_lossy().into_owned(),
-            branch: current_identity.branch_name.clone(),
-            expected_spec_path: spec_path.to_owned(),
-            expected_plan_path: expected_plan.to_owned(),
-            status: String::from("spec_approved_needs_plan"),
-            next_skill: String::from("featureforge:writing-plans"),
-            reason: String::from("repo_slug_recovered"),
-            note: String::from("repo_slug_recovered"),
-            updated_at: String::from("2026-03-24T00:00:00Z"),
-        },
-    );
-
-    let status_json = workflow_status_refresh_json(repo, state);
-
-    assert_eq!(status_json["status"], "spec_approved_needs_plan");
-    assert_eq!(status_json["plan_path"], "");
-    assert!(
-        !status_json["reason"]
-            .as_str()
-            .unwrap_or("")
-            .contains("repo_slug_recovered")
-    );
-
-    let manifest_json = fs::read_to_string(current_manifest_path)
-        .expect("current manifest should be written after refresh");
-    assert!(!manifest_json.contains(expected_plan));
-}
-
-#[test]
 fn canonical_workflow_status_accepts_manifest_selected_plan_with_legacy_symlink_repo_root() {
     let (repo_dir, state_dir) = init_repo("workflow-status-symlink-manifest");
     let repo = repo_dir.path();
@@ -4094,7 +3893,7 @@ fn canonical_workflow_status_accepts_manifest_selected_plan_with_legacy_symlink_
         },
     );
 
-    let status_json = workflow_status_refresh_json(&alias_root, state);
+    let status_json = workflow_status_json(&alias_root, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["plan_path"], plan_a);
@@ -4140,7 +3939,7 @@ fn canonical_workflow_status_ignores_manifest_selected_spec_when_branch_mismatch
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "spec_draft");
     assert_eq!(status_json["plan_path"], "");
@@ -4193,7 +3992,7 @@ fn canonical_workflow_status_ignores_manifest_selected_plan_when_repo_root_misma
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "spec_approved_needs_plan");
     assert_eq!(status_json["plan_path"], "");
@@ -4205,108 +4004,6 @@ fn canonical_workflow_status_ignores_manifest_selected_plan_when_repo_root_misma
             .any(|value| value == "ambiguous_plan_candidates"),
         "repo-root-mismatched manifests should not suppress ambiguous current plan candidates"
     );
-}
-
-#[test]
-fn canonical_workflow_status_refresh_recovers_legacy_symlinked_local_repo_manifest() {
-    let (repo_dir, state_dir) = init_repo("workflow-local-symlink-recovery");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    remove_origin_remote(repo);
-
-    let alias_root = state.join("workflow-local-symlink-checkout");
-    create_dir_symlink(repo, &alias_root);
-
-    let spec_path = "docs/featureforge/specs/2026-03-24-local-symlink-spec.md";
-    let plan_a = "docs/featureforge/plans/2026-03-24-local-symlink-a.md";
-    let plan_b = "docs/featureforge/plans/2026-03-24-local-symlink-b.md";
-
-    write_file(
-        &repo.join(spec_path),
-        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
-    );
-    for plan_path in [plan_a, plan_b] {
-        write_file(
-            &repo.join(plan_path),
-            &format!(
-                "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n"
-            ),
-        );
-    }
-
-    let current_identity = discover_repo_identity(repo).expect("repo identity should resolve");
-    let legacy_identity = RepositoryIdentity {
-        repo_root: alias_root.clone(),
-        remote_url: None,
-        branch_name: current_identity.branch_name.clone(),
-    };
-    let current_manifest_path = manifest_path(&current_identity, state);
-    let legacy_manifest_path = manifest_path(&legacy_identity, state);
-    assert_ne!(
-        current_manifest_path, legacy_manifest_path,
-        "canonicalized local repo roots should move the manifest path"
-    );
-
-    write_manifest(
-        &legacy_manifest_path,
-        &WorkflowManifest {
-            version: 1,
-            repo_root: alias_root.to_string_lossy().into_owned(),
-            branch: current_identity.branch_name.clone(),
-            expected_spec_path: spec_path.to_owned(),
-            expected_plan_path: plan_a.to_owned(),
-            status: String::from("plan_draft"),
-            next_skill: String::from("featureforge:plan-eng-review"),
-            reason: String::from("legacy-local-symlink-manifest"),
-            note: String::from("legacy-local-symlink-manifest"),
-            updated_at: String::from("2026-03-25T00:00:00Z"),
-        },
-    );
-
-    let runtime = discover_execution_runtime(
-        &alias_root,
-        state,
-        "workflow phase should preserve legacy local symlink manifest recovery reasons",
-    );
-    let phase_json = workflow_phase_json(
-        &runtime,
-        "workflow phase should preserve legacy local symlink manifest recovery reasons",
-    );
-    assert!(
-        phase_json["route"]["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| codes.iter().any(|value| value == "repo_slug_recovered")),
-        "workflow phase should preserve recovered manifest reason codes in the route payload"
-    );
-    assert_eq!(phase_json["plan_path"], plan_a);
-
-    let handoff_json = workflow_handoff_json(
-        &runtime,
-        "workflow handoff should preserve legacy local symlink manifest recovery reasons",
-    );
-    assert!(
-        handoff_json["route"]["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| codes.iter().any(|value| value == "repo_slug_recovered")),
-        "workflow handoff should preserve recovered manifest reason codes in the route payload"
-    );
-    assert_eq!(handoff_json["plan_path"], plan_a);
-
-    let status_json = workflow_status_refresh_json(&alias_root, state);
-
-    assert_eq!(status_json["status"], "plan_draft");
-    assert_eq!(status_json["plan_path"], plan_a);
-
-    let rewritten: WorkflowManifest = serde_json::from_str(
-        &fs::read_to_string(&current_manifest_path)
-            .expect("canonical manifest should be rewritten on refresh"),
-    )
-    .expect("rewritten canonical manifest should parse");
-    assert_eq!(
-        rewritten.repo_root,
-        current_identity.repo_root.to_string_lossy().into_owned()
-    );
-    assert_eq!(rewritten.expected_plan_path, plan_a);
 }
 
 #[test]
@@ -4360,7 +4057,7 @@ fn canonical_workflow_operator_accepts_manifest_selected_ready_route_with_extra_
         },
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
     assert_eq!(status_json["status"], "implementation_ready");
     assert_eq!(status_json["spec_path"], spec_path);
     assert_eq!(status_json["plan_path"], plan_path);
@@ -4597,7 +4294,7 @@ fn canonical_workflow_status_treats_ceo_approved_specs_without_ceo_review_as_dra
         "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** brainstorming\n\n## Requirement Index\n\n- [REQ-001][behavior] Routing should reject approval-owner drift.\n",
     );
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "spec_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-ceo-review");
@@ -4622,7 +4319,7 @@ fn canonical_workflow_status_treats_eng_approved_plans_without_eng_review_as_dra
     )
     .expect("plan fixture should be writable");
 
-    let status_json = workflow_status_refresh_json(repo, state);
+    let status_json = workflow_status_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
@@ -4704,7 +4401,7 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
         Value::String(execution_preflight_phase)
     );
     assert_eq!(handoff_json["next_action"], "continue execution");
-    assert_eq!(handoff_json["recommended_skill"], Value::from(""));
+    assert_eq!(handoff_json["next_skill"], Value::from(""));
     assert!(handoff_json.get("session_entry").is_none());
     assert_eq!(handoff_json["schema_version"], 3);
     assert_eq!(handoff_json["route"]["schema_version"], 3);
@@ -4743,75 +4440,6 @@ fn workflow_runtime_surfaces_expose_runtime_provenance_fields() {
 
     let doctor_json = workflow_doctor_json(&runtime, "workflow doctor runtime provenance fixture");
     assert_runtime_provenance_fields(&doctor_json, "workflow doctor");
-}
-
-#[test]
-fn canonical_workflow_status_ignores_strict_session_entry_gate_env() {
-    let (repo_dir, state_dir) = init_repo("workflow-status-strict-session-entry-gate");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-
-    install_full_contract_ready_artifacts(repo);
-    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
-    let workflow_manifest_path = manifest_path(&identity, state);
-
-    let status_json = workflow_status_refresh_json(repo, state);
-    assert_eq!(status_json["schema_version"], 3);
-    assert_eq!(status_json["status"], "implementation_ready");
-    assert!(
-        !status_json["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| codes.iter().any(|code| {
-                code == "session_entry_unresolved" || code == "session_entry_bypassed"
-            })),
-        "workflow status should not expose removed strict session-entry reason codes"
-    );
-
-    let enabled_manifest: WorkflowManifest = serde_json::from_str(
-        &fs::read_to_string(&workflow_manifest_path)
-            .expect("workflow manifest should be written after strict refresh"),
-    )
-    .expect("workflow manifest json should parse after strict refresh");
-    assert_eq!(
-        enabled_manifest.expected_spec_path,
-        status_json["spec_path"].as_str().unwrap_or(""),
-        "strict refresh should persist the selected expected spec path"
-    );
-    assert_eq!(
-        enabled_manifest.expected_plan_path,
-        status_json["plan_path"].as_str().unwrap_or(""),
-        "strict refresh should persist the selected expected plan path"
-    );
-
-    let bypassed_decision_path = state
-        .join("session-entry")
-        .join("using-featureforge")
-        .join("workflow-status-strict-session-entry-gate-bypassed");
-    write_file(&bypassed_decision_path, "bypassed\n");
-    let bypassed_status_json = workflow_status_refresh_json(repo, state);
-    assert_eq!(bypassed_status_json["schema_version"], 3);
-    assert_eq!(bypassed_status_json["status"], "implementation_ready");
-    assert!(
-        !bypassed_status_json["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| codes.iter().any(|code| {
-                code == "session_entry_unresolved" || code == "session_entry_bypassed"
-            })),
-        "workflow status should not expose removed strict session-entry reason codes"
-    );
-    let manifest_after_bypassed_session: WorkflowManifest = serde_json::from_str(
-        &fs::read_to_string(&workflow_manifest_path)
-            .expect("workflow manifest should remain readable after bypassed strict refresh"),
-    )
-    .expect("workflow manifest should parse after bypassed strict refresh");
-    assert_eq!(
-        manifest_after_bypassed_session.expected_spec_path, enabled_manifest.expected_spec_path,
-        "bypassed session-entry files should not clear the selected expected spec path"
-    );
-    assert_eq!(
-        manifest_after_bypassed_session.expected_plan_path, enabled_manifest.expected_plan_path,
-        "bypassed session-entry files should not clear the selected expected plan path"
-    );
 }
 
 #[test]
@@ -5063,7 +4691,7 @@ fn canonical_workflow_operator_surfaces_fail_closed_when_session_entry_is_bypass
         Value::String(execution_preflight_phase)
     );
     assert_eq!(handoff_json["next_action"], "continue execution");
-    assert_eq!(handoff_json["recommended_skill"], Value::from(""));
+    assert_eq!(handoff_json["next_skill"], Value::from(""));
     assert!(handoff_json.get("session_entry").is_none());
 }
 
@@ -5096,66 +4724,6 @@ fn canonical_workflow_phase_routes_enabled_stale_plan_to_plan_writing() {
     assert_eq!(phase_json["next_action"], "pivot / return to planning");
     assert_eq!(phase_json["next_skill"], "featureforge:writing-plans");
     assert!(phase_json.get("session_entry").is_none());
-}
-
-#[test]
-fn canonical_workflow_phase_keeps_corrupt_manifest_read_only() {
-    let (repo_dir, state_dir) = init_repo("workflow-phase-corrupt-manifest");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    let spec_path = repo.join("docs/featureforge/specs/2026-03-24-corrupt-phase-spec.md");
-
-    write_file(
-        &spec_path,
-        "# Phase Corrupt Manifest Spec\n\n**Workflow State:** Draft\n**Spec Revision:** 1\n**Last Reviewed By:** brainstorming\n",
-    );
-
-    let _ = workflow_status_refresh_json(repo, state);
-
-    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
-    let manifest_path = manifest_path(&identity, state);
-    fs::write(&manifest_path, "{ \"broken\": true\n")
-        .expect("corrupt manifest fixture should be writable");
-    let before_bytes = fs::read(&manifest_path).expect("corrupt manifest fixture should exist");
-
-    let runtime = discover_execution_runtime(
-        repo,
-        state,
-        "rust canonical workflow phase should inspect corrupt manifests without repairing them",
-    );
-    let phase_json = workflow_phase_json(
-        &runtime,
-        "rust canonical workflow phase should inspect corrupt manifests without repairing them",
-    );
-    assert!(phase_json["phase"].is_string());
-
-    let after_bytes = fs::read(&manifest_path)
-        .expect("workflow phase should leave the corrupt manifest in place");
-    assert_eq!(after_bytes, before_bytes);
-
-    let parent = manifest_path
-        .parent()
-        .expect("manifest fixture should have a parent directory");
-    let backup_prefix = format!(
-        "{}.corrupt-",
-        manifest_path
-            .file_name()
-            .expect("manifest fixture should have a file name")
-            .to_string_lossy()
-    );
-    let backup_written = fs::read_dir(parent)
-        .expect("manifest directory should stay readable")
-        .flatten()
-        .any(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(&backup_prefix)
-        });
-    assert!(
-        !backup_written,
-        "workflow phase should not create corrupt-manifest backups for read-only inspection"
-    );
 }
 
 #[test]
@@ -5422,14 +4990,35 @@ fn canonical_workflow_handoff_rejects_legacy_pre_harness_cutover_state() {
         "fixture should inject legacy pre-harness execution evidence"
     );
 
-    let runtime = discover_execution_runtime(
+    let output = run_featureforge_real_cli(
         repo,
         state,
-        "workflow handoff for legacy pre-harness cutover fixture",
+        &["workflow", "doctor", "--json"],
+        "workflow doctor for legacy pre-harness cutover fixture",
     );
-    let error = operator::handoff_for_runtime(&runtime)
-        .expect_err("workflow handoff should fail closed for legacy pre-harness cutover state");
-    let error_message = format!("{} {}", error.error_class, error.message);
+    assert!(
+        !output.status.success(),
+        "workflow doctor should fail closed for legacy pre-harness cutover state\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let failure_stream = if output.stderr.is_empty() {
+        output.stdout.as_slice()
+    } else {
+        output.stderr.as_slice()
+    };
+    let failure_json: Value = serde_json::from_slice(failure_stream).unwrap_or_else(|error| {
+        panic!(
+            "workflow doctor legacy pre-harness failure should emit JSON: {error}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    let error_message = format!(
+        "{} {}",
+        failure_json["error_class"].as_str().unwrap_or_default(),
+        failure_json["message"].as_str().unwrap_or_default()
+    );
     assert!(
         error_message.contains("MalformedExecutionState"),
         "workflow handoff should report malformed legacy execution evidence, got:\n{error_message}"
@@ -5550,13 +5139,22 @@ fn canonical_workflow_operator_surfaces_pivot_required_plan_revision_block_phase
     assert_eq!(phase_json["next_action"], "pivot / return to planning");
     assert_eq!(doctor_json["next_action"], "pivot / return to planning");
     assert_eq!(handoff_json["next_action"], "pivot / return to planning");
-    assert_ne!(
-        handoff_json["recommended_skill"], doctor_json["execution_status"]["execution_mode"],
+    let execution_mode = doctor_json["execution_status"]["execution_mode"]
+        .as_str()
+        .expect("doctor execution status should expose execution_mode");
+    assert!(
+        !handoff_json["next_step"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(execution_mode),
         "pivot-required plan-revision blocks should not keep recommending the active execution mode"
     );
-    assert_eq!(
-        handoff_json["recommendation_reason"],
-        "Execution is blocked pending an approved plan revision."
+    assert!(
+        handoff_json["next_step"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Update and re-approve the plan"),
+        "pivot-required plan-revision blocks should tell agents to refresh the plan approval, got {handoff_json:?}"
     );
 }
 
@@ -5717,9 +5315,12 @@ fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
     assert_eq!(phase_json["next_action"], "advance late stage");
     assert_eq!(handoff_json["phase"], "document_release_pending");
     assert_eq!(handoff_json["next_action"], "advance late stage");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:document-release"
+    assert!(
+        handoff_json["next_step"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("featureforge:document-release"),
+        "document-release pending public doctor output should route agents to the public release-docs action, got {handoff_json:?}"
     );
 }
 
@@ -5801,13 +5402,12 @@ fn canonical_workflow_phase_routes_review_resolved_to_document_release_pending()
 
     assert_eq!(handoff_json["phase"], "document_release_pending");
     assert_eq!(handoff_json["next_action"], "advance late stage");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:document-release"
-    );
-    assert_eq!(
-        handoff_json["recommendation_reason"],
-        "Finish readiness requires a current release-readiness milestone for the current branch closure."
+    assert!(
+        handoff_json["next_step"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("featureforge:document-release"),
+        "document-release pending public doctor output should route agents to the public release-docs action, got {handoff_json:?}"
     );
 }
 
@@ -6348,17 +5948,12 @@ fn runtime_remediation_fs11_operator_begin_repair_share_one_next_action_engine()
     );
     let runtime =
         discover_execution_runtime(repo, state, "FS-11 workflow doctor stale-boundary fixture");
-    let doctor_json = to_value(
-        operator::doctor_for_runtime_with_args(
-            &runtime,
-            &operator::DoctorArgs {
-                plan: Some(plan_rel.into()),
-                external_review_result_ready: false,
-            },
-        )
-        .expect("FS-11 workflow doctor stale-boundary fixture should resolve"),
-    )
-    .expect("FS-11 workflow doctor stale-boundary fixture should serialize");
+    let doctor_json = workflow_doctor_json_for_plan(
+        &runtime,
+        plan_rel,
+        false,
+        "FS-11 workflow doctor stale-boundary fixture",
+    );
     assert!(
         doctor_json["phase_detail"]
             .as_str()
@@ -7728,7 +7323,7 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
         ),
         (
             "FS-06",
-            "helper-backed tests pass but compiled CLI behavior differs",
+            "helper-backed tests passed even though the shipped CLI boundary behaved differently",
         ),
         (
             "FS-07",
@@ -7797,34 +7392,34 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
             "FS-03",
             &[
                 "tests/workflow_runtime.rs::workflow_phase_routes_task_boundary_blocked",
-                "tests/plan_execution.rs::runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch",
-                "tests/workflow_shell_smoke.rs::plan_execution_record_review_dispatch_prefers_task_boundary_target_over_interrupted_note_state",
-                "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs03_dispatch_target_acceptance_and_mismatch_stay_aligned_between_direct_and_compiled_cli",
+                "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch",
+                "tests/internal_workflow_shell_smoke.rs::internal_only_compatibility_plan_execution_record_review_dispatch_prefers_task_boundary_target_over_interrupted_note_state",
+                "tests/internal_contracts_execution_runtime_boundaries.rs::internal_only_compatibility_runtime_remediation_fs03_internal_dispatch_target_acceptance_and_mismatch_preserve_mutation_contract",
             ],
         ),
         (
             "FS-04",
             &[
-                "tests/workflow_runtime.rs::runtime_remediation_fs04_repair_returns_route_consumed_by_operator",
-                "tests/workflow_runtime.rs::runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator",
-                "tests/plan_execution.rs::runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest",
-                "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli",
+                "tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs04_repair_returns_route_consumed_by_operator",
+                "tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator",
+                "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest",
+                "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_is_compiled_cli_contract",
                 "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift",
             ],
         ),
         (
             "FS-05",
             &[
-                "tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation",
-                "tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation",
-                "tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation",
+                "tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation",
+                "tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation",
+                "tests/internal_plan_execution.rs::internal_only_compatibility_record_final_review_rejects_unapproved_reviewer_source_before_mutation",
                 "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases",
             ],
         ),
         (
             "FS-06",
             &[
-                "tests/workflow_shell_smoke.rs::fs06_helper_and_compiled_cli_target_mismatch_stay_in_parity",
+                "tests/internal_workflow_shell_smoke.rs::internal_only_fs06_hidden_dispatch_target_mismatch_keeps_helper_semantics_and_cli_cutover_boundary",
             ],
         ),
         (
@@ -7837,9 +7432,9 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
         (
             "FS-08",
             &[
-                "tests/workflow_runtime.rs::runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker",
-                "tests/workflow_runtime.rs::runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker",
-                "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direct_and_compiled_cli",
+                "tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker",
+                "tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker",
+                "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs08_stale_blocker_visibility_is_compiled_cli_contract",
             ],
         ),
         (
@@ -7870,11 +7465,11 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
             "FS-12",
             &[
                 concat!(
-                    "tests/workflow_runtime.rs::runtime_remediation_fs12_authoritative_run_identity_beats_pre",
+                    "tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs12_authoritative_run_identity_beats_pre",
                     "flight_for_begin_and_operator"
                 ),
                 concat!(
-                    "tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_pre",
+                    "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_pre",
                     "flight"
                 ),
                 concat!(
@@ -7887,8 +7482,8 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
             "FS-13",
             &[
                 "tests/workflow_runtime.rs::runtime_remediation_fs13_markdown_note_is_projection_not_authority",
-                "tests/workflow_runtime.rs::runtime_remediation_fs13_hidden_gates_materialize_legacy_open_step_state_when_blocked",
-                "tests/plan_execution.rs::runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state",
+                "tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_state_when_blocked",
+                "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state",
                 "tests/workflow_shell_smoke.rs::fs13_normal_recovery_never_requires_manual_plan_note_edit",
                 "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_round_trip",
             ],
@@ -7896,9 +7491,9 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
         (
             "FS-14",
             &[
-                "tests/workflow_runtime.rs::runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry",
-                "tests/workflow_runtime.rs::runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task",
-                "tests/plan_execution.rs::runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch",
+                "tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry",
+                "tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task",
+                "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch",
                 "tests/workflow_shell_smoke.rs::fs14_recovery_to_close_current_task_uses_only_public_intent_commands",
             ],
         ),
@@ -7907,14 +7502,14 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
             &[
                 "tests/workflow_runtime.rs::runtime_remediation_fs15_earliest_stale_boundary_beats_latest_overlay_target",
                 "tests/workflow_runtime.rs::runtime_remediation_fs15_repair_never_jumps_to_later_task_when_earlier_boundary_exists",
-                "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task",
+                "tests/internal_contracts_execution_runtime_boundaries.rs::internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task",
             ],
         ),
         (
             "FS-16",
             &[
-                "tests/workflow_runtime.rs::runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin_even_if_receipts_need_projection_refresh",
-                "tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts",
+                "tests/public_replay_churn.rs::public_replay_fs16_current_closure_allows_next_begin_after_projection_drift",
+                "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts",
             ],
         ),
     ];

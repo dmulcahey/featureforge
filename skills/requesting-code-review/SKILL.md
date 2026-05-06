@@ -72,33 +72,18 @@ For every interactive user question, use this structure:
 
 Per-skill instructions may add additional formatting rules on top of this baseline.
 
-
 # Requesting Code Review
 
-Dispatch the `code-reviewer` sub-agent or custom agent to catch issues before they cascade. The reviewer gets precisely crafted context for evaluation — never your session's history. This keeps the reviewer focused on the work product, not your thought process, and preserves your own context for continued work.
+Dispatch the `code-reviewer` sub-agent or custom agent with precisely crafted context for evaluation - never your session's history. This keeps the reviewer focused on the work product and preserves your own context for continued work.
 
 In Codex, FeatureForge installs the `code-reviewer` custom agent alongside the shared skills checkout. In GitHub Copilot local installs, FeatureForge installs the same reviewer through the platform's custom-agent path.
 
 **Core principle:** Review at the right checkpoints, then fail closed on the final whole-diff gate.
 
-Invocation identity: `featureforge:requesting-code-review`.
-
-This skill has two valid modes:
-- terminal whole-diff review (workflow-routed final gate after `featureforge:document-release`)
-- non-terminal checkpoint/task-boundary review (targeted dedicated-independent validation before execution continues)
-
-For late-stage phase/action/skill grounding, reference `review/late-stage-precedence-reference.md`.
+Invocation identity: `featureforge:requesting-code-review`. Valid modes: terminal whole-diff review after `featureforge:document-release`, or non-terminal checkpoint/task-boundary review before execution continues. For late-stage phase/action/skill grounding, reference `review/late-stage-precedence-reference.md`.
 
 ## When to Request Review
-**Mandatory:**
-- For the final cross-task review gate in workflow-routed work, after `featureforge:document-release` is current for the same `HEAD`
-- After completing major feature
-- Before merge to the target base branch
-
-**Optional but valuable:**
-- When stuck (fresh perspective)
-- Before refactoring (baseline check)
-- After fixing complex bug
+**Mandatory:** For the final cross-task review gate in workflow-routed work after `featureforge:document-release` is current for the same `HEAD`, after completing major feature work, and before merge to the target base branch.
 
 ## How to Request
 
@@ -120,8 +105,8 @@ For late-stage phase/action/skill grounding, reference `review/late-stage-preced
 - For terminal whole-diff review, if workflow/operator already reports `phase_detail=final_review_outcome_pending`, do not dispatch a second reviewer; wait for the current final-review result or return to the current execution flow.
 - For terminal whole-diff review, when workflow/operator reports `final_review_dispatch_required`, keep the normal path operator-led and treat low-level dispatch commands as compatibility/debug-only.
 - For terminal whole-diff review, do not route the normal path through low-level compatibility/debug dispatch primitives; stay on workflow/operator plus the intent-level commands.
-- For terminal whole-diff review, rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` after the external review result is ready and require `phase_detail=final_review_recording_ready` before recording final-review outcome.
-- After the independent reviewer returns a final-review result, rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready`; when it reports `phase_detail=final_review_recording_ready`, execute that response's `recommended_public_command_argv` when present. If `recommended_public_command_argv[0] == "featureforge"`, run it through `$_FEATUREFORGE_BIN` (or `_featureforge_exec_public_argv`) instead of PATH/workspace-runtime resolution. If argv is absent, satisfy the typed `required_inputs` with the concrete reviewer source, reviewer id, result, and summary path, then rerun workflow/operator. Treat `recommended_command` as display-only input-shape text.
+- For terminal whole-diff review, rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` after the external review result is ready. `phase_detail=final_review_recording_ready` means record the outcome now; `phase_detail=final_review_dispatch_required` means the public `advance-late-stage` recording command will bootstrap current final-review dispatch lineage and record the outcome in the same intent-level call.
+- After the independent reviewer returns a final-review result, rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready`; when it reports `phase_detail=final_review_recording_ready` or `phase_detail=final_review_dispatch_required`, record through public `advance-late-stage` with the concrete reviewer source, reviewer id, result, and summary path. Execute `recommended_public_command_argv` exactly when it already includes the complete executable public mutation for the current route. If `recommended_public_command_argv[0] == "featureforge"`, run it through `$_FEATUREFORGE_BIN` (or `_featureforge_exec_public_argv`) instead of PATH/workspace-runtime resolution. If argv is absent or only bootstraps dispatch lineage, satisfy the typed final-review inputs with the concrete reviewer values before rerunning workflow/operator. Treat `recommended_command` as display-only input-shape text.
 - For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: low-level compatibility/debug dispatch commands are not normal intent-level progression.
 - If operator/status diagnostics surface warning-only compatibility codes such as `legacy_evidence_format`, keep them in review context but do not treat them as blockers while authoritative runtime/operator gate outputs remain non-blocking.
 - Pass the exact approved plan path into the reviewer context. When runtime-owned execution evidence or task-packet context is already available from the current workflow handoff, pass it through as supplemental context; do not make the public flow harvest it manually.
@@ -146,7 +131,7 @@ HEAD_SHA=$(git rev-parse HEAD)
 
 Do not use PR metadata or repo default-branch APIs as a fallback. For workflow-routed review, require `BASE_BRANCH` from `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` (`base_branch`). For non-plan-routed review, require an explicitly provided `BASE_BRANCH`.
 
-The reviewer MUST use the shared review checklist from `review/checklist.md` in the repo when available, otherwise fall back to the installed FeatureForge copy.
+The reviewer MUST use `review/checklist.md` from the repo when available, otherwise the installed FeatureForge copy.
 
 **3. Dispatch the code-reviewer agent:**
 
@@ -154,31 +139,9 @@ Use the `code-reviewer` agent and fill the template at `code-reviewer.md`
 
 For workflow-routed final review, dispatch a dedicated fresh-context reviewer independent of the implementation context. Do not reuse the implementation agent or its session for the terminal whole-diff review gate.
 
-The controller owns any FeatureForge runtime queries before dispatch. Fill the `code-reviewer.md` template with all context the reviewer must consider; if required runtime context is absent, return to the current execution flow instead of dispatching an under-contextualized review. The reviewer prompt owns the reviewer-only recursion contract.
+The controller owns any FeatureForge runtime queries before dispatch. Fill the `code-reviewer.md` template with all context the reviewer must consider, including unfamiliar platform patterns or known footguns when relevant; if required runtime context is absent, return to the current execution flow instead of dispatching an under-contextualized review. The reviewer prompt owns the reviewer-only recursion contract.
 
-When the implementation introduces unfamiliar patterns, framework APIs, dependencies, or bespoke wrappers around platform behavior, make sure the review considers built-in-before-bespoke and known ecosystem footguns.
-
-If the approved plan already called out a likely external-pattern target, you may pass that context into the reviewer briefing, but this is optional in v1.
-
-**Placeholders:**
-- `{WHAT_WAS_IMPLEMENTED}` - What you just built
-- `{PLAN_OR_REQUIREMENTS}` - What it should do, including completed task-packet context and coverage matrix details for plan-routed review
-- `{APPROVED_PLAN_PATH}` - Exact approved plan path for plan-routed review, otherwise leave blank
-- `{EXECUTION_EVIDENCE_PATH}` - Optional runtime-provided evidence artifact path for plan-routed review, otherwise leave blank
-- `{BASE_BRANCH}` - The runtime-provided or explicitly supplied base branch name
-- `{BASE_SHA}` - Starting commit
-- `{HEAD_SHA}` - Ending commit
-- `{WORKING_TREE_DIFF_HASH}` - Hash of `git diff` for the review scope
-- `{INSTALLED_RUNTIME_PATH}` - Installed runtime path used for live workflow routing
-- `{INSTALLED_RUNTIME_HASH}` - Installed runtime hash used for live workflow routing
-- `{WORKSPACE_RUNTIME_HASH}` - Workspace runtime hash used for tests/fixtures, or `none`
-- `{LIVE_STATE_DIR}` - State directory used for live workflow commands
-- `{ACTIVE_FEATUREFORGE_SKILL_SOURCE}` - Active FeatureForge skill source from runtime provenance, for example `installed`, `workspace`, `mixed`, `unknown`, or `none`
-- `{ACTIVE_FEATUREFORGE_SKILL_ROOTS}` - Active FeatureForge skill discovery roots from runtime provenance, or `none`
-- `{INSTALLED_SKILL_ROOT}` - Installed skill root from runtime provenance, normally `$HOME/.featureforge/install/skills`
-- `{WORKSPACE_SKILL_ROOT}` - Workspace skill root from runtime provenance, normally `<repo>/skills`
-- `{WORKSPACE_RUNTIME_LIVE_MUTATION_CONFIRMATION}` - Confirm workspace runtime did not mutate live state, or record explicit approved override
-- `{DESCRIPTION}` - Brief summary
+Use `code-reviewer.md` as the placeholder source of truth. Fill all plan, diff, runtime-provenance, skill-root, live-state, and description fields before dispatch.
 
 **3.5. Required review-dispatch provenance for FeatureForge-on-FeatureForge work:**
 - Before dispatch, include a provenance section in the review handoff with: base branch, base SHA, head SHA, working-tree diff hash, installed runtime path/hash used for live routing, workspace runtime hash used for tests (if any), live state dir, active FeatureForge skill source/roots, installed skill root, and workspace skill root.
@@ -188,12 +151,7 @@ If the approved plan already called out a likely external-pattern target, you ma
 - Reviewers must fail review when FeatureForge-on-FeatureForge provenance is missing or incomplete.
 
 **4. Act on feedback:**
-- Fix Critical issues immediately
-- Fix Important issues before proceeding
-- Note Minor issues for later
-- Capture documentation or TODO follow-ups instead of silently dropping them
-- Push back if reviewer is wrong (with reasoning)
-- Review findings must use deterministic repair-packet fields: `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail`.
+Fix Critical issues immediately and Important issues before proceeding. Note Minor issues for later, push back on incorrect findings with code/test evidence, and require deterministic repair-packet fields: `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail`.
 
 **4.25. Enforce runtime-owned remediation checkpoints before fixes:**
 
@@ -246,11 +204,11 @@ HEAD_SHA=$(git rev-parse HEAD)
 # Stop here: dispatch the dedicated fresh-context reviewer, wait for its result, then set REVIEW_RESULT=pass|fail and SUMMARY_FILE=<actual-final-review-summary>.
 RECORDING_READY_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --external-review-result-ready --json)
 RECORDING_PHASE_DETAIL=$(printf '%s\n' "$RECORDING_READY_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
-if [ "$RECORDING_PHASE_DETAIL" != "final_review_recording_ready" ]; then
-  echo "Stop and return to execution: workflow/operator did not expose final-review recording readiness."
+if [ "$RECORDING_PHASE_DETAIL" != "final_review_recording_ready" ] && [ "$RECORDING_PHASE_DETAIL" != "final_review_dispatch_required" ]; then
+  echo "Stop and return to execution: workflow/operator did not expose public final-review outcome recording or dispatch bootstrap."
   exit 1
 fi
-# If RECORDING_READY_JSON includes recommended_public_command_argv, execute that argv exactly. Do not parse recommended_command; it is display-only input-shape text.
+# If RECORDING_READY_JSON includes a complete recommended_public_command_argv for recording, execute that argv exactly. If the route is still final_review_dispatch_required, the explicit public command below bootstraps dispatch lineage and records the outcome in one intent-level call. Do not parse recommended_command; it is display-only input-shape text.
 # The explicit command below is an input shape; use it only after all placeholders have been replaced with actual review values.
 "$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "$APPROVED_PLAN_PATH" --reviewer-source fresh-context-subagent --reviewer-id <actual-reviewer-id> --result "$REVIEW_RESULT" --summary-file "$SUMMARY_FILE"
 ```
@@ -261,22 +219,15 @@ See `$_FEATUREFORGE_ROOT/references/execution-review-qa-examples.md` for example
 
 - rejects final review if the plan has invalid execution state or required unfinished work not truthfully represented
 - when diagnostic status is required, treats non-null `active_task`, `blocking_task`, or `resume_task` as execution-dirty and rejects final review until execution returns to a clean state
-- uses `$_FEATUREFORGE_BIN workflow operator --plan ...` as the authoritative late-stage route, requests external final review when operator reports `final_review_dispatch_required`, and records final-review outcome through the operator response's `recommended_public_command_argv` when present, using the explicit `advance-late-stage` shape only after `--external-review-result-ready` exposes `final_review_recording_ready`
+- uses `$_FEATUREFORGE_BIN workflow operator --plan ...` as the authoritative late-stage route, requests external final review when operator reports `final_review_dispatch_required`, and records final-review outcome through public `advance-late-stage` after `--external-review-result-ready` exposes either `final_review_recording_ready` or `final_review_dispatch_required`
 - accepts runtime-provided supplemental review context when the current workflow handoff already includes it, but does not require manual status/evidence/task-packet harvesting in the normal path
 - treats any derived reviewer projection metadata or provenance artifacts as runtime-owned output, not routing authority
 - must fail closed when it detects a missed reopen or stale evidence, but must not call `reopen` itself
 
 ## Red Flags
 
-**Never:**
-- Skip review because "it's simple"
-- Ignore Critical issues
-- Proceed with unfixed Important issues
-- Argue with valid technical feedback
+Never skip review because "it's simple", ignore Critical issues, proceed with unfixed Important issues, or argue with valid technical feedback.
 
-**If reviewer wrong:**
-- Push back with technical reasoning
-- Show code/tests that prove it works
-- Request clarification
+If reviewer feedback is wrong, push back with technical reasoning, code/tests, or a clarification request.
 
 See template at: code-reviewer.md

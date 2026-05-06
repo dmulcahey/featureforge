@@ -83,22 +83,11 @@ Read relevant docs, classify safe factual corrections as `Auto-update`, and mark
 
 ## Step 3: Apply safe factual updates
 
-Make the clear factual updates directly.
-
-For each file changed, record a one-line summary such as:
-- `README.md: added qa-only to the public skill list and updated the skill count`
-- `docs/README.codex.md: documented ~/.featureforge/projects/ artifact storage`
-
-Do not silently rewrite positioning, philosophy, or security promises.
+Make clear factual updates directly and report one line per changed file. Do not silently rewrite positioning, philosophy, or security promises.
 
 ## Step 4: Ask about risky changes
 
-For each risky or questionable update, use one interactive user question:
-- State the doc file and the decision
-- Give a recommendation
-- Include a skip option
-
-Apply approved changes immediately after each answer.
+For each risky update, use one interactive user question naming the file, decision, recommendation, and skip option. Apply approved changes immediately.
 
 ## Step 5: CHANGELOG or release-notes voice polish
 
@@ -108,34 +97,19 @@ This step polishes voice. It does not replace history.
 
 If the repo keeps release history in `CHANGELOG.md`, use that file. Otherwise, use the equivalent release-notes file (for example `RELEASE-NOTES.md`) for this step.
 
-Rules:
-1. Read the full current release-history file before touching it
-2. Preserve existing entries and ordering
-3. Only polish wording inside the current entry when the meaning stays the same
-4. If an entry appears factually wrong or incomplete, ask instead of rewriting it
+Rules: read the full file first, preserve entries and ordering, polish only the current entry without changing meaning, and ask before fixing apparently wrong or incomplete entries.
 
 If the diff does not touch the current release-history file, skip this step.
 
 ## Step 6: Cross-doc consistency and discoverability
 
-After auditing files individually, do one discoverability pass:
-
-1. Do README and install docs describe the same public workflows?
-2. Does the latest `CHANGELOG.md` or release-notes entry align with `VERSION`, if both exist?
-3. Are important docs discoverable from README or the main contributor docs?
+After auditing files individually, do one discoverability pass: README/install workflow consistency, release-history/version consistency, and links from README or contributor docs to important docs.
 
 If a doc exists but nothing links to it, flag it as a discoverability issue and make the smallest safe fix.
 
 ## Step 6.5: Release-readiness pass
 
-Run an explicit release-readiness pass before finishing:
-
-1. Are refreshed docs present anywhere behavior or contributor workflows changed?
-2. Are release notes or equivalent release-history updates present when the diff changes user-visible or operator-visible behavior?
-3. Are rollout notes documented when the change meaningfully affects release or operations?
-4. Are rollback notes documented when rollback is non-trivial?
-5. Are known risks or operator-facing caveats documented when they matter?
-6. Are monitoring or verification expectations documented when the change introduces operational risk?
+Run an explicit release-readiness pass before finishing: refreshed docs for changed behavior/workflows, release-history updates for user/operator-visible behavior, rollout notes, non-trivial rollback notes, material risks/caveats, and monitoring or verification expectations.
 
 If any of these are materially missing, stop and fix them or ask the user before calling the branch ready to finish.
 

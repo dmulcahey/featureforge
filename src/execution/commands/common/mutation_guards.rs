@@ -61,6 +61,11 @@ pub(in crate::execution::commands) fn begin_failure_class_from_blocking_reason_c
         return FailureClass::MalformedExecutionState;
     }
     if reason_codes.iter().any(|reason_code| {
+        crate::contracts::plan::is_engineering_approval_fidelity_reason_code(reason_code)
+    }) {
+        return FailureClass::PlanNotExecutionReady;
+    }
+    if reason_codes.iter().any(|reason_code| {
         matches!(
             reason_code.as_str(),
             "current_task_closure_overlay_restore_required"

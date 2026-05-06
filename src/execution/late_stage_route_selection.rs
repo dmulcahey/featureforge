@@ -7,10 +7,10 @@ use crate::execution::next_action::{
     NextActionDecision, NextActionKind, advance_late_stage_public_command,
     canonical_review_state_status, transfer_handoff_public_command,
 };
-use crate::execution::state::{
-    ExecutionContext, GateResult, PlanExecutionStatus, document_release_pending_phase_detail,
-    qa_pending_requires_test_plan_refresh,
-};
+use crate::execution::query::canonical_phase_for_shared_decision;
+use crate::execution::read_model::document_release_pending_phase_detail;
+use crate::execution::read_model_support::qa_pending_requires_test_plan_refresh;
+use crate::execution::state::{ExecutionContext, GateResult, PlanExecutionStatus};
 
 pub(crate) struct LateStageRouteInputs<'a> {
     pub(crate) context: &'a ExecutionContext,
@@ -171,16 +171,16 @@ pub(crate) fn late_stage_decision(
         crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
         | crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
         | crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED
+        | crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
         | crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY
-        | crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED => {
+        | crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED
+        | crate::execution::phase::DETAIL_FINISH_REVIEW_GATE_READY
+        | crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY => {
             public_advance_late_stage_mode_for_phase_detail(phase_detail)
                 .map(|mode| advance_late_stage_public_command(plan_path, mode))
         }
-        crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-        | crate::execution::phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
-        | crate::execution::phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED
-        | crate::execution::phase::DETAIL_FINISH_REVIEW_GATE_READY
-        | crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY => None,
+        crate::execution::phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
+        | crate::execution::phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED => None,
         crate::execution::phase::DETAIL_HANDOFF_RECORDING_REQUIRED => {
             let scope = shared_handoff_decision_scope(
                 status.active_task,
@@ -196,39 +196,7 @@ pub(crate) fn late_stage_decision(
     };
     NextActionDecision {
         kind,
-        phase: match phase_detail {
-            crate::execution::phase::DETAIL_TASK_REVIEW_RESULT_PENDING
-            | crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY => {
-                String::from(crate::execution::phase::PHASE_TASK_CLOSURE_PENDING)
-            }
-            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
-            | crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
-            | crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => {
-                String::from(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING)
-            }
-            crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-                if status.harness_phase == HarnessPhase::DocumentReleasePending =>
-            {
-                String::from(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING)
-            }
-            crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-            | crate::execution::phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
-            | crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY => {
-                String::from(crate::execution::phase::PHASE_FINAL_REVIEW_PENDING)
-            }
-            crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED
-            | crate::execution::phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED => {
-                String::from(crate::execution::phase::PHASE_QA_PENDING)
-            }
-            crate::execution::phase::DETAIL_FINISH_REVIEW_GATE_READY
-            | crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY => {
-                String::from(crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION)
-            }
-            crate::execution::phase::DETAIL_HANDOFF_RECORDING_REQUIRED => {
-                String::from(crate::execution::phase::PHASE_HANDOFF_REQUIRED)
-            }
-            _ => status.harness_phase.as_str().to_owned(),
-        },
+        phase: canonical_phase_for_shared_decision(status.harness_phase.as_str(), phase_detail),
         phase_detail: String::from(phase_detail),
         review_state_status: canonical_review_state_status(status),
         task_number: status

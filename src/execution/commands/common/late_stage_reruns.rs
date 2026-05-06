@@ -68,6 +68,12 @@ pub(in crate::execution::commands) fn equivalent_current_release_readiness_rerun
     {
         return Ok(None);
     }
+    let recovery = public_recovery_contract_for_follow_up(
+        Path::new(&context.plan_rel),
+        None,
+        (result == "blocked").then(|| String::from("resolve_release_blocker")),
+        PublicFollowUpInputProfile::ReleaseReadiness,
+    );
     Ok(Some(AdvanceLateStageOutput {
         action: String::from("already_current"),
         stage_path: stage_path.to_owned(),
@@ -77,11 +83,11 @@ pub(in crate::execution::commands) fn equivalent_current_release_readiness_rerun
         dispatch_id: None,
         result: result.to_owned(),
         code: None,
-        recommended_command: None,
-        recommended_public_command_argv: None,
-        required_inputs: Vec::new(),
-        rederive_via_workflow_operator: None,
-        required_follow_up: (result == "blocked").then(|| String::from("resolve_release_blocker")),
+        recommended_command: recovery.recommended_command,
+        recommended_public_command_argv: recovery.recommended_public_command_argv,
+        required_inputs: recovery.required_inputs,
+        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+        required_follow_up: recovery.required_follow_up,
         trace_summary: String::from(
             "Current branch closure already has an equivalent recorded release-readiness outcome.",
         ),
@@ -126,6 +132,12 @@ pub(in crate::execution::commands) fn equivalent_current_final_review_rerun(
     )? {
         return Ok(None);
     }
+    let recovery = public_recovery_contract_for_follow_up(
+        Path::new(&context.plan_rel),
+        None,
+        params.required_follow_up,
+        PublicFollowUpInputProfile::FinalReview,
+    );
     Ok(Some(AdvanceLateStageOutput {
         action: String::from("already_current"),
         stage_path: params.stage_path.to_owned(),
@@ -135,11 +147,11 @@ pub(in crate::execution::commands) fn equivalent_current_final_review_rerun(
         dispatch_id: Some(params.dispatch_id.to_owned()),
         result: params.result.to_owned(),
         code: None,
-        recommended_command: None,
-        recommended_public_command_argv: None,
-        required_inputs: Vec::new(),
-        rederive_via_workflow_operator: None,
-        required_follow_up: params.required_follow_up,
+        recommended_command: recovery.recommended_command,
+        recommended_public_command_argv: recovery.recommended_public_command_argv,
+        required_inputs: recovery.required_inputs,
+        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+        required_follow_up: recovery.required_follow_up,
         trace_summary: String::from(
             "Current branch closure already has an equivalent recorded final-review outcome.",
         ),
@@ -193,16 +205,22 @@ pub(in crate::execution::commands) fn equivalent_current_browser_qa_rerun(
             Err(error) => return Err(error),
         }
     }
+    let recovery = public_recovery_contract_for_follow_up(
+        Path::new(&context.plan_rel),
+        None,
+        required_follow_up,
+        PublicFollowUpInputProfile::None,
+    );
     Ok(Some(RecordQaOutput {
         action: String::from("already_current"),
         branch_closure_id: current_branch_closure.branch_closure_id.clone(),
         result: result.to_owned(),
         code: None,
-        recommended_command: None,
-        recommended_public_command_argv: None,
-        required_inputs: Vec::new(),
-        rederive_via_workflow_operator: None,
-        required_follow_up,
+        recommended_command: recovery.recommended_command,
+        recommended_public_command_argv: recovery.recommended_public_command_argv,
+        required_inputs: recovery.required_inputs,
+        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+        required_follow_up: recovery.required_follow_up,
         trace_summary: String::from(
             "Current branch closure already has an equivalent recorded browser QA outcome.",
         ),

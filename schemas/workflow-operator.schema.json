@@ -596,9 +596,11 @@
       ]
     },
     "recommended_command": {
+      "description": "Display-only compatibility summary; do not parse or execute this string. Use recommended_public_command_argv when present.",
       "type": "string"
     },
     "recommended_public_command_argv": {
+      "description": "Executable public command argv authority when present. Run these tokens as argv instead of parsing recommended_command.",
       "items": {
         "type": "string"
       },
@@ -611,6 +613,7 @@
       "$ref": "#/$defs/WorkflowOperatorRecordingContext"
     },
     "required_inputs": {
+      "description": "Parseable input contract for the routed public command when executable argv cannot be emitted yet.",
       "items": {
         "$ref": "#/$defs/PublicCommandInputRequirement"
       },

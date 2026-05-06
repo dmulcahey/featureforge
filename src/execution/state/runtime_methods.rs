@@ -10,6 +10,7 @@ use crate::execution::command_eligibility::{
     PublicAdvanceLateStageMode, PublicCommand, PublicCommandInputRequirement,
     recommended_public_command_display,
 };
+use crate::execution::implementation_gate::apply_pre_execution_plan_fidelity_gate;
 use crate::execution::next_action::repair_review_state_public_command;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -44,6 +45,7 @@ impl ExecutionRuntime {
             args.external_review_result_ready,
             false,
         )?;
+        apply_pre_execution_plan_fidelity_gate(&read_scope.context, &mut read_scope.status);
         apply_public_read_invariants_to_status(&mut read_scope.status);
         Ok(read_scope.status)
     }
@@ -457,6 +459,13 @@ fn gate_should_rederive_via_workflow_operator(
     gate: &GateResult,
     external_review_result_ready: bool,
 ) -> bool {
+    if gate
+        .reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "finish_review_gate_already_current")
+    {
+        return true;
+    }
     gate.allowed
         || specific_gate_direct_recommendation(context, gate, external_review_result_ready)
             .is_none()
@@ -528,9 +537,14 @@ fn apply_out_of_phase_gate_contract(
     gate: &mut GateResult,
     external_review_result_ready: bool,
 ) {
-    if let Some(route_decision) =
-        gate_follow_up_routing_state(context, external_review_result_ready)
-            .and_then(|routing| routing.route_decision)
+    let force_operator_requery = gate
+        .reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "finish_review_gate_already_current");
+    if !force_operator_requery
+        && let Some(route_decision) =
+            gate_follow_up_routing_state(context, external_review_result_ready)
+                .and_then(|routing| routing.route_decision)
     {
         let required_inputs = route_decision.required_inputs;
         if let Some(command) = route_decision

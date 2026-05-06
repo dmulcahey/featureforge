@@ -216,19 +216,20 @@ fn collect_use_aliases_from_tree(
 
 struct UseAliasCollector<'a> {
     rel: &'a str,
+    include_test_cfg_items: bool,
     aliases: BTreeMap<String, String>,
 }
 
 impl<'ast> Visit<'ast> for UseAliasCollector<'_> {
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
-        if attrs_include_test_only_cfg(&item.attrs) {
+        if should_skip_test_only_cfg(self.include_test_cfg_items, &item.attrs) {
             return;
         }
         visit::visit_item_mod(self, item);
     }
 
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
-        if attrs_include_test_only_cfg(&item.attrs) {
+        if should_skip_test_only_cfg(self.include_test_cfg_items, &item.attrs) {
             return;
         }
         collect_use_aliases_from_tree(self.rel, "", &item.tree, &mut self.aliases);
@@ -239,6 +240,7 @@ impl<'ast> Visit<'ast> for UseAliasCollector<'_> {
 pub fn use_aliases(rel: &str, syntax: &syn::File) -> BTreeMap<String, String> {
     let mut collector = UseAliasCollector {
         rel,
+        include_test_cfg_items: include_test_cfg_items_for_source(rel),
         aliases: BTreeMap::new(),
     };
     collector.visit_file(syntax);
@@ -373,6 +375,15 @@ pub fn attrs_include_test_only_cfg(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(cfg_attr_is_test_only)
 }
 
+fn include_test_cfg_items_for_source(rel: &str) -> bool {
+    let normalized = rel.replace('\\', "/");
+    normalized.starts_with("tests/") || normalized.contains("/tests/")
+}
+
+fn should_skip_test_only_cfg(include_test_cfg_items: bool, attrs: &[syn::Attribute]) -> bool {
+    !include_test_cfg_items && attrs_include_test_only_cfg(attrs)
+}
+
 struct DependencyPathCollector<'a> {
     rel: &'a str,
     aliases: &'a BTreeMap<String, String>,
@@ -478,6 +489,7 @@ struct CallPathCollector<'a> {
     runtime_receiver_scopes: Vec<BTreeMap<String, Option<String>>>,
     excluded_functions: BTreeSet<&'a str>,
     selected_function: Option<&'a str>,
+    include_test_cfg_items: bool,
     active_depth: usize,
     calls: Vec<RustCallPath>,
 }
@@ -648,14 +660,14 @@ impl CallPathCollector<'_> {
 
 impl<'ast> Visit<'ast> for CallPathCollector<'_> {
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
-        if attrs_include_test_only_cfg(&node.attrs) {
+        if should_skip_test_only_cfg(self.include_test_cfg_items, &node.attrs) {
             return;
         }
         visit::visit_item_mod(self, node);
     }
 
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        if attrs_include_test_only_cfg(&node.attrs)
+        if should_skip_test_only_cfg(self.include_test_cfg_items, &node.attrs)
             || self
                 .excluded_functions
                 .contains(node.sig.ident.to_string().as_str())
@@ -676,7 +688,7 @@ impl<'ast> Visit<'ast> for CallPathCollector<'_> {
     }
 
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
-        if attrs_include_test_only_cfg(&node.attrs)
+        if should_skip_test_only_cfg(self.include_test_cfg_items, &node.attrs)
             || self
                 .excluded_functions
                 .contains(node.sig.ident.to_string().as_str())
@@ -823,6 +835,7 @@ fn normalized_call_paths_for_selection(
         runtime_receiver_scopes: vec![BTreeMap::new()],
         excluded_functions: excluded_functions.iter().copied().collect(),
         selected_function,
+        include_test_cfg_items: include_test_cfg_items_for_source(rel),
         active_depth: 0,
         calls: Vec::new(),
     };
@@ -860,6 +873,7 @@ pub fn normalized_call_path_hits(
         runtime_receiver_scopes: vec![BTreeMap::new()],
         excluded_functions: excluded_functions.iter().copied().collect(),
         selected_function: None,
+        include_test_cfg_items: include_test_cfg_items_for_source(rel),
         active_depth: 0,
         calls: Vec::new(),
     };
@@ -1181,12 +1195,13 @@ pub struct RustFunctionSpan {
 }
 
 struct FunctionSpanCollector {
+    include_test_cfg_items: bool,
     spans: Vec<RustFunctionSpan>,
 }
 
 impl FunctionSpanCollector {
     fn record_function(&mut self, name: String, attrs: &[syn::Attribute], block: &syn::Block) {
-        if attrs_include_test_only_cfg(attrs) {
+        if should_skip_test_only_cfg(self.include_test_cfg_items, attrs) {
             return;
         }
         let start_line = block.brace_token.span.open().start().line;
@@ -1201,7 +1216,7 @@ impl FunctionSpanCollector {
 
 impl<'ast> Visit<'ast> for FunctionSpanCollector {
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
-        if attrs_include_test_only_cfg(&node.attrs) {
+        if should_skip_test_only_cfg(self.include_test_cfg_items, &node.attrs) {
             return;
         }
         visit::visit_item_mod(self, node);
@@ -1220,7 +1235,10 @@ impl<'ast> Visit<'ast> for FunctionSpanCollector {
 
 pub fn function_spans(rel: &str, source: &str) -> Vec<RustFunctionSpan> {
     let syntax = parse_rust_source(rel, source);
-    let mut collector = FunctionSpanCollector { spans: Vec::new() };
+    let mut collector = FunctionSpanCollector {
+        include_test_cfg_items: include_test_cfg_items_for_source(rel),
+        spans: Vec::new(),
+    };
     collector.visit_file(&syntax);
     collector.spans.sort_by(|left, right| {
         left.start_line

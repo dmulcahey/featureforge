@@ -59,6 +59,7 @@ use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, DownstreamFreshnessState, EvaluationVerdict, EvaluatorKind,
     ExecutionRunId, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE,
 };
+use crate::execution::implementation_gate::apply_pre_execution_plan_fidelity_gate;
 #[cfg(test)]
 use crate::execution::internal_args::{RecordReviewDispatchArgs, ReviewDispatchScopeArg};
 use crate::execution::leases::{
@@ -208,6 +209,7 @@ pub(crate) fn public_status_from_context_with_shared_routing(
 ) -> Result<PlanExecutionStatus, JsonFailure> {
     let mut status =
         status_from_context_with_shared_routing(runtime, context, external_review_result_ready)?;
+    apply_pre_execution_plan_fidelity_gate(context, &mut status);
     apply_public_read_invariants_to_status(&mut status);
     Ok(status)
 }
@@ -234,6 +236,7 @@ pub(crate) fn public_status_from_supplied_context_with_shared_routing(
         external_review_result_ready,
         true,
     )?;
+    apply_pre_execution_plan_fidelity_gate(&read_scope.context, &mut read_scope.status);
     apply_public_read_invariants_to_status(&mut read_scope.status);
     Ok(read_scope.status)
 }

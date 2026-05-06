@@ -455,7 +455,7 @@ pub fn render_phase_for_runtime(runtime: &ExecutionRuntime) -> Result<String, Js
 
 fn render_phase_from_context(context: &OperatorContext) -> String {
     format!(
-        "Workflow phase: {}\nPhase detail: {}\nReview state: {}\nRoute status: {}\nNext action: {}\nRecommended command: {}\nNext: {}\nSpec: {}\nPlan: {}\n",
+        "Workflow phase: {}\nPhase detail: {}\nReview state: {}\nRoute status: {}\nNext action: {}\nDisplay command summary: {}\nCommand execution authority: Use JSON recommended_public_command_argv for execution.\nNext: {}\nSpec: {}\nPlan: {}\n",
         context.phase,
         context.operator_phase_detail,
         context.operator_review_state_status,
@@ -695,7 +695,7 @@ pub fn render_doctor_for_runtime_with_args(
 
 fn render_doctor_output(doctor: &WorkflowDoctor) -> String {
     let mut output = format!(
-        "Workflow doctor\nPhase: {}\nPhase detail: {}\nReview state: {}\nRoute status: {}\nNext action: {}\nRecommended command: {}\nNext: {}\nContract state: {}\nSpec: {}\nPlan: {}\n",
+        "Workflow doctor\nPhase: {}\nPhase detail: {}\nReview state: {}\nRoute status: {}\nNext action: {}\nDisplay command summary: {}\nCommand execution authority: Use JSON recommended_public_command_argv for execution.\nNext: {}\nContract state: {}\nSpec: {}\nPlan: {}\n",
         doctor.phase,
         doctor.phase_detail,
         doctor.review_state_status,
@@ -1039,9 +1039,15 @@ pub fn render_operator(operator: WorkflowOperator) -> String {
     if let Some(raw_workspace_tree_id) = operator.raw_workspace_tree_id.as_deref() {
         output.push_str(&format!("Raw workspace tree id: {raw_workspace_tree_id}\n"));
     }
+    let renders_command_summary = operator.recommended_command.is_some()
+        || operator.next_public_action.is_some()
+        || operator
+            .blockers
+            .iter()
+            .any(|blocker| blocker.next_public_action.is_some());
     if let Some(next_public_action) = operator.next_public_action.as_ref() {
         output.push_str(&format!(
-            "Next public action: {}\n",
+            "Next public action display summary: {}\n",
             next_public_action.command
         ));
     }
@@ -1049,15 +1055,20 @@ pub fn render_operator(operator: WorkflowOperator) -> String {
         output.push_str("Blockers:\n");
         for blocker in &operator.blockers {
             output.push_str(&format!(
-                "- {} scope={} next={}\n",
+                "- {} scope={} next_display_summary={}\n",
                 blocker.category,
                 blocker.scope_key,
                 blocker.next_public_action.as_deref().unwrap_or("none")
             ));
         }
     }
-    if let Some(recommended_command) = operator.recommended_command {
-        output.push_str(&format!("Recommended command: {recommended_command}\n"));
+    if let Some(recommended_command) = operator.recommended_command.as_deref() {
+        output.push_str(&format!("Display command summary: {recommended_command}\n"));
+    }
+    if renders_command_summary {
+        output.push_str(
+            "Command execution authority: Use JSON recommended_public_command_argv for execution.\n",
+        );
     }
     output
 }
@@ -1081,7 +1092,7 @@ fn render_handoff_output(handoff: &WorkflowHandoff) -> String {
     output.push_str(&format!("Route status: {}\n", handoff.route_status));
     output.push_str(&format!("Next action: {}\n", handoff.next_action));
     output.push_str(&format!(
-        "Recommended command: {}\n",
+        "Display command summary: {}\nCommand execution authority: Use JSON recommended_public_command_argv for execution.\n",
         optional_text(handoff.recommended_command.as_deref())
     ));
     output.push_str(&format!("State kind: {}\n", handoff.state_kind));
@@ -1096,7 +1107,7 @@ fn render_handoff_output(handoff: &WorkflowHandoff) -> String {
     }
     if let Some(next_public_action) = handoff.next_public_action.as_ref() {
         output.push_str(&format!(
-            "Next public action: {}\n",
+            "Next public action display summary: {}\n",
             next_public_action.command
         ));
     }
@@ -1104,7 +1115,7 @@ fn render_handoff_output(handoff: &WorkflowHandoff) -> String {
         output.push_str("Blockers:\n");
         for blocker in &handoff.blockers {
             output.push_str(&format!(
-                "- {} scope={} next={}\n",
+                "- {} scope={} next_display_summary={}\n",
                 blocker.category,
                 blocker.scope_key,
                 blocker.next_public_action.as_deref().unwrap_or("none")
@@ -1298,11 +1309,11 @@ fn build_context_from_routing(
         .as_ref()
         .map(|status| status.review_state_status.clone())
         .unwrap_or(review_state_status);
-    let mut operator_blocking_scope = execution_status
+    let operator_blocking_scope = execution_status
         .as_ref()
         .and_then(|status| status.blocking_scope.clone())
         .or(blocking_scope);
-    let mut operator_blocking_task = execution_status
+    let operator_blocking_task = execution_status
         .as_ref()
         .and_then(|status| status.blocking_task)
         .or(blocking_task);
@@ -1318,28 +1329,6 @@ fn build_context_from_routing(
         .as_ref()
         .map(|status| merge_status_projection_diagnostics(diagnostic_reason_codes.clone(), status))
         .unwrap_or(diagnostic_reason_codes);
-    if operator_phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
-        && let Some(task_number) = operator_execution_command_context
-            .as_ref()
-            .and_then(|context| context.task_number)
-    {
-        operator_blocking_scope = Some(String::from("task"));
-        operator_blocking_task = Some(task_number);
-    } else if operator_phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
-        && let Some(task_number) = execution_status
-            .as_ref()
-            .and_then(task_blocking_record_task)
-    {
-        operator_blocking_scope = Some(String::from("task"));
-        operator_blocking_task = Some(task_number);
-    } else if operator_phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
-        && let Some(task_number) = operator_recording_context
-            .as_ref()
-            .and_then(|context| context.task_number)
-    {
-        operator_blocking_scope = Some(String::from("task"));
-        operator_blocking_task = Some(task_number);
-    }
     let (
         operator_state_kind,
         operator_next_public_action,
@@ -1433,22 +1422,6 @@ fn doctor_self_hosting_warning(runtime_provenance: Option<&RuntimeProvenance>) -
     } else {
         Some(warnings.join(" "))
     }
-}
-
-fn task_blocking_record_task(status: &PlanExecutionStatus) -> Option<u32> {
-    status.blocking_records.iter().find_map(|record| {
-        if record.scope_type != "task" {
-            return None;
-        }
-        let raw = record.scope_key.strip_prefix("task-")?;
-        let digits = raw
-            .chars()
-            .take_while(|character| character.is_ascii_digit())
-            .collect::<String>();
-        (!digits.is_empty())
-            .then(|| digits.parse::<u32>().ok())
-            .flatten()
-    })
 }
 
 fn operator_plan_path(context: &OperatorContext, args: &OperatorArgs) -> String {
@@ -1781,7 +1754,7 @@ fn task_boundary_next_step_text(context: &OperatorContext) -> Option<String> {
     let reason = task_boundary_reason_text(context)?;
     if let Some(recommended_command) = context.operator_recommended_command.as_deref() {
         return Some(format!(
-            "{reason} Follow the routed command: {recommended_command}"
+            "{reason} Use JSON recommended_public_command_argv for execution; display command summary: {recommended_command}"
         ));
     }
     Some(reason)
@@ -2077,6 +2050,19 @@ mod tests {
         assert!(rendered.contains(
             "Execution command context: command_kind=complete, task_number=1, step_id=2"
         ));
+        assert!(rendered.contains("Next public action display summary:"));
+        assert!(rendered.contains("next_display_summary=close_current_task"));
+        assert!(rendered.contains(
+            "Command execution authority: Use JSON recommended_public_command_argv for execution."
+        ));
+        assert!(
+            !rendered.contains("Next public action: featureforge"),
+            "command-shaped text must be labeled as display-only: {rendered}"
+        );
+        assert!(
+            !rendered.contains(" next=featureforge"),
+            "blocker command-shaped text must be labeled as display-only: {rendered}"
+        );
     }
 
     #[test]

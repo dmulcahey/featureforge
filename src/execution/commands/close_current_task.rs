@@ -39,6 +39,12 @@ pub fn close_current_task(
         )? {
             TaskDispatchReviewedStateStatus::Current => {}
             TaskDispatchReviewedStateStatus::MissingReviewedStateBinding => {
+                let recovery = public_recovery_contract_for_follow_up(
+                    &args.plan,
+                    None,
+                    Some(String::from("request_external_review")),
+                    PublicFollowUpInputProfile::TaskReview { task: args.task },
+                );
                 return Ok(blocked_close_current_task_output(
                     BlockedCloseCurrentTaskOutputContext {
                         task_number: args.task,
@@ -46,16 +52,22 @@ pub fn close_current_task(
                         task_closure_status: "not_current",
                         closure_record_id: None,
                         code: None,
-                        recommended_command: None,
-                        recommended_public_command_argv: None,
-                        required_inputs: Vec::new(),
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("request_external_review")),
+                        recommended_command: recovery.recommended_command,
+                        recommended_public_command_argv: recovery.recommended_public_command_argv,
+                        required_inputs: recovery.required_inputs,
+                        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                        required_follow_up: recovery.required_follow_up,
                         trace_summary: "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
                     },
                 ));
             }
             TaskDispatchReviewedStateStatus::StaleReviewedState => {
+                let recovery = public_recovery_contract_for_follow_up(
+                    &args.plan,
+                    None,
+                    Some(String::from("execution_reentry")),
+                    PublicFollowUpInputProfile::None,
+                );
                 return Ok(blocked_close_current_task_output(
                     BlockedCloseCurrentTaskOutputContext {
                         task_number: args.task,
@@ -63,11 +75,11 @@ pub fn close_current_task(
                         task_closure_status: "not_current",
                         closure_record_id: None,
                         code: None,
-                        recommended_command: None,
-                        recommended_public_command_argv: None,
-                        required_inputs: Vec::new(),
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
+                        recommended_command: recovery.recommended_command,
+                        recommended_public_command_argv: recovery.recommended_public_command_argv,
+                        required_inputs: recovery.required_inputs,
+                        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                        required_follow_up: recovery.required_follow_up,
                         trace_summary: "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
                     },
                 ));
@@ -86,7 +98,7 @@ pub fn close_current_task(
             &initial_reviewed_state_id,
         ) {
             let operator = current_workflow_operator(runtime, &args.plan, true)?;
-            let follow_up = close_current_task_follow_up_and_command(&operator);
+            let recovery = close_current_task_recovery_contract(&args.plan, &operator, args.task);
             return Ok(with_close_current_task_operator_blocker_metadata(
                 blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                     task_number: args.task,
@@ -94,11 +106,11 @@ pub fn close_current_task(
                     task_closure_status: "not_current",
                     closure_record_id: None,
                     code: None,
-                    recommended_command: follow_up.recommended_command,
-                    recommended_public_command_argv: follow_up.recommended_public_command_argv,
-                    required_inputs: follow_up.required_inputs,
-                    rederive_via_workflow_operator: None,
-                    required_follow_up: follow_up.required_follow_up,
+                    recommended_command: recovery.recommended_command,
+                    recommended_public_command_argv: recovery.recommended_public_command_argv,
+                    required_inputs: recovery.required_inputs,
+                    rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                    required_follow_up: recovery.required_follow_up,
                     trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
                 }),
                 &operator,
@@ -169,6 +181,12 @@ pub fn close_current_task(
                 ));
             } else {
                 let operator = current_workflow_operator(runtime, &args.plan, true)?;
+                let recovery = public_recovery_contract_for_follow_up(
+                    &args.plan,
+                    Some(&operator),
+                    Some(String::from("execution_reentry")),
+                    PublicFollowUpInputProfile::None,
+                );
                 return Ok(with_close_current_task_operator_blocker_metadata(
                     blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                         task_number: args.task,
@@ -176,11 +194,11 @@ pub fn close_current_task(
                         task_closure_status: "current",
                         closure_record_id: Some(initial_closure_record_id),
                         code: None,
-                        recommended_command: None,
-                        recommended_public_command_argv: None,
-                        required_inputs: Vec::new(),
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
+                        recommended_command: recovery.recommended_command,
+                        recommended_public_command_argv: recovery.recommended_public_command_argv,
+                        required_inputs: recovery.required_inputs,
+                        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                        required_follow_up: recovery.required_follow_up,
                         trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
                     }),
                     &operator,
@@ -225,6 +243,12 @@ pub fn close_current_task(
     )? {
         TaskDispatchReviewedStateStatus::Current => {}
         TaskDispatchReviewedStateStatus::MissingReviewedStateBinding => {
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                Some(String::from("request_external_review")),
+                PublicFollowUpInputProfile::TaskReview { task: args.task },
+            );
             return Ok(with_close_current_task_operator_blocker_metadata(
                 blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                     task_number: args.task,
@@ -232,17 +256,23 @@ pub fn close_current_task(
                     task_closure_status: "not_current",
                     closure_record_id: None,
                     code: None,
-                    recommended_command: None,
-                    recommended_public_command_argv: None,
-                    required_inputs: Vec::new(),
-                    rederive_via_workflow_operator: None,
-                    required_follow_up: Some(String::from("request_external_review")),
+                    recommended_command: recovery.recommended_command,
+                    recommended_public_command_argv: recovery.recommended_public_command_argv,
+                    required_inputs: recovery.required_inputs,
+                    rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                    required_follow_up: recovery.required_follow_up,
                     trace_summary: "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
                 }),
                 &operator,
             ));
         }
         TaskDispatchReviewedStateStatus::StaleReviewedState => {
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                Some(String::from("execution_reentry")),
+                PublicFollowUpInputProfile::None,
+            );
             return Ok(with_close_current_task_operator_blocker_metadata(
                 blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                     task_number: args.task,
@@ -250,11 +280,11 @@ pub fn close_current_task(
                     task_closure_status: "not_current",
                     closure_record_id: None,
                     code: None,
-                    recommended_command: None,
-                    recommended_public_command_argv: None,
-                    required_inputs: Vec::new(),
-                    rederive_via_workflow_operator: None,
-                    required_follow_up: Some(String::from("execution_reentry")),
+                    recommended_command: recovery.recommended_command,
+                    recommended_public_command_argv: recovery.recommended_public_command_argv,
+                    required_inputs: recovery.required_inputs,
+                    rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                    required_follow_up: recovery.required_follow_up,
                     trace_summary: "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
                 }),
                 &operator,
@@ -281,7 +311,7 @@ pub fn close_current_task(
             &reviewed_state_id,
         ) {
             let operator = current_workflow_operator(runtime, &args.plan, true)?;
-            let follow_up = close_current_task_follow_up_and_command(&operator);
+            let recovery = close_current_task_recovery_contract(&args.plan, &operator, args.task);
             return Ok(with_close_current_task_operator_blocker_metadata(
                 blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                     task_number: args.task,
@@ -289,11 +319,11 @@ pub fn close_current_task(
                     task_closure_status: "not_current",
                     closure_record_id: None,
                     code: None,
-                    recommended_command: follow_up.recommended_command,
-                    recommended_public_command_argv: follow_up.recommended_public_command_argv,
-                    required_inputs: follow_up.required_inputs,
-                    rederive_via_workflow_operator: None,
-                    required_follow_up: follow_up.required_follow_up,
+                    recommended_command: recovery.recommended_command,
+                    recommended_public_command_argv: recovery.recommended_public_command_argv,
+                    required_inputs: recovery.required_inputs,
+                    rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                    required_follow_up: recovery.required_follow_up,
                     trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
                 }),
                 &operator,
@@ -361,6 +391,12 @@ pub fn close_current_task(
                     reason_codes,
                 ));
             } else {
+                let recovery = public_recovery_contract_for_follow_up(
+                    &args.plan,
+                    Some(&operator),
+                    Some(String::from("execution_reentry")),
+                    PublicFollowUpInputProfile::None,
+                );
                 return Ok(with_close_current_task_operator_blocker_metadata(
                     blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                         task_number: args.task,
@@ -368,11 +404,11 @@ pub fn close_current_task(
                         task_closure_status: "current",
                         closure_record_id: Some(closure_record_id),
                         code: None,
-                        recommended_command: None,
-                        recommended_public_command_argv: None,
-                        required_inputs: Vec::new(),
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
+                        recommended_command: recovery.recommended_command,
+                        recommended_public_command_argv: recovery.recommended_public_command_argv,
+                        required_inputs: recovery.required_inputs,
+                        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                        required_follow_up: recovery.required_follow_up,
                         trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
                     }),
                     &operator,
@@ -448,6 +484,12 @@ pub fn close_current_task(
                         reason_codes,
                     ));
                 }
+                let recovery = public_recovery_contract_for_follow_up(
+                    &args.plan,
+                    Some(&operator),
+                    Some(String::from("execution_reentry")),
+                    PublicFollowUpInputProfile::None,
+                );
                 return Ok(with_close_current_task_operator_blocker_metadata(
                     blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                         task_number: args.task,
@@ -455,11 +497,11 @@ pub fn close_current_task(
                         task_closure_status: "current",
                         closure_record_id: Some(closure_record_id),
                         code: None,
-                        recommended_command: None,
-                        recommended_public_command_argv: None,
-                        required_inputs: Vec::new(),
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
+                        recommended_command: recovery.recommended_command,
+                        recommended_public_command_argv: recovery.recommended_public_command_argv,
+                        required_inputs: recovery.required_inputs,
+                        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                        required_follow_up: recovery.required_follow_up,
                         trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
                     }),
                     &operator,
@@ -477,7 +519,8 @@ pub fn close_current_task(
                     )
                 })
             {
-                let follow_up = close_current_task_follow_up_and_command(&operator);
+                let recovery =
+                    close_current_task_recovery_contract(&args.plan, &operator, args.task);
                 return Ok(with_close_current_task_operator_blocker_metadata(
                     blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                         task_number: args.task,
@@ -485,11 +528,11 @@ pub fn close_current_task(
                         task_closure_status: "not_current",
                         closure_record_id: None,
                         code: None,
-                        recommended_command: follow_up.recommended_command,
-                        recommended_public_command_argv: follow_up.recommended_public_command_argv,
-                        required_inputs: follow_up.required_inputs,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: follow_up.required_follow_up,
+                        recommended_command: recovery.recommended_command,
+                        recommended_public_command_argv: recovery.recommended_public_command_argv,
+                        required_inputs: recovery.required_inputs,
+                        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                        required_follow_up: recovery.required_follow_up,
                         trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
                     }),
                     &operator,
@@ -566,6 +609,12 @@ pub fn close_current_task(
                 && current_record.closure_record_id == closure_record_id
                 && current_record.dispatch_id == dispatch_id
             {
+                let recovery = public_recovery_contract_for_follow_up(
+                    &args.plan,
+                    Some(&operator),
+                    Some(String::from("execution_reentry")),
+                    PublicFollowUpInputProfile::None,
+                );
                 return Ok(with_close_current_task_operator_blocker_metadata(
                     blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                         task_number: args.task,
@@ -573,11 +622,11 @@ pub fn close_current_task(
                         task_closure_status: "current",
                         closure_record_id: Some(closure_record_id),
                         code: None,
-                        recommended_command: None,
-                        recommended_public_command_argv: None,
-                        required_inputs: Vec::new(),
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
+                        recommended_command: recovery.recommended_command,
+                        recommended_public_command_argv: recovery.recommended_public_command_argv,
+                        required_inputs: recovery.required_inputs,
+                        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                        required_follow_up: recovery.required_follow_up,
                         trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
                     }),
                     &operator,
@@ -601,11 +650,12 @@ pub fn close_current_task(
                     &operator,
                     Some(authoritative_state),
                 );
-                let (recommended_command, recommended_public_command_argv, required_inputs) =
-                    close_current_task_recommendation_for_follow_up(
-                        required_follow_up.as_deref(),
-                        &operator,
-                    );
+                let recovery = public_recovery_contract_for_follow_up(
+                    &args.plan,
+                    Some(&operator),
+                    required_follow_up,
+                    PublicFollowUpInputProfile::TaskReview { task: args.task },
+                );
                 return Ok(with_close_current_task_operator_blocker_metadata(
                     blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                         task_number: args.task,
@@ -613,11 +663,11 @@ pub fn close_current_task(
                         task_closure_status: "not_current",
                         closure_record_id: None,
                         code: None,
-                        recommended_command,
-                        recommended_public_command_argv,
-                        required_inputs,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up,
+                        recommended_command: recovery.recommended_command,
+                        recommended_public_command_argv: recovery.recommended_public_command_argv,
+                        required_inputs: recovery.required_inputs,
+                        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                        required_follow_up: recovery.required_follow_up,
                         trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
                     }),
                     &operator,
@@ -643,11 +693,12 @@ pub fn close_current_task(
                 &operator,
                 Some(authoritative_state),
             );
-            let (recommended_command, recommended_public_command_argv, _required_inputs) =
-                close_current_task_recommendation_for_follow_up(
-                    required_follow_up.as_deref(),
-                    &operator,
-                );
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                required_follow_up,
+                PublicFollowUpInputProfile::TaskReview { task: args.task },
+            );
             Ok(with_close_current_task_operator_blocker_metadata(
                 blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                     task_number: args.task,
@@ -655,30 +706,38 @@ pub fn close_current_task(
                     task_closure_status: "not_current",
                     closure_record_id: None,
                     code: None,
-                    recommended_command,
-                    recommended_public_command_argv,
-                    required_inputs: _required_inputs,
-                    rederive_via_workflow_operator: None,
-                    required_follow_up,
+                    recommended_command: recovery.recommended_command,
+                    recommended_public_command_argv: recovery.recommended_public_command_argv,
+                    required_inputs: recovery.required_inputs,
+                    rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                    required_follow_up: recovery.required_follow_up,
                     trace_summary: "Task closure remained blocked because the supplied review or verification outcome was not passing.",
                 }),
                 &operator,
             ))
         }
-        CloseCurrentTaskOutcomeClass::Invalid => Ok(blocked_close_current_task_output(
-            BlockedCloseCurrentTaskOutputContext {
-                task_number: args.task,
-                dispatch_validation_action: "validated",
-                task_closure_status: "not_current",
-                closure_record_id: None,
-                code: None,
-                recommended_command: None,
-                recommended_public_command_argv: None,
-                required_inputs: Vec::new(),
-                rederive_via_workflow_operator: None,
-                required_follow_up: Some(String::from("run_verification")),
-                trace_summary: "close-current-task failed closed because a passing task review requires verification before closure recording can continue.",
-            },
-        )),
+        CloseCurrentTaskOutcomeClass::Invalid => {
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                Some(String::from("run_verification")),
+                PublicFollowUpInputProfile::TaskReview { task: args.task },
+            );
+            Ok(blocked_close_current_task_output(
+                BlockedCloseCurrentTaskOutputContext {
+                    task_number: args.task,
+                    dispatch_validation_action: "validated",
+                    task_closure_status: "not_current",
+                    closure_record_id: None,
+                    code: None,
+                    recommended_command: recovery.recommended_command,
+                    recommended_public_command_argv: recovery.recommended_public_command_argv,
+                    required_inputs: recovery.required_inputs,
+                    rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                    required_follow_up: recovery.required_follow_up,
+                    trace_summary: "close-current-task failed closed because a passing task review requires verification before closure recording can continue.",
+                },
+            ))
+        }
     }
 }

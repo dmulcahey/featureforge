@@ -1927,14 +1927,16 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
             [
                 "~/.featureforge/install/bin/featureforge config set featureforge_contributor true",
                 "~/.featureforge/install/bin/featureforge config set update_check true",
+                "~/.featureforge/install/bin/featureforge update-check",
                 "featureforge.exe",
-                "for `update-check` automatically",
+                "Generated skill preambles do not run `update-check` automatically",
             ],
             [
                 "~/.featureforge/install/bin/featureforge install migrate",
                 "~/.featureforge/install/bin/featureforge-migrate-install",
                 "~/.featureforge/install/bin/featureforge-config",
                 "~/.featureforge/install/bin/featureforge-update-check",
+                "for `update-check` automatically",
                 "PendingMigration",
             ],
         ),
@@ -1943,14 +1945,16 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
             [
                 "~/.featureforge/install/bin/featureforge config set featureforge_contributor true",
                 "~/.featureforge/install/bin/featureforge config set update_check true",
+                "~/.featureforge/install/bin/featureforge update-check",
                 "featureforge.exe",
-                "for `update-check` automatically",
+                "Generated skill preambles do not run `update-check` automatically",
             ],
             [
                 "~/.featureforge/install/bin/featureforge install migrate",
                 "~/.featureforge/install/bin/featureforge-migrate-install",
                 "~/.featureforge/install/bin/featureforge-config",
                 "~/.featureforge/install/bin/featureforge-update-check",
+                "for `update-check` automatically",
                 "PendingMigration",
             ],
         ),
@@ -4094,7 +4098,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "if [ \"$RECORDING_PHASE_DETAIL\" != \"final_review_recording_ready\" ]; then",
+        "if [ \"$RECORDING_PHASE_DETAIL\" != \"final_review_recording_ready\" ] && [ \"$RECORDING_PHASE_DETAIL\" != \"final_review_dispatch_required\" ]; then",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -5124,7 +5128,7 @@ fn runtime_remediation_inventory_is_visible_to_instruction_contract_tests() {
     }
     for detail_anchor in [
         "branch-closure mutation says repair is required",
-        "helper-backed tests pass but compiled CLI behavior differs",
+        "helper-backed tests passed even though the shipped CLI boundary behaved differently",
         "status points to the right blocker, operator still recommends execution reentry / begin",
         "rebased consumer-style fixture with forward reentry overlay pointing at Task 3",
         "authoritative state contains `run_identity.execution_run_id`",
@@ -5139,20 +5143,20 @@ fn runtime_remediation_inventory_is_visible_to_instruction_contract_tests() {
     }
     for anchor in [
         "tests/workflow_shell_smoke.rs::runtime_remediation_fs01_compiled_cli_repair_and_branch_closure_do_not_disagree",
-        "tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation",
-        "tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation",
+        "tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation",
+        "tests/internal_plan_execution.rs::internal_only_compatibility_record_final_review_rejects_unapproved_reviewer_source_before_mutation",
         "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift",
         "tests/workflow_runtime.rs::runtime_remediation_fs11_operator_begin_repair_share_one_next_action_engine",
         "tests/workflow_shell_smoke.rs::fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers",
         concat!(
-            "tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_pre",
+            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_pre",
             "flight"
         ),
-        "tests/plan_execution.rs::runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state",
-        "tests/workflow_runtime.rs::runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task",
-        "tests/plan_execution.rs::runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch",
-        "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task",
-        "tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts",
+        "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state",
+        "tests/internal_workflow_runtime.rs::internal_only_compatibility_runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task",
+        "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch",
+        "tests/internal_contracts_execution_runtime_boundaries.rs::internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task",
+        "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts",
         "task_close_internal_dispatch_runtime_management_budget_is_capped",
     ] {
         assert_contains(

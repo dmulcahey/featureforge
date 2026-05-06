@@ -17,7 +17,7 @@ mod process_support;
 mod repo_template_support;
 #[path = "support/runtime_json.rs"]
 mod runtime_json_support;
-#[path = "support/runtime_phase_handoff.rs"]
+#[path = "support/internal_runtime_phase_handoff.rs"]
 mod runtime_phase_handoff_support;
 
 use bin_support::compiled_featureforge_path;

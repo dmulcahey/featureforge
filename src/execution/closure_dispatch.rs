@@ -15,6 +15,7 @@ use crate::execution::read_model::{
     final_review_dispatch_still_current_for_gates, has_authoritative_late_stage_progress,
     is_late_stage_phase, normalize_optional_overlay_value, parse_harness_phase,
     status_from_context, usable_current_branch_closure_identity,
+    usable_current_branch_closure_identity_from_authoritative_state,
 };
 use crate::execution::read_model_support::{
     active_step, context_all_task_scopes_closed_by_authority, latest_attempted_step_for_task,
@@ -122,6 +123,22 @@ pub(crate) fn current_review_dispatch_id_from_lineage(
                 usable_current_branch_closure_id.as_deref(),
                 Some(&overlay),
             )
+            .or_else(|| {
+                let authoritative_state = load_authoritative_transition_state(context).ok()?;
+                let authoritative_branch_closure_id =
+                    usable_current_branch_closure_identity_from_authoritative_state(
+                        context,
+                        authoritative_state.as_ref(),
+                    )
+                    .map(|identity| identity.branch_closure_id);
+                current_final_review_dispatch_id_from_authority(
+                    authoritative_branch_closure_id
+                        .as_deref()
+                        .or(usable_current_branch_closure_id.as_deref()),
+                    Some(&overlay),
+                    authoritative_state.as_ref(),
+                )
+            })
         }
     })
 }
@@ -155,16 +172,26 @@ pub(crate) fn current_final_review_dispatch_id_from_authority(
     shared_current_final_review_dispatch_id(usable_current_branch_closure_id, overlay).or_else(
         || {
             authoritative_state.and_then(|state| {
-                if state.current_final_review_branch_closure_id()
-                    != usable_current_branch_closure_id
+                if state.current_final_review_dispatch_lineage_branch_closure_id()
+                    == usable_current_branch_closure_id
                 {
-                    return None;
+                    return state
+                        .current_final_review_dispatch_lineage_dispatch_id()
+                        .or_else(|| state.current_final_review_dispatch_id())
+                        .map(str::trim)
+                        .filter(|dispatch_id| !dispatch_id.is_empty())
+                        .map(ToOwned::to_owned);
                 }
-                state
-                    .current_final_review_dispatch_id()
-                    .map(str::trim)
-                    .filter(|dispatch_id| !dispatch_id.is_empty())
-                    .map(ToOwned::to_owned)
+                if state.current_final_review_branch_closure_id()
+                    == usable_current_branch_closure_id
+                {
+                    return state
+                        .current_final_review_dispatch_id()
+                        .map(str::trim)
+                        .filter(|dispatch_id| !dispatch_id.is_empty())
+                        .map(ToOwned::to_owned);
+                }
+                None
             })
         },
     )

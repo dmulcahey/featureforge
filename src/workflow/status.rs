@@ -7,7 +7,10 @@ use schemars::schema_for;
 use serde::Serialize;
 
 use crate::contracts::plan::{
-    AnalyzePlanReport, PlanFidelityReviewReport, evaluate_plan_fidelity_review, parse_plan_file,
+    AnalyzePlanReport, PlanFidelityReviewReport, engineering_approval_fidelity_message,
+    engineering_approval_fidelity_primary_reason_code, engineering_approval_fidelity_reason_codes,
+    evaluate_plan_fidelity_review, parse_plan_file, plan_fidelity_allows_implementation,
+    plan_fidelity_verification_incomplete_report,
 };
 use crate::contracts::runtime::analyze_contract_report;
 use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
@@ -1626,6 +1629,42 @@ fn tighten_workflow_operator_routing_field_schemas(
             )
         })?;
     tighten_operator_schema_property_type(properties, "recommended_command", "string")?;
+    annotate_operator_schema_property(
+        properties,
+        "recommended_command",
+        "Display-only compatibility summary; do not parse or execute this string. Use recommended_public_command_argv when present.",
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "recommended_public_command_argv",
+        "Executable public command argv authority when present. Run these tokens as argv instead of parsing recommended_command.",
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "required_inputs",
+        "Parseable input contract for the routed public command when executable argv cannot be emitted yet.",
+    )?;
+    Ok(())
+}
+
+fn annotate_operator_schema_property(
+    properties: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    description: &str,
+) -> Result<(), DiagnosticError> {
+    let property = properties
+        .get_mut(field)
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!("WorkflowOperator schema is missing `{field}`."),
+            )
+        })?;
+    property.insert(
+        String::from("description"),
+        serde_json::Value::from(description),
+    );
     Ok(())
 }
 
@@ -2130,58 +2169,6 @@ fn draft_ready_for_engineering_approval(
         && matches!(gate.state.as_str(), "pass" | "fail")
 }
 
-fn plan_fidelity_allows_implementation(gate: &PlanFidelityReviewReport) -> bool {
-    gate.state == "pass" && gate.reason_codes.is_empty() && gate.verified_surfaces_are_complete()
-}
-
-fn engineering_approval_fidelity_reason_codes(gate: &PlanFidelityReviewReport) -> Vec<String> {
-    let mut reason_codes = vec![String::from(
-        engineering_approval_fidelity_primary_reason_code(gate),
-    )];
-    for code in &gate.reason_codes {
-        if !reason_codes.iter().any(|existing| existing == code) {
-            reason_codes.push(code.clone());
-        }
-    }
-    reason_codes
-}
-
-fn engineering_approval_fidelity_primary_reason_code(
-    gate: &PlanFidelityReviewReport,
-) -> &'static str {
-    if gate.state == "missing"
-        || gate
-            .reason_codes
-            .iter()
-            .any(|code| code == "missing_plan_fidelity_review_artifact")
-    {
-        "engineering_approval_missing_plan_fidelity_review"
-    } else if gate.state == "stale"
-        || gate
-            .reason_codes
-            .iter()
-            .any(|code| code == "stale_plan_fidelity_review_artifact")
-    {
-        "engineering_approval_stale_plan_fidelity_review"
-    } else if gate
-        .reason_codes
-        .iter()
-        .any(|code| code == "plan_fidelity_review_missing_required_surface")
-        || !gate.verified_surfaces_are_complete()
-    {
-        "engineering_approval_incomplete_plan_fidelity_surfaces"
-    } else if gate.state == "fail"
-        || gate
-            .reason_codes
-            .iter()
-            .any(|code| code == "plan_fidelity_review_artifact_not_pass")
-    {
-        "engineering_approval_failed_plan_fidelity_review"
-    } else {
-        "engineering_approval_invalid_plan_fidelity_review"
-    }
-}
-
 fn engineering_approval_fidelity_diagnostics(
     plan: &WorkflowPlanCandidate,
     gate: &PlanFidelityReviewReport,
@@ -2215,26 +2202,6 @@ fn engineering_approval_fidelity_diagnostics(
         });
     }
     diagnostics
-}
-
-fn engineering_approval_fidelity_message(code: &str) -> String {
-    match code {
-        "engineering_approval_missing_plan_fidelity_review" => {
-            "Engineering Approved plan cannot route to implementation until a current pass plan-fidelity review artifact exists.".to_owned()
-        }
-        "engineering_approval_stale_plan_fidelity_review" => {
-            "Engineering Approved plan cannot route to implementation because the plan-fidelity review artifact is stale.".to_owned()
-        }
-        "engineering_approval_incomplete_plan_fidelity_surfaces" => {
-            "Engineering Approved plan cannot route to implementation because the plan-fidelity review artifact does not verify the exact required surfaces.".to_owned()
-        }
-        "engineering_approval_failed_plan_fidelity_review" => {
-            "Engineering Approved plan cannot route to implementation because the plan-fidelity review did not pass.".to_owned()
-        }
-        _ => {
-            "Engineering Approved plan cannot route to implementation because the plan-fidelity review artifact is invalid.".to_owned()
-        }
-    }
 }
 
 fn fidelity_review_visible_for_route(
@@ -2320,36 +2287,16 @@ fn evaluate_plan_fidelity_gate(
     let plan = match parse_plan_file(&plan_abs) {
         Ok(plan) => plan,
         Err(_) => {
-            return PlanFidelityReviewReport::unverified(
-                "invalid",
-                String::new(),
-                String::new(),
-                String::new(),
-                vec![String::from("plan_fidelity_verification_incomplete")],
-                vec![crate::contracts::plan::ContractDiagnostic {
-                    code: String::from("plan_fidelity_verification_incomplete"),
-                    message: String::from(
-                        "Plan-fidelity review cannot be validated until the plan parses cleanly.",
-                    ),
-                }],
+            return plan_fidelity_verification_incomplete_report(
+                "Plan-fidelity review cannot be validated until the plan parses cleanly.",
             );
         }
     };
     let spec = match load_plan_fidelity_spec_document(&spec_abs) {
         Ok(spec) => spec,
         Err(_) => {
-            return PlanFidelityReviewReport::unverified(
-                "invalid",
-                String::new(),
-                String::new(),
-                String::new(),
-                vec![String::from("plan_fidelity_verification_incomplete")],
-                vec![crate::contracts::plan::ContractDiagnostic {
-                    code: String::from("plan_fidelity_verification_incomplete"),
-                    message: String::from(
-                        "Plan-fidelity review cannot be validated until the source spec parses cleanly, including a parseable Requirement Index.",
-                    ),
-                }],
+            return plan_fidelity_verification_incomplete_report(
+                "Plan-fidelity review cannot be validated until the source spec parses cleanly, including a parseable Requirement Index.",
             );
         }
     };

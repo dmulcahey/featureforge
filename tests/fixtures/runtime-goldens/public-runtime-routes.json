@@ -2210,16 +2210,12 @@
           "active_step": null,
           "active_task": null,
           "aggregate_evaluation_state": "pending",
-          "blockers": [
-            {
-              "category": "workflow",
-              "details": "Follow the public routing lane for `execution_preflight_required`.",
-              "next_public_action": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
-              "scope_key": "execution_preflight_required",
-              "scope_type": "route"
-            }
+          "blocking_reason_codes": [
+            "engineering_approval_missing_plan_fidelity_review",
+            "missing_plan_fidelity_review_artifact"
           ],
           "blocking_records": [],
+          "blocking_scope": "workflow",
           "blocking_step": null,
           "blocking_task": null,
           "browser_qa_state": "not_required",
@@ -2238,11 +2234,6 @@
           "dependency_index_state": "missing",
           "evaluator_policy": null,
           "evidence_path": "docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md",
-          "execution_command_context": {
-            "command_kind": "begin",
-            "step_id": 1,
-            "task_number": 1
-          },
           "execution_fingerprint": "<SHA256>",
           "execution_mode": "none",
           "execution_run_id": null,
@@ -2250,7 +2241,7 @@
           "final_review_state": "not_required",
           "finish_review_gate_pass_branch_closure_id": null,
           "handoff_required": false,
-          "harness_phase": "implementation_handoff",
+          "harness_phase": "pivot_required",
           "last_browser_qa_artifact_fingerprint": null,
           "last_evaluation_evaluator_kind": null,
           "last_evaluation_report_fingerprint": null,
@@ -2260,37 +2251,19 @@
           "last_release_docs_artifact_fingerprint": null,
           "last_strategy_checkpoint_fingerprint": null,
           "latest_authoritative_sequence": 0,
-          "next_action": "continue execution",
-          "next_public_action": {
-            "args_template": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
-            "command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>"
-          },
+          "next_action": "pivot / return to planning",
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
           "pending_evaluator_kinds": [],
-          "phase": "execution_preflight",
-          "phase_detail": "execution_preflight_required",
+          "phase": "pivot_required",
+          "phase_detail": "planning_reentry_required",
           "plan_revision": 1,
           "projection_mode": "state_dir_only",
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
-          "reason_codes": [],
-          "recommended_command": "featureforge plan execution begin --plan docs/featureforge/plans/runtime-golden-execution-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <SHA256>",
-          "recommended_public_command_argv": [
-            "featureforge",
-            "plan",
-            "execution",
-            "begin",
-            "--plan",
-            "docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "--task",
-            "1",
-            "--step",
-            "1",
-            "--execution-mode",
-            "featureforge:executing-plans",
-            "--expect-execution-fingerprint",
-            "0000000000000000000000000000000000000000"
+          "reason_codes": [
+            "engineering_approval_missing_plan_fidelity_review",
+            "missing_plan_fidelity_review_artifact"
           ],
           "release_docs_state": "not_required",
           "repo_state_baseline_head_sha": null,
@@ -2325,7 +2298,7 @@
             "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/plans/runtime-golden-execution-plan.md",
             "<STATE>/projects/<PROJECT_KEY>/tracked-projections/feature-runtime-golden-e40ef2721b65/docs/featureforge/execution-evidence/runtime-golden-execution-plan-r1-evidence.md"
           ],
-          "state_kind": "actionable_public_command",
+          "state_kind": "waiting_external_input",
           "strategy_checkpoint_kind": "none",
           "strategy_reset_required": false,
           "strategy_state": "checkpoint_missing",
@@ -2349,10 +2322,14 @@
               "category": "external_input",
               "details": "Waiting for external review result.",
               "scope_key": "planning_reentry_required",
-              "scope_type": "external"
+              "scope_type": "workflow"
             }
           ],
-          "blocking_reason_codes": [],
+          "blocking_reason_codes": [
+            "engineering_approval_missing_plan_fidelity_review",
+            "missing_plan_fidelity_review_artifact"
+          ],
+          "blocking_scope": "workflow",
           "next_action": "pivot / return to planning",
           "phase": "pivot_required",
           "phase_detail": "planning_reentry_required",
@@ -3035,7 +3012,7 @@
             {
               "category": "late_stage",
               "details": "A fresh external final review is required before late-stage progression can continue.",
-              "next_public_action": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+              "next_public_action": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; records final-review dispatch lineage",
               "scope_key": "branch-closure-<ID>",
               "scope_type": "branch"
             }
@@ -3104,8 +3081,8 @@
           "latest_authoritative_sequence": 0,
           "next_action": "request final review",
           "next_public_action": {
-            "args_template": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "command": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md"
+            "args_template": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; records final-review dispatch lineage",
+            "command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; records final-review dispatch lineage"
           },
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
@@ -3120,11 +3097,26 @@
               "expires_when_fingerprint_changes": true,
               "reason_code": "route_repair_review_state_available",
               "source_record_id": "route_decision:final_review_dispatch_required"
+            },
+            {
+              "command_kind": "advance-late-stage",
+              "expires_when_fingerprint_changes": true,
+              "reason_code": "route_advance_late_stage_ready",
+              "source_record_id": "route_decision:advance_late_stage"
             }
           ],
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [],
+          "recommended_command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; records final-review dispatch lineage",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md"
+          ],
           "release_docs_state": "fresh",
           "repo_state_baseline_head_sha": null,
           "repo_state_baseline_worktree_fingerprint": null,
@@ -3188,7 +3180,7 @@
             {
               "category": "late_stage",
               "details": "A fresh external final review is required before late-stage progression can continue.",
-              "next_public_action": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
+              "next_public_action": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; records final-review dispatch lineage",
               "scope_key": "branch-closure-<ID>",
               "scope_type": "branch"
             }
@@ -3199,8 +3191,8 @@
           "blocking_scope": "branch",
           "next_action": "request final review",
           "next_public_action": {
-            "args_template": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md",
-            "command": "featureforge workflow operator --plan docs/featureforge/plans/runtime-golden-execution-plan.md"
+            "args_template": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; records final-review dispatch lineage",
+            "command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; records final-review dispatch lineage"
           },
           "phase": "final_review_pending",
           "phase_detail": "final_review_dispatch_required",
@@ -3208,6 +3200,15 @@
           "projection_mode": "state_dir_only",
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "recommended_command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; records final-review dispatch lineage",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md"
+          ],
           "review_state_status": "clean",
           "runtime_provenance": {
             "binary_path": "<FEATUREFORGE_BIN>",
@@ -3291,6 +3292,15 @@
           "active_step": null,
           "active_task": null,
           "aggregate_evaluation_state": "pending",
+          "blockers": [
+            {
+              "category": "workflow",
+              "details": "Follow the public routing lane for `finish_completion_gate_ready`.",
+              "next_public_action": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; validates finish completion",
+              "scope_key": "finish_completion_gate_ready",
+              "scope_type": "branch"
+            }
+          ],
           "blocking_records": [],
           "blocking_scope": "branch",
           "blocking_step": null,
@@ -3342,6 +3352,10 @@
           "last_strategy_checkpoint_fingerprint": "<SHA256>",
           "latest_authoritative_sequence": 0,
           "next_action": "finish branch",
+          "next_public_action": {
+            "args_template": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; validates finish completion",
+            "command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; validates finish completion"
+          },
           "non_passing_evaluator_kinds": [],
           "open_failed_criteria": [],
           "pending_evaluator_kinds": [],
@@ -3351,15 +3365,24 @@
           "projection_mode": "state_dir_only",
           "public_repair_targets": [
             {
-              "command_kind": "repair-review-state",
+              "command_kind": "advance-late-stage",
               "expires_when_fingerprint_changes": true,
-              "reason_code": "route_repair_review_state_available",
-              "source_record_id": "route_decision:finish_completion_gate_ready"
+              "reason_code": "route_advance_late_stage_ready",
+              "source_record_id": "route_decision:advance_late_stage"
             }
           ],
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
           "reason_codes": [],
+          "recommended_command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; validates finish completion",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md"
+          ],
           "release_docs_state": "fresh",
           "repo_state_baseline_head_sha": null,
           "repo_state_baseline_worktree_fingerprint": null,
@@ -3397,7 +3420,7 @@
             "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-independent-review-final-review-record-<SHA256>.md",
             "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-code-review-final-review-record-<SHA256>.md"
           ],
-          "state_kind": "terminal",
+          "state_kind": "actionable_public_command",
           "strategy_checkpoint_kind": "review_remediation",
           "strategy_reset_required": false,
           "strategy_state": "ready",
@@ -3423,16 +3446,38 @@
       "workflow_operator": {
         "json": {
           "base_branch": "main",
+          "blockers": [
+            {
+              "category": "workflow",
+              "details": "Follow the public routing lane for `finish_completion_gate_ready`.",
+              "next_public_action": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; validates finish completion",
+              "scope_key": "finish_completion_gate_ready",
+              "scope_type": "branch"
+            }
+          ],
           "blocking_reason_codes": [],
           "blocking_scope": "branch",
           "finish_review_gate_pass_branch_closure_id": "branch-closure-<ID>",
           "next_action": "finish branch",
+          "next_public_action": {
+            "args_template": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; validates finish completion",
+            "command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; validates finish completion"
+          },
           "phase": "ready_for_branch_completion",
           "phase_detail": "finish_completion_gate_ready",
           "plan_path": "docs/featureforge/plans/runtime-golden-execution-plan.md",
           "projection_mode": "state_dir_only",
           "qa_requirement": "not-required",
           "raw_workspace_tree_id": "git_tree:<GIT_SHA>",
+          "recommended_command": "featureforge plan execution advance-late-stage --plan docs/featureforge/plans/runtime-golden-execution-plan.md; validates finish completion",
+          "recommended_public_command_argv": [
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            "docs/featureforge/plans/runtime-golden-execution-plan.md"
+          ],
           "review_state_status": "clean",
           "runtime_provenance": {
             "binary_path": "<FEATUREFORGE_BIN>",
@@ -3461,7 +3506,7 @@
             "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-independent-review-final-review-record-<SHA256>.md",
             "<STATE>/projects/<PROJECT_KEY>/featureforge-feature-runtime-golden-e40ef2721b65-code-review-final-review-record-<SHA256>.md"
           ],
-          "state_kind": "terminal",
+          "state_kind": "actionable_public_command",
           "tracked_projection_paths": [
             "docs/featureforge/projections/runtime-golden-execution-plan/execution-plan.md",
             "docs/featureforge/projections/runtime-golden-execution-plan/execution-evidence.md",

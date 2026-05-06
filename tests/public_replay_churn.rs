@@ -20,7 +20,8 @@ use featureforge::execution::follow_up::execution_step_repair_target_id;
 use featureforge::git::discover_slug_identity;
 use featureforge::git::sha256_hex;
 use featureforge::paths::{
-    branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
+    branch_storage_key, harness_authoritative_artifact_path, harness_authoritative_artifacts_dir,
+    harness_events_log_path, harness_state_path,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -32,6 +33,8 @@ const REVIEW_SPEC_REL: &str = "docs/featureforge/specs/public-replay-review-desi
 const REVIEW_PLAN_REL: &str = "docs/featureforge/plans/public-replay-review-plan.md";
 const EXEC_SPEC_REL: &str = "docs/featureforge/specs/public-replay-execution-design.md";
 const EXEC_PLAN_REL: &str = "docs/featureforge/plans/public-replay-execution-plan.md";
+const LATE_STAGE_SPEC_REL: &str = "docs/featureforge/specs/public-replay-late-stage-design.md";
+const LATE_STAGE_PLAN_REL: &str = "docs/featureforge/plans/public-replay-late-stage-plan.md";
 const OLD_SESSION_SPEC_REL: &str = "docs/featureforge/specs/public-replay-old-session-design.md";
 const OLD_SESSION_FS11_PLAN_REL: &str =
     "docs/featureforge/plans/public-replay-old-session-fs11-plan.md";
@@ -487,6 +490,29 @@ fn write_execution_spec_and_plan(repo: &Path) {
     );
 }
 
+fn write_late_stage_spec_and_plan(repo: &Path) {
+    write_file(
+        &repo.join(LATE_STAGE_SPEC_REL),
+        "# Public Replay Late-Stage Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n\n## Requirement Index\n\n- [REQ-001][behavior] Public late-stage commands own final-review dispatch repair.\n",
+    );
+    write_file(
+        &repo.join(LATE_STAGE_PLAN_REL),
+        &format!(
+            "# Public Replay Late-Stage Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{LATE_STAGE_SPEC_REL}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n**QA Requirement:** not-required\n**Late-Stage Surface:** docs/public-replay-late-stage.md\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1, close it, then prove late-stage repair returns to public intent-level commands.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Public late-stage replay\n\n**Spec Coverage:** REQ-001\n**Goal:** Public late-stage routing repairs final-review dispatch drift without hidden commands.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Use only public runtime commands for replayed transitions.\n\n**Done when:**\n- Repaired final-review dispatch drift exposes executable public advance-late-stage argv.\n\n**Files:**\n- Modify: `docs/public-replay-late-stage.md`\n- Test: `cargo nextest run --test public_replay_churn`\n\n- [ ] **Step 1: Produce late-stage replay output**\n",
+        ),
+    );
+    write_file(
+        &repo.join("docs/public-replay-late-stage.md"),
+        "Public replay late-stage output before execution.\n",
+    );
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        ".featureforge/reviews/public-replay-late-stage-plan-fidelity.md",
+        LATE_STAGE_PLAN_REL,
+        LATE_STAGE_SPEC_REL,
+    );
+}
+
 fn write_current_pass_plan_fidelity_review_artifact(
     repo: &Path,
     artifact_rel: &str,
@@ -515,6 +541,63 @@ fn write_current_pass_plan_fidelity_review_artifact(
             spec.spec_revision,
             PLAN_FIDELITY_REQUIRED_SURFACES.join(", "),
             verified_requirement_ids.join(", "),
+        ),
+    );
+}
+
+fn review_plan_fidelity_artifact_rel() -> &'static str {
+    ".featureforge/reviews/public-replay-review-plan-fidelity.md"
+}
+
+fn write_current_review_plan_fidelity_artifact(repo: &Path) {
+    write_current_pass_plan_fidelity_review_artifact(
+        repo,
+        review_plan_fidelity_artifact_rel(),
+        REVIEW_PLAN_REL,
+        REVIEW_SPEC_REL,
+    );
+}
+
+fn rewrite_review_plan_execution_mode(repo: &Path, execution_mode: &str) {
+    let plan_path = repo.join(REVIEW_PLAN_REL);
+    let source = fs::read_to_string(&plan_path).expect("review replay plan should be readable");
+    write_file(
+        &plan_path,
+        &source.replace(
+            "**Execution Mode:** none",
+            &format!("**Execution Mode:** {execution_mode}"),
+        ),
+    );
+}
+
+fn dirty_review_plan_after_fidelity(repo: &Path) {
+    let plan_path = repo.join(REVIEW_PLAN_REL);
+    let source = fs::read_to_string(&plan_path).expect("review replay plan should be readable");
+    write_file(
+        &plan_path,
+        &source.replace(
+            "**Goal:** Review routing remains on public skills without receipt dead ends.",
+            "**Goal:** Review routing remains on public skills without receipt dead ends after fidelity was recorded.",
+        ),
+    );
+}
+
+fn write_malformed_review_plan_fidelity_artifact(repo: &Path) {
+    write_file(
+        &repo.join(review_plan_fidelity_artifact_rel()),
+        "not a parseable plan-fidelity review artifact\n",
+    );
+}
+
+fn make_review_plan_fidelity_artifact_incomplete(repo: &Path) {
+    let artifact_path = repo.join(review_plan_fidelity_artifact_rel());
+    let source =
+        fs::read_to_string(&artifact_path).expect("review plan fidelity artifact should read");
+    write_file(
+        &artifact_path,
+        &source.replace(
+            "**Verified Surfaces:** requirement_index, execution_topology, task_contract, task_determinism, spec_reference_fidelity",
+            "**Verified Surfaces:** requirement_index",
         ),
     );
 }
@@ -608,6 +691,226 @@ fn begin_task_for_plan(
         ],
         context,
     )
+}
+
+fn assert_json_array_contains_string(value: &Value, expected: &str, context: &str) {
+    assert!(
+        value
+            .as_array()
+            .expect("value should be an array")
+            .iter()
+            .any(|value| value == expected),
+        "{context} should contain {expected}: {value}"
+    );
+}
+
+fn assert_direct_fidelity_gate_blocks_begin(
+    cli: &mut PublicCli<'_>,
+    plan_rel: &'static str,
+    expected_reason_code: &str,
+    include_execution_mode_arg: bool,
+    context: &str,
+) {
+    let direct_status = status_for_plan(cli, plan_rel, &format!("{context} direct status"));
+    assert_eq!(
+        direct_status["phase_detail"],
+        json!("planning_reentry_required"),
+        "{context}: direct plan execution status must not synthesize a begin route when workflow routing is fidelity-blocked: {direct_status}"
+    );
+    assert_eq!(
+        direct_status["state_kind"],
+        json!("waiting_external_input"),
+        "{context}: direct status should fail closed to the workflow review boundary: {direct_status}"
+    );
+    assert_eq!(
+        direct_status["recommended_command"],
+        Value::Null,
+        "{context}: direct status must not expose a display begin command while fidelity is blocked: {direct_status}"
+    );
+    assert_eq!(
+        direct_status["recommended_public_command_argv"],
+        Value::Null,
+        "{context}: direct status must not expose begin argv while fidelity is blocked: {direct_status}"
+    );
+    assert!(
+        direct_status["required_inputs"].is_null()
+            || direct_status["required_inputs"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
+        "{context}: direct status must not ask for begin inputs while fidelity is blocked: {direct_status}"
+    );
+    assert_json_array_contains_string(
+        &direct_status["reason_codes"],
+        expected_reason_code,
+        &format!("{context} direct status reason_codes"),
+    );
+    assert_json_array_contains_string(
+        &direct_status["blocking_reason_codes"],
+        expected_reason_code,
+        &format!("{context} direct status blocking_reason_codes"),
+    );
+    assert_eq!(
+        direct_status["blocking_scope"],
+        json!("workflow"),
+        "{context}: direct status should mark the fidelity block as workflow-scoped: {direct_status}"
+    );
+    assert_json_text_excludes(
+        &direct_status,
+        "receipt",
+        &format!("{context} direct status"),
+    );
+
+    let operator = workflow_operator(cli, plan_rel, &format!("{context} workflow operator"));
+    assert_eq!(
+        operator["phase_detail"], direct_status["phase_detail"],
+        "{context}: workflow operator and direct status should agree on phase_detail: operator={operator}; status={direct_status}"
+    );
+    assert_eq!(
+        operator["recommended_public_command_argv"],
+        Value::Null,
+        "{context}: workflow operator must not expose begin argv while fidelity is blocked: {operator}"
+    );
+    assert_eq!(
+        operator["blocking_scope"],
+        json!("workflow"),
+        "{context}: workflow operator should mark the fidelity block as workflow-scoped: {operator}"
+    );
+    assert_json_array_contains_string(
+        &operator["blocking_reason_codes"],
+        expected_reason_code,
+        &format!("{context} workflow operator blocking_reason_codes"),
+    );
+
+    let fingerprint = direct_status["execution_fingerprint"]
+        .as_str()
+        .expect("direct blocked status should still expose fingerprint for failed mutation parity");
+    let mut begin_args = vec![
+        "plan",
+        "execution",
+        "begin",
+        "--plan",
+        plan_rel,
+        "--task",
+        "1",
+        "--step",
+        "1",
+    ];
+    if include_execution_mode_arg {
+        begin_args.extend(["--execution-mode", "featureforge:executing-plans"]);
+    }
+    begin_args.extend(["--expect-execution-fingerprint", fingerprint]);
+
+    let begin_failure = cli.failure_json(
+        &begin_args,
+        &format!("{context} direct begin should fail closed"),
+    );
+    assert_eq!(
+        begin_failure["error_class"],
+        json!("PlanNotExecutionReady"),
+        "{context}: direct begin should fail as plan-not-execution-ready when fidelity is blocked: {begin_failure}"
+    );
+    assert!(
+        begin_failure["message"]
+            .as_str()
+            .is_some_and(|message| message.contains(&format!("reason_code={expected_reason_code}"))),
+        "{context}: direct begin failure should expose the fidelity reason code: {begin_failure}"
+    );
+    assert_json_text_excludes(
+        &begin_failure,
+        "receipt",
+        &format!("{context} direct begin failure"),
+    );
+
+    let post_failure_status = status_for_plan(
+        cli,
+        plan_rel,
+        &format!("{context} status after blocked begin"),
+    );
+    assert_blocked_begin_left_no_runtime_authority(
+        cli,
+        plan_rel,
+        &direct_status,
+        &post_failure_status,
+        context,
+    );
+}
+
+fn assert_blocked_begin_left_no_runtime_authority(
+    cli: &PublicCli<'_>,
+    plan_rel: &str,
+    pre_begin_status: &Value,
+    post_begin_status: &Value,
+    context: &str,
+) {
+    assert_eq!(
+        post_begin_status["active_task"],
+        Value::Null,
+        "{context}: blocked begin must not mutate active task state: {post_begin_status}"
+    );
+    assert_eq!(
+        post_begin_status["active_step"],
+        Value::Null,
+        "{context}: blocked begin must not mutate active step state: {post_begin_status}"
+    );
+    assert_eq!(
+        post_begin_status["execution_started"],
+        json!("no"),
+        "{context}: blocked begin must leave execution unstarted: {post_begin_status}"
+    );
+    assert_eq!(
+        post_begin_status["execution_run_id"],
+        Value::Null,
+        "{context}: blocked begin must not persist a run identity: {post_begin_status}"
+    );
+    assert_eq!(
+        post_begin_status["execution_mode"], pre_begin_status["execution_mode"],
+        "{context}: blocked begin must not rewrite the plan execution mode: before={pre_begin_status}; after={post_begin_status}"
+    );
+    assert_json_array_empty_or_absent(
+        &post_begin_status["current_task_closures"],
+        &format!("{context} current_task_closures after blocked begin"),
+    );
+    assert_json_array_empty_or_absent(
+        &post_begin_status["task_closure_record_history"],
+        &format!("{context} task_closure_record_history after blocked begin"),
+    );
+
+    let (repo_slug, branch_name) = state_identity(cli.repo);
+    let state_path = harness_state_path(cli.state, &repo_slug, &branch_name);
+    let events_path = harness_events_log_path(cli.state, &repo_slug, &branch_name);
+    let artifacts_dir = harness_authoritative_artifacts_dir(cli.state, &repo_slug, &branch_name);
+    let preflight_path = execution_acceptance_state_path(cli.repo, cli.state);
+    let authority_paths = [
+        ("authoritative harness state", state_path),
+        ("authoritative event log", events_path),
+        ("execution preflight acceptance", preflight_path),
+    ];
+    for (label, path) in authority_paths {
+        assert!(
+            !path.exists(),
+            "{context}: blocked begin for {plan_rel} must not create {label} at {}",
+            path.display()
+        );
+    }
+    assert!(
+        !artifacts_dir.exists() || directory_is_empty(&artifacts_dir),
+        "{context}: blocked begin for {plan_rel} must not create authoritative artifacts in {}",
+        artifacts_dir.display()
+    );
+}
+
+fn assert_json_array_empty_or_absent(value: &Value, context: &str) {
+    assert!(
+        value.as_array().is_none_or(Vec::is_empty),
+        "{context} must be absent or empty: {value}"
+    );
+}
+
+fn directory_is_empty(path: &Path) -> bool {
+    fs::read_dir(path)
+        .unwrap_or_else(|error| panic!("directory `{}` should read: {error}", path.display()))
+        .next()
+        .is_none()
 }
 
 fn complete_task_1(cli: &mut PublicCli<'_>, fingerprint: &str, context: &str) -> Value {
@@ -1536,6 +1839,13 @@ fn setup_execution_fixture(name: &str) -> (TempDir, TempDir) {
     (repo_dir, state_dir)
 }
 
+fn setup_late_stage_execution_fixture(name: &str) -> (TempDir, TempDir) {
+    let (repo_dir, state_dir) = init_repo(name);
+    write_late_stage_spec_and_plan(repo_dir.path());
+    commit_all(repo_dir.path(), "public replay late-stage fixture");
+    (repo_dir, state_dir)
+}
+
 fn setup_old_session_fs11_fixture(name: &str) -> (TempDir, TempDir) {
     let (repo_dir, state_dir) = init_repo(name);
     let repo = repo_dir.path();
@@ -1675,7 +1985,7 @@ fn setup_execution_fixture_with_additional_plan(name: &str, plan_rel: &str) -> (
     write_file(&repo.join(plan_rel), &plan_contents);
     write_current_pass_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/public-replay-execution-plan-with-spaces-fidelity.md",
+        ".featureforge/reviews/public-replay-execution-plan-with-spaces-plan-fidelity.md",
         plan_rel,
         EXEC_SPEC_REL,
     );
@@ -1843,6 +2153,143 @@ fn public_replay_engineering_approved_plan_without_fidelity_cannot_bypass_to_imp
     );
     assert_eq!(status_json["plan_fidelity_review"]["state"], "missing");
     assert_json_text_excludes(&status_json, "receipt", "approved plan fidelity gate");
+
+    assert_direct_fidelity_gate_blocks_begin(
+        &mut cli,
+        REVIEW_PLAN_REL,
+        "engineering_approval_missing_plan_fidelity_review",
+        true,
+        "missing approved-plan fidelity",
+    );
+}
+
+#[test]
+fn public_replay_engineering_approved_plan_with_marker_free_execution_mode_still_requires_fidelity()
+{
+    let (repo_dir, state_dir) = init_repo("public-replay-approved-plan-marker-free-fidelity-gate");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_review_spec_and_plan_with_state(repo, 1, "Engineering Approved", "plan-eng-review");
+    rewrite_review_plan_execution_mode(repo, "featureforge:executing-plans");
+    commit_all(repo, "public replay marker-free approved review fixture");
+    let mut cli = PublicCli::new(repo, state);
+
+    assert_direct_fidelity_gate_blocks_begin(
+        &mut cli,
+        REVIEW_PLAN_REL,
+        "engineering_approval_missing_plan_fidelity_review",
+        false,
+        "marker-free missing approved-plan fidelity",
+    );
+}
+
+#[test]
+fn public_replay_engineering_approved_plan_with_stale_fidelity_cannot_bypass_to_implementation() {
+    let (repo_dir, state_dir) = init_repo("public-replay-approved-plan-stale-fidelity-gate");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_review_spec_and_plan_with_state(repo, 1, "Engineering Approved", "plan-eng-review");
+    write_current_review_plan_fidelity_artifact(repo);
+    commit_all(repo, "public replay stale approved review fixture");
+    dirty_review_plan_after_fidelity(repo);
+    let mut cli = PublicCli::new(repo, state);
+
+    assert_direct_fidelity_gate_blocks_begin(
+        &mut cli,
+        REVIEW_PLAN_REL,
+        "engineering_approval_stale_plan_fidelity_review",
+        true,
+        "stale approved-plan fidelity",
+    );
+}
+
+#[test]
+fn public_replay_engineering_approved_plan_with_malformed_fidelity_cannot_bypass_to_implementation()
+{
+    let (repo_dir, state_dir) = init_repo("public-replay-approved-plan-malformed-fidelity-gate");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_review_spec_and_plan_with_state(repo, 1, "Engineering Approved", "plan-eng-review");
+    write_malformed_review_plan_fidelity_artifact(repo);
+    commit_all(repo, "public replay malformed approved review fixture");
+    let mut cli = PublicCli::new(repo, state);
+
+    assert_direct_fidelity_gate_blocks_begin(
+        &mut cli,
+        REVIEW_PLAN_REL,
+        "engineering_approval_invalid_plan_fidelity_review",
+        true,
+        "malformed approved-plan fidelity",
+    );
+}
+
+#[test]
+fn public_replay_engineering_approved_plan_with_incomplete_fidelity_cannot_bypass_to_implementation()
+ {
+    let (repo_dir, state_dir) = init_repo("public-replay-approved-plan-incomplete-fidelity-gate");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_review_spec_and_plan_with_state(repo, 1, "Engineering Approved", "plan-eng-review");
+    write_current_review_plan_fidelity_artifact(repo);
+    make_review_plan_fidelity_artifact_incomplete(repo);
+    commit_all(repo, "public replay incomplete approved review fixture");
+    let mut cli = PublicCli::new(repo, state);
+
+    assert_direct_fidelity_gate_blocks_begin(
+        &mut cli,
+        REVIEW_PLAN_REL,
+        "engineering_approval_incomplete_plan_fidelity_surfaces",
+        true,
+        "incomplete approved-plan fidelity",
+    );
+}
+
+#[test]
+fn public_replay_started_execution_does_not_recheck_disappearing_plan_fidelity_artifact() {
+    let (repo_dir, state_dir) = setup_execution_fixture("public-replay-started-fidelity-removal");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+
+    let status_before = status(&mut cli, "started fidelity removal status before begin");
+    let begin = begin_task(
+        &mut cli,
+        1,
+        status_before["execution_fingerprint"]
+            .as_str()
+            .expect("status before begin should expose execution fingerprint"),
+        "started fidelity removal begin",
+    );
+    fs::remove_file(repo.join(".featureforge/reviews/public-replay-execution-plan-fidelity.md"))
+        .expect("started fidelity removal fixture should remove plan-fidelity artifact");
+
+    let active_status = status(
+        &mut cli,
+        "started fidelity removal status after artifact removal",
+    );
+    assert_eq!(
+        active_status["phase_detail"],
+        json!("execution_in_progress"),
+        "started execution should not bounce to plan-fidelity after the artifact disappears: {active_status}"
+    );
+    assert_eq!(
+        active_status["active_task"],
+        json!(1),
+        "started execution should retain active task after the artifact disappears: {active_status}"
+    );
+
+    let complete = complete_task_1(
+        &mut cli,
+        begin["execution_fingerprint"]
+            .as_str()
+            .expect("begin should expose execution fingerprint"),
+        "started fidelity removal complete",
+    );
+    assert_eq!(
+        complete["active_task"],
+        Value::Null,
+        "complete should remain legal after execution has already started: {complete}"
+    );
 }
 
 #[test]
@@ -2615,6 +3062,178 @@ fn public_replay_stale_current_closure_repair_recommendation_executes_without_lo
     );
     loop_detector.observe_after_command(&next, "stale repair parity next close-current-task");
     assert_public_json_excludes_hidden_tokens(&next, "stale repair parity next command output");
+}
+
+#[test]
+fn public_replay_repaired_final_review_dispatch_drift_executes_public_advance_late_stage() {
+    let (repo_dir, state_dir) =
+        setup_late_stage_execution_fixture("public-replay-final-review-dispatch-repair");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let mut cli = PublicCli::new(repo, state);
+    let mut loop_detector = PublicRouteLoopDetector::default();
+
+    let initial_status = status_for_plan(
+        &mut cli,
+        LATE_STAGE_PLAN_REL,
+        "late-stage replay initial status",
+    );
+    let begin = begin_task_for_plan(
+        &mut cli,
+        LATE_STAGE_PLAN_REL,
+        1,
+        1,
+        initial_status["execution_fingerprint"]
+            .as_str()
+            .expect("late-stage initial status should expose execution fingerprint"),
+        "late-stage replay begin task 1",
+    );
+    append_repo_file(
+        repo,
+        "docs/public-replay-late-stage.md",
+        "Task 1 changed the late-stage replay surface.",
+    );
+    let complete = complete_task_for_plan(
+        &mut cli,
+        LATE_STAGE_PLAN_REL,
+        1,
+        1,
+        "docs/public-replay-late-stage.md",
+        begin["execution_fingerprint"]
+            .as_str()
+            .expect("late-stage begin should expose execution fingerprint"),
+        "late-stage replay complete task 1",
+    );
+    assert!(
+        complete["execution_fingerprint"].as_str().is_some(),
+        "late-stage replay complete should return the next execution fingerprint: {complete}"
+    );
+    let close = close_task_for_plan(
+        &mut cli,
+        repo,
+        LATE_STAGE_PLAN_REL,
+        1,
+        "late-stage replay close task 1",
+    );
+    assert!(
+        close["action"] == json!("recorded") || close["action"] == json!("already_current"),
+        "late-stage replay close-current-task should record a current task closure: {close}"
+    );
+
+    let branch_route = workflow_operator(
+        &mut cli,
+        LATE_STAGE_PLAN_REL,
+        "late-stage replay branch closure route",
+    );
+    assert_eq!(
+        branch_route["phase_detail"], "branch_closure_recording_required_for_release_readiness",
+        "late-stage replay should route to public branch closure recording before release readiness: {branch_route}"
+    );
+    assert_recommended_public_command_parts_include(
+        &public_recommended_command_argv(&branch_route, "late-stage replay branch closure route"),
+        "advance-late-stage",
+        "late-stage replay branch closure route",
+    );
+    let branch_record = invoke_recommended_public_command_and_check_progress(
+        &mut cli,
+        &mut loop_detector,
+        &branch_route,
+        "late-stage replay record branch closure",
+    );
+    assert!(
+        branch_record["action"] == json!("recorded")
+            || branch_record["action"] == json!("already_current"),
+        "late-stage replay advance-late-stage should record branch closure lineage: {branch_record}"
+    );
+    let branch_closure_id = branch_record["branch_closure_id"]
+        .as_str()
+        .expect("branch closure recording should expose branch_closure_id")
+        .to_owned();
+
+    let release_summary = repo.join("docs/public-replay-release-ready-summary.md");
+    write_file(
+        &release_summary,
+        "Public replay release readiness passed before final-review dispatch repair.\n",
+    );
+    let release = cli.json(
+        &[
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            LATE_STAGE_PLAN_REL,
+            "--result",
+            "ready",
+            "--summary-file",
+            release_summary
+                .to_str()
+                .expect("release summary path should be utf-8"),
+        ],
+        "late-stage replay record release readiness",
+    );
+    assert_eq!(
+        release["action"], "recorded",
+        "late-stage replay should record release readiness through public advance-late-stage: {release}"
+    );
+
+    append_repo_file(
+        repo,
+        "docs/public-replay-late-stage.md",
+        "Late-stage surface drift after release readiness should exercise the persisted repaired-drift route.",
+    );
+    update_state_fields(
+        repo,
+        state,
+        &[(
+            "review_state_repair_follow_up_record",
+            json!({
+                "kind": "advance_late_stage",
+                "target_scope": "branch_closure",
+                "target_record_id": branch_closure_id,
+                "created_sequence": 999,
+                "expires_on_plan_fingerprint_change": true
+            }),
+        )],
+    );
+
+    let repaired_route = cli.json(
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            LATE_STAGE_PLAN_REL,
+            "--external-review-result-ready",
+            "--json",
+        ],
+        "late-stage replay repaired final-review dispatch operator",
+    );
+    assert_eq!(
+        repaired_route["phase_detail"], "final_review_dispatch_required",
+        "post-repair workflow/operator should restore the final-review dispatch route: {repaired_route}"
+    );
+    assert_recommended_public_command_parts_include(
+        &public_recommended_command_argv(
+            &repaired_route,
+            "late-stage replay repaired dispatch route",
+        ),
+        "advance-late-stage",
+        "late-stage replay repaired dispatch route",
+    );
+
+    let dispatch = invoke_recommended_public_command_and_check_progress(
+        &mut cli,
+        &mut loop_detector,
+        &repaired_route,
+        "late-stage replay record repaired final-review dispatch",
+    );
+    assert_eq!(
+        dispatch["operation"], "record_final_review_dispatch",
+        "public advance-late-stage should record repaired final-review dispatch lineage: {dispatch}"
+    );
+    assert_eq!(
+        dispatch["required_follow_up"], "request_external_review",
+        "after dispatch lineage exists, the public flow should request the external final-review result: {dispatch}"
+    );
 }
 
 #[test]

@@ -36,6 +36,11 @@ pub fn begin(
         }
     };
     let begin_status = public_status_from_supplied_context_with_shared_routing(&context, false)?;
+    if let Some(failure) =
+        crate::execution::implementation_gate::pre_execution_plan_fidelity_failure(&begin_status)
+    {
+        return Err(failure);
+    }
     if let Some(execution_mode) = execution_mode_to_persist {
         context.plan_document.execution_mode = execution_mode;
     }
@@ -176,6 +181,7 @@ pub fn begin(
             crate::execution::state::NoteState::Active,
             &context.steps[step_index].note_summary,
         ))?;
+        authoritative_state.set_harness_phase_executing()?;
         authoritative_state.ensure_initial_dispatch_strategy_checkpoint(
             &context,
             &context.plan_document.execution_mode,

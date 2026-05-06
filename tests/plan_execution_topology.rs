@@ -1,5 +1,7 @@
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/plan_fidelity.rs"]
+mod plan_fidelity_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/repo_template.rs"]
@@ -10,6 +12,7 @@ use featureforge::execution::harness::{LearnedTopologyGuidance, TopologySelectio
 use featureforge::execution::internal_args::ExecutionTopologyArg;
 use featureforge::execution::topology::recommend_topology;
 use files_support::write_file;
+use plan_fidelity_support::write_current_pass_plan_fidelity_review_artifact_for_plan;
 use process_support::run_checked;
 use repo_template_support::populate_repo_from_template;
 use serde_json::Value;
@@ -133,6 +136,7 @@ Task 1    Task 2
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn topology_report(repo: &Path) -> AnalyzePlanReport {

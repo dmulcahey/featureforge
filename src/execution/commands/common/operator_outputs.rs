@@ -87,20 +87,15 @@ pub(in crate::execution::commands) fn late_stage_negative_result_override_active
     )
 }
 
-pub(in crate::execution::commands) fn workflow_operator_requery_public_command(
+fn workflow_operator_json_requery_command(
     plan: &Path,
     external_review_result_ready: bool,
 ) -> PublicCommand {
     PublicCommand::WorkflowOperator {
         plan: plan.display().to_string(),
         external_review_result_ready,
+        json: true,
     }
-}
-
-pub(in crate::execution::commands) fn public_command_surfaces(
-    command: &PublicCommand,
-) -> (String, Vec<String>) {
-    (command.to_display_command(), command.to_argv())
 }
 
 pub(in crate::execution::commands) fn optional_public_command_surfaces(
@@ -116,10 +111,8 @@ pub(in crate::execution::commands) fn workflow_operator_requery_surfaces(
     plan: &Path,
     external_review_result_ready: bool,
 ) -> (String, Vec<String>) {
-    public_command_surfaces(&workflow_operator_requery_public_command(
-        plan,
-        external_review_result_ready,
-    ))
+    let command = workflow_operator_json_requery_command(plan, external_review_result_ready);
+    (command.to_display_command(), command.to_argv())
 }
 
 pub(in crate::execution::commands) fn workflow_operator_requery_optional_surfaces(
@@ -134,6 +127,188 @@ pub(in crate::execution::commands) fn workflow_operator_requery_optional_surface
     )
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PublicRecoveryContract {
+    pub(crate) required_follow_up: Option<String>,
+    pub(crate) recommended_command: Option<String>,
+    pub(crate) recommended_public_command_argv: RecommendedPublicCommandArgv,
+    pub(crate) required_inputs: Vec<PublicCommandInputRequirement>,
+    pub(crate) rederive_via_workflow_operator: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PublicFollowUpInputProfile {
+    None,
+    TaskReview { task: u32 },
+    FinalReview,
+    ReleaseReadiness,
+}
+
+impl PublicRecoveryContract {
+    fn empty() -> Self {
+        Self {
+            required_follow_up: None,
+            recommended_command: None,
+            recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
+            rederive_via_workflow_operator: None,
+        }
+    }
+
+    fn diagnostic_only() -> Self {
+        Self::empty()
+    }
+
+    fn from_public_command(
+        required_follow_up: String,
+        command: Option<&PublicCommand>,
+    ) -> Option<Self> {
+        let (recommended_command, recommended_public_command_argv, required_inputs) =
+            public_command_recommendation_surfaces(command);
+        (recommended_public_command_argv.is_some() || !required_inputs.is_empty()).then_some(Self {
+            required_follow_up: Some(required_follow_up),
+            recommended_command,
+            recommended_public_command_argv,
+            required_inputs,
+            rederive_via_workflow_operator: None,
+        })
+    }
+
+    fn from_requery(
+        plan: &Path,
+        external_review_result_ready: bool,
+        required_follow_up: String,
+        required_inputs: Vec<PublicCommandInputRequirement>,
+    ) -> Self {
+        let (recommended_command, recommended_public_command_argv) =
+            workflow_operator_requery_optional_surfaces(plan, external_review_result_ready);
+        Self {
+            required_follow_up: Some(required_follow_up),
+            recommended_command,
+            recommended_public_command_argv,
+            required_inputs,
+            rederive_via_workflow_operator: Some(true),
+        }
+    }
+}
+
+pub(crate) fn public_recovery_contract_for_follow_up(
+    plan: &Path,
+    operator: Option<&ExecutionRoutingState>,
+    required_follow_up: Option<String>,
+    input_profile: PublicFollowUpInputProfile,
+) -> PublicRecoveryContract {
+    let Some(required_follow_up) = required_follow_up else {
+        return PublicRecoveryContract::empty();
+    };
+    match required_follow_up.as_str() {
+        "request_external_review" | "wait_for_external_review_result" => {
+            return PublicRecoveryContract::from_requery(
+                plan,
+                true,
+                required_follow_up,
+                required_inputs_for_follow_up_profile(plan, input_profile),
+            );
+        }
+        "execution_reentry" => {
+            if let Some(contract) = contract_from_matching_operator(&required_follow_up, operator) {
+                return contract;
+            }
+            return PublicRecoveryContract::diagnostic_only();
+        }
+        _ => {}
+    }
+    if let Some(contract) = contract_from_matching_operator(&required_follow_up, operator) {
+        return contract;
+    }
+    fallback_public_recovery_contract(plan, required_follow_up, input_profile)
+}
+
+fn contract_from_matching_operator(
+    required_follow_up: &str,
+    operator: Option<&ExecutionRoutingState>,
+) -> Option<PublicRecoveryContract> {
+    let command = operator
+        .and_then(|operator| operator.recommended_public_command.as_ref())
+        .filter(|command| {
+            close_current_task_command_matches_follow_up(Some(required_follow_up), command)
+        });
+    PublicRecoveryContract::from_public_command(required_follow_up.to_owned(), command)
+}
+
+fn fallback_public_recovery_contract(
+    plan: &Path,
+    required_follow_up: String,
+    input_profile: PublicFollowUpInputProfile,
+) -> PublicRecoveryContract {
+    match required_follow_up.as_str() {
+        "repair_review_state" => PublicRecoveryContract::from_public_command(
+            required_follow_up,
+            Some(&repair_review_state_public_command(
+                &plan.display().to_string(),
+            )),
+        )
+        .unwrap_or_else(PublicRecoveryContract::diagnostic_only),
+        "run_verification" | "resolve_release_blocker" | "record_handoff" => {
+            let required_inputs = required_inputs_for_follow_up_profile(plan, input_profile);
+            if required_inputs.is_empty() {
+                PublicRecoveryContract::diagnostic_only()
+            } else {
+                PublicRecoveryContract {
+                    required_follow_up: Some(required_follow_up),
+                    recommended_command: None,
+                    recommended_public_command_argv: None,
+                    required_inputs,
+                    rederive_via_workflow_operator: None,
+                }
+            }
+        }
+        "advance_late_stage" => {
+            let command = command_for_follow_up_profile(plan, input_profile);
+            if let Some(contract) = PublicRecoveryContract::from_public_command(
+                required_follow_up.clone(),
+                command.as_ref(),
+            ) {
+                contract
+            } else {
+                PublicRecoveryContract::from_requery(plan, false, required_follow_up, Vec::new())
+            }
+        }
+        _ => PublicRecoveryContract::diagnostic_only(),
+    }
+}
+
+fn required_inputs_for_follow_up_profile(
+    plan: &Path,
+    input_profile: PublicFollowUpInputProfile,
+) -> Vec<PublicCommandInputRequirement> {
+    required_inputs_for_public_command(command_for_follow_up_profile(plan, input_profile).as_ref())
+}
+
+fn command_for_follow_up_profile(
+    plan: &Path,
+    input_profile: PublicFollowUpInputProfile,
+) -> Option<PublicCommand> {
+    let plan = plan.display().to_string();
+    match input_profile {
+        PublicFollowUpInputProfile::None => None,
+        PublicFollowUpInputProfile::TaskReview { task } => Some(PublicCommand::CloseCurrentTask {
+            plan,
+            task: Some(task),
+            result_inputs_required: true,
+        }),
+        PublicFollowUpInputProfile::FinalReview => Some(PublicCommand::AdvanceLateStage {
+            plan,
+            mode: PublicAdvanceLateStageMode::FinalReview,
+        }),
+        PublicFollowUpInputProfile::ReleaseReadiness => Some(PublicCommand::AdvanceLateStage {
+            plan,
+            mode: PublicAdvanceLateStageMode::ReleaseReadiness,
+        }),
+    }
+}
+
+#[cfg(test)]
 pub(in crate::execution::commands) struct CloseCurrentTaskFollowUpRecommendation {
     pub(in crate::execution::commands) required_follow_up: Option<String>,
     pub(in crate::execution::commands) recommended_command: Option<String>,
@@ -188,6 +363,7 @@ pub(in crate::execution::commands) fn close_current_task_command_matches_follow_
     }
 }
 
+#[cfg(test)]
 pub(in crate::execution::commands) fn close_current_task_recommendation_for_follow_up(
     required_follow_up: Option<&str>,
     operator: &ExecutionRoutingState,
@@ -207,6 +383,7 @@ pub(in crate::execution::commands) fn close_current_task_recommendation_for_foll
     close_current_task_public_command_surfaces(recommended_public_command)
 }
 
+#[cfg(test)]
 pub(in crate::execution::commands) fn close_current_task_follow_up_and_command(
     operator: &ExecutionRoutingState,
 ) -> CloseCurrentTaskFollowUpRecommendation {
@@ -219,6 +396,19 @@ pub(in crate::execution::commands) fn close_current_task_follow_up_and_command(
         recommended_public_command_argv,
         required_inputs,
     }
+}
+
+pub(in crate::execution::commands) fn close_current_task_recovery_contract(
+    plan: &Path,
+    operator: &ExecutionRoutingState,
+    task_number: u32,
+) -> PublicRecoveryContract {
+    public_recovery_contract_for_follow_up(
+        plan,
+        Some(operator),
+        close_current_task_required_follow_up(operator),
+        PublicFollowUpInputProfile::TaskReview { task: task_number },
+    )
 }
 
 pub(in crate::execution::commands) fn with_close_current_task_operator_blocker_metadata(
@@ -401,6 +591,16 @@ pub(in crate::execution::commands) fn advance_late_stage_follow_up_or_requery_ou
                 },
             );
         }
+        let recovery = public_recovery_contract_for_follow_up(
+            plan,
+            Some(operator),
+            Some(required_follow_up),
+            if stage_path == "final_review" {
+                PublicFollowUpInputProfile::FinalReview
+            } else {
+                PublicFollowUpInputProfile::None
+            },
+        );
         return AdvanceLateStageOutput {
             action: String::from("blocked"),
             stage_path: stage_path.to_owned(),
@@ -410,11 +610,11 @@ pub(in crate::execution::commands) fn advance_late_stage_follow_up_or_requery_ou
             dispatch_id,
             result: result.to_owned(),
             code: None,
-            recommended_command: None,
-            recommended_public_command_argv: None,
-            required_inputs: Vec::new(),
-            rederive_via_workflow_operator: None,
-            required_follow_up: Some(required_follow_up),
+            recommended_command: recovery.recommended_command,
+            recommended_public_command_argv: recovery.recommended_public_command_argv,
+            required_inputs: recovery.required_inputs,
+            rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+            required_follow_up: recovery.required_follow_up,
             trace_summary: trace_summary.to_owned(),
         };
     }
@@ -447,6 +647,12 @@ pub(in crate::execution::commands) fn release_readiness_follow_up_or_requery_out
         trace_summary,
     } = params;
     if let Some(required_follow_up) = release_readiness_required_follow_up(operator) {
+        let recovery = public_recovery_contract_for_follow_up(
+            plan,
+            Some(operator),
+            Some(required_follow_up),
+            PublicFollowUpInputProfile::ReleaseReadiness,
+        );
         return AdvanceLateStageOutput {
             action: String::from("blocked"),
             stage_path: stage_path.to_owned(),
@@ -456,11 +662,11 @@ pub(in crate::execution::commands) fn release_readiness_follow_up_or_requery_out
             dispatch_id,
             result: result.to_owned(),
             code: None,
-            recommended_command: None,
-            recommended_public_command_argv: None,
-            required_inputs: Vec::new(),
-            rederive_via_workflow_operator: None,
-            required_follow_up: Some(required_follow_up),
+            recommended_command: recovery.recommended_command,
+            recommended_public_command_argv: recovery.recommended_public_command_argv,
+            required_inputs: recovery.required_inputs,
+            rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+            required_follow_up: recovery.required_follow_up,
             trace_summary: trace_summary.to_owned(),
         };
     }
