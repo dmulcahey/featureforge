@@ -12,7 +12,8 @@ mod runtime_support;
 use bin_support::compiled_featureforge_path;
 use featureforge::cli::plan_execution::{ExecutionModeArg, TransferArgs};
 use featureforge::contracts::harness::{WorktreeLease, WorktreeLeaseState};
-use featureforge::contracts::plan::parse_plan_file;
+use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
+use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::authority::{
     persist_active_worktree_lease_index, write_authoritative_unit_review_receipt_artifact,
     write_authoritative_worktree_lease_artifact,
@@ -492,6 +493,7 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact(repo);
 }
 
 fn write_second_approved_plan_same_spec(repo: &Path, execution_mode: &str) {
@@ -575,6 +577,7 @@ fn write_single_step_plan(repo: &Path, execution_mode: &str) {
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact(repo);
 }
 
 fn set_plan_qa_requirement(repo: &Path, qa_requirement: &str) {
@@ -640,6 +643,33 @@ fn add_fenced_step_details(repo: &Path) {
 fn sha256_hex(contents: &[u8]) -> String {
     let digest = Sha256::digest(contents);
     format!("{digest:x}")
+}
+
+fn write_current_pass_plan_fidelity_review_artifact(repo: &Path) {
+    let artifact_path = repo.join(".featureforge/reviews/plan-execution-plan-fidelity.md");
+    let plan = parse_plan_file(repo.join(PLAN_REL)).expect("plan fixture should parse");
+    let spec = parse_spec_file(repo.join(SPEC_REL)).expect("spec fixture should parse");
+    let plan_fingerprint = sha256_hex(&fs::read(repo.join(PLAN_REL)).expect("plan should read"));
+    let spec_fingerprint = sha256_hex(&fs::read(repo.join(SPEC_REL)).expect("spec should read"));
+    let verified_requirement_ids = spec
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+
+    if let Some(parent) = artifact_path.parent() {
+        fs::create_dir_all(parent).expect("plan-fidelity artifact parent should be creatable");
+    }
+    write_file(
+        &artifact_path,
+        &format!(
+            "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** pass\n**Reviewed Plan:** `{PLAN_REL}`\n**Reviewed Plan Revision:** {}\n**Reviewed Plan Fingerprint:** {plan_fingerprint}\n**Reviewed Spec:** `{SPEC_REL}`\n**Reviewed Spec Revision:** {}\n**Reviewed Spec Fingerprint:** {spec_fingerprint}\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** plan-execution-fixture-plan-fidelity-reviewer\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** {}\n**Verified Requirement IDs:** {}\n",
+            plan.plan_revision,
+            spec.spec_revision,
+            PLAN_FIDELITY_REQUIRED_SURFACES.join(", "),
+            verified_requirement_ids.join(", "),
+        ),
+    );
 }
 
 fn evidence_rel_path() -> String {
@@ -4434,56 +4464,56 @@ fn runtime_remediation_inventory_includes_plan_execution_invariant_regressions()
     }
     assert!(
         inventory.contains(
-            "tests/plan_execution.rs::runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch"
+            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch"
         ),
         "runtime-remediation inventory should map FS-03 to an explicit compiled-cli plan-execution regression"
     );
     assert!(
         inventory.contains(
-            "tests/plan_execution.rs::runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest"
+            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest"
         ),
         "runtime-remediation inventory should map FS-04 to the authoritative-state-digest invariant in plan execution"
     );
     assert!(
         inventory.contains(
-            "tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation"
+            "tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation"
         ),
         "runtime-remediation inventory should map FS-05 to explicit no-mutation target-mismatch coverage in plan execution"
     );
     assert!(
         inventory.contains(
-            "tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation"
+            "tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation"
         ),
         "runtime-remediation inventory should map FS-05 to final-review scope no-mutation coverage in plan execution"
     );
     assert!(
         inventory.contains(
-            "tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation"
+            "tests/internal_plan_execution.rs::internal_only_compatibility_record_final_review_rejects_unapproved_reviewer_source_before_mutation"
         ),
         "runtime-remediation inventory should map FS-05 to final-review reviewer-source no-mutation coverage in plan execution"
     );
     assert!(
         inventory.contains(&format!(
-            "tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_{}",
+            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_{}",
             concat!("pre", "flight")
         )),
         "runtime-remediation inventory should map FS-12 to authoritative run-identity closure recording coverage in plan execution"
     );
     assert!(
         inventory.contains(
-            "tests/plan_execution.rs::runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state"
+            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state"
         ),
         "runtime-remediation inventory should map FS-13 to authoritative open-step state mutation coverage in plan execution"
     );
     assert!(
         inventory.contains(
-            "tests/plan_execution.rs::runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch"
+            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch"
         ),
         "runtime-remediation inventory should map FS-14 to closure-baseline regeneration coverage in plan execution"
     );
     assert!(
         inventory.contains(
-            "tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts"
+            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts"
         ),
         "runtime-remediation inventory should map FS-16 to begin-time closure-authority coverage in plan execution"
     );

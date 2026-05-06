@@ -72,7 +72,6 @@ For every interactive user question, use this structure:
 
 Per-skill instructions may add additional formatting rules on top of this baseline.
 
-
 # Executing Plans
 
 ## Overview
@@ -86,31 +85,16 @@ Use this skill when the runtime-selected topology calls for a separate-session c
 ### Step 1: Implementation Preflight
 1. Require the exact approved plan path as input. If you are not given one, stop and ask for it or route back to `featureforge:plan-eng-review`.
 2. Read the plan file first.
-3. Verify these exact header lines exist and are current:
-   - `**Workflow State:** Engineering Approved`
-   - `**Source Spec:** <path>`
-   - `**Source Spec Revision:** <integer>`
+3. Verify these exact header lines exist and are current: `**Workflow State:** Engineering Approved`, `**Source Spec:** <path>`, and `**Source Spec Revision:** <integer>`.
 4. Read the source spec named in the plan and confirm it is still `CEO Approved`, and that the latest approved spec still matches that exact source-spec path and revision.
-5. Stop immediately and redirect:
-   - to `featureforge:plan-eng-review` if the plan is draft or malformed
-   - to `featureforge:writing-plans` if the source spec path or revision is stale
-6. Verify workspace readiness before starting:
-   - stop on a default protected branch (`main`, `master`, `dev`, or `develop`) unless the user explicitly approves in-place execution
-   - stop on detached HEAD
-   - stop if merge conflicts, unresolved index entries, rebase, or cherry-pick state is present
-   - if the working tree is dirty, stop unless the helper-selected topology and workspace-prepared context explicitly support isolated worktree-backed execution for this run
+5. Stop immediately and redirect to `featureforge:plan-eng-review` if the plan is draft or malformed, or to `featureforge:writing-plans` if the source spec path or revision is stale.
+6. Verify workspace readiness before starting: stop on protected/default branches without explicit in-place approval, detached HEAD, conflict/rebase/cherry-pick state, or dirty worktree unless the helper-selected topology explicitly supports isolated worktree-backed execution.
 7. Do not bulk-clean the workspace ad hoc. If the helper-selected topology or protected-branch gate requires isolated execution, provision or route through a worktree-backed workspace before mutating repo state, and let the runtime-owned barrier flow reconcile reviewed work back onto the active branch and clean temporary worktrees at safe intervals.
 8. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
 9. Run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` before starting execution.
 10. If workflow/operator does not report `phase` `executing`, stop and follow the reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of reopening execution through compatibility helpers. Treat `recommended_command` as display-only compatibility text.
 11. If workflow/operator confirms `phase` `executing`, review the plan critically for execution concerns and treat workflow/operator plus `plan execution status` as the live execution surface. Tracked checklist/evidence markdown is an optional materialized export; the event log remains authoritative for routing and gates.
-12. Treat execution start as a hard gate, not a reminder:
-   - no code edits and no test edits are allowed after workflow/operator confirms the current execution preflight handoff and before the first `begin` for the active step
-   - no repo mutation is allowed until that first `begin` is recorded
-   - the first `begin` is the mandatory execution-tracking boundary; preflight acceptance alone is not permission to start implementation
-   - if the workspace becomes dirty before the first `begin`, expect later execution-start checks to fail closed (for example `tracked_worktree_dirty`) until the workspace is reconciled or isolated
-   - retroactive execution tracking is recovery-only and must never be treated as the normal execution path
-   - five-step recovery runbook for dirty-before-begin failures:
+12. Treat execution start as a hard gate: no code edits, no test edits, and no repo mutation are allowed after workflow/operator confirms the current execution preflight handoff and before the first `begin` for the active step. The first `begin` is the mandatory execution-tracking boundary; preflight acceptance alone is not permission to start implementation. If the workspace becomes dirty before the first `begin`, expect later execution-start checks to fail closed (for example `tracked_worktree_dirty`) until reconciled or isolated. Retroactive execution tracking is recovery-only and must never be the normal path. Five-step recovery runbook for dirty-before-begin failures:
      1. reconcile or isolate the workspace
      2. rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` and confirm the current route is still `executing` for the current approved plan revision
      3. use that helper-backed route before any recovery mutation
@@ -136,22 +120,14 @@ Use this skill when the runtime-selected topology calls for a separate-session c
 
 - Runtime strategy checkpoints are execution-owned state, not workflow-stage transitions. Keep public workflow phase in execution (`executing`) while strategy checkpoints change; remediation stays represented by checkpoint state and operator routing.
 - The approved plan/spec scope is fixed during execution. Runtime strategy checkpoints may change topology, lane/worktree allocation, subagent assignment, and remediation order, but must not change approved scope, source plan revision, or required coverage.
-- Required checkpoint kinds:
-  - `initial_dispatch`: required before repo-writing implementation starts. Runtime records it automatically on first dispatch/begin when missing.
-  - `review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically when reviewable dispatch lineage enters remediation and when remediation reopens execution work.
-  - `cycle_break`: required when churn is detected. Runtime records it automatically when the same task hits three review-dispatch/reopen cycles in one run.
+- Required checkpoint kinds: `initial_dispatch` before repo-writing implementation starts; `cycle_break` when the same task hits three review-dispatch/reopen cycles in one run; and `review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically when reviewable dispatch lineage enters remediation and when remediation reopens execution work.
 - Cycle-break trigger: cap remediation churn at 3 cycles per task. On the third cycle, transition to `cycle_break` strategy automatically (no human replanning loopback).
 - Reviewers return summaries/results; the controller/runtime binds those results to authoritative state and runtime-owned review projections retain checkpoint fingerprints for traceability. Agents do not search for, repair, or depend on those projection files.
-- Surface and respect runtime strategy status from `$_FEATUREFORGE_BIN plan execution status --plan ...`:
-  - `strategy_state`
-  - `strategy_checkpoint_kind`
-  - `last_strategy_checkpoint_fingerprint`
-  - `strategy_reset_required`
+- Surface and respect runtime strategy status from `$_FEATUREFORGE_BIN plan execution status --plan ...`: `strategy_state`, `strategy_checkpoint_kind`, `last_strategy_checkpoint_fingerprint`, and `strategy_reset_required`.
 
 ## Execution-Phase Subagent Dispatch Policy
 
-- Once execution is active for an approved plan (`execution_started` is `yes`), runtime-selected implementation and review subagent dispatch is authorized and does not require per-dispatch user-consent prompts.
-- This authorization is limited to execution-phase dispatch performed by workflow-owned execution skills (`featureforge:executing-plans` and `featureforge:subagent-driven-development`).
+- Once execution is active for an approved plan (`execution_started` is `yes`), runtime-selected implementation and review subagent dispatch by workflow-owned execution skills is authorized and does not require per-dispatch user-consent prompts.
 - Non-execution ad-hoc delegation still follows normal user-consent policy.
 
 ## Protected-Branch Repo-Write Gate
@@ -162,12 +138,8 @@ Before starting any plan step that mutates repo state, run the shared repo-safet
 $_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:executing-plans --task-id <current-task-slice> --path <repo-relative-path> --write-target execution-task-slice
 ```
 
-- Use one stable task id per repo-writing task slice and pass the concrete repo-relative paths when they are known.
-- If the helper returns `allowed`, continue with that task slice.
-- If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact task slice.
-- If the user explicitly approves protected-branch writes, approve the full task-slice scope with `$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:executing-plans --task-id <current-task-slice> --reason "<explicit user approval>" --path <repo-relative-path> --write-target execution-task-slice [--write-target git-commit] [--write-target git-merge] [--write-target git-push]`, then re-check before continuing.
-- Before a follow-on `git commit`, `git merge`, or `git push`, re-run the gate with the same task id, paths, and approved write-target set.
-- If the protected-branch task scope changes, run a new approval plus full-scope check before continuing.
+- Use one stable task id per repo-writing task slice and pass concrete repo-relative paths when known. If `allowed`, continue; if `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact task slice.
+- If the user approves protected-branch writes, approve the full task-slice scope with `$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:executing-plans --task-id <current-task-slice> --reason "<explicit user approval>" --path <repo-relative-path> --write-target execution-task-slice [--write-target git-commit] [--write-target git-merge] [--write-target git-push]`, then re-check. Before follow-on `git commit`, `git merge`, or `git push`, re-run the gate with the same task id, paths, and approved write-target set; if scope changes, approve and re-check the new full scope.
 - Do not treat a worktree on `main`, `master`, `dev`, or `develop` as safe by itself; the branch must be non-protected or explicitly approved.
 
 ### Step 2: Execute Tasks
@@ -183,12 +155,7 @@ For each task:
   --persist yes
 ```
 
-2. treat it as the exact task contract for that execution segment. Coordinator-added logistics may clarify branch, cwd, or base commit, but they may not reinterpret approved requirements.
-   - The packet's `Goal`, `Context`, indexed `CONSTRAINT_N` obligations, indexed `DONE_WHEN_N` obligations, covered requirements, and file scope are authoritative.
-   - `CONSTRAINT_N` obligations must be checked by task reviewers and must not be softened into advice.
-   - `Done when` obligations must not be reinterpreted or replaced with prose summaries; objectively reviewable obligations remain mandatory even when verified by diff inspection or targeted evidence rather than one command.
-   - Separate-session handoffs must paste the helper-built packet verbatim and may not replace it with a coordinator-written summary.
-   - If packet content conflicts with `review/plan-task-contract.md`, stop and route back to plan review instead of guessing.
+2. treat it as the exact task contract for that execution segment. Coordinator logistics may clarify branch/cwd/base commit, but must not reinterpret approved requirements: the packet's `Goal`, `Context`, indexed `CONSTRAINT_N` obligations, indexed `DONE_WHEN_N` obligations, covered requirements, and file scope are authoritative; `CONSTRAINT_N` obligations must be checked by task reviewers; objectively reviewable `Done when` obligations remain mandatory even when verified by diff inspection or targeted evidence rather than one command; Separate-session handoffs must paste the helper-built packet verbatim; if packet content conflicts with `review/plan-task-contract.md`, stop and route back to plan review.
 3. Use workflow/operator and `plan execution status` as the live step-progress surface for the task's steps; tracked checklist/evidence markdown is optional materialized output and is not routing authority.
 4. Follow each step exactly (plan has bite-sized steps).
 5. Run verifications as specified.
@@ -264,7 +231,7 @@ After all tasks complete and verified:
 After the final review is resolved:
 - Announce: "I'm using the finishing-a-development-branch skill to complete this work."
 - **REQUIRED SUB-SKILL:** Use featureforge:finishing-a-development-branch
-- Follow that skill to verify tests, require `qa-only` when browser QA is warranted, require `document-release` for workflow-routed work, present options, and execute the chosen completion path
+- Follow that skill to verify tests, route QA when warranted, present options, and execute the chosen completion path
 
 - **featureforge:writing-plans** - Creates the plan this skill executes
 - **featureforge:plan-eng-review** - Provides the approved plan and the execution preflight handoff

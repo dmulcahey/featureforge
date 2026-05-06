@@ -235,7 +235,6 @@ const BRANCH_CLOSURE_EVENT_FIELDS: &[&str] = &[
     "current_qa_record_id",
     "browser_qa_state",
     "last_browser_qa_artifact_fingerprint",
-    "finish_review_gate_pass_branch_closure_id",
     "harness_phase",
 ];
 
@@ -3083,6 +3082,13 @@ fn event_from_command_authoritative_delta(
             dispatch_id: current_dispatch_id_from_state(state),
             facts: Box::new(dispatch_state.into()),
         }),
+        "advance_late_stage" if advance_late_stage_dispatch_state_changed(current_state, state) => {
+            Ok(ExecutionEvent::DispatchRecorded {
+                scope: dispatch_scope_from_state(state),
+                dispatch_id: current_dispatch_id_from_state(state),
+                facts: Box::new(dispatch_state.into()),
+            })
+        }
         "close_current_task" => Ok(ExecutionEvent::TaskClosureRecorded {
             task: newest_current_task_from_state(state),
             closure_record_id: newest_current_task_closure_id_from_state(state),
@@ -3251,6 +3257,12 @@ fn dispatch_scope_from_state(state: &Value) -> Option<String> {
 fn current_dispatch_id_from_state(state: &Value) -> Option<String> {
     json_string(state, "current_task_review_dispatch_id")
         .or_else(|| json_string(state, "current_final_review_dispatch_id"))
+}
+
+fn advance_late_stage_dispatch_state_changed(current_state: &Value, state: &Value) -> bool {
+    DISPATCH_EVENT_FIELDS
+        .iter()
+        .any(|field| changed_authoritative_field_value(current_state, state, field).is_some())
 }
 
 fn newest_current_task_from_state(state: &Value) -> Option<u32> {

@@ -3,6 +3,8 @@
 //! reconcile/explain commands stay thin over query and recording boundaries instead of
 //! reaching into authoritative storage or rendered artifacts directly.
 
+use std::path::Path;
+
 use serde::Serialize;
 
 use crate::cli::plan_execution::StatusArgs;
@@ -10,6 +12,9 @@ use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::command_eligibility::{
     PublicAdvanceLateStageMode, PublicCommand, PublicCommandInputRequirement, PublicMutationKind,
     PublicMutationRequest, public_command_recommendation_surfaces, require_public_mutation,
+};
+use crate::execution::commands::common::{
+    PublicFollowUpInputProfile, public_recovery_contract_for_follow_up,
 };
 use crate::execution::current_truth::{
     BranchRerecordingUnsupportedReason, branch_closure_rerecording_assessment,
@@ -237,16 +242,11 @@ fn public_recommendation_surfaces(
 fn follow_up_recommended_public_command(
     required_follow_up: &str,
     routed_required_follow_up: Option<&str>,
-    final_routing_phase_detail: &str,
+    _final_routing_phase_detail: &str,
     final_routing_public_command: Option<&PublicCommand>,
     fallback_public_command: Option<&PublicCommand>,
 ) -> Option<PublicCommand> {
-    if required_follow_up == "request_external_review"
-        && final_routing_phase_detail
-            == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-    {
-        None
-    } else if routed_required_follow_up == Some(required_follow_up) {
+    if routed_required_follow_up == Some(required_follow_up) {
         final_routing_public_command.cloned()
     } else {
         fallback_public_command.cloned()
@@ -450,6 +450,12 @@ fn targetless_stale_reconcile_output(
     if !stale_unreviewed_closures.is_empty() {
         let (recommended_command, recommended_public_command_argv, required_inputs) =
             public_command_recommendation_surfaces(concrete_stale_target_repair_command.as_ref());
+        let required_follow_up =
+            if recommended_public_command_argv.is_some() || !required_inputs.is_empty() {
+                Some(String::from("execution_reentry"))
+            } else {
+                None
+            };
         return RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -458,7 +464,7 @@ fn targetless_stale_reconcile_output(
             stale_unreviewed_closures,
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
-            required_follow_up: Some(String::from("execution_reentry")),
+            required_follow_up,
             next_action: None,
             recommended_command: recommended_command.clone(),
             recommended_public_command_argv,
@@ -1114,6 +1120,17 @@ fn repair_review_state_external_wait_output(
     phase_bundle: RepairPhaseBundle,
     actions_performed: Vec<String>,
 ) -> RepairReviewStateOutput {
+    let input_profile = phase_bundle
+        .status
+        .blocking_task
+        .map(|task| PublicFollowUpInputProfile::TaskReview { task })
+        .unwrap_or(PublicFollowUpInputProfile::FinalReview);
+    let recovery = public_recovery_contract_for_follow_up(
+        Path::new(&phase_bundle.read_scope.context.plan_rel),
+        None,
+        Some(String::from("wait_for_external_review_result")),
+        input_profile,
+    );
     RepairReviewStateOutput {
         action: String::from("blocked"),
         current_task_closures: phase_bundle.snapshot.current_task_closures,
@@ -1122,11 +1139,11 @@ fn repair_review_state_external_wait_output(
         stale_unreviewed_closures: phase_bundle.snapshot.stale_unreviewed_closures,
         missing_derived_overlays: phase_bundle.snapshot.missing_derived_overlays,
         actions_performed,
-        required_follow_up: Some(String::from("wait_for_external_review_result")),
+        required_follow_up: recovery.required_follow_up,
         next_action: None,
-        recommended_command: None,
-        recommended_public_command_argv: None,
-        required_inputs: Vec::new(),
+        recommended_command: recovery.recommended_command,
+        recommended_public_command_argv: recovery.recommended_public_command_argv,
+        required_inputs: recovery.required_inputs,
         trace_summary: String::from(
             "Repair review state refreshed routing, but an external review result is pending; no local repair mutation is authorized until that result is available.",
         ),
@@ -1479,12 +1496,7 @@ pub fn repair_review_state(
     };
     let recommended_public_command =
         if let Some(required_follow_up_lane) = required_follow_up.as_deref() {
-            if required_follow_up_lane == "request_external_review"
-                && route_decision.phase_detail
-                    == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-            {
-                None
-            } else if required_follow_up_lane == "execution_reentry"
+            if required_follow_up_lane == "execution_reentry"
                 && public_command_is_repair_review_state(
                     route_decision.recommended_public_command.as_ref(),
                 )
@@ -1771,6 +1783,18 @@ pub fn repair_review_state(
     {
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
         if final_routing.current_release_readiness_result.is_some() {
+            let branch_route_decision = match final_routing.recommended_public_command.as_ref() {
+                Some(PublicCommand::AdvanceLateStage { .. }) => {
+                    if let Some(route_decision) = final_routing.route_decision.as_ref() {
+                        route_decision.clone()
+                    } else {
+                        branch_closure_repair_route_decision(&phase_bundle)?
+                    }
+                }
+                _ => branch_closure_repair_route_decision(&phase_bundle)?,
+            };
+            let (recommended_command, recommended_public_command_argv, required_inputs) =
+                route_decision_surfaces(&branch_route_decision);
             return Ok(RepairReviewStateOutput {
                 action: String::from("blocked"),
                 current_task_closures: snapshot.current_task_closures,
@@ -1779,23 +1803,23 @@ pub fn repair_review_state(
                 stale_unreviewed_closures: stale_unreviewed_closures.clone(),
                 missing_derived_overlays: snapshot.missing_derived_overlays,
                 actions_performed,
-                required_follow_up: Some(String::from("request_external_review")),
+                required_follow_up: Some(String::from("advance_late_stage")),
                 next_action: None,
-                recommended_command: None,
-                recommended_public_command_argv: None,
-                required_inputs: Vec::new(),
-                trace_summary: repair_follow_up_trace_summary(
-                    "request_external_review",
-                    branch_rerecording_unsupported_reason,
-                    task_scope_structural_reason.as_deref(),
-                    branch_scope_structural_reason.as_deref(),
+                recommended_command: recommended_command.clone(),
+                recommended_public_command_argv,
+                required_inputs,
+                trace_summary: String::from(
+                    "Repair review state reconciled projections and refreshed routing; public late-stage advancement must refresh branch lineage before final review can continue.",
                 ) + blocker_metadata.as_str(),
-                phase: Some(final_routing.phase.clone()),
-                phase_detail: Some(final_routing.phase_detail.clone()),
-                blocking_task: final_routing.blocking_task,
+                phase: Some(branch_route_decision.phase),
+                phase_detail: Some(branch_route_decision.phase_detail),
+                blocking_task: branch_route_decision
+                    .recording_context
+                    .and_then(|context| context.task_number)
+                    .or(final_routing.blocking_task),
                 blocking_step: None,
-                blocking_reason_codes: final_routing.blocking_reason_codes.clone(),
-                authoritative_next_action: routing_recommended_command(&final_routing),
+                blocking_reason_codes: branch_route_decision.blocking_reason_codes,
+                authoritative_next_action: recommended_command,
             });
         }
         let branch_route_decision = match final_routing.recommended_public_command.as_ref() {
@@ -1902,15 +1926,74 @@ pub fn repair_review_state(
     if let Some(required_follow_up) = final_required_follow_up.as_deref() {
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
         let routed_required_follow_up = required_follow_up_from_routing(&final_routing);
-        let recommended_public_command = follow_up_recommended_public_command(
-            required_follow_up,
-            routed_required_follow_up.as_deref(),
-            &final_routing.phase_detail,
-            final_routing.recommended_public_command.as_ref(),
-            recommended_public_command.as_ref(),
+        let public_required_follow_up = if required_follow_up == "request_external_review"
+            && final_routing.phase_detail
+                == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+            && matches!(
+                final_routing.recommended_public_command.as_ref(),
+                Some(PublicCommand::AdvanceLateStage { .. })
+            ) {
+            "advance_late_stage"
+        } else {
+            required_follow_up
+        };
+        let recommended_public_command = if public_required_follow_up == "advance_late_stage"
+            && final_routing.phase_detail
+                == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+        {
+            final_routing.recommended_public_command.clone()
+        } else {
+            follow_up_recommended_public_command(
+                required_follow_up,
+                routed_required_follow_up.as_deref(),
+                &final_routing.phase_detail,
+                final_routing.recommended_public_command.as_ref(),
+                recommended_public_command.as_ref(),
+            )
+        };
+        let recovery = public_recovery_contract_for_follow_up(
+            &status_args.plan,
+            Some(&final_routing),
+            Some(public_required_follow_up.to_owned()),
+            if public_required_follow_up == "request_external_review" {
+                PublicFollowUpInputProfile::FinalReview
+            } else {
+                PublicFollowUpInputProfile::None
+            },
         );
-        let (recommended_command, recommended_public_command_argv, required_inputs) =
-            public_recommendation_surfaces(recommended_public_command.as_ref());
+        let (
+            output_required_follow_up,
+            output_recommended_command,
+            output_recommended_public_command_argv,
+            output_required_inputs,
+        ) = if recovery.recommended_public_command_argv.is_none()
+            && recovery.required_inputs.is_empty()
+        {
+            let (recommended_command, recommended_public_command_argv, required_inputs) =
+                public_recommendation_surfaces(recommended_public_command.as_ref());
+            if recommended_public_command_argv.is_some() || !required_inputs.is_empty() {
+                (
+                    Some(public_required_follow_up.to_owned()),
+                    recommended_command,
+                    recommended_public_command_argv,
+                    required_inputs,
+                )
+            } else {
+                (
+                    recovery.required_follow_up,
+                    recovery.recommended_command,
+                    recovery.recommended_public_command_argv,
+                    recovery.required_inputs,
+                )
+            }
+        } else {
+            (
+                recovery.required_follow_up,
+                recovery.recommended_command,
+                recovery.recommended_public_command_argv,
+                recovery.required_inputs,
+            )
+        };
         if required_follow_up == "execution_reentry"
             && task_scope_structural_reason.is_none()
             && branch_scope_structural_reason.is_none()
@@ -2016,13 +2099,13 @@ pub fn repair_review_state(
             stale_unreviewed_closures: stale_unreviewed_closures.clone(),
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
-            required_follow_up: Some(required_follow_up.to_owned()),
+            required_follow_up: output_required_follow_up,
             next_action: None,
-            recommended_command,
-            recommended_public_command_argv,
-            required_inputs,
+            recommended_command: output_recommended_command,
+            recommended_public_command_argv: output_recommended_public_command_argv,
+            required_inputs: output_required_inputs,
             trace_summary: repair_follow_up_trace_summary(
-                required_follow_up,
+                public_required_follow_up,
                 branch_rerecording_unsupported_reason,
                 task_scope_structural_reason.as_deref(),
                 branch_scope_structural_reason.as_deref(),
@@ -2072,6 +2155,30 @@ pub fn repair_review_state(
     }
     if let Some(required_follow_up) = public_required_follow_up {
         let blocker_metadata = repair_blocker_metadata_suffix(&repair_plan);
+        let route_action_command = route_action.recommended_command();
+        let route_action_argv = route_action.recommended_command_argv();
+        let route_action_inputs = route_action.required_inputs();
+        let recovery = if route_action_argv.is_some() || !route_action_inputs.is_empty() {
+            (
+                Some(required_follow_up.clone()),
+                route_action_command.clone(),
+                route_action_argv,
+                route_action_inputs,
+            )
+        } else {
+            let recovery = public_recovery_contract_for_follow_up(
+                &status_args.plan,
+                None,
+                Some(required_follow_up.clone()),
+                PublicFollowUpInputProfile::None,
+            );
+            (
+                recovery.required_follow_up,
+                recovery.recommended_command,
+                recovery.recommended_public_command_argv,
+                recovery.required_inputs,
+            )
+        };
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -2080,11 +2187,11 @@ pub fn repair_review_state(
             stale_unreviewed_closures: stale_unreviewed_closures.clone(),
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
-            required_follow_up: Some(required_follow_up.clone()),
+            required_follow_up: recovery.0,
             next_action: None,
-            recommended_command: route_action.recommended_command(),
-            recommended_public_command_argv: route_action.recommended_command_argv(),
-            required_inputs: route_action.required_inputs(),
+            recommended_command: recovery.1,
+            recommended_public_command_argv: recovery.2,
+            required_inputs: recovery.3,
             trace_summary: repair_follow_up_trace_summary(
                 required_follow_up.as_str(),
                 branch_rerecording_unsupported_reason,
@@ -3359,6 +3466,7 @@ fn recommended_operator_command(args: &StatusArgs, external_review_result_ready:
     PublicCommand::WorkflowOperator {
         plan: args.plan.display().to_string(),
         external_review_result_ready,
+        json: false,
     }
     .to_display_command()
 }

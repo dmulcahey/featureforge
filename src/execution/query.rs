@@ -39,15 +39,18 @@ use crate::execution::follow_up::{
     normalize_persisted_repair_follow_up_token, normalize_public_routing_follow_up_token,
 };
 use crate::execution::harness::HarnessPhase;
+use crate::execution::implementation_gate::implementation_entry_started;
 #[cfg(test)]
 use crate::execution::next_action::{
     NextActionDecision, NextActionKind, compute_next_action_decision, public_next_action_text,
 };
 use crate::execution::phase;
+use crate::execution::read_model_support::qa_pending_requires_test_plan_refresh;
 use crate::execution::reducer::{RuntimeState, reduce_execution_read_scope};
 use crate::execution::router::{
     RouteDecision, project_non_runtime_workflow_routing_state, project_runtime_routing_state,
     required_follow_up_from_route_decision, route_decision_from_routing,
+    route_is_engineering_approval_fidelity_blocked,
 };
 use crate::execution::runtime::state_dir as default_state_dir;
 use crate::execution::runtime_provenance::{RuntimeProvenance, runtime_provenance_for_paths};
@@ -60,9 +63,8 @@ use crate::execution::state::{
     apply_public_read_invariants_to_status,
     apply_shared_routing_projection_to_read_scope_with_routing,
     current_branch_closure_structural_review_state_reason, load_execution_read_scope,
-    missing_derived_review_state_fields, qa_pending_requires_test_plan_refresh,
-    shared_repair_review_state_reroute_decision, task_scope_review_state_repair_reason,
-    task_scope_structural_review_state_reason,
+    missing_derived_review_state_fields, shared_repair_review_state_reroute_decision,
+    task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
 #[cfg(test)]
@@ -138,6 +140,31 @@ pub struct ExecutionRoutingExecutionCommandContext {
     pub command_kind: String,
     pub task_number: Option<u32>,
     pub step_id: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub(crate) struct ExecutionBlockingProjection {
+    pub(crate) scope: Option<String>,
+    pub(crate) task: Option<u32>,
+}
+
+impl ExecutionBlockingProjection {
+    pub(crate) fn apply_to_status(&self, status: &mut PlanExecutionStatus) {
+        status.blocking_scope.clone_from(&self.scope);
+        status.blocking_task = self.task;
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ExecutionBlockingProjectionInputs<'a> {
+    pub(crate) phase_detail: &'a str,
+    pub(crate) review_state_status: &'a str,
+    pub(crate) status: Option<&'a PlanExecutionStatus>,
+    pub(crate) fallback_scope: Option<&'a str>,
+    pub(crate) fallback_task: Option<u32>,
+    pub(crate) execution_command_task: Option<u32>,
+    pub(crate) recording_task: Option<u32>,
+    pub(crate) blocker_task: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -639,7 +666,7 @@ fn query_workflow_routing_state_internal(
                 project_runtime_routing_state(&runtime, read_scope, external_review_result_ready)?;
             attach_runtime_provenance(&mut routing, Some(&runtime), current_dir);
             if engineering_approval_fidelity_blocked
-                && projected_runtime_route_is_before_execution_entry(&routing)
+                && projected_runtime_route_is_before_execution_entry(&routing, &read_scope.context)
             {
                 let (mut routing, _) = project_non_runtime_workflow_routing_state(
                     route,
@@ -666,10 +693,10 @@ fn query_workflow_routing_state_internal(
             external_review_result_ready,
             false,
         )?;
-        routing.execution_status = Some(read_scope.status);
+        routing.execution_status = Some(read_scope.status.clone());
         attach_runtime_provenance(&mut routing, Some(&runtime), current_dir);
         if engineering_approval_fidelity_blocked
-            && projected_runtime_route_is_before_execution_entry(&routing)
+            && projected_runtime_route_is_before_execution_entry(&routing, &read_scope.context)
         {
             let (mut routing, _) =
                 project_non_runtime_workflow_routing_state(route, external_review_result_ready)?;
@@ -807,6 +834,49 @@ pub(crate) fn default_phase_for_status(status: &PlanExecutionStatus) -> String {
     }
 }
 
+pub(crate) fn project_execution_blocking(
+    inputs: ExecutionBlockingProjectionInputs<'_>,
+) -> ExecutionBlockingProjection {
+    let mut task = inputs.fallback_task;
+    match inputs.phase_detail {
+        phase::DETAIL_EXECUTION_REENTRY_REQUIRED => {
+            task = inputs
+                .execution_command_task
+                .or(inputs.blocker_task)
+                .or_else(|| inputs.status.and_then(blocking_task_from_status_records))
+                .or_else(|| {
+                    inputs
+                        .status
+                        .and_then(projected_earliest_stale_task_candidate_from_status)
+                })
+                .or(task);
+        }
+        phase::DETAIL_TASK_CLOSURE_RECORDING_READY => {
+            task = inputs
+                .recording_task
+                .or(task)
+                .or_else(|| inputs.status.and_then(blocking_task_from_status_records))
+                .or_else(|| {
+                    inputs
+                        .status
+                        .and_then(projected_earliest_stale_task_candidate_from_status)
+                });
+        }
+        phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS => {
+            task = None;
+        }
+        _ => {}
+    }
+    let scope = blocking_scope_for_phase_detail(
+        inputs.phase_detail,
+        task,
+        inputs.status,
+        inputs.review_state_status,
+    )
+    .or_else(|| inputs.fallback_scope.map(str::to_owned));
+    ExecutionBlockingProjection { scope, task }
+}
+
 pub(crate) fn canonical_phase_for_shared_decision(
     default_phase: &str,
     phase_detail: &str,
@@ -927,21 +997,52 @@ pub(crate) fn blocking_scope_for_phase_detail(
     scope.map(str::to_owned)
 }
 
+pub(crate) fn task_number_from_task_scope_key(scope_key: &str) -> Option<u32> {
+    let raw = scope_key.strip_prefix("task-")?;
+    let digits = raw
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect::<String>();
+    (!digits.is_empty())
+        .then(|| digits.parse::<u32>().ok())
+        .flatten()
+}
+
+pub(crate) fn blocking_task_from_status_records(status: &PlanExecutionStatus) -> Option<u32> {
+    status.blocking_records.iter().find_map(|record| {
+        (record.scope_type == "task")
+            .then(|| task_number_from_task_scope_key(&record.scope_key))
+            .flatten()
+    })
+}
+
+pub(crate) fn projected_earliest_stale_task_candidate_from_status(
+    status: &PlanExecutionStatus,
+) -> Option<u32> {
+    status
+        .blocking_records
+        .iter()
+        .filter(|record| record.scope_type == "task")
+        .filter_map(|record| task_number_from_task_scope_key(&record.scope_key))
+        .chain(
+            status
+                .stale_unreviewed_closures
+                .iter()
+                .filter_map(|record_id| task_number_from_task_scope_key(record_id)),
+        )
+        .chain(
+            status
+                .public_repair_targets
+                .iter()
+                .filter_map(|target| target.task),
+        )
+        .min()
+}
+
 fn status_has_task_blocking_record(status: &PlanExecutionStatus, task: u32) -> bool {
     status.blocking_records.iter().any(|record| {
         record.scope_type == "task"
-            && record
-                .scope_key
-                .strip_prefix("task-")
-                .and_then(|raw| {
-                    let digits = raw
-                        .chars()
-                        .take_while(|character| character.is_ascii_digit())
-                        .collect::<String>();
-                    (!digits.is_empty()).then_some(digits)
-                })
-                .and_then(|digits| digits.parse::<u32>().ok())
-                == Some(task)
+            && task_number_from_task_scope_key(&record.scope_key) == Some(task)
     })
 }
 
@@ -1169,17 +1270,23 @@ fn explicit_route_for_plan_override(
         .map_err(JsonFailure::from)
 }
 
-fn route_is_engineering_approval_fidelity_blocked(route: &WorkflowRoute) -> bool {
-    route.status == "plan_review_required"
-        && route.next_skill == "featureforge:plan-eng-review"
-        && route
-            .reason_codes
-            .iter()
-            .any(|code| code.starts_with("engineering_approval_"))
-}
-
-fn projected_runtime_route_is_before_execution_entry(routing: &ExecutionRoutingState) -> bool {
-    routing.phase_detail == phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED
+fn projected_runtime_route_is_before_execution_entry(
+    routing: &ExecutionRoutingState,
+    context: &ExecutionContext,
+) -> bool {
+    routing.execution_status.as_ref().is_some_and(|status| {
+        if implementation_entry_started(context, status) {
+            return false;
+        }
+        if routing.phase_detail == phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED {
+            return true;
+        }
+        status.execution_started == "no"
+            && status.active_task.is_none()
+            && status.active_step.is_none()
+            && status.resume_task.is_none()
+            && status.resume_step.is_none()
+    })
 }
 
 fn task_scope_review_state_is_stale_unreviewed(status: &PlanExecutionStatus) -> bool {

@@ -1,6 +1,7 @@
 use super::*;
 use crate::execution::closure_diagnostics::apply_task_boundary_projection_diagnostics;
 use crate::execution::public_repair_targets::public_repair_target_warning_codes;
+use crate::execution::query::{ExecutionBlockingProjectionInputs, project_execution_blocking};
 
 fn project_routing_decision_onto_status(
     context: &ExecutionContext,
@@ -92,8 +93,6 @@ fn project_routing_decision_onto_status(
         && route_decision.review_state_status == "missing_current_closure"
         && status.current_branch_closure_id.is_none()
     {
-        status.blocking_task = None;
-        status.blocking_scope = Some(String::from("branch"));
         status.blocking_records = vec![StatusBlockingRecord {
             code: String::from("missing_current_closure"),
             scope_type: String::from("branch"),
@@ -107,15 +106,23 @@ fn project_routing_decision_onto_status(
             ),
         }];
     }
-    if route_decision.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
-        && let Some(task_number) = status
+    let blocking_projection = project_execution_blocking(ExecutionBlockingProjectionInputs {
+        phase_detail: &route_decision.phase_detail,
+        review_state_status: &route_decision.review_state_status,
+        status: Some(status),
+        fallback_scope: status.blocking_scope.as_deref(),
+        fallback_task: status.blocking_task,
+        execution_command_task: status
             .execution_command_context
             .as_ref()
-            .and_then(|context| context.task_number)
-    {
-        status.blocking_scope = Some(String::from("task"));
-        status.blocking_task = Some(task_number);
-    }
+            .and_then(|context| context.task_number),
+        recording_task: status
+            .recording_context
+            .as_ref()
+            .and_then(|context| context.task_number),
+        blocker_task: None,
+    });
+    blocking_projection.apply_to_status(status);
 }
 
 fn project_public_repair_target_warning_codes(
@@ -185,13 +192,25 @@ pub(crate) fn apply_shared_routing_projection_to_read_scope_with_routing(
     };
     read_scope.status.blocking_records =
         compute_status_blocking_records(&read_scope.context, &read_scope.status, gate_finish)?;
-    if read_scope.status.phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED
-        && read_scope.status.blocking_task.is_none()
-        && let Some(task_number) = projected_earliest_stale_task_from_status(&read_scope.status)
-    {
-        read_scope.status.blocking_scope = Some(String::from("task"));
-        read_scope.status.blocking_task = Some(task_number);
-    }
+    let blocking_projection = project_execution_blocking(ExecutionBlockingProjectionInputs {
+        phase_detail: &read_scope.status.phase_detail,
+        review_state_status: &read_scope.status.review_state_status,
+        status: Some(&read_scope.status),
+        fallback_scope: read_scope.status.blocking_scope.as_deref(),
+        fallback_task: read_scope.status.blocking_task,
+        execution_command_task: read_scope
+            .status
+            .execution_command_context
+            .as_ref()
+            .and_then(|context| context.task_number),
+        recording_task: read_scope
+            .status
+            .recording_context
+            .as_ref()
+            .and_then(|context| context.task_number),
+        blocker_task: None,
+    });
+    blocking_projection.apply_to_status(&mut read_scope.status);
     project_reducer_stale_target_source(&runtime_state, &mut read_scope.status);
     let route_decision = route_decision_with_status_blockers(
         route_decision,

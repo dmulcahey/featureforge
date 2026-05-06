@@ -1087,6 +1087,7 @@ fn collect_runtime_golden() -> Value {
     collect_review_gate_scenarios(&mut scenarios);
     collect_late_stage_scenarios(&mut scenarios);
     assert_required_scenarios(&scenarios);
+    assert_no_token_only_blocked_follow_ups(&Value::Array(scenarios.clone()));
     json!({
         "schema_version": 1,
         "normalization": [
@@ -1117,6 +1118,65 @@ fn assert_required_scenarios(scenarios: &[Value]) {
         actual, expected,
         "runtime behavior goldens must cover every Task 8 representative state"
     );
+}
+
+fn assert_no_token_only_blocked_follow_ups(value: &Value) {
+    let mut violations = Vec::new();
+    collect_token_only_blocked_follow_up_violations("$", value, &mut violations);
+    assert!(
+        violations.is_empty(),
+        "public runtime golden scenarios must not expose blocked token-only follow-ups:\n{}",
+        violations.join("\n")
+    );
+}
+
+fn collect_token_only_blocked_follow_up_violations(
+    path: &str,
+    value: &Value,
+    violations: &mut Vec<String>,
+) {
+    match value {
+        Value::Array(values) => {
+            for (index, value) in values.iter().enumerate() {
+                collect_token_only_blocked_follow_up_violations(
+                    &format!("{path}[{index}]"),
+                    value,
+                    violations,
+                );
+            }
+        }
+        Value::Object(object) => {
+            if object
+                .get("action")
+                .and_then(Value::as_str)
+                .is_some_and(|action| action == "blocked")
+                && object
+                    .get("required_follow_up")
+                    .is_some_and(|follow_up| !follow_up.is_null())
+                && object
+                    .get("recommended_public_command_argv")
+                    .is_none_or(Value::is_null)
+                && object
+                    .get("required_inputs")
+                    .and_then(Value::as_array)
+                    .is_none_or(Vec::is_empty)
+                && object
+                    .get("rederive_via_workflow_operator")
+                    .and_then(Value::as_bool)
+                    != Some(true)
+            {
+                violations.push(path.to_owned());
+            }
+            for (key, value) in object {
+                collect_token_only_blocked_follow_up_violations(
+                    &format!("{path}.{key}"),
+                    value,
+                    violations,
+                );
+            }
+        }
+        _ => {}
+    }
 }
 
 fn normalize_value_for_paths(value: Value, repo: &Path, state: &Path) -> Value {

@@ -17,12 +17,15 @@ pub(super) use crate::execution::closure_dispatch::{
     TaskDispatchReviewedStateStatus, ensure_final_review_dispatch_id_matches,
     ensure_task_dispatch_id_matches, task_dispatch_reviewed_state_status,
 };
-pub(super) use crate::execution::closure_dispatch_mutation::ensure_current_review_dispatch_id;
+pub(super) use crate::execution::closure_dispatch_mutation::{
+    ensure_current_review_dispatch_id, ensure_current_review_dispatch_id_for_command,
+};
 pub(super) use crate::execution::command_eligibility::{
-    PublicCommand, PublicCommandInputRequirement, PublicMutationKind, PublicMutationRequest,
-    PublicTransferMode, blocked_follow_up_for_operator, close_current_task_required_follow_up,
-    late_stage_required_follow_up, negative_result_follow_up,
-    operator_requires_review_state_repair, recommended_public_command_argv,
+    PublicAdvanceLateStageMode, PublicCommand, PublicCommandInputRequirement, PublicMutationKind,
+    PublicMutationRequest, PublicTransferMode, blocked_follow_up_for_operator,
+    close_current_task_required_follow_up, late_stage_required_follow_up,
+    negative_result_follow_up, operator_requires_review_state_repair,
+    public_command_recommendation_surfaces, recommended_public_command_argv,
     recommended_public_command_display, release_readiness_required_follow_up,
     require_public_mutation, required_inputs_for_public_command,
 };
@@ -68,6 +71,7 @@ pub(super) use crate::execution::leases::{
     authoritative_matching_execution_topology_downgrade_records_checked,
     load_status_authoritative_overlay_checked,
 };
+pub(super) use crate::execution::next_action::repair_review_state_public_command;
 pub(super) use crate::execution::observability::REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED;
 pub(super) use crate::execution::projection_renderer::{
     BranchClosureProjectionInput, FinalReviewProjectionInput, QaProjectionInput,
@@ -98,11 +102,12 @@ pub(super) use crate::execution::state::{
     NO_REPO_FILES_MARKER, PlanExecutionStatus, RebuildEvidenceCandidate, RebuildEvidenceCounts,
     RebuildEvidenceFilter, RebuildEvidenceOutput, RebuildEvidenceTarget, current_head_sha,
     current_review_dispatch_id_candidate, current_test_plan_artifact_path_for_qa_recording,
-    discover_rebuild_candidates, ensure_public_intent_preflight_ready,
-    load_execution_context_for_exact_plan, load_execution_context_for_mutation,
-    normalize_begin_request, normalize_complete_request, normalize_note_request,
-    normalize_rebuild_evidence_request, normalize_reopen_request, normalize_source,
-    normalize_transfer_request, persist_allowed_public_begin_preflight,
+    discover_rebuild_candidates, ensure_public_intent_preflight_ready, gate_finish_from_context,
+    gate_review_from_context, load_execution_context_for_exact_plan,
+    load_execution_context_for_mutation, normalize_begin_request, normalize_complete_request,
+    normalize_note_request, normalize_rebuild_evidence_request, normalize_reopen_request,
+    normalize_source, normalize_transfer_request, persist_allowed_public_begin_preflight,
+    persist_finish_review_gate_pass_checkpoint_for_command,
     public_intent_preflight_persistence_required, require_normalized_text,
     require_preflight_acceptance, task_packet_fingerprint, validate_expected_fingerprint,
 };
@@ -130,7 +135,7 @@ mod summary_inputs;
 pub(super) use branch_closure_truth::*;
 pub(super) use late_stage_reruns::*;
 pub(super) use mutation_guards::*;
-pub(super) use operator_outputs::*;
+pub(crate) use operator_outputs::*;
 pub(super) use outputs::*;
 pub use outputs::{
     AdvanceLateStageOutput, CloseCurrentTaskOutput, MaterializeProjectionsOutput,

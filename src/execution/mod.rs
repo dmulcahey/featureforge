@@ -26,6 +26,7 @@ pub mod follow_up;
 pub mod gates;
 pub mod handoff;
 pub mod harness;
+pub(crate) mod implementation_gate;
 pub mod internal_args;
 pub mod invariants;
 pub(crate) mod late_stage_route_selection;

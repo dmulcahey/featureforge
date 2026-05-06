@@ -160,6 +160,112 @@ impl PlanFidelityReviewReport {
     }
 }
 
+pub fn plan_fidelity_allows_implementation(gate: &PlanFidelityReviewReport) -> bool {
+    gate.state == "pass" && gate.reason_codes.is_empty() && gate.verified_surfaces_are_complete()
+}
+
+pub fn engineering_approval_fidelity_reason_codes(gate: &PlanFidelityReviewReport) -> Vec<String> {
+    let mut reason_codes = vec![String::from(
+        engineering_approval_fidelity_primary_reason_code(gate),
+    )];
+    for code in &gate.reason_codes {
+        if !reason_codes.iter().any(|existing| existing == code) {
+            reason_codes.push(code.clone());
+        }
+    }
+    reason_codes
+}
+
+pub fn is_engineering_approval_fidelity_reason_code(code: &str) -> bool {
+    matches!(
+        code,
+        "engineering_approval_missing_plan_fidelity_review"
+            | "engineering_approval_stale_plan_fidelity_review"
+            | "engineering_approval_incomplete_plan_fidelity_surfaces"
+            | "engineering_approval_failed_plan_fidelity_review"
+            | "engineering_approval_invalid_plan_fidelity_review"
+    )
+}
+
+pub fn engineering_approval_fidelity_primary_reason_code(
+    gate: &PlanFidelityReviewReport,
+) -> &'static str {
+    if gate.state == "missing"
+        || gate
+            .reason_codes
+            .iter()
+            .any(|code| code == "missing_plan_fidelity_review_artifact")
+    {
+        "engineering_approval_missing_plan_fidelity_review"
+    } else if gate.state == "stale"
+        || gate
+            .reason_codes
+            .iter()
+            .any(|code| code == "stale_plan_fidelity_review_artifact")
+    {
+        "engineering_approval_stale_plan_fidelity_review"
+    } else if gate.reason_codes.iter().any(|code| {
+        matches!(
+            code.as_str(),
+            "plan_fidelity_review_artifact_invalid" | "ambiguous_plan_fidelity_review_artifact"
+        )
+    }) {
+        "engineering_approval_invalid_plan_fidelity_review"
+    } else if gate
+        .reason_codes
+        .iter()
+        .any(|code| code == "plan_fidelity_review_missing_required_surface")
+        || !gate.verified_surfaces_are_complete()
+    {
+        "engineering_approval_incomplete_plan_fidelity_surfaces"
+    } else if gate.state == "fail"
+        || gate
+            .reason_codes
+            .iter()
+            .any(|code| code == "plan_fidelity_review_artifact_not_pass")
+    {
+        "engineering_approval_failed_plan_fidelity_review"
+    } else {
+        "engineering_approval_invalid_plan_fidelity_review"
+    }
+}
+
+pub fn engineering_approval_fidelity_message(code: &str) -> String {
+    match code {
+        "engineering_approval_missing_plan_fidelity_review" => {
+            "Engineering Approved plan cannot route to implementation until a current pass plan-fidelity review artifact exists.".to_owned()
+        }
+        "engineering_approval_stale_plan_fidelity_review" => {
+            "Engineering Approved plan cannot route to implementation because the plan-fidelity review artifact is stale.".to_owned()
+        }
+        "engineering_approval_incomplete_plan_fidelity_surfaces" => {
+            "Engineering Approved plan cannot route to implementation because the plan-fidelity review artifact does not verify the exact required surfaces.".to_owned()
+        }
+        "engineering_approval_failed_plan_fidelity_review" => {
+            "Engineering Approved plan cannot route to implementation because the plan-fidelity review did not pass.".to_owned()
+        }
+        _ => {
+            "Engineering Approved plan cannot route to implementation because the plan-fidelity review artifact is invalid.".to_owned()
+        }
+    }
+}
+
+pub fn plan_fidelity_verification_incomplete_report(
+    message: impl Into<String>,
+) -> PlanFidelityReviewReport {
+    PlanFidelityReviewReport::unverified(
+        "invalid",
+        String::new(),
+        String::new(),
+        String::new(),
+        vec![String::from("plan_fidelity_verification_incomplete")],
+        vec![ContractDiagnostic {
+            code: String::from("plan_fidelity_verification_incomplete"),
+            message: message.into(),
+        }],
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ContractDiagnostic {
     pub code: String,

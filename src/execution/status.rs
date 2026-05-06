@@ -629,6 +629,42 @@ fn tighten_plan_execution_routing_field_schemas(
             )
         })?;
     tighten_schema_property_type(properties, "recommended_command", "string")?;
+    annotate_schema_property(
+        properties,
+        "recommended_command",
+        "Display-only compatibility summary; do not parse or execute this string. Use recommended_public_command_argv when present.",
+    )?;
+    annotate_schema_property(
+        properties,
+        "recommended_public_command_argv",
+        "Executable public command argv authority when present. Run these tokens as argv instead of parsing recommended_command.",
+    )?;
+    annotate_schema_property(
+        properties,
+        "required_inputs",
+        "Parseable input contract for the routed public command when executable argv cannot be emitted yet.",
+    )?;
+    Ok(())
+}
+
+fn annotate_schema_property(
+    properties: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    description: &str,
+) -> Result<(), JsonFailure> {
+    let property = properties
+        .get_mut(field)
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                format!("Plan execution schema is missing `{field}`."),
+            )
+        })?;
+    property.insert(
+        String::from("description"),
+        serde_json::Value::from(description),
+    );
     Ok(())
 }
 

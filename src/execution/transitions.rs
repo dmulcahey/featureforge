@@ -3553,6 +3553,26 @@ impl AuthoritativeTransitionState {
             .filter(|value| !value.is_empty())
     }
 
+    pub(crate) fn current_final_review_dispatch_lineage_branch_closure_id(&self) -> Option<&str> {
+        self.state_payload
+            .get("final_review_dispatch_lineage")
+            .and_then(Value::as_object)
+            .and_then(|record| record.get("branch_closure_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub(crate) fn current_final_review_dispatch_lineage_dispatch_id(&self) -> Option<&str> {
+        self.state_payload
+            .get("final_review_dispatch_lineage")
+            .and_then(Value::as_object)
+            .and_then(|record| record.get("dispatch_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
     pub(crate) fn current_final_review_reviewer_source(&self) -> Option<&str> {
         self.state_payload
             .get("current_final_review_reviewer_source")

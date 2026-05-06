@@ -106,14 +106,8 @@ Use for ANY technical issue:
 **Use this ESPECIALLY when:**
 - Under time pressure (emergencies make guessing tempting)
 - "Just one quick fix" seems obvious
-- You've already tried multiple fixes
 - Previous fix didn't work
 - You don't fully understand the issue
-
-**Don't skip when:**
-- Issue seems simple (simple bugs have root causes too)
-- You're in a hurry (rushing guarantees rework)
-- Manager wants it fixed NOW (systematic is faster than thrashing)
 
 ## The Four Phases
 
@@ -125,14 +119,12 @@ You MUST complete each phase before proceeding to the next.
 
 1. **Read Error Messages Carefully**
    - Don't skip past errors or warnings
-   - They often contain the exact solution
    - Read stack traces completely
    - Note line numbers, file paths, error codes
 
 2. **Reproduce Consistently**
    - Can you trigger it reliably?
    - What are the exact steps?
-   - Does it happen every time?
    - If not reproducible → gather more data, don't guess
 
 3. **Check Recent Changes**
@@ -201,7 +193,6 @@ Use this only when local pattern analysis stalls:
 
 1. **Form Single Hypothesis**
    - State clearly: "I think X is the root cause because Y"
-   - Write it down
    - Be specific, not vague
 
 2. **Test Minimally**
@@ -280,8 +271,6 @@ If you catch yourself thinking:
 - "Skip the test, I'll manually verify"
 - "It's probably X, let me fix that"
 - "I don't fully understand but this might work"
-- "Pattern says X but I'll adapt it differently"
-- "Here are the main problems: [lists fixes without investigation]"
 - Proposing solutions before tracing data flow
 - **"One more fix attempt" (when already tried 2+)**
 - **Each fix reveals new problem in different place**
@@ -289,15 +278,6 @@ If you catch yourself thinking:
 **ALL of these mean: STOP. Return to Phase 1.**
 
 **If 3+ fixes failed:** Question the architecture (see Phase 4.5)
-
-## Quick Reference
-
-| Phase | Key Activities | Success Criteria |
-|-------|---------------|------------------|
-| **1. Root Cause** | Read errors, reproduce, check changes, gather evidence | Understand WHAT and WHY |
-| **2. Pattern** | Find working examples, compare | Identify differences |
-| **3. Hypothesis** | Form theory, test minimally | Confirmed or new hypothesis |
-| **4. Implementation** | Create test, fix, verify | Bug resolved, tests pass |
 
 ## When Process Reveals "No Root Cause"
 

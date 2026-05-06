@@ -161,6 +161,21 @@ fn assert_final_review_required_inputs(surface: &Value) {
     );
 }
 
+fn assert_advance_late_stage_public_argv(surface: &Value, plan_rel: &str, context: &str) {
+    assert_eq!(
+        surface["recommended_public_command_argv"],
+        serde_json::json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            plan_rel
+        ]),
+        "{context} should expose executable public advance-late-stage argv: {surface}"
+    );
+}
+
 fn assert_transfer_required_inputs(surface: &Value) {
     assert_eq!(
         surface["recommended_command"],
@@ -2574,6 +2589,7 @@ fn complete_workflow_fixture_execution_with_qa_requirement_slow(
     } else if let Some(qa_requirement) = qa_requirement {
         rewrite_plan_qa_requirement(repo, plan_rel, Some(qa_requirement));
     }
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
     write_repo_file(
         repo,
         "tests/workflow_shell_smoke.rs",
@@ -6590,7 +6606,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_refreshes_missi
 
     assert_eq!(close_json["action"], "blocked");
     assert_eq!(close_json["dispatch_validation_action"], "validated");
-    assert_eq!(close_json["required_follow_up"], "execution_reentry");
+    assert_eq!(close_json["required_follow_up"], Value::Null);
 }
 
 #[test]
@@ -6656,7 +6672,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_records_failed_
     assert_eq!(close_json["action"], "blocked");
     assert_eq!(close_json["closure_action"], "blocked");
     assert_eq!(close_json["task_closure_status"], "not_current");
-    assert_eq!(close_json["required_follow_up"], "execution_reentry");
+    assert_eq!(close_json["required_follow_up"], Value::Null);
 
     let authoritative_state = authoritative_harness_state(repo, state);
     let record = &authoritative_state["task_closure_negative_result_records"]["task-1"];
@@ -6755,7 +6771,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_records_failed_
     assert_eq!(close_json["action"], "blocked");
     assert_eq!(close_json["closure_action"], "blocked");
     assert_eq!(close_json["task_closure_status"], "not_current");
-    assert_eq!(close_json["required_follow_up"], "execution_reentry");
+    assert_eq!(close_json["required_follow_up"], Value::Null);
 
     let authoritative_state = authoritative_harness_state(repo, state);
     let record = &authoritative_state["task_closure_negative_result_records"]["task-1"];
@@ -6918,7 +6934,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_records_failed_
     assert_eq!(close_json["action"], "blocked");
     assert_eq!(close_json["closure_action"], "blocked");
     assert_eq!(close_json["task_closure_status"], "not_current");
-    assert_eq!(close_json["required_follow_up"], "execution_reentry");
+    assert_eq!(close_json["required_follow_up"], Value::Null);
 
     let authoritative_state = authoritative_harness_state(repo, state);
     let record = &authoritative_state["task_closure_negative_result_records"]["task-1"];
@@ -6991,7 +7007,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_failed_review_k
     assert_eq!(close_json["action"], "blocked");
     assert_eq!(close_json["closure_action"], "blocked");
     assert_eq!(close_json["task_closure_status"], "not_current");
-    assert_eq!(close_json["required_follow_up"], "execution_reentry");
+    assert_eq!(close_json["required_follow_up"], Value::Null);
 
     let operator_after_fail = run_featureforge_with_env_json(
         repo,
@@ -7065,10 +7081,7 @@ fn internal_only_compatibility_workflow_operator_ignores_forged_transfer_artifac
         ],
         "close-current-task should route to handoff before forged transfer coverage",
     );
-    assert_eq!(
-        close_json["required_follow_up"],
-        Value::from("execution_reentry")
-    );
+    assert_eq!(close_json["required_follow_up"], Value::Null);
     update_authoritative_harness_state(
         repo,
         state,
@@ -7172,10 +7185,7 @@ fn internal_only_compatibility_workflow_operator_keeps_handoff_override_when_che
         ],
         "close-current-task should route to handoff before checkpoint decision drift coverage",
     );
-    assert_eq!(
-        close_json["required_follow_up"],
-        Value::from("execution_reentry")
-    );
+    assert_eq!(close_json["required_follow_up"], Value::Null);
     update_authoritative_harness_state(
         repo,
         state,
@@ -7295,10 +7305,7 @@ fn internal_only_compatibility_plan_execution_transfer_records_when_checkpoint_s
         ],
         "close-current-task should route to handoff before scope-drift transfer coverage",
     );
-    assert_eq!(
-        close_json["required_follow_up"],
-        Value::from("execution_reentry")
-    );
+    assert_eq!(close_json["required_follow_up"], Value::Null);
     update_authoritative_harness_state(
         repo,
         state,
@@ -7452,10 +7459,7 @@ fn internal_only_compatibility_plan_execution_transfer_blocks_when_requested_sco
         ],
         "close-current-task should route to handoff before mismatched requested transfer scope coverage",
     );
-    assert_eq!(
-        close_json["required_follow_up"],
-        Value::from("execution_reentry")
-    );
+    assert_eq!(close_json["required_follow_up"], Value::Null);
     update_authoritative_harness_state(
         repo,
         state,
@@ -7566,10 +7570,7 @@ fn internal_only_compatibility_plan_execution_transfer_reuses_equivalent_artifac
         ],
         "close-current-task should route to handoff before equivalent transfer rerun coverage",
     );
-    assert_eq!(
-        close_json["required_follow_up"],
-        Value::from("execution_reentry")
-    );
+    assert_eq!(close_json["required_follow_up"], Value::Null);
     update_authoritative_harness_state(
         repo,
         state,
@@ -7711,10 +7712,7 @@ fn internal_only_compatibility_plan_execution_transfer_routed_handoff_shape_is_e
         ],
         "close-current-task should return routed handoff follow-up",
     );
-    assert_eq!(
-        close_json["required_follow_up"],
-        Value::from("execution_reentry")
-    );
+    assert_eq!(close_json["required_follow_up"], Value::Null);
     update_authoritative_harness_state(
         repo,
         state,
@@ -7967,7 +7965,7 @@ fn internal_only_compatibility_plan_execution_close_current_task_failed_verifica
     assert_eq!(close_json["action"], "blocked");
     assert_eq!(close_json["closure_action"], "blocked");
     assert_eq!(close_json["task_closure_status"], "not_current");
-    assert_eq!(close_json["required_follow_up"], "execution_reentry");
+    assert_eq!(close_json["required_follow_up"], Value::Null);
 
     let operator_after_fail = run_featureforge_with_env_json(
         repo,
@@ -8860,13 +8858,17 @@ fn internal_only_compatibility_workflow_operator_requires_fresh_final_review_dis
         operator_json["phase_detail"],
         "final_review_dispatch_required"
     );
-    assert!(
-        operator_json["recommended_command"].is_null(),
-        "json: {operator_json}"
+    assert_advance_late_stage_public_argv(
+        &operator_json,
+        plan_rel,
+        "stale final-review dispatch operator route",
     );
     assert_eq!(
-        operator_json["next_public_action"]["command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        operator_json["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution advance-late-stage --plan {plan_rel}; records final-review dispatch lineage"
+        )),
+        "json: {operator_json}"
     );
 
     let status_json = internal_only_run_plan_execution_json_direct_or_cli(
@@ -8888,13 +8890,14 @@ fn internal_only_compatibility_workflow_operator_requires_fresh_final_review_dis
         "final_review_dispatch_required"
     );
     assert_eq!(status_json["review_state_status"], "clean");
-    assert!(
-        status_json["recommended_command"].is_null(),
-        "json: {status_json}"
+    assert_advance_late_stage_public_argv(
+        &status_json,
+        plan_rel,
+        "stale final-review dispatch status route",
     );
     assert_eq!(
-        status_json["next_public_action"]["command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        status_json["recommended_command"],
+        operator_json["recommended_command"]
     );
 }
 
@@ -8963,13 +8966,17 @@ fn internal_only_compatibility_workflow_operator_final_review_external_ready_wit
         "final_review_dispatch_required"
     );
     assert_eq!(operator_json["next_action"], "request final review");
-    assert!(
-        operator_json["recommended_command"].is_null(),
-        "json: {operator_json}"
+    assert_advance_late_stage_public_argv(
+        &operator_json,
+        plan_rel,
+        "missing final-review dispatch operator route",
     );
     assert_eq!(
-        operator_json["next_public_action"]["command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        operator_json["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution advance-late-stage --plan {plan_rel}; records final-review dispatch lineage"
+        )),
+        "json: {operator_json}"
     );
     assert_eq!(explain_json["next_action"], operator_json["next_action"]);
     assert_eq!(
@@ -9391,7 +9398,7 @@ fn internal_only_compatibility_plan_execution_record_final_review_primitive_reje
     assert_eq!(
         review_json["recommended_command"],
         Value::from(format!(
-            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready"
+            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready --json"
         ))
     );
     assert_eq!(
@@ -9748,7 +9755,7 @@ fn internal_only_compatibility_plan_execution_advance_late_stage_final_review_bl
     assert_eq!(
         review_json["recommended_command"],
         Value::from(format!(
-            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready"
+            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready --json"
         ))
     );
     assert_eq!(
@@ -9924,7 +9931,7 @@ fn internal_only_compatibility_plan_execution_advance_late_stage_final_review_re
     assert_eq!(
         conflicting["recommended_command"],
         Value::from(format!(
-            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready"
+            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready --json"
         ))
     );
     assert_eq!(
@@ -9969,7 +9976,23 @@ fn internal_only_compatibility_plan_execution_advance_late_stage_final_review_re
     );
     assert_eq!(stale_rerun["action"], "blocked");
     assert_eq!(stale_rerun["code"], Value::Null);
-    assert_eq!(stale_rerun["recommended_command"], Value::Null);
+    assert_eq!(
+        stale_rerun["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution repair-review-state --plan {plan_rel}"
+        ))
+    );
+    assert_eq!(
+        stale_rerun["recommended_public_command_argv"],
+        serde_json::json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "repair-review-state",
+            "--plan",
+            plan_rel,
+        ])
+    );
     assert_eq!(stale_rerun["rederive_via_workflow_operator"], Value::Null);
     assert_eq!(stale_rerun["required_follow_up"], "repair_review_state");
 }
@@ -10289,7 +10312,9 @@ fn internal_only_compatibility_plan_execution_record_qa_same_state_rerun_keeps_s
     );
     assert_eq!(
         rerun["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}")),
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        )),
         "json: {rerun}"
     );
     assert_eq!(rerun["rederive_via_workflow_operator"], Value::Bool(true));
@@ -10402,7 +10427,18 @@ fn internal_only_compatibility_workflow_operator_keeps_branch_completion_routing
     assert_eq!(operator_json["phase"], "ready_for_branch_completion");
     assert_eq!(operator_json["phase_detail"], "finish_review_gate_ready");
     assert_eq!(operator_json["review_state_status"], "clean");
-    assert_eq!(operator_json["recommended_command"], Value::Null);
+    assert_advance_late_stage_public_argv(
+        &operator_json,
+        plan_rel,
+        "finish-review operator route after reviewer-artifact tamper",
+    );
+    assert_eq!(
+        operator_json["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution advance-late-stage --plan {plan_rel}; records finish-review checkpoint"
+        )),
+        "json: {operator_json}"
+    );
     let status_json = internal_only_run_plan_execution_json_direct_or_cli(
         repo,
         state,
@@ -10533,7 +10569,7 @@ fn internal_only_compatibility_plan_execution_advance_late_stage_final_review_fa
     );
     assert_eq!(first["action"], "recorded");
     assert_eq!(first["result"], "fail");
-    assert_eq!(first["required_follow_up"], "execution_reentry");
+    assert_eq!(first["required_follow_up"], Value::Null);
 
     let operator_after_fail = run_featureforge_with_env_json(
         repo,
@@ -10586,7 +10622,22 @@ fn internal_only_compatibility_plan_execution_advance_late_stage_final_review_fa
     assert_eq!(second["action"], "already_current", "json: {second}");
     assert_eq!(second["result"], "fail");
     assert!(second["code"].is_null(), "json: {second}");
-    assert!(second["recommended_command"].is_null(), "json: {second}");
+    assert!(
+        second["recommended_command"]
+            .as_str()
+            .is_some_and(|command| command.starts_with(&format!(
+                "featureforge plan execution reopen --plan {plan_rel}"
+            ))),
+        "json: {second}"
+    );
+    assert!(
+        second["recommended_public_command_argv"]
+            .as_array()
+            .is_some_and(|argv| argv
+                .iter()
+                .any(|arg| arg == "--expect-execution-fingerprint")),
+        "json: {second}"
+    );
     assert!(
         second["rederive_via_workflow_operator"].is_null(),
         "json: {second}"
@@ -10654,7 +10705,8 @@ fn internal_only_compatibility_plan_execution_advance_late_stage_final_review_fa
     assert_eq!(review_json["action"], "recorded", "json: {review_json}");
     assert_eq!(review_json["result"], "fail", "json: {review_json}");
     assert_eq!(
-        review_json["required_follow_up"], "execution_reentry",
+        review_json["required_follow_up"],
+        Value::Null,
         "json: {review_json}"
     );
     assert!(review_json["code"].is_null(), "json: {review_json}");
@@ -10700,6 +10752,14 @@ fn internal_only_compatibility_plan_execution_advance_late_stage_final_review_fa
     assert_eq!(
         rerun["dispatch_id"],
         Value::from(dispatch_id),
+        "json: {rerun}"
+    );
+    assert!(
+        rerun["recommended_public_command_argv"]
+            .as_array()
+            .is_some_and(|argv| argv
+                .iter()
+                .any(|arg| arg == "--expect-execution-fingerprint")),
         "json: {rerun}"
     );
     assert_eq!(
@@ -11749,7 +11809,9 @@ fn internal_only_compatibility_plan_execution_record_qa_missing_current_closure_
     assert_eq!(qa_json["required_follow_up"], Value::Null);
     assert_eq!(
         qa_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        ))
     );
     assert_eq!(qa_json["rederive_via_workflow_operator"], Value::Bool(true));
     assert!(
@@ -11810,7 +11872,9 @@ fn internal_only_compatibility_plan_execution_record_qa_rejects_overlay_only_bra
     assert_eq!(qa_json["code"], "out_of_phase_requery_required");
     assert_eq!(
         qa_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        ))
     );
     assert_eq!(qa_json["rederive_via_workflow_operator"], Value::Bool(true));
     assert!(qa_json["required_follow_up"].is_null());
@@ -11987,7 +12051,9 @@ fn internal_only_compatibility_plan_execution_record_branch_closure_blocks_out_o
     assert_eq!(rerun["code"], "out_of_phase_requery_required");
     assert_eq!(
         rerun["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        ))
     );
     assert_eq!(rerun["rederive_via_workflow_operator"], Value::Bool(true));
     assert_eq!(rerun["required_follow_up"], Value::Null);
@@ -14263,7 +14329,9 @@ fn internal_only_compatibility_plan_execution_record_branch_closure_allows_alrea
     );
     assert_eq!(
         rerun["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}")),
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        )),
         "json: {rerun}"
     );
     assert_eq!(rerun["required_follow_up"], Value::Null, "json: {rerun}");
@@ -14452,6 +14520,7 @@ fn internal_only_compatibility_empty_lineage_late_stage_exemption_ignores_curren
         "Late-Stage Surface",
         "docs/release-notes.md",
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
     write_repo_file(repo, "docs/release-notes.md", "synthetic release notes\n");
     write_repo_file(
         repo,
@@ -14747,7 +14816,7 @@ fn internal_only_compatibility_plan_execution_record_qa_fail_returns_execution_r
 
     assert_eq!(qa_json["action"], "recorded");
     assert_eq!(qa_json["result"], "fail");
-    assert_eq!(qa_json["required_follow_up"], "execution_reentry");
+    assert_eq!(qa_json["required_follow_up"], Value::Null);
 
     let operator_after_fail = run_featureforge_with_env_json(
         repo,
@@ -14815,7 +14884,8 @@ fn internal_only_compatibility_plan_execution_record_qa_fail_keeps_execution_ree
     assert_eq!(qa_json["action"], "recorded", "json: {qa_json}");
     assert_eq!(qa_json["result"], "fail", "json: {qa_json}");
     assert_eq!(
-        qa_json["required_follow_up"], "execution_reentry",
+        qa_json["required_follow_up"],
+        Value::Null,
         "json: {qa_json}"
     );
     assert!(qa_json["code"].is_null(), "json: {qa_json}");
@@ -14893,7 +14963,7 @@ fn internal_only_compatibility_plan_execution_record_qa_same_state_rerun_stays_i
         second["rederive_via_workflow_operator"].is_null(),
         "json: {second}"
     );
-    assert_eq!(second["required_follow_up"], "execution_reentry");
+    assert_eq!(second["required_follow_up"], Value::Null);
 
     let conflict = internal_only_plan_execution_fixture_json(
         repo,
@@ -14916,7 +14986,9 @@ fn internal_only_compatibility_plan_execution_record_qa_same_state_rerun_stays_i
     assert_eq!(conflict["code"], "out_of_phase_requery_required");
     assert_eq!(
         conflict["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        ))
     );
     assert_eq!(
         conflict["rederive_via_workflow_operator"],
@@ -14982,7 +15054,9 @@ fn internal_only_compatibility_plan_execution_record_qa_missing_current_test_pla
     );
     assert_eq!(
         qa_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}")),
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        )),
         "json: {qa_json}"
     );
 }
@@ -15139,7 +15213,9 @@ fn internal_only_compatibility_plan_execution_record_qa_requeries_when_base_bran
     );
     assert_eq!(
         qa_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        ))
     );
     assert_eq!(qa_json["rederive_via_workflow_operator"], Value::Bool(true));
 }
@@ -15521,7 +15597,9 @@ fn internal_only_compatibility_plan_execution_record_qa_missing_current_test_pla
     );
     assert_eq!(
         qa_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}")),
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        )),
         "json: {qa_json}"
     );
 }
@@ -15631,7 +15709,9 @@ fn internal_only_compatibility_plan_execution_record_qa_after_repair_reroute_req
     assert_eq!(blocked["code"], "out_of_phase_requery_required");
     assert_eq!(
         blocked["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        ))
     );
     assert_eq!(blocked["rederive_via_workflow_operator"], Value::Bool(true));
 }
@@ -15754,7 +15834,9 @@ fn internal_only_compatibility_plan_execution_repair_review_state_reroutes_late_
     );
     assert_eq!(
         rerecord_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}")),
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        )),
         "json: {rerecord_json}"
     );
     assert_eq!(
@@ -15820,7 +15902,7 @@ fn internal_only_compatibility_workflow_operator_does_not_preserve_persisted_bra
         &["repair-review-state", "--plan", plan_rel],
         "repair-review-state should persist a branch reroute before escaped-drift reset coverage",
     );
-    assert_eq!(repair_json["required_follow_up"], "request_external_review");
+    assert_eq!(repair_json["required_follow_up"], "advance_late_stage");
 
     write_repo_file(
         repo,
@@ -17331,7 +17413,7 @@ fn internal_only_compatibility_plan_execution_repair_review_state_ignores_missin
         "close-current-task should record the failed review outcome before overlay repair coverage",
     );
     assert_eq!(close_json["action"], "blocked");
-    assert_eq!(close_json["required_follow_up"], "execution_reentry");
+    assert_eq!(close_json["required_follow_up"], Value::Null);
     let authoritative_state_before = authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state_before["task_closure_negative_result_history"]
@@ -18039,7 +18121,9 @@ fn internal_only_compatibility_malformed_current_branch_closure_reviewed_state_r
     assert_eq!(release_json["required_follow_up"], Value::Null);
     assert_eq!(
         release_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        ))
     );
     assert_eq!(
         release_json["rederive_via_workflow_operator"],
@@ -18076,7 +18160,9 @@ fn internal_only_compatibility_malformed_current_branch_closure_reviewed_state_r
     assert_eq!(qa_json["required_follow_up"], Value::Null);
     assert_eq!(
         qa_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        ))
     );
     assert_eq!(qa_json["rederive_via_workflow_operator"], Value::Bool(true));
 }
@@ -18769,6 +18855,7 @@ fn internal_only_compatibility_empty_lineage_late_stage_exemption_subset_surface
         "Late-Stage Surface",
         "README.md,docs/featureforge/specs/",
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
     write_repo_file(
         repo,
         "tests/workflow_shell_smoke.rs",
@@ -19782,7 +19869,9 @@ fn internal_only_compatibility_plan_execution_record_qa_blocks_when_test_plan_re
     assert_eq!(qa_json["rederive_via_workflow_operator"], Value::Bool(true));
     assert_eq!(
         qa_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --json"
+        ))
     );
 }
 

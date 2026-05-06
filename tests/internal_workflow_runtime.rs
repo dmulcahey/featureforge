@@ -17,7 +17,7 @@ mod process_support;
 mod projection_support;
 #[path = "support/runtime_json.rs"]
 mod runtime_json_support;
-#[path = "support/runtime_phase_handoff.rs"]
+#[path = "support/internal_runtime_phase_handoff.rs"]
 mod runtime_phase_handoff_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
@@ -46,22 +46,32 @@ use featureforge::execution::state::{
     current_head_sha as runtime_current_head_sha, derive_evidence_rel_path,
     load_execution_context_for_mutation,
 };
-use featureforge::git::{discover_repository, discover_slug_identity};
+use featureforge::git::{
+    RepositoryIdentity, discover_repo_identity, discover_repository, discover_slug_identity,
+};
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
 };
+use featureforge::workflow::manifest::{
+    WorkflowManifest, manifest_path, recover_slug_changed_manifest,
+};
 use featureforge::workflow::operator;
+use featureforge::workflow::status::WorkflowRuntime;
 use files_support::write_file;
 use internal_only_direct_helpers::internal_runtime_direct as plan_execution_direct_support;
 use json_support::parse_json;
 use process_support::{run, run_checked};
-use runtime_json_support::{discover_execution_runtime, plan_execution_status_json};
+use runtime_json_support::{
+    discover_execution_runtime, plan_execution_status_json, run_featureforge_json_real_cli,
+};
 use runtime_phase_handoff_support::{workflow_handoff_json, workflow_phase_json};
 use serde::Serialize;
 use serde_json::{Value, json, to_value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
@@ -200,6 +210,51 @@ fn workflow_doctor_json(
     to_value(value)
         .unwrap_or_else(|error| panic!("{context}: workflow doctor should serialize: {error}"))
 }
+
+fn workflow_status_json(repo: &Path, state_dir: &Path) -> Value {
+    run_featureforge_json_real_cli(
+        repo,
+        state_dir,
+        &["workflow", "status", "--json"],
+        "workflow status compiled CLI",
+    )
+}
+
+fn internal_only_workflow_status_refresh_json(repo: &Path, state_dir: &Path) -> Value {
+    let mut runtime = WorkflowRuntime::discover_for_state_dir(repo, state_dir)
+        .expect("workflow runtime should discover fixture repo");
+    to_value(
+        runtime
+            .status_refresh()
+            .expect("workflow status refresh should resolve route"),
+    )
+    .expect("workflow route should serialize")
+}
+
+fn write_manifest(path: &Path, manifest: &WorkflowManifest) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("manifest parent should be creatable");
+    }
+    let json = serde_json::to_string(manifest).expect("manifest json should serialize");
+    fs::write(path, json).expect("manifest should be writable");
+}
+
+fn set_remote_url(repo: &Path, url: &str) {
+    let mut git_remote_set = Command::new("git");
+    git_remote_set
+        .args(["remote", "set-url", "origin", url])
+        .current_dir(repo);
+    run_checked(git_remote_set, "git remote set-url origin");
+}
+
+fn remove_origin_remote(repo: &Path) {
+    let mut git_remote_remove = Command::new("git");
+    git_remote_remove
+        .args(["remote", "remove", "origin"])
+        .current_dir(repo);
+    run_checked(git_remote_remove, "git remote remove origin");
+}
+
 const FULL_CONTRACT_READY_FIXTURE_SPEC_PATH: &str = "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md";
 
 struct FullContractReadyFixtureTemplate {
@@ -1321,9 +1376,431 @@ fn internal_only_compatibility_repair_review_state_rebinds_route_after_read_inva
     );
 }
 
+#[cfg(unix)]
+fn create_dir_symlink(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).expect("directory symlink should be creatable");
+}
+
 #[cfg(windows)]
 fn create_dir_symlink(target: &Path, link: &Path) {
     std::os::windows::fs::symlink_dir(target, link).expect("directory symlink should be creatable");
+}
+
+#[test]
+#[cfg(unix)]
+fn internal_only_canonical_workflow_status_refresh_preserves_route_when_manifest_write_fails() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-manifest-write-conflict");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    install_full_contract_ready_artifacts(repo);
+
+    let original_permissions = fs::metadata(state)
+        .expect("state dir metadata should be readable")
+        .permissions();
+    let mut read_only_permissions = original_permissions.clone();
+    read_only_permissions.set_mode(0o555);
+    fs::set_permissions(state, read_only_permissions).expect("state dir should become read-only");
+
+    let status_json = internal_only_workflow_status_refresh_json(repo, state);
+    fs::set_permissions(state, original_permissions)
+        .expect("state dir permissions should be restorable");
+
+    assert_eq!(status_json["status"], "implementation_ready");
+    assert_ne!(status_json["next_skill"], "featureforge:brainstorming");
+    assert!(
+        status_json["reason_codes"]
+            .as_array()
+            .expect("reason_codes should stay an array")
+            .iter()
+            .any(|value| value == &Value::String(String::from("manifest_write_conflict")))
+    );
+    assert_eq!(
+        status_json["diagnostics"][0]["code"],
+        Value::String(String::from("manifest_write_conflict"))
+    );
+}
+
+#[test]
+fn internal_only_canonical_workflow_status_refresh_recovers_old_manifest_after_slug_change() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-cross-slug-old");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-03-24-cross-slug-design.md";
+    let expected_plan = "docs/featureforge/plans/2026-03-24-cross-slug-plan.md";
+
+    write_file(
+        &repo.join(spec_path),
+        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
+    );
+
+    let old_identity = discover_repo_identity(repo).expect("old repo identity should resolve");
+    let old_manifest_path = manifest_path(&old_identity, state);
+    write_manifest(
+        &old_manifest_path,
+        &WorkflowManifest {
+            version: 1,
+            repo_root: old_identity.repo_root.to_string_lossy().into_owned(),
+            branch: old_identity.branch_name.clone(),
+            expected_spec_path: spec_path.to_owned(),
+            expected_plan_path: expected_plan.to_owned(),
+            status: String::from("spec_approved_needs_plan"),
+            next_skill: String::from("featureforge:writing-plans"),
+            reason: String::from("missing_expected_plan,expect_set"),
+            note: String::from("missing_expected_plan,expect_set"),
+            updated_at: String::from("2026-03-24T00:00:00Z"),
+        },
+    );
+
+    set_remote_url(
+        repo,
+        "https://example.com/example/workflow-runtime-cross-slug-new.git",
+    );
+    let new_identity = discover_repo_identity(repo).expect("new repo identity should resolve");
+    let new_manifest_path = manifest_path(&new_identity, state);
+    assert_ne!(
+        old_manifest_path, new_manifest_path,
+        "slug change should move the manifest path"
+    );
+    let recovered = recover_slug_changed_manifest(&new_identity, state, &new_manifest_path)
+        .expect("cross-slug manifest should be recoverable from sibling state");
+    assert_eq!(recovered.expected_plan_path, expected_plan);
+
+    let route = WorkflowRuntime {
+        identity: new_identity.clone(),
+        state_dir: state.to_path_buf(),
+        manifest_path: new_manifest_path.clone(),
+        manifest: Some(recovered.clone()),
+        manifest_warning: None,
+        manifest_recovery_reasons: vec![String::from("repo_slug_recovered")],
+    }
+    .status()
+    .expect("status should preserve the recovered expected plan path");
+    assert_eq!(route.plan_path, expected_plan);
+
+    let refreshed_route = WorkflowRuntime {
+        identity: new_identity,
+        state_dir: state.to_path_buf(),
+        manifest_path: new_manifest_path.clone(),
+        manifest: Some(recovered),
+        manifest_warning: None,
+        manifest_recovery_reasons: vec![String::from("repo_slug_recovered")],
+    }
+    .status_refresh()
+    .expect("status refresh should preserve recovery metadata and write the new manifest");
+
+    assert_eq!(refreshed_route.status, "spec_approved_needs_plan");
+    assert_eq!(refreshed_route.plan_path, expected_plan);
+    assert!(refreshed_route.reason.contains("repo_slug_recovered"));
+    assert!(
+        refreshed_route
+            .reason_codes
+            .iter()
+            .any(|value| value == "repo_slug_recovered")
+    );
+
+    let new_manifest_json = fs::read_to_string(&new_manifest_path)
+        .expect("recovered manifest should be written at the new slug path");
+    assert!(new_manifest_json.contains(expected_plan));
+}
+
+#[test]
+fn internal_only_canonical_workflow_status_limits_cross_slug_manifest_recovery_scan() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-cross-slug-budget");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-03-24-budget-limit-design.md";
+    let expected_plan = "docs/featureforge/plans/2026-03-24-budget-limit-plan.md";
+
+    write_file(
+        &repo.join(spec_path),
+        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
+    );
+
+    let current_identity =
+        discover_repo_identity(repo).expect("current repo identity should resolve");
+    let current_manifest_path = manifest_path(&current_identity, state);
+    let manifest_name = current_manifest_path
+        .file_name()
+        .expect("manifest path should have a file name")
+        .to_owned();
+
+    for index in 1..=12 {
+        let decoy_dir = state.join("projects").join(format!("decoy-{index:02}"));
+        write_manifest(
+            &decoy_dir.join(&manifest_name),
+            &WorkflowManifest {
+                version: 1,
+                repo_root: format!("/tmp/not-the-current-repo-{index:02}"),
+                branch: current_identity.branch_name.clone(),
+                expected_spec_path: String::new(),
+                expected_plan_path: String::new(),
+                status: String::from("needs_brainstorming"),
+                next_skill: String::from("featureforge:brainstorming"),
+                reason: String::from("decoy"),
+                note: String::from("decoy"),
+                updated_at: String::from("2026-03-24T00:00:00Z"),
+            },
+        );
+    }
+
+    write_manifest(
+        &state.join("projects/zzz-old-slug").join(&manifest_name),
+        &WorkflowManifest {
+            version: 1,
+            repo_root: current_identity.repo_root.to_string_lossy().into_owned(),
+            branch: current_identity.branch_name.clone(),
+            expected_spec_path: spec_path.to_owned(),
+            expected_plan_path: expected_plan.to_owned(),
+            status: String::from("spec_approved_needs_plan"),
+            next_skill: String::from("featureforge:writing-plans"),
+            reason: String::from("repo_slug_recovered"),
+            note: String::from("repo_slug_recovered"),
+            updated_at: String::from("2026-03-24T00:00:00Z"),
+        },
+    );
+
+    let status_json = internal_only_workflow_status_refresh_json(repo, state);
+
+    assert_eq!(status_json["status"], "spec_approved_needs_plan");
+    assert_eq!(status_json["plan_path"], "");
+    assert!(
+        !status_json["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("repo_slug_recovered")
+    );
+
+    let manifest_json = fs::read_to_string(current_manifest_path)
+        .expect("current manifest should be written after refresh");
+    assert!(!manifest_json.contains(expected_plan));
+}
+
+#[test]
+fn internal_only_canonical_workflow_status_refresh_recovers_legacy_symlinked_local_repo_manifest() {
+    let (repo_dir, state_dir) = init_repo("workflow-local-symlink-recovery");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    remove_origin_remote(repo);
+
+    let alias_root = state.join("workflow-local-symlink-checkout");
+    create_dir_symlink(repo, &alias_root);
+
+    let spec_path = "docs/featureforge/specs/2026-03-24-local-symlink-spec.md";
+    let plan_a = "docs/featureforge/plans/2026-03-24-local-symlink-a.md";
+    let plan_b = "docs/featureforge/plans/2026-03-24-local-symlink-b.md";
+
+    write_file(
+        &repo.join(spec_path),
+        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
+    );
+    for plan_path in [plan_a, plan_b] {
+        write_file(
+            &repo.join(plan_path),
+            &format!(
+                "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n"
+            ),
+        );
+    }
+
+    let current_identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    let legacy_identity = RepositoryIdentity {
+        repo_root: alias_root.clone(),
+        remote_url: None,
+        branch_name: current_identity.branch_name.clone(),
+    };
+    let current_manifest_path = manifest_path(&current_identity, state);
+    let legacy_manifest_path = manifest_path(&legacy_identity, state);
+    assert_ne!(
+        current_manifest_path, legacy_manifest_path,
+        "canonicalized local repo roots should move the manifest path"
+    );
+
+    write_manifest(
+        &legacy_manifest_path,
+        &WorkflowManifest {
+            version: 1,
+            repo_root: alias_root.to_string_lossy().into_owned(),
+            branch: current_identity.branch_name.clone(),
+            expected_spec_path: spec_path.to_owned(),
+            expected_plan_path: plan_a.to_owned(),
+            status: String::from("plan_draft"),
+            next_skill: String::from("featureforge:plan-eng-review"),
+            reason: String::from("legacy-local-symlink-manifest"),
+            note: String::from("legacy-local-symlink-manifest"),
+            updated_at: String::from("2026-03-25T00:00:00Z"),
+        },
+    );
+
+    let runtime = discover_execution_runtime(
+        &alias_root,
+        state,
+        "workflow phase should preserve legacy local symlink manifest recovery reasons",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
+        "workflow phase should preserve legacy local symlink manifest recovery reasons",
+    );
+    assert!(
+        phase_json["route"]["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|value| value == "repo_slug_recovered")),
+        "workflow phase should preserve recovered manifest reason codes in the route payload"
+    );
+    assert_eq!(phase_json["plan_path"], plan_a);
+
+    let handoff_json = workflow_handoff_json(
+        &runtime,
+        "workflow handoff should preserve legacy local symlink manifest recovery reasons",
+    );
+    assert!(
+        handoff_json["route"]["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|value| value == "repo_slug_recovered")),
+        "workflow handoff should preserve recovered manifest reason codes in the route payload"
+    );
+    assert_eq!(handoff_json["plan_path"], plan_a);
+
+    let status_json = internal_only_workflow_status_refresh_json(&alias_root, state);
+
+    assert_eq!(status_json["status"], "plan_draft");
+    assert_eq!(status_json["plan_path"], plan_a);
+
+    let rewritten: WorkflowManifest = serde_json::from_str(
+        &fs::read_to_string(&current_manifest_path)
+            .expect("canonical manifest should be rewritten on refresh"),
+    )
+    .expect("rewritten canonical manifest should parse");
+    assert_eq!(
+        rewritten.repo_root,
+        current_identity.repo_root.to_string_lossy().into_owned()
+    );
+    assert_eq!(rewritten.expected_plan_path, plan_a);
+}
+
+#[test]
+fn internal_only_canonical_workflow_status_ignores_strict_session_entry_gate_env() {
+    let (repo_dir, state_dir) = init_repo("workflow-status-strict-session-entry-gate");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    install_full_contract_ready_artifacts(repo);
+    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    let workflow_manifest_path = manifest_path(&identity, state);
+
+    let status_json = internal_only_workflow_status_refresh_json(repo, state);
+    assert_eq!(status_json["schema_version"], 3);
+    assert_eq!(status_json["status"], "implementation_ready");
+    assert!(
+        !status_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| {
+                code == "session_entry_unresolved" || code == "session_entry_bypassed"
+            })),
+        "workflow status should not expose removed strict session-entry reason codes"
+    );
+
+    let enabled_manifest: WorkflowManifest = serde_json::from_str(
+        &fs::read_to_string(&workflow_manifest_path)
+            .expect("workflow manifest should be written after strict refresh"),
+    )
+    .expect("workflow manifest json should parse after strict refresh");
+    assert_eq!(
+        enabled_manifest.expected_spec_path,
+        status_json["spec_path"].as_str().unwrap_or(""),
+        "strict refresh should persist the selected expected spec path"
+    );
+    assert_eq!(
+        enabled_manifest.expected_plan_path,
+        status_json["plan_path"].as_str().unwrap_or(""),
+        "strict refresh should persist the selected expected plan path"
+    );
+
+    let bypassed_decision_path = state
+        .join("session-entry")
+        .join("using-featureforge")
+        .join("workflow-status-strict-session-entry-gate-bypassed");
+    write_file(&bypassed_decision_path, "bypassed\n");
+    let bypassed_status_json = workflow_status_json(repo, state);
+    assert_eq!(bypassed_status_json["schema_version"], 3);
+    assert_eq!(bypassed_status_json["status"], "implementation_ready");
+    assert!(
+        !bypassed_status_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| {
+                code == "session_entry_unresolved" || code == "session_entry_bypassed"
+            })),
+        "workflow status should not expose removed strict session-entry reason codes"
+    );
+    let manifest_after_bypassed_session: WorkflowManifest = serde_json::from_str(
+        &fs::read_to_string(&workflow_manifest_path)
+            .expect("workflow manifest should remain readable after bypassed strict refresh"),
+    )
+    .expect("workflow manifest should parse after bypassed strict refresh");
+    assert_eq!(
+        manifest_after_bypassed_session.expected_spec_path, enabled_manifest.expected_spec_path,
+        "bypassed session-entry files should not clear the selected expected spec path"
+    );
+    assert_eq!(
+        manifest_after_bypassed_session.expected_plan_path, enabled_manifest.expected_plan_path,
+        "bypassed session-entry files should not clear the selected expected plan path"
+    );
+}
+
+#[test]
+fn internal_only_canonical_workflow_phase_keeps_corrupt_manifest_read_only() {
+    let (repo_dir, state_dir) = init_repo("workflow-phase-corrupt-manifest");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = repo.join("docs/featureforge/specs/2026-03-24-corrupt-phase-spec.md");
+
+    write_file(
+        &spec_path,
+        "# Phase Corrupt Manifest Spec\n\n**Workflow State:** Draft\n**Spec Revision:** 1\n**Last Reviewed By:** brainstorming\n",
+    );
+
+    let _ = internal_only_workflow_status_refresh_json(repo, state);
+
+    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    let manifest_path = manifest_path(&identity, state);
+    fs::write(&manifest_path, "{ \"broken\": true\n")
+        .expect("corrupt manifest fixture should be writable");
+    let before_bytes = fs::read(&manifest_path).expect("corrupt manifest fixture should exist");
+
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "rust canonical workflow phase should inspect corrupt manifests without repairing them",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
+        "rust canonical workflow phase should inspect corrupt manifests without repairing them",
+    );
+    assert!(phase_json["phase"].is_string());
+
+    let after_bytes = fs::read(&manifest_path)
+        .expect("workflow phase should leave the corrupt manifest in place");
+    assert_eq!(after_bytes, before_bytes);
+
+    let parent = manifest_path
+        .parent()
+        .expect("manifest fixture should have a parent directory");
+    let backup_prefix = format!(
+        "{}.corrupt-",
+        manifest_path
+            .file_name()
+            .expect("manifest fixture should have a file name")
+            .to_string_lossy()
+    );
+    let backup_written = fs::read_dir(parent)
+        .expect("manifest directory should stay readable")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .any(|name| name.starts_with(&backup_prefix));
+    assert!(
+        !backup_written,
+        "workflow phase read should not repair or rotate corrupt manifests"
+    );
 }
 
 fn run_rust_featureforge_with_env(
@@ -2090,6 +2567,7 @@ fn complete_workflow_fixture_execution_with_qa_requirement_slow(
 ) {
     install_full_contract_ready_artifacts(repo);
     set_plan_qa_requirement(repo, plan_rel, qa_requirement);
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
     write_file(
         &repo.join("tests/workflow_runtime.rs"),
         "synthetic route proof\n",

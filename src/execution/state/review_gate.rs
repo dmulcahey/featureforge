@@ -19,6 +19,13 @@ pub(super) fn gate_result_current_branch_closure_id(
 pub(super) fn persist_finish_review_gate_pass_checkpoint(
     context: &ExecutionContext,
 ) -> Result<(), JsonFailure> {
+    persist_finish_review_gate_pass_checkpoint_for_command(context, "gate_review")
+}
+
+pub(crate) fn persist_finish_review_gate_pass_checkpoint_for_command(
+    context: &ExecutionContext,
+    command_name: &'static str,
+) -> Result<(), JsonFailure> {
     let Some(branch_closure_id) = usable_current_branch_closure_identity(context)
         .map(|identity| identity.branch_closure_id)
         .map(|value| value.trim().to_owned())
@@ -35,7 +42,7 @@ pub(super) fn persist_finish_review_gate_pass_checkpoint(
     {
         return Ok(());
     }
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "gate_review")
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, command_name)
 }
 
 pub(super) fn gate_review_base_result(

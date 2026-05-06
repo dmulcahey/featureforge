@@ -72,14 +72,11 @@ For every interactive user question, use this structure:
 
 Per-skill instructions may add additional formatting rules on top of this baseline.
 
-
 # Writing Plans
 
 ## Overview
 
-Write comprehensive implementation plans assuming the engineer has zero context for our codebase and questionable taste. Document everything they need to know: which files to touch for each task, code, testing, docs they might need to check, how to test it. Give them the whole plan as bite-sized tasks. DRY. YAGNI. TDD. Frequent commits.
-
-Assume they are a skilled developer, but know almost nothing about our toolset or problem domain. Assume they don't know good test design very well.
+Write comprehensive implementation plans for skilled engineers with little repo/tool context. Document files, code paths, tests, docs, validation, and test expectations as bite-sized tasks. DRY. YAGNI. TDD.
 
 **Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
 
@@ -293,14 +290,7 @@ Reject these shapes during drafting instead of leaving them for review:
 - A task that mixes two architectural goals, such as "replace the parser and redesign the review workflow", when either half could be completed independently.
 
 ## Remember
-- Exact file paths always
-- Complete code in plan (not "add validation")
-- Exact commands with expected output
-- Reference relevant skills by name (for example `featureforge:test-driven-development`)
-- Copy the exact approved spec path and current `Spec Revision` into the plan header
-- New execution plans start at `**Plan Revision:** 1`
-- New execution plans start with `**Execution Mode:** none`
-- DRY, YAGNI, TDD, frequent commits
+Use exact file paths, complete task-level implementation direction, exact commands with expected output when they matter, relevant skill names, and the approved spec path/revision. New execution plans start at `**Plan Revision:** 1` and `**Execution Mode:** none`.
 
 ## Plan Review Handoff
 

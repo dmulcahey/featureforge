@@ -12,7 +12,8 @@ mod process_support;
 mod projection_support;
 
 use featureforge::contracts::evidence::read_execution_evidence;
-use featureforge::contracts::plan::parse_plan_file;
+use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
+use featureforge::contracts::spec::parse_spec_file;
 use featureforge::diagnostics::FailureClass;
 use featureforge::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, STABLE_EVENT_KINDS,
@@ -160,6 +161,10 @@ fn write_approved_spec(repo: &Path) {
 **Spec Revision:** 2
 **Last Reviewed By:** plan-ceo-review
 
+## Requirement Index
+
+- [REQ-001][behavior] Harness state and storage fields are visible before execution starts.
+
 ## Summary
 
 Fixture spec for harness state regression coverage.
@@ -205,6 +210,7 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 "#,
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
@@ -286,6 +292,41 @@ fn git_head_sha(repo: &Path) -> String {
 fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     format!("{digest:x}")
+}
+
+fn write_current_pass_plan_fidelity_review_artifact_for_plan(repo: &Path, plan_rel: &str) {
+    let plan = parse_plan_file(repo.join(plan_rel)).expect("plan fixture should parse");
+    let spec_rel = plan.source_spec_path.clone();
+    let spec = parse_spec_file(repo.join(&spec_rel)).expect("spec fixture should parse");
+    let plan_fingerprint = sha256_hex(&fs::read(repo.join(plan_rel)).expect("plan should read"));
+    let spec_fingerprint = sha256_hex(&fs::read(repo.join(&spec_rel)).expect("spec should read"));
+    let verified_requirement_ids = spec
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+    let plan_stem = Path::new(plan_rel)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("plan");
+    let artifact_path = repo
+        .join(".featureforge")
+        .join("reviews")
+        .join(format!("{plan_stem}-plan-fidelity.md"));
+
+    if let Some(parent) = artifact_path.parent() {
+        fs::create_dir_all(parent).expect("plan-fidelity artifact parent should be creatable");
+    }
+    write_file(
+        &artifact_path,
+        &format!(
+            "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** pass\n**Reviewed Plan:** `{plan_rel}`\n**Reviewed Plan Revision:** {}\n**Reviewed Plan Fingerprint:** {plan_fingerprint}\n**Reviewed Spec:** `{spec_rel}`\n**Reviewed Spec Revision:** {}\n**Reviewed Spec Fingerprint:** {spec_fingerprint}\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** execution-harness-state-fixture-plan-fidelity-reviewer\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** {}\n**Verified Requirement IDs:** {}\n",
+            plan.plan_revision,
+            spec.spec_revision,
+            PLAN_FIDELITY_REQUIRED_SURFACES.join(", "),
+            verified_requirement_ids.join(", "),
+        ),
+    );
 }
 
 fn write_authoritative_contract_fixture(repo: &Path, state: &Path) -> (String, String) {

@@ -32,6 +32,7 @@ use crate::execution::final_review::authoritative_strategy_checkpoint_fingerprin
 use crate::execution::harness::HarnessPhase;
 use crate::execution::internal_args::{RecordReviewDispatchArgs, ReviewDispatchScopeArg};
 use crate::execution::leases::load_status_authoritative_overlay_checked;
+use crate::execution::query::projected_earliest_stale_task_candidate_from_status;
 use crate::execution::read_model::{
     normalize_optional_overlay_value, task_contract_identity_matches_expected,
     task_scope_structural_review_state_reason,
@@ -349,35 +350,7 @@ pub(crate) fn stale_unreviewed_allows_task_closure_baseline_bridge(
 pub(crate) fn projected_earliest_stale_task_from_status(
     status: &PlanExecutionStatus,
 ) -> Option<u32> {
-    status
-        .blocking_records
-        .iter()
-        .filter(|record| record.scope_type == "task")
-        .filter_map(|record| task_number_from_task_scope_key(&record.scope_key))
-        .chain(
-            status
-                .stale_unreviewed_closures
-                .iter()
-                .filter_map(|record_id| task_number_from_task_scope_key(record_id)),
-        )
-        .chain(
-            status
-                .public_repair_targets
-                .iter()
-                .filter_map(|target| target.task),
-        )
-        .min()
-}
-
-fn task_number_from_task_scope_key(scope_key: &str) -> Option<u32> {
-    let raw = scope_key.strip_prefix("task-")?;
-    let digits = raw
-        .chars()
-        .take_while(|character| character.is_ascii_digit())
-        .collect::<String>();
-    (!digits.is_empty())
-        .then(|| digits.parse::<u32>().ok())
-        .flatten()
+    projected_earliest_stale_task_candidate_from_status(status)
 }
 
 pub(crate) fn stale_unreviewed_allows_task_closure_baseline_bridge_with_stale_target(

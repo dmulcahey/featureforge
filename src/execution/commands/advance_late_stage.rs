@@ -61,16 +61,22 @@ pub fn record_branch_closure(
         || repair_follow_up_allows_branch_closure;
     if !branch_closure_recording_ready {
         if operator_requires_review_state_repair(&operator) {
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                Some(String::from("repair_review_state")),
+                PublicFollowUpInputProfile::None,
+            );
             return Ok(RecordBranchClosureOutput {
                 action: String::from("blocked"),
                 branch_closure_id: None,
                 code: None,
-                recommended_command: None,
-                recommended_public_command_argv: None,
-                required_inputs: Vec::new(),
-                rederive_via_workflow_operator: None,
+                recommended_command: recovery.recommended_command,
+                recommended_public_command_argv: recovery.recommended_public_command_argv,
+                required_inputs: recovery.required_inputs,
+                rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
                 superseded_branch_closure_ids: Vec::new(),
-                required_follow_up: Some(String::from("repair_review_state")),
+                required_follow_up: recovery.required_follow_up,
                 trace_summary: String::from(
                     "advance-late-stage branch-closure recording failed closed because workflow/operator requires review-state repair before branch-closure recording can proceed.",
                 ),
@@ -82,16 +88,22 @@ pub fn record_branch_closure(
                 "advance-late-stage branch-closure recording failed closed because the current phase must be re-derived through workflow/operator before branch-closure recording can proceed.",
             ));
         } else {
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                blocked_follow_up_for_operator(&operator),
+                PublicFollowUpInputProfile::None,
+            );
             return Ok(RecordBranchClosureOutput {
                 action: String::from("blocked"),
                 branch_closure_id: None,
                 code: None,
-                recommended_command: None,
-                recommended_public_command_argv: None,
-                required_inputs: Vec::new(),
-                rederive_via_workflow_operator: None,
+                recommended_command: recovery.recommended_command,
+                recommended_public_command_argv: recovery.recommended_public_command_argv,
+                required_inputs: recovery.required_inputs,
+                rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
                 superseded_branch_closure_ids: Vec::new(),
-                required_follow_up: blocked_follow_up_for_operator(&operator),
+                required_follow_up: recovery.required_follow_up,
                 trace_summary: String::from(
                     "advance-late-stage branch-closure recording failed closed because workflow/operator did not expose branch_closure_recording_required_for_release_readiness.",
                 ),
@@ -111,16 +123,22 @@ pub fn record_branch_closure(
                     "advance-late-stage branch-closure recording failed closed because branch drift escaped the trusted Late-Stage Surface."
                 }
             };
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                Some(String::from("repair_review_state")),
+                PublicFollowUpInputProfile::None,
+            );
             return Ok(RecordBranchClosureOutput {
                 action: String::from("blocked"),
                 branch_closure_id: None,
                 code: None,
-                recommended_command: None,
-                recommended_public_command_argv: None,
-                required_inputs: Vec::new(),
-                rederive_via_workflow_operator: None,
+                recommended_command: recovery.recommended_command,
+                recommended_public_command_argv: recovery.recommended_public_command_argv,
+                required_inputs: recovery.required_inputs,
+                rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
                 superseded_branch_closure_ids: Vec::new(),
-                required_follow_up: Some(String::from("repair_review_state")),
+                required_follow_up: recovery.required_follow_up,
                 trace_summary: trace_summary.to_owned(),
             });
         }
@@ -154,16 +172,22 @@ pub fn record_branch_closure(
         && reviewed_state.provenance_basis
             != "task_closure_lineage_plus_late_stage_surface_exemption"
     {
+        let recovery = public_recovery_contract_for_follow_up(
+            &args.plan,
+            Some(&operator),
+            Some(String::from("repair_review_state")),
+            PublicFollowUpInputProfile::None,
+        );
         return Ok(RecordBranchClosureOutput {
             action: String::from("blocked"),
             branch_closure_id: None,
             code: None,
-            recommended_command: None,
-            recommended_public_command_argv: None,
-            required_inputs: Vec::new(),
-            rederive_via_workflow_operator: None,
+            recommended_command: recovery.recommended_command,
+            recommended_public_command_argv: recovery.recommended_public_command_argv,
+            required_inputs: recovery.required_inputs,
+            rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
             superseded_branch_closure_ids: Vec::new(),
-            required_follow_up: Some(String::from("repair_review_state")),
+            required_follow_up: recovery.required_follow_up,
             trace_summary: String::from(
                 "advance-late-stage branch-closure recording failed closed because no authoritative still-current task-closure provenance remains for the requested branch surface.",
             ),
@@ -456,16 +480,22 @@ pub fn record_qa(
                 ),
             });
         }
+        let recovery = public_recovery_contract_for_follow_up(
+            &args.plan,
+            Some(&operator),
+            required_follow_up,
+            PublicFollowUpInputProfile::None,
+        );
         return Ok(RecordQaOutput {
             action: String::from("blocked"),
             branch_closure_id,
             result: args.result.as_str().to_owned(),
             code: None,
-            recommended_command: None,
-            recommended_public_command_argv: None,
-            required_inputs: Vec::new(),
-            rederive_via_workflow_operator: None,
-            required_follow_up,
+            recommended_command: recovery.recommended_command,
+            recommended_public_command_argv: recovery.recommended_public_command_argv,
+            required_inputs: recovery.required_inputs,
+            rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+            required_follow_up: recovery.required_follow_up,
             trace_summary: String::from(
                 "advance-late-stage QA recording failed closed because workflow/operator did not expose qa_recording_required for the current branch closure.",
             ),
@@ -480,7 +510,7 @@ pub fn record_qa(
         if !allow_fail_recording_while_override_out_of_phase
             && equivalent_current_browser_qa_rerun_allowed(&operator, args.result.as_str())
             && let Some(current_branch_closure) = current_branch_closure.as_ref()
-            && let Some(output) = equivalent_current_browser_qa_rerun(
+            && let Some(mut output) = equivalent_current_browser_qa_rerun(
                 &context,
                 current_branch_closure,
                 &runtime_state.gate_snapshot,
@@ -491,6 +521,17 @@ pub fn record_qa(
                     .flatten(),
             )?
         {
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                output.required_follow_up.take(),
+                PublicFollowUpInputProfile::None,
+            );
+            output.recommended_command = recovery.recommended_command;
+            output.recommended_public_command_argv = recovery.recommended_public_command_argv;
+            output.required_inputs = recovery.required_inputs;
+            output.rederive_via_workflow_operator = recovery.rederive_via_workflow_operator;
+            output.required_follow_up = recovery.required_follow_up;
             return Ok(output);
         }
         if !allow_fail_recording_while_override_out_of_phase {
@@ -709,6 +750,7 @@ pub fn record_qa(
         code,
         recommended_command,
         recommended_public_command_argv,
+        required_inputs,
         rederive_via_workflow_operator,
         required_follow_up,
         trace_summary,
@@ -718,6 +760,7 @@ pub fn record_qa(
             Some(String::from("out_of_phase_requery_required")),
             recommended_command,
             recommended_public_command_argv,
+            Vec::new(),
             Some(true),
             None,
             String::from(
@@ -725,21 +768,29 @@ pub fn record_qa(
             ),
         )
     } else {
+        let required_follow_up = (args.result == ReviewOutcomeArg::Fail)
+            .then(|| {
+                negative_result_required_follow_up(
+                    runtime,
+                    &args.plan,
+                    &operator,
+                    Some(authoritative_state),
+                )
+            })
+            .flatten();
+        let recovery = public_recovery_contract_for_follow_up(
+            &args.plan,
+            Some(&operator),
+            required_follow_up,
+            PublicFollowUpInputProfile::None,
+        );
         (
             None,
-            None,
-            None,
-            None,
-            (args.result == ReviewOutcomeArg::Fail)
-                .then(|| {
-                    negative_result_required_follow_up(
-                        runtime,
-                        &args.plan,
-                        &operator,
-                        Some(authoritative_state),
-                    )
-                })
-                .flatten(),
+            recovery.recommended_command,
+            recovery.recommended_public_command_argv,
+            recovery.required_inputs,
+            recovery.rederive_via_workflow_operator,
+            recovery.required_follow_up,
             String::from(
                 "Recorded browser QA evidence for the current branch closure and approved test plan.",
             ),
@@ -752,11 +803,80 @@ pub fn record_qa(
         code,
         recommended_command,
         recommended_public_command_argv,
-        required_inputs: Vec::new(),
+        required_inputs,
         rederive_via_workflow_operator,
         required_follow_up,
         trace_summary,
     })
+}
+
+fn advance_late_stage_args_are_intent_only(args: &AdvanceLateStageArgs) -> bool {
+    args.dispatch_id.is_none()
+        && args.branch_closure_id.is_none()
+        && args.reviewer_source.is_none()
+        && args.reviewer_id.is_none()
+        && args.result.is_none()
+        && args.summary_file.is_none()
+}
+
+fn final_review_dispatch_public_route_ready(operator: &ExecutionRoutingState) -> bool {
+    operator.review_state_status == "clean"
+        && matches!(
+            operator.phase.as_str(),
+            crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING
+                | crate::execution::phase::PHASE_FINAL_REVIEW_PENDING
+        )
+        && operator.phase_detail == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+        && operator.current_branch_closure_id.is_some()
+        && operator.current_release_readiness_result.as_deref() == Some("ready")
+}
+
+fn final_review_recording_can_bootstrap_dispatch(
+    operator: &ExecutionRoutingState,
+    branch_closure_id: Option<&str>,
+) -> bool {
+    final_review_dispatch_public_route_ready(operator)
+        && operator
+            .current_branch_closure_id
+            .as_deref()
+            .zip(branch_closure_id)
+            .is_some_and(|(operator_branch, current_branch)| operator_branch == current_branch)
+}
+
+fn gate_requery_output(
+    plan: &Path,
+    stage_path: &str,
+    operation: &str,
+    branch_closure_id: Option<String>,
+    result: &str,
+    trace_summary: &str,
+) -> AdvanceLateStageOutput {
+    let (recommended_command, recommended_public_command_argv) =
+        workflow_operator_requery_optional_surfaces(plan, false);
+    AdvanceLateStageOutput {
+        action: String::from("blocked"),
+        stage_path: String::from(stage_path),
+        intent: String::from("advance_late_stage"),
+        operation: String::from(operation),
+        branch_closure_id,
+        dispatch_id: None,
+        result: String::from(result),
+        code: Some(String::from("out_of_phase_requery_required")),
+        recommended_command,
+        recommended_public_command_argv,
+        required_inputs: Vec::new(),
+        rederive_via_workflow_operator: Some(true),
+        required_follow_up: None,
+        trace_summary: String::from(trace_summary),
+    }
+}
+
+fn current_finish_review_gate_checkpoint(
+    context: &ExecutionContext,
+) -> Result<Option<String>, JsonFailure> {
+    Ok(load_authoritative_transition_state(context)?
+        .as_ref()
+        .and_then(AuthoritativeTransitionState::finish_review_gate_pass_branch_closure_id))
 }
 
 pub(super) fn advance_late_stage_impl(
@@ -788,8 +908,54 @@ pub(super) fn advance_late_stage_impl(
         &context,
         final_review_recording_requested,
     )?;
+    if advance_late_stage_args_are_intent_only(args)
+        && let Ok(operator) = operator_without_external_review.as_ref()
+        && final_review_dispatch_public_route_ready(operator)
+    {
+        require_advance_late_stage_public_mutation(&status)?;
+        let prior_dispatch_id = current_review_dispatch_id_candidate(
+            &context,
+            ReviewDispatchScopeArg::FinalReview,
+            None,
+            None,
+        )?;
+        let dispatch_id = ensure_current_review_dispatch_id_for_command(
+            &context,
+            ReviewDispatchScopeArg::FinalReview,
+            None,
+            None,
+            "advance_late_stage",
+        )?;
+        let recovery = public_recovery_contract_for_follow_up(
+            &args.plan,
+            Some(operator),
+            Some(String::from("request_external_review")),
+            PublicFollowUpInputProfile::FinalReview,
+        );
+        return Ok(AdvanceLateStageOutput {
+            action: if prior_dispatch_id.as_deref() == Some(dispatch_id.as_str()) {
+                String::from("already_current")
+            } else {
+                String::from("recorded")
+            },
+            stage_path: String::from("final_review"),
+            intent: String::from("advance_late_stage"),
+            operation: String::from("record_final_review_dispatch"),
+            branch_closure_id: branch_closure_id.clone(),
+            dispatch_id: Some(dispatch_id),
+            result: String::from("dispatch_recorded"),
+            code: None,
+            recommended_command: recovery.recommended_command,
+            recommended_public_command_argv: recovery.recommended_public_command_argv,
+            required_inputs: recovery.required_inputs,
+            rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+            required_follow_up: recovery.required_follow_up,
+            trace_summary: String::from(
+                "Recorded current final-review dispatch lineage through the public advance-late-stage route.",
+            ),
+        });
+    }
     if final_review_recording_requested {
-        let _write_authority = claim_step_write_authority(runtime)?;
         if args.branch_closure_id.is_some() {
             return Err(JsonFailure::new(
                 FailureClass::InvalidCommandInput,
@@ -839,13 +1005,13 @@ pub(super) fn advance_late_stage_impl(
                     .and_then(|context| context.branch_closure_id.as_deref())
                     == branch_closure_id.as_deref()
         };
-        let candidate_dispatch_id = current_review_dispatch_id_candidate(
+        let mut candidate_dispatch_id = current_review_dispatch_id_candidate(
             &context,
             ReviewDispatchScopeArg::FinalReview,
             None,
             args.dispatch_id.as_deref(),
         )?;
-        let operator = match current_workflow_operator(runtime, &args.plan, true) {
+        let mut operator = match current_workflow_operator(runtime, &args.plan, true) {
             Ok(operator) => operator,
             Err(error) if error.error_class == FailureClass::InstructionParseFailed.as_str() => {
                 return Ok(shared_out_of_phase_advance_late_stage_output(
@@ -863,6 +1029,42 @@ pub(super) fn advance_late_stage_impl(
             }
             Err(error) => return Err(error),
         };
+        if candidate_dispatch_id.is_none()
+            && final_review_recording_can_bootstrap_dispatch(
+                &operator,
+                branch_closure_id.as_deref(),
+            )
+        {
+            require_advance_late_stage_public_mutation(&status)?;
+            let dispatch_id = ensure_current_review_dispatch_id_for_command(
+                &context,
+                ReviewDispatchScopeArg::FinalReview,
+                None,
+                None,
+                "advance_late_stage",
+            )?;
+            candidate_dispatch_id = Some(dispatch_id);
+            operator = match current_workflow_operator(runtime, &args.plan, true) {
+                Ok(operator) => operator,
+                Err(error)
+                    if error.error_class == FailureClass::InstructionParseFailed.as_str() =>
+                {
+                    return Ok(shared_out_of_phase_advance_late_stage_output(
+                        &args.plan,
+                        AdvanceLateStageOutputContext {
+                            stage_path: "final_review",
+                            operation: "record_final_review_outcome",
+                            branch_closure_id: branch_closure_id.clone(),
+                            dispatch_id: candidate_dispatch_id.clone(),
+                            result,
+                            external_review_result_ready: true,
+                            trace_summary: "advance-late-stage final-review recording failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                        },
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
+        }
         let final_review_override_out_of_phase =
             late_stage_negative_result_override_active(&operator);
         let dispatch_current_before_record = candidate_dispatch_id
@@ -875,24 +1077,42 @@ pub(super) fn advance_late_stage_impl(
             && !final_review_override_out_of_phase
             && dispatch_current_before_record
             && let Some(current_branch_closure) = current_branch_closure.as_ref()
-            && let Some(output) = equivalent_current_final_review_rerun(
-                &context,
-                current_branch_closure,
-                EquivalentFinalReviewRerunParams {
-                    stage_path: "final_review",
-                    operation: "record_final_review_outcome",
-                    dispatch_id: candidate_dispatch_id
-                        .as_deref()
-                        .expect("candidate dispatch id should exist when marked current"),
-                    reviewer_source,
-                    reviewer_id,
-                    result,
-                    summary_file,
-                    required_follow_up: (result == "fail")
-                        .then(|| negative_result_follow_up(&operator))
-                        .flatten(),
-                },
-            )?
+            && let Some(output) = {
+                let required_follow_up = (result == "fail")
+                    .then(|| negative_result_follow_up(&operator))
+                    .flatten();
+                equivalent_current_final_review_rerun(
+                    &context,
+                    current_branch_closure,
+                    EquivalentFinalReviewRerunParams {
+                        stage_path: "final_review",
+                        operation: "record_final_review_outcome",
+                        dispatch_id: candidate_dispatch_id
+                            .as_deref()
+                            .expect("candidate dispatch id should exist when marked current"),
+                        reviewer_source,
+                        reviewer_id,
+                        result,
+                        summary_file,
+                        required_follow_up: required_follow_up.clone(),
+                    },
+                )?
+                .map(|output| (output, required_follow_up))
+            }
+            .map(|(mut output, required_follow_up)| {
+                let recovery = public_recovery_contract_for_follow_up(
+                    &args.plan,
+                    Some(&operator),
+                    required_follow_up,
+                    PublicFollowUpInputProfile::None,
+                );
+                output.recommended_command = recovery.recommended_command;
+                output.recommended_public_command_argv = recovery.recommended_public_command_argv;
+                output.required_inputs = recovery.required_inputs;
+                output.rederive_via_workflow_operator = recovery.rederive_via_workflow_operator;
+                output.required_follow_up = recovery.required_follow_up;
+                output
+            })
         {
             return Ok(output);
         }
@@ -923,11 +1143,12 @@ pub(super) fn advance_late_stage_impl(
         let dispatch_id = if let Some(dispatch_id) = candidate_dispatch_id {
             dispatch_id
         } else {
-            ensure_current_review_dispatch_id(
+            ensure_current_review_dispatch_id_for_command(
                 &context,
                 ReviewDispatchScopeArg::FinalReview,
                 None,
                 args.dispatch_id.as_deref(),
+                "advance_late_stage",
             )?
         };
         let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
@@ -965,22 +1186,41 @@ pub(super) fn advance_late_stage_impl(
             if operator.review_state_status == "clean"
                 && !final_review_override_out_of_phase
                 && let Some(current_branch_closure) = current_branch_closure.as_ref()
-                && let Some(output) = equivalent_current_final_review_rerun(
-                    &context,
-                    current_branch_closure,
-                    EquivalentFinalReviewRerunParams {
-                        stage_path: "final_review",
-                        operation: "record_final_review_outcome",
-                        dispatch_id: &dispatch_id,
-                        reviewer_source,
-                        reviewer_id,
-                        result,
-                        summary_file,
-                        required_follow_up: (result == "fail")
-                            .then(|| negative_result_follow_up(&operator))
-                            .flatten(),
-                    },
-                )?
+                && let Some(output) = {
+                    let required_follow_up = (result == "fail")
+                        .then(|| negative_result_follow_up(&operator))
+                        .flatten();
+                    equivalent_current_final_review_rerun(
+                        &context,
+                        current_branch_closure,
+                        EquivalentFinalReviewRerunParams {
+                            stage_path: "final_review",
+                            operation: "record_final_review_outcome",
+                            dispatch_id: &dispatch_id,
+                            reviewer_source,
+                            reviewer_id,
+                            result,
+                            summary_file,
+                            required_follow_up: required_follow_up.clone(),
+                        },
+                    )?
+                    .map(|output| (output, required_follow_up))
+                }
+                .map(|(mut output, required_follow_up)| {
+                    let recovery = public_recovery_contract_for_follow_up(
+                        &args.plan,
+                        Some(&operator),
+                        required_follow_up,
+                        PublicFollowUpInputProfile::None,
+                    );
+                    output.recommended_command = recovery.recommended_command;
+                    output.recommended_public_command_argv =
+                        recovery.recommended_public_command_argv;
+                    output.required_inputs = recovery.required_inputs;
+                    output.rederive_via_workflow_operator = recovery.rederive_via_workflow_operator;
+                    output.required_follow_up = recovery.required_follow_up;
+                    output
+                })
             {
                 return Ok(output);
             }
@@ -1008,6 +1248,7 @@ pub(super) fn advance_late_stage_impl(
         let reviewed_state_id = current_branch_closure.reviewed_state_id.clone();
         let semantic_reviewed_state_id = current_branch_closure.semantic_reviewed_state_id.clone();
         let browser_qa_required = current_plan_requires_browser_qa(&context);
+        let _write_authority = claim_step_write_authority(runtime)?;
         let mut authoritative_state = load_authoritative_transition_state(&context)?;
         let Some(authoritative_state) = authoritative_state.as_mut() else {
             return Err(JsonFailure::new(
@@ -1064,6 +1305,22 @@ pub(super) fn advance_late_stage_impl(
                             },
                         ));
                     }
+                    let required_follow_up = (result == "fail")
+                        .then(|| {
+                            negative_result_required_follow_up(
+                                runtime,
+                                &args.plan,
+                                &operator,
+                                Some(authoritative_state),
+                            )
+                        })
+                        .flatten();
+                    let recovery = public_recovery_contract_for_follow_up(
+                        &args.plan,
+                        Some(&operator),
+                        required_follow_up,
+                        PublicFollowUpInputProfile::None,
+                    );
                     return Ok(AdvanceLateStageOutput {
                         action: String::from("already_current"),
                         stage_path: String::from("final_review"),
@@ -1073,20 +1330,11 @@ pub(super) fn advance_late_stage_impl(
                         dispatch_id: Some(dispatch_id.clone()),
                         result: result.to_owned(),
                         code: None,
-                        recommended_command: None,
-                        recommended_public_command_argv: None,
-                        required_inputs: Vec::new(),
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: (result == "fail")
-                            .then(|| {
-                                negative_result_required_follow_up(
-                                    runtime,
-                                    &args.plan,
-                                    &operator,
-                                    Some(authoritative_state),
-                                )
-                            })
-                            .flatten(),
+                        recommended_command: recovery.recommended_command,
+                        recommended_public_command_argv: recovery.recommended_public_command_argv,
+                        required_inputs: recovery.required_inputs,
+                        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                        required_follow_up: recovery.required_follow_up,
                         trace_summary: String::from(
                             "Current branch closure already has an equivalent recorded final-review outcome.",
                         ),
@@ -1180,6 +1428,7 @@ pub(super) fn advance_late_stage_impl(
             code,
             recommended_command,
             recommended_public_command_argv,
+            required_inputs,
             rederive_via_workflow_operator,
             required_follow_up,
             trace_summary,
@@ -1190,6 +1439,7 @@ pub(super) fn advance_late_stage_impl(
                 Some(String::from("out_of_phase_requery_required")),
                 recommended_command,
                 recommended_public_command_argv,
+                Vec::new(),
                 Some(true),
                 None,
                 String::from(
@@ -1197,21 +1447,29 @@ pub(super) fn advance_late_stage_impl(
                 ),
             )
         } else {
+            let required_follow_up = (result == "fail")
+                .then(|| {
+                    negative_result_required_follow_up(
+                        runtime,
+                        &args.plan,
+                        &operator,
+                        Some(authoritative_state),
+                    )
+                })
+                .flatten();
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                required_follow_up,
+                PublicFollowUpInputProfile::None,
+            );
             (
                 None,
-                None,
-                None,
-                None,
-                (result == "fail")
-                    .then(|| {
-                        negative_result_required_follow_up(
-                            runtime,
-                            &args.plan,
-                            &operator,
-                            Some(authoritative_state),
-                        )
-                    })
-                    .flatten(),
+                recovery.recommended_command,
+                recovery.recommended_public_command_argv,
+                recovery.required_inputs,
+                recovery.rederive_via_workflow_operator,
+                recovery.required_follow_up,
                 String::from(
                     "Validated final-review dispatch lineage and recorded final-review evidence from authoritative late-stage state.",
                 ),
@@ -1228,7 +1486,7 @@ pub(super) fn advance_late_stage_impl(
             code,
             recommended_command,
             recommended_public_command_argv,
-            required_inputs: Vec::new(),
+            required_inputs,
             rederive_via_workflow_operator,
             required_follow_up,
             trace_summary,
@@ -1262,6 +1520,109 @@ pub(super) fn advance_late_stage_impl(
         }
         Err(error) => return Err(error),
     };
+    if operator.phase == crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION
+        && operator.phase_detail == crate::execution::phase::DETAIL_FINISH_REVIEW_GATE_READY
+        && advance_late_stage_args_are_intent_only(args)
+    {
+        require_advance_late_stage_public_mutation(&status)?;
+        let _write_authority = claim_step_write_authority(runtime)?;
+        let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+        let branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
+        let gate = gate_review_from_context(&context);
+        if !gate.allowed {
+            return Ok(gate_requery_output(
+                &args.plan,
+                "finish_review",
+                "record_finish_review_gate_checkpoint",
+                branch_closure_id,
+                "blocked",
+                "advance-late-stage finish-review checkpointing failed closed because finish-review gate validation is not currently allowed.",
+            ));
+        }
+        let checkpoint_before = current_finish_review_gate_checkpoint(&context)?;
+        persist_finish_review_gate_pass_checkpoint_for_command(&context, "advance_late_stage")?;
+        let refreshed_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+        let checkpoint_after = current_finish_review_gate_checkpoint(&refreshed_context)?;
+        let Some(branch_closure_id) = branch_closure_id else {
+            return Ok(gate_requery_output(
+                &args.plan,
+                "finish_review",
+                "record_finish_review_gate_checkpoint",
+                None,
+                "blocked",
+                "advance-late-stage finish-review checkpointing failed closed because no current branch closure is available.",
+            ));
+        };
+        if checkpoint_after.as_deref() != Some(branch_closure_id.as_str()) {
+            return Ok(gate_requery_output(
+                &args.plan,
+                "finish_review",
+                "record_finish_review_gate_checkpoint",
+                Some(branch_closure_id),
+                "blocked",
+                "advance-late-stage finish-review checkpointing failed closed because the persisted checkpoint did not bind to the current branch closure.",
+            ));
+        }
+        return Ok(AdvanceLateStageOutput {
+            action: if checkpoint_before.as_deref() == checkpoint_after.as_deref() {
+                String::from("already_current")
+            } else {
+                String::from("recorded")
+            },
+            stage_path: String::from("finish_review"),
+            intent: String::from("advance_late_stage"),
+            operation: String::from("record_finish_review_gate_checkpoint"),
+            branch_closure_id: Some(branch_closure_id),
+            dispatch_id: None,
+            result: String::from("pass"),
+            code: None,
+            recommended_command: None,
+            recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
+            rederive_via_workflow_operator: None,
+            required_follow_up: None,
+            trace_summary: String::from(
+                "Recorded finish-review checkpoint for the current branch closure through the public advance-late-stage route.",
+            ),
+        });
+    }
+    if operator.phase == crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION
+        && operator.phase_detail == crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY
+        && advance_late_stage_args_are_intent_only(args)
+    {
+        require_advance_late_stage_public_mutation(&status)?;
+        let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+        let branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
+        let gate = gate_finish_from_context(&context);
+        if !gate.allowed {
+            return Ok(gate_requery_output(
+                &args.plan,
+                "finish_completion",
+                "validate_finish_completion",
+                branch_closure_id,
+                "blocked",
+                "advance-late-stage finish completion failed closed because finish-gate validation is not currently allowed.",
+            ));
+        }
+        return Ok(AdvanceLateStageOutput {
+            action: String::from("completed"),
+            stage_path: String::from("finish_completion"),
+            intent: String::from("advance_late_stage"),
+            operation: String::from("validate_finish_completion"),
+            branch_closure_id,
+            dispatch_id: None,
+            result: String::from("pass"),
+            code: None,
+            recommended_command: None,
+            recommended_public_command_argv: None,
+            required_inputs: Vec::new(),
+            rederive_via_workflow_operator: None,
+            required_follow_up: None,
+            trace_summary: String::from(
+                "Validated finish completion through the public advance-late-stage route.",
+            ),
+        });
+    }
     if operator.phase == crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING
         && operator.phase_detail == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
     {
@@ -1297,7 +1658,7 @@ pub(super) fn advance_late_stage_impl(
             code: output.code,
             recommended_command: output.recommended_command,
             recommended_public_command_argv: output.recommended_public_command_argv,
-            required_inputs: Vec::new(),
+            required_inputs: output.required_inputs,
             rederive_via_workflow_operator: output.rederive_via_workflow_operator,
             required_follow_up: output.required_follow_up,
             trace_summary: output.trace_summary,
@@ -1338,7 +1699,7 @@ pub(super) fn advance_late_stage_impl(
             code: output.code,
             recommended_command: output.recommended_command,
             recommended_public_command_argv: output.recommended_public_command_argv,
-            required_inputs: Vec::new(),
+            required_inputs: output.required_inputs,
             rederive_via_workflow_operator: output.rederive_via_workflow_operator,
             required_follow_up: output.required_follow_up,
             trace_summary: output.trace_summary,
@@ -1365,7 +1726,7 @@ pub(super) fn advance_late_stage_impl(
     if !release_route_ready {
         if operator.review_state_status == "clean"
             && let Some(current_branch_closure) = current_branch_closure.as_ref()
-            && let Some(output) = equivalent_current_release_readiness_rerun(
+            && let Some(mut output) = equivalent_current_release_readiness_rerun(
                 &context,
                 current_branch_closure,
                 "release_readiness",
@@ -1374,6 +1735,17 @@ pub(super) fn advance_late_stage_impl(
                 summary_file,
             )?
         {
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                output.required_follow_up.take(),
+                PublicFollowUpInputProfile::ReleaseReadiness,
+            );
+            output.recommended_command = recovery.recommended_command;
+            output.recommended_public_command_argv = recovery.recommended_public_command_argv;
+            output.required_inputs = recovery.required_inputs;
+            output.rederive_via_workflow_operator = recovery.rederive_via_workflow_operator;
+            output.required_follow_up = recovery.required_follow_up;
             return Ok(output);
         }
         if current_branch_closure.is_none() {
@@ -1429,6 +1801,12 @@ pub(super) fn advance_late_stage_impl(
     {
         if current_record.result == result && current_record.summary_hash == normalized_summary_hash
         {
+            let recovery = public_recovery_contract_for_follow_up(
+                &args.plan,
+                Some(&operator),
+                (result == "blocked").then(|| String::from("resolve_release_blocker")),
+                PublicFollowUpInputProfile::ReleaseReadiness,
+            );
             return Ok(AdvanceLateStageOutput {
                 action: String::from("already_current"),
                 stage_path: String::from("release_readiness"),
@@ -1438,12 +1816,11 @@ pub(super) fn advance_late_stage_impl(
                 dispatch_id: None,
                 result: result.to_owned(),
                 code: None,
-                recommended_command: None,
-                recommended_public_command_argv: None,
-                required_inputs: Vec::new(),
-                rederive_via_workflow_operator: None,
-                required_follow_up: (result == "blocked")
-                    .then(|| String::from("resolve_release_blocker")),
+                recommended_command: recovery.recommended_command,
+                recommended_public_command_argv: recovery.recommended_public_command_argv,
+                required_inputs: recovery.required_inputs,
+                rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+                required_follow_up: recovery.required_follow_up,
                 trace_summary: String::from(
                     "Current branch closure already has an equivalent recorded release-readiness outcome.",
                 ),
@@ -1511,6 +1888,12 @@ pub(super) fn advance_late_stage_impl(
         let published = publish_authoritative_artifact(runtime, "release-docs", &release_source)?;
         debug_assert_eq!(published, release_docs_fingerprint);
     }
+    let recovery = public_recovery_contract_for_follow_up(
+        &args.plan,
+        Some(&operator),
+        (result == "blocked").then(|| String::from("resolve_release_blocker")),
+        PublicFollowUpInputProfile::ReleaseReadiness,
+    );
     Ok(AdvanceLateStageOutput {
         action: String::from("recorded"),
         stage_path: String::from("release_readiness"),
@@ -1520,11 +1903,11 @@ pub(super) fn advance_late_stage_impl(
         dispatch_id: None,
         result: result.to_owned(),
         code: None,
-        recommended_command: None,
-        recommended_public_command_argv: None,
-        required_inputs: Vec::new(),
-        rederive_via_workflow_operator: None,
-        required_follow_up: (result == "blocked").then(|| String::from("resolve_release_blocker")),
+        recommended_command: recovery.recommended_command,
+        recommended_public_command_argv: recovery.recommended_public_command_argv,
+        required_inputs: recovery.required_inputs,
+        rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
+        required_follow_up: recovery.required_follow_up,
         trace_summary: String::from(
             "Recorded release-readiness late-stage evidence for the current branch closure.",
         ),

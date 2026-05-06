@@ -248,6 +248,108 @@ fn display_command_parsing_is_test_only_not_route_authority() {
     );
 }
 
+#[test]
+fn public_blocked_outputs_do_not_emit_token_only_follow_ups() {
+    let files = [
+        "src/execution/commands/advance_late_stage.rs",
+        "src/execution/commands/close_current_task.rs",
+        "src/execution/commands/common/branch_closure_truth.rs",
+        "src/execution/commands/common/late_stage_reruns.rs",
+        "src/execution/commands/common/operator_outputs.rs",
+        "src/execution/review_state.rs",
+    ];
+    let token_only_pattern = concat!(
+        "recommended_command: None,\n",
+        "recommended_public_command_argv: None,\n",
+        "required_inputs: Vec::new(),\n",
+        "rederive_via_workflow_operator: None,\n",
+        "required_follow_up: Some"
+    );
+    let mut violations = Vec::new();
+    for rel in files {
+        let source = read_repo_file(rel);
+        let normalized = source.lines().map(str::trim).collect::<Vec<_>>().join("\n");
+        for (start, _) in normalized.match_indices(token_only_pattern) {
+            violations.push(format!(
+                "{rel}:{} emits required_follow_up without argv, inputs, requery, or diagnostic-only null follow-up",
+                line_number_for_byte(&normalized, start)
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "normal public blocked outputs must not strand agents on token-only follow-ups:\n{}",
+        violations.join("\n")
+    );
+
+    let operator_outputs = read_repo_file("src/execution/commands/common/operator_outputs.rs");
+    for required in [
+        "pub(crate) fn public_recovery_contract_for_follow_up",
+        "workflow_operator_requery_optional_surfaces(plan, external_review_result_ready)",
+        "required_inputs_for_follow_up_profile",
+        "PublicCommand::WorkflowOperator",
+        "json: true",
+    ] {
+        assert!(
+            operator_outputs.contains(required),
+            "public follow-up recovery should stay centralized through `{required}`"
+        );
+    }
+    for forbidden in [
+        "\"featureforge workflow operator --plan {}",
+        "String::from(\"workflow\"),\n        String::from(\"operator\")",
+    ] {
+        assert!(
+            !operator_outputs.contains(forbidden),
+            "workflow-operator JSON requery surfaces must use typed PublicCommand authority, not hand-built command fragments via `{forbidden}`"
+        );
+    }
+}
+
+#[test]
+fn public_text_and_schemas_mark_recommended_command_as_display_only() {
+    let workflow_operator = read_repo_file("src/workflow/operator.rs");
+    for required in [
+        "Display command summary:",
+        "Next public action display summary:",
+        "next_display_summary=",
+        "Use JSON recommended_public_command_argv for execution",
+    ] {
+        assert!(
+            workflow_operator.contains(required),
+            "workflow text renderers should include `{required}`"
+        );
+    }
+    assert!(
+        !workflow_operator.contains("Recommended command:"),
+        "workflow text renderers must not label display strings as recommended executable commands"
+    );
+    for forbidden in ["Next public action: {}", "next={}"] {
+        assert!(
+            !workflow_operator.contains(forbidden),
+            "workflow text renderers must not emit command-shaped action text without display-only labeling via `{forbidden}`"
+        );
+    }
+
+    for rel in [
+        "schemas/plan-execution-status.schema.json",
+        "schemas/workflow-operator.schema.json",
+    ] {
+        let schema = read_repo_file(rel);
+        for required in [
+            "Display-only compatibility summary; do not parse or execute this string.",
+            "Executable public command argv authority when present.",
+            "Parseable input contract for the routed public command",
+        ] {
+            assert!(
+                schema.contains(required),
+                "{rel} should document public command authority via `{required}`"
+            );
+        }
+    }
+}
+
 fn concat_source_expr(parts: &[&str]) -> String {
     let quoted_parts = parts
         .iter()
@@ -1042,7 +1144,14 @@ fn scanner_rejects_public_internal_helper_and_hidden_command_fixtures() {
 #[test]
 fn scanner_rejects_public_direct_runtime_surface_wrapper_fixture() {
     let operator_marker = hidden_literal(&["operator_for_", "runtime("]);
+    let doctor_marker = hidden_literal(&["doctor_for_", "runtime("]);
+    let doctor_with_args_marker = hidden_literal(&["doctor_for_", "runtime_with_args("]);
+    let doctor_phase_next_marker =
+        hidden_literal(&["doctor_phase_and_next_for_", "runtime_with_args("]);
+    let phase_marker = hidden_literal(&["phase_for_", "runtime("]);
+    let handoff_marker = hidden_literal(&["handoff_for_", "runtime("]);
     let status_marker = hidden_literal(&[".status", "("]);
+    let status_refresh_marker = hidden_literal(&[".status_", "refresh("]);
     let review_gate_marker = hidden_literal(&[".review_gate", "("]);
     let finish_gate_marker = hidden_literal(&[".finish_gate", "("]);
     let fixture = format!(
@@ -1055,8 +1164,32 @@ fn plan_execution_status_json(runtime: &ExecutionRuntime, plan: &str) {{
     runtime{status_marker}&StatusArgs {{ plan: plan.into(), external_review_result_ready: false }});
 }}
 
+fn workflow_status_refresh_json(runtime: &mut WorkflowRuntime) {{
+    runtime{status_refresh_marker});
+}}
+
 fn workflow_operator_json(runtime: &ExecutionRuntime, args: &OperatorArgs) {{
     operator::{operator_marker}runtime, args);
+}}
+
+fn workflow_doctor_json(runtime: &ExecutionRuntime) {{
+    operator::{doctor_marker}runtime);
+}}
+
+fn workflow_doctor_with_args_json(runtime: &ExecutionRuntime, args: &DoctorArgs) {{
+    operator::{doctor_with_args_marker}runtime, args);
+}}
+
+fn workflow_doctor_phase_next_json(runtime: &ExecutionRuntime, args: &DoctorArgs) {{
+    operator::{doctor_phase_next_marker}runtime, args);
+}}
+
+fn workflow_phase_json(runtime: &ExecutionRuntime) {{
+    operator::{phase_marker}runtime);
+}}
+
+fn workflow_handoff_json(runtime: &ExecutionRuntime) {{
+    operator::{handoff_marker}runtime);
 }}
 
 fn workflow_gate_review_json(runtime: &ExecutionRuntime, args: &StatusArgs) {{
@@ -1083,7 +1216,13 @@ fn review_gate_local_alias_value(runtime: &ExecutionRuntime, args: &StatusArgs) 
     for wrapper in [
         "status_value",
         "plan_execution_status_json",
+        "workflow_status_refresh_json",
         "workflow_operator_json",
+        "workflow_doctor_json",
+        "workflow_doctor_with_args_json",
+        "workflow_doctor_phase_next_json",
+        "workflow_phase_json",
+        "workflow_handoff_json",
         "workflow_gate_review_json",
         "workflow_gate_finish_json",
         "status_alias_value",
@@ -1097,6 +1236,93 @@ fn review_gate_local_alias_value(runtime: &ExecutionRuntime, args: &StatusArgs) 
             "scanner should reject public direct runtime surface wrapper `{wrapper}`, got {violations:?}"
         );
     }
+}
+
+#[test]
+fn scanner_rejects_cfg_test_wrapped_public_direct_runtime_surface_wrappers() {
+    let doctor_marker = hidden_literal(&["doctor_for_", "runtime("]);
+    let status_refresh_marker = hidden_literal(&["runtime.status_", "refresh("]);
+    let fixture = format!(
+        r#"
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    fn cfg_test_doctor_wrapper(runtime: &ExecutionRuntime) {{
+        operator::{doctor_marker}runtime);
+    }}
+
+    fn cfg_test_status_refresh_wrapper(runtime: &mut WorkflowRuntime) {{
+        {status_refresh_marker});
+    }}
+}}
+"#
+    );
+
+    let violations = scan_source_for_public_flow_violations("tests/workflow_runtime.rs", &fixture);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("cfg_test_doctor_wrapper")
+                && violation.contains("doctor_for_runtime")
+                && violation.contains("direct runtime surface")),
+        "scanner should reject cfg(test)-wrapped doctor_for_runtime wrappers, got {violations:?}"
+    );
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("cfg_test_status_refresh_wrapper")
+                && violation.contains("status_refresh")
+                && violation.contains("direct runtime surface")
+        ),
+        "scanner should reject cfg(test)-wrapped status_refresh wrappers, got {violations:?}"
+    );
+}
+
+#[test]
+fn scanner_rejects_cfg_test_aliased_public_direct_runtime_surface_wrappers() {
+    let doctor_import = hidden_literal(&[
+        "use featureforge::workflow::operator::doctor_for_",
+        "runtime as cfg_test_doctor;",
+    ]);
+    let phase_import = hidden_literal(&[
+        "use featureforge::workflow::operator::phase_for_",
+        "runtime as cfg_test_phase;",
+    ]);
+    let fixture = format!(
+        r#"
+#[cfg(test)]
+mod tests {{
+    {doctor_import}
+    {phase_import}
+
+    fn cfg_test_aliased_doctor_wrapper(runtime: &ExecutionRuntime) {{
+        cfg_test_doctor(runtime);
+    }}
+
+    fn cfg_test_aliased_phase_wrapper(runtime: &ExecutionRuntime) {{
+        cfg_test_phase(runtime);
+    }}
+}}
+"#
+    );
+
+    let violations = scan_source_for_public_flow_violations("tests/workflow_runtime.rs", &fixture);
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("cfg_test_aliased_doctor_wrapper")
+                && violation.contains("doctor_for_runtime")
+                && violation.contains("direct runtime surface")
+        ),
+        "scanner should reject cfg(test)-aliased doctor_for_runtime wrappers, got {violations:?}"
+    );
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("cfg_test_aliased_phase_wrapper")
+                && violation.contains("phase_for_runtime")
+                && violation.contains("direct runtime surface")
+        ),
+        "scanner should reject cfg(test)-aliased phase_for_runtime wrappers, got {violations:?}"
+    );
 }
 
 #[test]
@@ -1124,6 +1350,8 @@ fn scanner_rejects_public_flow_header_bypass_fixture() {
 fn scanner_rejects_public_flow_internal_support_imports() {
     let featureforge_support = hidden_literal(&["support/", "featureforge.rs"]);
     let internal_runtime_direct = hidden_literal(&["support/", "internal_runtime_direct.rs"]);
+    let internal_runtime_phase_handoff =
+        hidden_literal(&["support/", "internal_runtime_phase_handoff.rs"]);
     let plan_execution_direct = hidden_literal(&["support/", "plan_execution_direct.rs"]);
     let workflow_direct = hidden_literal(&["support/", "workflow_direct.rs"]);
     let fixture = format!(
@@ -1132,6 +1360,8 @@ fn scanner_rejects_public_flow_internal_support_imports() {
 mod featureforge_support;
 #[path = "{internal_runtime_direct}"]
 mod internal_runtime_direct;
+#[path = "{internal_runtime_phase_handoff}"]
+mod internal_runtime_phase_handoff_support;
 #[path = "{plan_execution_direct}"]
 mod plan_execution_direct_support;
 #[path = "{workflow_direct}"]
@@ -1147,6 +1377,7 @@ fn public_replay_fixture() {{}}
     for forbidden in [
         featureforge_support,
         internal_runtime_direct,
+        internal_runtime_phase_handoff,
         plan_execution_direct,
         workflow_direct,
     ] {
@@ -1346,11 +1577,15 @@ fn public_fixture() {
 #[test]
 fn scanner_rejects_direct_internal_support_imports_even_in_mixed_protected_files() {
     let internal_runtime_direct = hidden_literal(&["support/", "internal_runtime_direct.rs"]);
+    let internal_runtime_phase_handoff =
+        hidden_literal(&["support/", "internal_runtime_phase_handoff.rs"]);
     let plan_execution_direct = hidden_literal(&["support/", "plan_execution_direct.rs"]);
     let fixture = format!(
         r#"
 #[path = "{internal_runtime_direct}"]
 mod internal_runtime_direct;
+#[path = "{internal_runtime_phase_handoff}"]
+mod internal_runtime_phase_handoff_support;
 #[path = "{plan_execution_direct}"]
 mod plan_execution_direct_support;
 
@@ -1361,7 +1596,11 @@ fn internal_compatibility_fixture() {{}}
     let violations =
         scan_source_for_public_flow_violations("tests/workflow_shell_smoke.rs", &fixture);
 
-    for forbidden in [internal_runtime_direct, plan_execution_direct] {
+    for forbidden in [
+        internal_runtime_direct,
+        internal_runtime_phase_handoff,
+        plan_execution_direct,
+    ] {
         assert!(
             violations
                 .iter()
@@ -1406,6 +1645,40 @@ fn scanner_allows_explicitly_quarantined_internal_file_fixture() {
     assert!(
         scan_source_for_public_flow_violations("tests/internal_fixture.rs", &fixture).is_empty(),
         "quarantined internal files should be allowed to exercise internal helpers"
+    );
+}
+
+#[test]
+fn scanner_rejects_internal_only_direct_wrappers_in_protected_public_files() {
+    let helper = hidden_literal(&[
+        "internal_only_unit_",
+        "record_contract_json(repo, state, args);",
+    ]);
+    let direct_refresh = hidden_literal(&["runtime.status_", "refresh();"]);
+    let fixture = format!(
+        r#"
+fn internal_only_helper_wrapper(repo: &Path, state: &Path, args: &RecordContractArgs) {{
+    {helper}
+}}
+
+fn internal_only_direct_status_refresh(runtime: &mut WorkflowRuntime) {{
+    {direct_refresh}
+}}
+"#
+    );
+
+    let violations = scan_source_for_public_flow_violations("tests/workflow_runtime.rs", &fixture);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("internal_only_helper_wrapper")),
+        "protected public-flow files must reject internal_only helper wrappers, got {violations:?}"
+    );
+    assert!(
+        violations.iter().any(|violation| violation
+            .contains("internal_only_direct_status_refresh")
+            && violation.contains("direct runtime surface")),
+        "protected public-flow files must reject internal_only direct runtime surface wrappers, got {violations:?}"
     );
 }
 
@@ -1725,8 +1998,8 @@ fn explicit_internal_helper_scope_exception_reason(
 }
 
 fn function_scope_allows_internal_helpers(rel: &str, function_name: &str) -> bool {
-    if public_runtime_flow_test_files().contains(rel) {
-        return false;
+    if is_protected_public_flow_file(rel) {
+        return explicit_internal_helper_scope_exception_reason(rel, function_name).is_some();
     }
     function_name.starts_with("internal_only_")
         || explicit_internal_helper_scope_exception_reason(rel, function_name).is_some()
@@ -1765,6 +2038,7 @@ fn internal_quarantine_bridge_imports(rel: &str, source: &str) -> Vec<String> {
 fn forbidden_internal_support_paths() -> HashSet<String> {
     [
         hidden_literal(&["support/", "featureforge.rs"]),
+        hidden_literal(&["support/", "internal_runtime_phase_handoff.rs"]),
         hidden_literal(&["support/", "plan_execution_direct.rs"]),
         hidden_literal(&["support/", "workflow_direct.rs"]),
         hidden_literal(&["support/", "internal_runtime_direct.rs"]),
@@ -1855,7 +2129,7 @@ fn tainted_runtime_helper_wrappers(
     source: &str,
     denied_helper_names: &[String],
 ) -> HashSet<String> {
-    let functions = rust_function_bodies(source);
+    let functions = rust_function_bodies(rel, source);
     let call_hits = rust_source_scan::normalized_call_path_hits(rel, source, &[]);
     let mut tainted = functions
         .iter()
@@ -1890,7 +2164,7 @@ fn public_tainted_runtime_helper_wrappers(
     denied_helper_names: &[String],
 ) -> Vec<(usize, String)> {
     let call_hits = rust_source_scan::normalized_call_path_hits(rel, source, &[]);
-    rust_function_bodies(source)
+    rust_function_bodies(rel, source)
         .into_iter()
         .filter(|function| !function_scope_allows_internal_helpers(rel, &function.name))
         .filter(|function| function_calls_any(&call_hits, function, denied_helper_names))
@@ -1900,7 +2174,7 @@ fn public_tainted_runtime_helper_wrappers(
 
 fn public_direct_runtime_surface_wrappers(rel: &str, source: &str) -> Vec<(usize, String, String)> {
     let call_hits = rust_source_scan::normalized_call_path_hits(rel, source, &[]);
-    rust_function_bodies(source)
+    rust_function_bodies(rel, source)
         .into_iter()
         .filter(|function| !function_scope_allows_internal_helpers(rel, &function.name))
         .filter_map(|function| {
@@ -1939,8 +2213,18 @@ fn function_calls_name(
 }
 
 fn direct_runtime_surface_marker(call: &rust_source_scan::RustCallPath) -> Option<String> {
-    if call_matches_name(call, "operator_for_runtime") {
-        return Some("operator_for_runtime".to_owned());
+    for marker in [
+        "operator_for_runtime",
+        "doctor_for_runtime",
+        "doctor_for_runtime_with_args",
+        "doctor_phase_and_next_for_runtime_with_args",
+        "phase_for_runtime",
+        "handoff_for_runtime",
+        "status_refresh",
+    ] {
+        if call_matches_name(call, marker) {
+            return Some(marker.to_owned());
+        }
     }
     call.receiver_runtime_path.as_ref()?;
     ["status", "review_gate", "finish_gate"]
@@ -2021,9 +2305,9 @@ fn assignment_ends(trimmed: &str) -> bool {
     trimmed.ends_with(';')
 }
 
-fn rust_function_bodies(source: &str) -> Vec<RustFunctionBody<'_>> {
+fn rust_function_bodies<'a>(rel: &str, source: &'a str) -> Vec<RustFunctionBody<'a>> {
     let lines = source.lines().collect::<Vec<_>>();
-    rust_source_scan::function_spans("public-flow-scanner.rs", source)
+    rust_source_scan::function_spans(rel, source)
         .into_iter()
         .map(|span| RustFunctionBody {
             name: span.name,

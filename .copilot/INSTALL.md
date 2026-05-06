@@ -106,7 +106,7 @@ cd ~/.featureforge/install && git pull
 
 If you copied the agent file on Windows, copy ~/.featureforge/install/agents/code-reviewer.md into ~/.copilot/agents/code-reviewer.agent.md again after updating.
 
-When `~/.featureforge/install` is the active runtime root, generated skill preambles run the packaged install binary from `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows) for `update-check` automatically so new sessions can surface `UPGRADE_AVAILABLE` or `JUST_UPGRADED` without extra setup.
+When `~/.featureforge/install` is the active runtime root, generated skill preambles use the packaged install binary from `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows) for runtime-root resolution and explicit public commands. Generated skill preambles do not run `update-check` automatically; run `~/.featureforge/install/bin/featureforge update-check` manually when you want upgrade notices.
 
 For the canonical deterministic validation matrix after install or update, see `docs/testing.md` in this repository.
 

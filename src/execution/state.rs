@@ -85,7 +85,7 @@ pub(crate) use crate::execution::read_model::{
     current_branch_closure_id, current_branch_closure_structural_review_state_reason,
     current_branch_reviewed_state_id, current_final_review_dispatch_authority_for_context,
     current_task_review_dispatch_id_for_status, derive_execution_truth_from_authority,
-    derive_execution_truth_from_authority_with_gates, document_release_pending_phase_detail,
+    derive_execution_truth_from_authority_with_gates,
     execution_reentry_current_task_closure_targets_from_stale_tasks,
     execution_reentry_requires_review_state_repair, finish_review_gate_pass_branch_closure_id,
     load_execution_read_scope, load_execution_read_scope_for_mutation,
@@ -101,9 +101,9 @@ pub(crate) use crate::execution::read_model::{
 pub(crate) use crate::execution::read_model_support::{
     active_step, latest_attempt_for_step, latest_attempt_indices_by_step,
     latest_attempted_step_for_task, latest_completed_attempts_by_file,
-    latest_completed_attempts_by_step, qa_pending_requires_test_plan_refresh,
-    resolve_branch_closure_reviewed_tree_sha, resolve_task_closure_reviewed_tree_sha,
-    task_boundary_reason_code_from_message, task_closure_baseline_bridge_ready_for_stale_target,
+    latest_completed_attempts_by_step, resolve_branch_closure_reviewed_tree_sha,
+    resolve_task_closure_reviewed_tree_sha, task_boundary_reason_code_from_message,
+    task_closure_baseline_bridge_ready_for_stale_target,
     task_closure_baseline_candidate_can_preempt_stale_target,
     task_closure_baseline_repair_candidate_with_stale_target,
     task_closures_are_non_branch_contributing, task_completion_lineage_fingerprint,
@@ -199,6 +199,7 @@ pub(crate) use repo_state::{
     repo_safety_stage,
 };
 pub use review_gate::gate_review_from_context;
+pub(crate) use review_gate::persist_finish_review_gate_pass_checkpoint_for_command;
 use review_gate::{
     evaluate_pre_checkpoint_finish_gate, gate_result_current_branch_closure_id,
     gate_review_base_result, gate_review_from_context_internal,

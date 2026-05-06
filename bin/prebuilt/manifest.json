@@ -4,21 +4,21 @@
     "darwin-arm64": {
       "binary_path": "bin/prebuilt/darwin-arm64/featureforge",
       "checksum_path": "bin/prebuilt/darwin-arm64/featureforge.sha256",
-      "binary_sha256": "sha256:56ea1622239008deec700992ee2141aaf472dd967577e7f2d2dc1b6913986806",
-      "source_fingerprint": "sha256:a164f00da05e902544fe17e1f22c4551c5ca0e96fab7b57577140a177f2b6fd1",
+      "binary_sha256": "sha256:19ff6746d7447468da228603ccde269c87fbd9a92e2551d000be26c778cdbc41",
+      "source_fingerprint": "sha256:9752bc89b1f3f075ad7035791da886daa6cee35e57472ad7ad2f54404da38ba8",
       "source_fingerprint_algorithm": "sha256",
-      "source_fingerprint_path_count": 128
+      "source_fingerprint_path_count": 132
     },
     "windows-x64": {
       "binary_path": "bin/prebuilt/windows-x64/featureforge.exe",
       "checksum_path": "bin/prebuilt/windows-x64/featureforge.exe.sha256",
-      "binary_sha256": "sha256:3985959b8698d5282032fd7b1a13eb853cabd157c4454c881728f7fb62008276",
-      "source_fingerprint": "sha256:a164f00da05e902544fe17e1f22c4551c5ca0e96fab7b57577140a177f2b6fd1",
+      "binary_sha256": "sha256:c612342557e233fdeb9a2a3b348bceee3ae3727b783953ae3ddd4efed306964e",
+      "source_fingerprint": "sha256:9752bc89b1f3f075ad7035791da886daa6cee35e57472ad7ad2f54404da38ba8",
       "source_fingerprint_algorithm": "sha256",
-      "source_fingerprint_path_count": 128
+      "source_fingerprint_path_count": 132
     }
   },
-  "source_fingerprint": "sha256:a164f00da05e902544fe17e1f22c4551c5ca0e96fab7b57577140a177f2b6fd1",
+  "source_fingerprint": "sha256:9752bc89b1f3f075ad7035791da886daa6cee35e57472ad7ad2f54404da38ba8",
   "source_fingerprint_algorithm": "sha256",
-  "source_fingerprint_path_count": 128
+  "source_fingerprint_path_count": 132
 }

@@ -305,6 +305,119 @@ fn public_route_decision_rules_have_focused_module_owners() {
 }
 
 #[test]
+fn blocking_scope_task_projection_has_single_execution_owner() {
+    let query = read_repo_file("src/execution/query.rs");
+    assert!(
+        query.contains("pub(crate) struct ExecutionBlockingProjection")
+            && query.contains("pub(crate) fn project_execution_blocking"),
+        "blocking scope/task projection must be owned by execution::query"
+    );
+
+    let router = read_repo_file("src/execution/router.rs");
+    assert!(
+        router.contains("project_execution_blocking(ExecutionBlockingProjectionInputs"),
+        "router must delegate blocking scope/task derivation to the shared query projection"
+    );
+
+    let public_route_projection =
+        read_repo_file("src/execution/read_model/public_route_projection.rs");
+    assert!(
+        public_route_projection
+            .contains("project_execution_blocking(ExecutionBlockingProjectionInputs"),
+        "read-model public route projection must reuse the shared blocking projection"
+    );
+    for forbidden in [
+        "status.blocking_scope = Some(String::from(\"task\"))",
+        "status.blocking_scope = Some(String::from(\"branch\"))",
+    ] {
+        assert!(
+            !public_route_projection.contains(forbidden),
+            "read-model public route projection must not locally override blocking scope/task outside the shared projection: found `{forbidden}`"
+        );
+    }
+
+    let operator = read_repo_file("src/workflow/operator.rs");
+    for forbidden in [
+        "operator_blocking_scope = Some(String::from(\"task\"))",
+        "fn task_blocking_record_task",
+        "strip_prefix(\"task-\")",
+    ] {
+        assert!(
+            !operator.contains(forbidden),
+            "workflow operator must consume projected blocking scope/task instead of deriving it locally: found `{forbidden}`"
+        );
+    }
+}
+
+#[test]
+fn late_stage_phase_mapping_delegates_to_shared_canonical_phase() {
+    let late_stage = read_repo_file("src/execution/late_stage_route_selection.rs");
+    assert!(
+        late_stage.contains(
+            "canonical_phase_for_shared_decision(status.harness_phase.as_str(), phase_detail)"
+        ),
+        "late-stage route selection must delegate phase-detail to phase mapping to the shared canonical helper"
+    );
+    assert!(
+        !late_stage.contains("phase: match phase_detail"),
+        "late-stage route selection must not maintain a local phase-detail to phase match table"
+    );
+
+    let mut violations = Vec::new();
+    for path in rust_source_files(&repo_root().join("src")) {
+        let rel = repo_relative(&path);
+        if rel == "src/execution/query.rs" {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{rel} should be readable: {error}"));
+        if local_phase_detail_to_phase_mapping_spans(&source)
+            .into_iter()
+            .any(|span| span.contains("PHASE_"))
+        {
+            violations.push(format!(
+                "{rel} contains a local phase_detail match that maps to public phase constants"
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "phase-detail to phase mapping must stay centralized in execution::query: {violations:#?}"
+    );
+}
+
+fn local_phase_detail_to_phase_mapping_spans(source: &str) -> Vec<&str> {
+    let mut spans = Vec::new();
+    let mut offset = 0;
+    while let Some(start) = source[offset..].find("match phase_detail") {
+        let start = offset + start;
+        let Some(open_relative) = source[start..].find('{') else {
+            break;
+        };
+        let open = start + open_relative;
+        let mut depth = 0_u32;
+        let mut end = source.len();
+        for (relative, character) in source[open..].char_indices() {
+            match character {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = open + relative + character.len_utf8();
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        spans.push(&source[start..end]);
+        offset = end;
+    }
+    spans
+}
+
+#[test]
 fn execution_reentry_target_construction_has_focused_owner() {
     let allowed_owner = "src/execution/repair_target_selection.rs";
     let mut violations = Vec::new();
@@ -590,7 +703,11 @@ fn command_common_remains_a_facade_over_bounded_domain_modules() {
 #[test]
 fn closure_dispatch_authority_is_not_raw_transition_dispatch_fallback() {
     let closure_dispatch = read_repo_file("src/execution/closure_dispatch.rs");
-    let closure_dispatch_mutation = read_repo_file("src/execution/closure_dispatch_mutation.rs");
+    let closure_dispatch_mutation = format!(
+        "{}\n{}",
+        read_repo_file("src/execution/closure_dispatch_mutation.rs"),
+        read_repo_file("src/execution/closure_dispatch_mutation/recording.rs")
+    );
     assert!(
         closure_dispatch.contains("pub(crate) fn current_review_dispatch_id_candidate")
             && closure_dispatch.contains("pub(crate) fn current_review_dispatch_id_from_lineage")

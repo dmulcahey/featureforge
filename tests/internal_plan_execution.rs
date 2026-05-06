@@ -17,7 +17,8 @@ mod runtime_support;
 use bin_support::compiled_featureforge_path;
 use featureforge::cli::plan_execution::{ReviewOutcomeArg, StatusArgs};
 use featureforge::contracts::harness::{WorktreeLease, WorktreeLeaseState};
-use featureforge::contracts::plan::parse_plan_file;
+use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
+use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::authority::{
     persist_active_worktree_lease_index, write_authoritative_unit_review_receipt_artifact,
     write_authoritative_worktree_lease_artifact,
@@ -481,6 +482,7 @@ fn write_default_approved_single_step_execution_fixture(repo: &Path, state: &Pat
         let evidence_rel = evidence_rel_path();
         copy_repo_relative_fixture_file(&template.repo_root, repo, evidence_rel.as_str());
     }
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
     write_completed_single_step_authority(repo, state);
 }
 
@@ -734,11 +736,13 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn write_second_approved_plan_same_spec(repo: &Path, execution_mode: &str) {
+    let plan_rel = "docs/featureforge/plans/2026-03-18-example-execution-plan-v2.md";
     write_file(
-        &repo.join("docs/featureforge/plans/2026-03-18-example-execution-plan-v2.md"),
+        &repo.join(plan_rel),
         &format!(
             r#"# Example Execution Plan V2
 
@@ -775,6 +779,7 @@ fn write_second_approved_plan_same_spec(repo: &Path, execution_mode: &str) {
 "#,
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, plan_rel);
 }
 
 fn write_independent_plan(repo: &Path) {
@@ -842,6 +847,7 @@ fn write_independent_plan(repo: &Path) {
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn write_single_step_plan(repo: &Path, execution_mode: &str) {
@@ -884,6 +890,7 @@ fn write_single_step_plan(repo: &Path, execution_mode: &str) {
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn set_plan_qa_requirement(repo: &Path, qa_requirement: &str) {
@@ -910,6 +917,7 @@ fn set_plan_qa_requirement(repo: &Path, qa_requirement: &str) {
         "plan QA requirement rewrite should change the fixture contents"
     );
     fs::write(&plan_path, updated).expect("plan fixture should be writable");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn write_two_step_shared_file_plan(repo: &Path, execution_mode: &str) {
@@ -953,6 +961,7 @@ fn write_two_step_shared_file_plan(repo: &Path, execution_mode: &str) {
 "#
         ),
     );
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn mark_all_plan_steps_checked(repo: &Path) {
@@ -960,11 +969,47 @@ fn mark_all_plan_steps_checked(repo: &Path) {
     let source = fs::read_to_string(&path).expect("plan should be readable");
     fs::write(path, source.replace("- [ ] **Step", "- [x] **Step"))
         .expect("plan should be writable");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
 }
 
 fn sha256_hex(contents: &[u8]) -> String {
     let digest = Sha256::digest(contents);
     format!("{digest:x}")
+}
+
+fn write_current_pass_plan_fidelity_review_artifact_for_plan(repo: &Path, plan_rel: &str) {
+    let plan = parse_plan_file(repo.join(plan_rel)).expect("plan fixture should parse");
+    let spec_rel = plan.source_spec_path.clone();
+    let spec = parse_spec_file(repo.join(&spec_rel)).expect("spec fixture should parse");
+    let plan_fingerprint = sha256_hex(&fs::read(repo.join(plan_rel)).expect("plan should read"));
+    let spec_fingerprint = sha256_hex(&fs::read(repo.join(&spec_rel)).expect("spec should read"));
+    let verified_requirement_ids = spec
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.clone())
+        .collect::<Vec<_>>();
+    let plan_stem = Path::new(plan_rel)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("plan");
+    let artifact_path = repo
+        .join(".featureforge")
+        .join("reviews")
+        .join(format!("{plan_stem}-plan-fidelity.md"));
+
+    if let Some(parent) = artifact_path.parent() {
+        fs::create_dir_all(parent).expect("plan-fidelity artifact parent should be creatable");
+    }
+    write_file(
+        &artifact_path,
+        &format!(
+            "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** pass\n**Reviewed Plan:** `{plan_rel}`\n**Reviewed Plan Revision:** {}\n**Reviewed Plan Fingerprint:** {plan_fingerprint}\n**Reviewed Spec:** `{spec_rel}`\n**Reviewed Spec Revision:** {}\n**Reviewed Spec Fingerprint:** {spec_fingerprint}\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** internal-plan-execution-fixture-plan-fidelity-reviewer\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** {}\n**Verified Requirement IDs:** {}\n",
+            plan.plan_revision,
+            spec.spec_revision,
+            PLAN_FIDELITY_REQUIRED_SURFACES.join(", "),
+            verified_requirement_ids.join(", "),
+        ),
+    );
 }
 
 fn evidence_rel_path() -> String {
@@ -10758,7 +10803,24 @@ fn internal_only_compatibility_status_and_finish_gates_expose_april_contract_sha
         status_after_gate_review["next_action"],
         Value::from("finish branch")
     );
-    assert!(status_after_gate_review["recommended_command"].is_null());
+    assert_eq!(
+        status_after_gate_review["recommended_public_command_argv"],
+        serde_json::json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            PLAN_REL
+        ]),
+        "finish-completion route should expose executable public argv: {status_after_gate_review}"
+    );
+    assert_eq!(
+        status_after_gate_review["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution advance-late-stage --plan {PLAN_REL}; validates finish completion"
+        ))
+    );
     assert_eq!(
         status_after_gate_review["finish_review_gate_pass_branch_closure_id"],
         authoritative_state["current_branch_closure_id"]
@@ -28698,7 +28760,9 @@ fn internal_only_compatibility_late_stage_recording_equivalent_reruns_keep_direc
     assert_eq!(qa["code"], Value::from("out_of_phase_requery_required"));
     assert_eq!(
         qa["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {PLAN_REL} --json"
+        ))
     );
     assert_eq!(qa["rederive_via_workflow_operator"], Value::Bool(true));
     assert_eq!(qa["required_follow_up"], Value::Null);
@@ -28749,7 +28813,9 @@ fn internal_only_compatibility_late_stage_out_of_phase_requery_happens_before_su
     );
     assert_eq!(
         advance_release["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {PLAN_REL} --json"
+        ))
     );
     assert_eq!(
         advance_release["rederive_via_workflow_operator"],
@@ -28780,7 +28846,9 @@ fn internal_only_compatibility_late_stage_out_of_phase_requery_happens_before_su
     );
     assert_eq!(
         primitive_release["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {PLAN_REL} --json"
+        ))
     );
     assert_eq!(
         primitive_release["rederive_via_workflow_operator"],
@@ -28814,7 +28882,7 @@ fn internal_only_compatibility_late_stage_out_of_phase_requery_happens_before_su
     assert_eq!(
         advance_final["recommended_command"],
         Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready"
+            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready --json"
         ))
     );
     assert_eq!(
@@ -28853,7 +28921,7 @@ fn internal_only_compatibility_late_stage_out_of_phase_requery_happens_before_su
     assert_eq!(
         primitive_final["recommended_command"],
         Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready"
+            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready --json"
         ))
     );
     assert_eq!(
@@ -29147,7 +29215,9 @@ fn internal_only_compatibility_late_stage_primitive_rerun_equivalence_requires_m
     );
     assert_eq!(
         mismatched_release["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {PLAN_REL} --json"
+        ))
     );
     assert_eq!(
         mismatched_release["rederive_via_workflow_operator"],
@@ -29196,7 +29266,7 @@ fn internal_only_compatibility_late_stage_primitive_rerun_equivalence_requires_m
     assert_eq!(
         mismatched_final["recommended_command"],
         Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready"
+            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready --json"
         ))
     );
     assert_eq!(
@@ -29413,7 +29483,9 @@ fn internal_only_compatibility_record_qa_test_plan_refresh_reroute_returns_block
     );
     assert_eq!(
         qa_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {PLAN_REL} --json"
+        ))
     );
     assert_eq!(qa_json["rederive_via_workflow_operator"], Value::Bool(true));
     assert_eq!(qa_json["required_follow_up"], Value::Null);

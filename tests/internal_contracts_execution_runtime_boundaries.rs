@@ -34,9 +34,19 @@ use internal_only_direct_helpers::internal_runtime_direct;
 use runtime_support::execution_runtime;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use workflow_support::{init_repo, install_full_contract_ready_artifacts};
+use workflow_support::{
+    init_repo, install_full_contract_ready_artifacts,
+    write_current_pass_plan_fidelity_review_artifact_for_plan,
+};
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+#[derive(Clone, Copy)]
+enum FeatureforgeExecutionPath {
+    DirectInProcess,
+    CompiledCli,
+}
+
 const TASK_BOUNDARY_BLOCKED_PLAN_SOURCE: &str = r#"# Runtime Integration Hardening Implementation Plan
 
 **Workflow State:** Engineering Approved
@@ -400,27 +410,42 @@ fn run_featureforge_output(
     repo: &Path,
     state: &Path,
     args: &[&str],
-    _real_cli: bool,
+    execution_path: FeatureforgeExecutionPath,
     context: &str,
 ) -> Output {
-    public_featureforge_cli::run_featureforge_real_cli(
-        Some(repo),
-        Some(state),
-        None,
-        &[],
-        args,
-        context,
-    )
+    match execution_path {
+        FeatureforgeExecutionPath::DirectInProcess => {
+            internal_runtime_direct::internal_only_run_featureforge_direct_output(
+                Some(repo),
+                Some(state),
+                None,
+                &[],
+                &[],
+                args,
+                context,
+            )
+        }
+        FeatureforgeExecutionPath::CompiledCli => {
+            public_featureforge_cli::run_featureforge_real_cli(
+                Some(repo),
+                Some(state),
+                None,
+                &[],
+                args,
+                context,
+            )
+        }
+    }
 }
 
 fn run_featureforge_json(
     repo: &Path,
     state: &Path,
     args: &[&str],
-    real_cli: bool,
+    execution_path: FeatureforgeExecutionPath,
     context: &str,
 ) -> Value {
-    let output = run_featureforge_output(repo, state, args, real_cli, context);
+    let output = run_featureforge_output(repo, state, args, execution_path, context);
     assert!(
         output.status.success(),
         "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -432,11 +457,18 @@ fn run_featureforge_json(
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
+fn route_semantics_without_runtime_provenance(surface: &Value) -> Value {
+    let mut normalized = surface.clone();
+    if let Some(object) = normalized.as_object_mut() {
+        object.remove("runtime_provenance");
+    }
+    normalized
+}
+
 fn run_recommended_plan_execution_command(
     repo: &Path,
     state: &Path,
     recommended_command: &str,
-    real_cli: bool,
     context: &str,
 ) -> Value {
     let command_parts = recommended_command.split_whitespace().collect::<Vec<_>>();
@@ -467,7 +499,13 @@ fn run_recommended_plan_execution_command(
         .map(|part| (*part).to_owned())
         .collect::<Vec<_>>();
     let command_args_refs = command_args.iter().map(String::as_str).collect::<Vec<_>>();
-    run_featureforge_json(repo, state, &command_args_refs, real_cli, context)
+    run_featureforge_json(
+        repo,
+        state,
+        &command_args_refs,
+        FeatureforgeExecutionPath::CompiledCli,
+        context,
+    )
 }
 
 fn assert_follow_up_blocker_parity_with_operator(
@@ -849,6 +887,7 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
     install_full_contract_ready_artifacts(repo);
     fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_BLOCKED_PLAN_SOURCE)
         .expect("task-boundary blocked plan fixture should write");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
     prepare_preflight_acceptance_workspace(repo, "boundary-task-closure-recording-ready");
 
     let status_before_begin = run_plan_execution_json(
@@ -1156,6 +1195,7 @@ fn internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefe
     install_full_contract_ready_artifacts(repo);
     fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_FS15_PLAN_SOURCE)
         .expect("FS-15 stale-boundary fixture plan should be writable");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
     prepare_preflight_acceptance_workspace(repo, "boundary-runtime-remediation-fs15");
 
     let preflight = internal_runtime_direct::internal_only_runtime_preflight_gate_json(
@@ -1365,19 +1405,25 @@ fn internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefe
         repo,
         state,
         &["workflow", "operator", "--plan", PLAN_REL, "--json"],
-        false,
+        FeatureforgeExecutionPath::DirectInProcess,
         "FS-15 direct operator stale-boundary targeting",
     );
     let operator_real = run_featureforge_json(
         repo,
         state,
         &["workflow", "operator", "--plan", PLAN_REL, "--json"],
-        true,
+        FeatureforgeExecutionPath::CompiledCli,
         "FS-15 compiled-cli operator stale-boundary targeting",
     );
     assert_eq!(
-        operator_direct, operator_real,
-        "FS-15 direct and compiled-cli operator outputs must stay semantically aligned",
+        route_semantics_without_runtime_provenance(&operator_direct),
+        route_semantics_without_runtime_provenance(&operator_real),
+        "FS-15 direct and compiled-cli operator route semantics must stay aligned",
+    );
+    assert_ne!(
+        operator_direct["runtime_provenance"]["binary_path"],
+        operator_real["runtime_provenance"]["binary_path"],
+        "FS-15 direct-vs-compiled guard should exercise distinct runtime paths",
     );
     assert_eq!(
         operator_real["blocking_task"],
@@ -1413,7 +1459,6 @@ fn internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefe
             repo,
             state,
             recommended_command,
-            true,
             "FS-15 compiled-cli operator recommended command follow-up parity",
         );
         assert_follow_up_blocker_parity_with_operator(
@@ -1440,6 +1485,7 @@ fn internal_only_compatibility_fs19_compiled_cli_ignores_superseded_stale_histor
     install_full_contract_ready_artifacts(repo);
     fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_FS15_PLAN_SOURCE)
         .expect("FS-19 stale-history fixture plan should be writable");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
     prepare_preflight_acceptance_workspace(repo, "boundary-runtime-remediation-fs19");
 
     let preflight = internal_runtime_direct::internal_only_runtime_preflight_gate_json(
@@ -1587,7 +1633,7 @@ fn internal_only_compatibility_fs19_compiled_cli_ignores_superseded_stale_histor
         repo,
         state,
         &["workflow", "operator", "--plan", PLAN_REL, "--json"],
-        true,
+        FeatureforgeExecutionPath::CompiledCli,
         "FS-19 compiled-cli stale-history routing",
     );
     assert_eq!(
@@ -1622,7 +1668,7 @@ fn internal_only_compatibility_fs20_runtime_owned_control_plane_churn_does_not_f
         repo,
         state,
         &["plan", "execution", "status", "--plan", PLAN_REL],
-        true,
+        FeatureforgeExecutionPath::CompiledCli,
         "FS-20 baseline status before runtime-owned control-plane churn",
     );
     let baseline_branch_closure_id = baseline_status["current_branch_closure_id"]
@@ -1636,7 +1682,7 @@ fn internal_only_compatibility_fs20_runtime_owned_control_plane_churn_does_not_f
         repo,
         state,
         &["workflow", "operator", "--plan", PLAN_REL, "--json"],
-        true,
+        FeatureforgeExecutionPath::CompiledCli,
         "FS-20 baseline operator before runtime-owned control-plane churn",
     );
 
@@ -1668,14 +1714,14 @@ fn internal_only_compatibility_fs20_runtime_owned_control_plane_churn_does_not_f
         repo,
         state,
         &["plan", "execution", "status", "--plan", PLAN_REL],
-        true,
+        FeatureforgeExecutionPath::CompiledCli,
         "FS-20 status after runtime-owned control-plane churn",
     );
     let operator_after_churn = run_featureforge_json(
         repo,
         state,
         &["workflow", "operator", "--plan", PLAN_REL, "--json"],
-        true,
+        FeatureforgeExecutionPath::CompiledCli,
         "FS-20 operator after runtime-owned control-plane churn",
     );
     let runtime = execution_runtime(repo, state);

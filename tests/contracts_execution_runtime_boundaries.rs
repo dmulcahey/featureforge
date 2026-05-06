@@ -25,7 +25,10 @@ use featureforge::paths::harness_state_path;
 use runtime_support::execution_runtime;
 use serde_json::{Value, json};
 use tempfile::TempDir;
-use workflow_support::{init_repo, install_full_contract_ready_artifacts};
+use workflow_support::{
+    init_repo, install_full_contract_ready_artifacts,
+    write_current_pass_plan_fidelity_review_artifact_for_plan,
+};
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
@@ -186,13 +189,7 @@ fn run_workflow_operator_json(
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
-fn run_featureforge_output(
-    repo: &Path,
-    state: &Path,
-    args: &[&str],
-    _real_cli: bool,
-    context: &str,
-) -> Output {
+fn run_featureforge_output(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
     public_featureforge_cli::run_featureforge_real_cli(
         Some(repo),
         Some(state),
@@ -203,14 +200,8 @@ fn run_featureforge_output(
     )
 }
 
-fn run_featureforge_json(
-    repo: &Path,
-    state: &Path,
-    args: &[&str],
-    real_cli: bool,
-    context: &str,
-) -> Value {
-    let output = run_featureforge_output(repo, state, args, real_cli, context);
+fn run_featureforge_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
+    let output = run_featureforge_output(repo, state, args, context);
     assert!(
         output.status.success(),
         "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -383,11 +374,74 @@ fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, ope
     );
 }
 
+fn assert_status_operator_blocking_projection(label: &str, status: &Value, operator: &Value) {
+    assert_eq!(
+        operator["phase_detail"], status["phase_detail"],
+        "{label} status/operator phase_detail should share one route projection"
+    );
+    assert_eq!(
+        operator.get("blocking_scope").and_then(Value::as_str),
+        status.get("blocking_scope").and_then(Value::as_str),
+        "{label} status/operator blocking_scope should share one projection"
+    );
+    assert_eq!(
+        operator.get("blocking_task").and_then(Value::as_u64),
+        status.get("blocking_task").and_then(Value::as_u64),
+        "{label} status/operator blocking_task should share one projection"
+    );
+}
+
+fn runtime_golden_scenario(label: &str) -> Value {
+    let source = fs::read_to_string(
+        repo_root().join("tests/fixtures/runtime-goldens/public-runtime-routes.json"),
+    )
+    .expect("runtime route golden fixture should be readable");
+    let scenarios: Value =
+        serde_json::from_str(&source).expect("runtime route golden fixture should parse");
+    scenarios["scenarios"]
+        .as_array()
+        .expect("runtime route golden fixture should contain scenarios")
+        .iter()
+        .find(|scenario| scenario["label"].as_str() == Some(label))
+        .unwrap_or_else(|| panic!("runtime route golden should contain scenario `{label}`"))
+        .clone()
+}
+
+#[test]
+fn runtime_route_golden_status_and_operator_share_blocking_projection_by_route_family() {
+    for (label, expected_phase_detail) in [
+        (
+            "release_readiness_pending",
+            "release_readiness_recording_ready",
+        ),
+        (
+            "task_closure_recording_ready",
+            "task_closure_recording_ready",
+        ),
+        ("repair_review_state_required", "execution_reentry_required"),
+        (
+            "stale_targetless_reconcile",
+            phase::DETAIL_RUNTIME_RECONCILE_REQUIRED,
+        ),
+        ("blocked_runtime_bug_diagnostic", "blocked_runtime_bug"),
+    ] {
+        let scenario = runtime_golden_scenario(label);
+        let status = &scenario["plan_execution_status"]["json"];
+        let operator = &scenario["workflow_operator"]["json"];
+        assert_eq!(
+            status["phase_detail"], expected_phase_detail,
+            "{label} should preserve the expected route family in the golden fixture"
+        );
+        assert_status_operator_blocking_projection(label, status, operator);
+    }
+}
+
 fn setup_execution_in_progress(repo: &Path, state: &Path) {
     install_full_contract_ready_artifacts(repo);
     prepare_preflight_acceptance_workspace(repo, "boundary-operator-query-active");
     fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_BLOCKED_PLAN_SOURCE)
         .expect("boundary active-context plan should be writable");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
     let status = run_plan_execution_json(
         repo,
         state,
@@ -420,6 +474,7 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
     install_full_contract_ready_artifacts(repo);
     fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_BLOCKED_PLAN_SOURCE)
         .expect("task-boundary blocked plan fixture should write");
+    write_current_pass_plan_fidelity_review_artifact_for_plan(repo, PLAN_REL);
     prepare_preflight_acceptance_workspace(repo, "boundary-task-closure-recording-ready");
 
     let status_before_begin = run_plan_execution_json(
@@ -679,7 +734,7 @@ fn assert_event_or_state_loader_rejection_across_public_surfaces(
 
     for (surface, command) in commands {
         let context = format!("{scenario} {surface} trust-boundary rejection");
-        let output = run_featureforge_output(repo, state, command, true, &context);
+        let output = run_featureforge_output(repo, state, command, &context);
         assert_trust_boundary_failure(&output, &context, message_fragment);
     }
 }
@@ -913,39 +968,31 @@ fn execution_query_boundary_stays_execution_owned() {
 }
 
 #[test]
-fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned() {
-    let (repo_dir, state_dir) = init_repo("contracts-boundary-workflow-direct-real-cli-alignment");
+fn workflow_compiled_cli_operator_read_surface_exposes_public_json() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-workflow-compiled-cli-json");
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_execution_in_progress(repo, state);
 
     let command = ["workflow", "operator", "--plan", PLAN_REL, "--json"];
-    let direct = run_featureforge_json(
+    let output = run_featureforge_json(
         repo,
         state,
         command.as_slice(),
-        false,
-        "direct workflow json",
+        "compiled-cli workflow operator json",
     );
-    let real = run_featureforge_json(
-        repo,
-        state,
-        command.as_slice(),
-        true,
-        "real-cli workflow json",
-    );
-    assert_eq!(
-        direct, real,
-        "workflow json command output must stay aligned between direct and real-cli paths for command {:?}",
-        command
+    assert_eq!(output["schema_version"], Value::from(3_u64));
+    assert_eq!(output["phase"], Value::from("handoff_required"));
+    assert!(
+        output["recommended_public_command_argv"].is_array()
+            || output["recommended_public_command_argv"].is_null(),
+        "compiled CLI operator output must carry typed public command authority, got {output:?}"
     );
 }
 
 #[test]
-fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned_for_task_boundary_blocked_fixture()
- {
-    let (repo_dir, state_dir) =
-        init_repo("contracts-boundary-workflow-direct-real-cli-alignment-blocked");
+fn workflow_compiled_cli_operator_read_surface_handles_task_boundary_blocked_fixture() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-workflow-compiled-cli-json-blocked");
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state);
@@ -962,63 +1009,40 @@ fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned_for_task
         ]
         .as_slice(),
     ] {
-        let direct = run_featureforge_json(
+        let output = run_featureforge_json(
             repo,
             state,
             command,
-            false,
-            "direct workflow json blocked fixture",
-        );
-        let real = run_featureforge_json(
-            repo,
-            state,
-            command,
-            true,
-            "real-cli workflow json blocked fixture",
+            "compiled-cli workflow json blocked fixture",
         );
         assert_eq!(
-            direct, real,
-            "workflow json command output must stay aligned between blocked fixture direct and real-cli paths for command {:?}",
-            command
+            output["phase_detail"],
+            Value::from("task_closure_recording_ready"),
+            "compiled CLI operator should keep task-closure blocker visible for command {command:?}, got {output:?}"
         );
+        assert_task_closure_required_inputs(&output, 1);
     }
 }
 
 #[test]
-fn workflow_status_legacy_summary_flag_failure_stays_aligned_with_real_cli() {
+fn workflow_status_legacy_summary_flag_failure_is_compiled_cli_contract() {
     let repo_dir = TempDir::new().expect("non-repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
     let state = state_dir.path();
 
-    let direct = run_featureforge_output(
+    let output = run_featureforge_output(
         repo,
         state,
         &["workflow", "status", "--summary"],
-        false,
-        "direct workflow status legacy summary failure",
-    );
-    let real = run_featureforge_output(
-        repo,
-        state,
-        &["workflow", "status", "--summary"],
-        true,
-        "real-cli workflow status legacy summary failure",
+        "compiled-cli workflow status legacy summary failure",
     );
 
     assert!(
-        !direct.status.success() && !real.status.success(),
-        "workflow status --summary should fail for both direct and real-cli paths",
+        !output.status.success(),
+        "workflow status --summary should fail through compiled CLI",
     );
-    assert_eq!(
-        direct.stdout, real.stdout,
-        "workflow status legacy flag failure stdout must stay aligned between direct and real-cli paths",
-    );
-    assert_eq!(
-        direct.stderr, real.stderr,
-        "workflow status legacy flag failure stderr must stay aligned between direct and real-cli paths",
-    );
-    let failure = parse_json_output(&direct, "workflow status legacy flag failure");
+    let failure = parse_json_output(&output, "workflow status legacy flag failure");
     assert_eq!(failure["error_class"], "InvalidCommandInput");
     assert!(
         failure["message"]
@@ -1240,21 +1264,22 @@ fn reconcile_review_state_threads_external_review_ready_through_routing_requerie
 
 #[test]
 fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
-    let closure_dispatch_mutation_source =
-        fs::read_to_string(repo_root().join("src/execution/closure_dispatch_mutation.rs"))
-            .expect("execution closure dispatch mutation source should be readable");
+    let closure_dispatch_mutation_source = fs::read_to_string(
+        repo_root().join("src/execution/closure_dispatch_mutation/recording.rs"),
+    )
+    .expect("execution closure dispatch mutation recording source should be readable");
     let review_gate_source =
         fs::read_to_string(repo_root().join("src/execution/state/review_gate.rs"))
             .expect("execution review gate source should be readable");
     let dispatch_start = closure_dispatch_mutation_source
         .find("fn record_review_dispatch_strategy_checkpoint(")
         .expect(
-            "closure_dispatch_mutation.rs should keep record_review_dispatch_strategy_checkpoint",
+            "closure_dispatch_mutation/recording.rs should keep record_review_dispatch_strategy_checkpoint",
         );
     let dispatch_end = closure_dispatch_mutation_source[dispatch_start..]
         .find("fn record_review_dispatch_strategy_checkpoint_without_claim(")
         .map(|offset| dispatch_start + offset)
-        .expect("closure_dispatch_mutation.rs should keep no-claim dispatch mutation after authoritative wrapper");
+        .expect("closure_dispatch_mutation/recording.rs should keep no-claim dispatch mutation after authoritative wrapper");
     let checkpoint_start = review_gate_source
         .find("fn persist_finish_review_gate_pass_checkpoint(")
         .expect("review_gate.rs should keep persist_finish_review_gate_pass_checkpoint");
@@ -1455,7 +1480,7 @@ fn runtime_remediation_inventory_includes_boundary_contract_regressions() {
     );
     assert!(
         inventory.contains(
-            "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task"
+            "tests/internal_contracts_execution_runtime_boundaries.rs::internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task"
         ),
         "runtime-remediation inventory should map FS-15 parity coverage to the compiled-cli boundary contract test"
     );
@@ -1466,83 +1491,48 @@ fn runtime_remediation_inventory_includes_boundary_contract_regressions() {
 }
 
 #[test]
-fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli()
-{
-    let run_case = |label: &str, real_cli: bool| -> (Value, Value) {
-        let (repo_dir, state_dir) = init_repo(&format!(
-            "contracts-boundary-runtime-remediation-fs04-{label}"
-        ));
-        let repo = repo_dir.path();
-        let state = state_dir.path();
-        setup_task_boundary_blocked_case(repo, state);
-        let operator = run_featureforge_json(
-            repo,
-            state,
-            &["workflow", "operator", "--plan", PLAN_REL, "--json"],
-            real_cli,
-            &format!("FS-04 {label} workflow operator shared-route parity"),
-        );
-        let repair = run_featureforge_json(
-            repo,
-            state,
-            &[
-                "plan",
-                "execution",
-                "repair-review-state",
-                "--plan",
-                PLAN_REL,
-            ],
-            real_cli,
-            &format!("FS-04 {label} repair-review-state route visibility"),
-        );
-        assert_task_closure_required_inputs(&operator, 1);
-        assert_task_closure_required_inputs(&repair, 1);
-        (operator, repair)
-    };
-
-    let (mut operator_direct, repair_direct) = run_case("direct", false);
-    let (mut operator_real, repair_real) = run_case("compiled-cli", true);
-    projection_support::normalize_state_dir_projection_paths_for_parity(&mut operator_direct);
-    projection_support::normalize_state_dir_projection_paths_for_parity(&mut operator_real);
-    projection_support::normalize_runtime_provenance_paths_for_parity(&mut operator_direct);
-    projection_support::normalize_runtime_provenance_paths_for_parity(&mut operator_real);
-    assert_eq!(
-        operator_direct, operator_real,
-        "FS-04 direct and compiled-cli operator outputs must stay semantically aligned"
+fn runtime_remediation_fs04_repair_route_visibility_is_compiled_cli_contract() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs04");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state);
+    let operator = run_featureforge_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
+        "FS-04 compiled-cli workflow operator shared-route contract",
     );
-    assert_eq!(
-        repair_direct["action"], repair_real["action"],
-        "FS-04 direct and compiled-cli repair actions must stay aligned"
+    let repair = run_featureforge_json(
+        repo,
+        state,
+        &[
+            "plan",
+            "execution",
+            "repair-review-state",
+            "--plan",
+            PLAN_REL,
+        ],
+        "FS-04 compiled-cli repair-review-state route visibility",
     );
+    assert_task_closure_required_inputs(&operator, 1);
+    assert_task_closure_required_inputs(&repair, 1);
     assert_eq!(
-        repair_direct["phase_detail"], repair_real["phase_detail"],
-        "FS-04 direct and compiled-cli repair phase_detail must stay aligned"
-    );
-    assert_eq!(
-        repair_direct["required_follow_up"], repair_real["required_follow_up"],
-        "FS-04 direct and compiled-cli repair follow-up classification must stay aligned"
-    );
-    assert_eq!(
-        operator_real["recommended_command"], repair_real["recommended_command"],
+        operator["recommended_command"], repair["recommended_command"],
         "FS-04 compiled-cli repair output should agree with operator on missing-input command absence"
     );
     assert_eq!(
-        operator_direct["recommended_command"], repair_direct["recommended_command"],
-        "FS-04 direct repair output should agree with operator on missing-input command absence"
-    );
-    assert_eq!(
-        repair_real["action"],
+        repair["action"],
         Value::from("blocked"),
         "FS-04 closure-baseline repair should surface the shared closure-recording blocker instead of claiming repair is already current"
     );
     assert_eq!(
-        repair_real["phase_detail"],
+        repair["phase_detail"],
         Value::from("task_closure_recording_ready"),
-        "FS-04 repair-review-state should expose the exact shared next-action phase detail for closure-baseline recovery, got {repair_real:?}"
+        "FS-04 repair-review-state should expose the exact shared next-action phase detail for closure-baseline recovery, got {repair:?}"
     );
     assert!(
-        repair_real["required_follow_up"].is_null(),
-        "FS-04 closure-baseline recovery should not force a stale follow-up category once shared routing is closure-recording-ready, got {repair_real:?}"
+        repair["required_follow_up"].is_null(),
+        "FS-04 closure-baseline recovery should not force a stale follow-up category once shared routing is closure-recording-ready, got {repair:?}"
     );
 }
 
@@ -1558,93 +1548,63 @@ fn runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_fl
         "--external-review-result-ready",
     ];
 
-    let mut results = Vec::new();
-    for (label, real_cli) in [("direct", false), ("compiled-cli", true)] {
-        let (repo_dir, state_dir) = init_repo(&format!(
-            "contracts-boundary-runtime-remediation-fs04-repair-flag-{label}"
-        ));
-        let repo = repo_dir.path();
-        let state = state_dir.path();
-        setup_task_boundary_blocked_case(repo, state);
-        let output = run_featureforge_output(repo, state, &command, real_cli, label);
-        assert!(
-            output.status.success(),
-            "FS-04 {label} path should accept external-review-result-ready and return a routed repair result\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let routed = parse_json_output(
-            &output,
-            &format!("FS-04 {label} repair-review-state flag acceptance"),
-        );
-        let operator = run_featureforge_json(
-            repo,
-            state,
-            &[
-                "workflow",
-                "operator",
-                "--plan",
-                PLAN_REL,
-                "--external-review-result-ready",
-                "--json",
-            ],
-            real_cli,
-            &format!("FS-04 {label} operator parity after repair-review-state flag acceptance"),
-        );
-        assert_eq!(
-            routed["recommended_command"], operator["recommended_command"],
-            "FS-04 {label} repair and operator should agree on missing-input command absence"
-        );
-        assert_task_closure_required_inputs(&operator, 1);
-        assert_task_closure_required_inputs(&routed, 1);
-        results.push((label, routed));
-    }
-
-    assert_eq!(results[0].1["action"], results[1].1["action"]);
-    assert_eq!(
-        results[0].1["required_follow_up"],
-        results[1].1["required_follow_up"]
+    let (repo_dir, state_dir) =
+        init_repo("contracts-boundary-runtime-remediation-fs04-repair-flag");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state);
+    let output = run_featureforge_output(repo, state, &command, "compiled-cli FS-04 repair flag");
+    assert!(
+        output.status.success(),
+        "FS-04 compiled CLI should accept external-review-result-ready and return a routed repair result\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let routed = parse_json_output(&output, "FS-04 repair-review-state flag acceptance");
+    let operator = run_featureforge_json(
+        repo,
+        state,
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            PLAN_REL,
+            "--external-review-result-ready",
+            "--json",
+        ],
+        "FS-04 operator after repair-review-state flag acceptance",
     );
     assert_eq!(
-        results[0].1["recommended_command"], results[1].1["recommended_command"],
-        "FS-04 direct and compiled-cli routes should stay aligned on missing-input command absence"
+        routed["recommended_command"], operator["recommended_command"],
+        "FS-04 repair and operator should agree on missing-input command absence"
     );
+    assert_task_closure_required_inputs(&operator, 1);
+    assert_task_closure_required_inputs(&routed, 1);
+    assert_eq!(routed["action"], Value::from("blocked"));
+    assert!(routed["required_follow_up"].is_null());
 }
 
 #[test]
-fn runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direct_and_compiled_cli()
-{
+fn runtime_remediation_fs08_stale_blocker_visibility_is_compiled_cli_contract() {
     let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs08");
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_fs08_stale_blocker_fixture(repo, state);
 
-    let operator_direct = run_featureforge_json(
+    let operator = run_featureforge_json(
         repo,
         state,
         &["workflow", "operator", "--plan", PLAN_REL, "--json"],
-        false,
-        "FS-08 direct operator stale-blocker visibility",
-    );
-    let operator_real = run_featureforge_json(
-        repo,
-        state,
-        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
-        true,
         "FS-08 compiled-cli operator stale-blocker visibility",
     );
     assert_eq!(
-        operator_direct, operator_real,
-        "FS-08 direct and compiled-cli operator outputs must stay semantically aligned"
-    );
-    assert_eq!(
-        operator_real["phase_detail"],
+        operator["phase_detail"],
         Value::from("task_closure_recording_ready"),
         "FS-08 stale blocker should remain visible as task_closure_recording_ready"
     );
-    assert_eq!(operator_real["blocking_scope"], Value::from("task"));
-    assert_eq!(operator_real["blocking_task"], Value::from(1_u64));
-    let mut operator_reason_codes = operator_real["blocking_reason_codes"]
+    assert_eq!(operator["blocking_scope"], Value::from("task"));
+    assert_eq!(operator["blocking_task"], Value::from(1_u64));
+    let mut operator_reason_codes = operator["blocking_reason_codes"]
         .as_array()
         .expect("FS-08 operator should expose blocking_reason_codes as an array")
         .iter()
@@ -1660,35 +1620,22 @@ fn runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direc
         operator_reason_codes, expected_reason_codes,
         "FS-08 operator should expose the exact stale-blocker reason-code set for this fixture"
     );
-    assert_task_closure_required_inputs(&operator_real, 1);
-    assert_task_closure_required_inputs(&operator_direct, 1);
+    assert_task_closure_required_inputs(&operator, 1);
 
-    let status_direct = run_featureforge_json(
+    let status = run_featureforge_json(
         repo,
         state,
         &["plan", "execution", "status", "--plan", PLAN_REL],
-        false,
-        "FS-08 direct status stale-blocker visibility",
-    );
-    let status_real = run_featureforge_json(
-        repo,
-        state,
-        &["plan", "execution", "status", "--plan", PLAN_REL],
-        true,
         "FS-08 compiled-cli status stale-blocker visibility",
     );
     assert_eq!(
-        status_direct, status_real,
-        "FS-08 direct and compiled-cli status outputs must stay semantically aligned"
-    );
-    assert_eq!(
-        status_real["phase_detail"],
+        status["phase_detail"],
         Value::from("task_closure_recording_ready"),
         "FS-08 status should keep stale blocker visible as task_closure_recording_ready"
     );
-    assert_eq!(status_real["blocking_scope"], Value::from("task"));
-    assert_eq!(status_real["blocking_task"], Value::from(1_u64));
-    let mut status_reason_codes = status_real["blocking_reason_codes"]
+    assert_eq!(status["blocking_scope"], Value::from("task"));
+    assert_eq!(status["blocking_task"], Value::from(1_u64));
+    let mut status_reason_codes = status["blocking_reason_codes"]
         .as_array()
         .expect("FS-08 status should expose blocking_reason_codes as an array")
         .iter()
@@ -1700,8 +1647,7 @@ fn runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direc
         status_reason_codes, expected_reason_codes,
         "FS-08 status should expose the exact stale-blocker reason-code set for this fixture"
     );
-    assert_task_closure_required_inputs(&status_real, 1);
-    assert_task_closure_required_inputs(&status_direct, 1);
+    assert_task_closure_required_inputs(&status, 1);
 }
 
 #[test]
@@ -1725,15 +1671,14 @@ fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_
         Value::from("Active")
     );
 
-    let status_real = run_featureforge_json(
+    let status_before_tamper = run_featureforge_json(
         repo,
         state,
         &["plan", "execution", "status", "--plan", PLAN_REL],
-        true,
         "FS-13 compiled-cli status before markdown note tamper",
     );
-    assert_eq!(status_real["active_task"], Value::from(1_u64));
-    assert_eq!(status_real["active_step"], Value::from(1_u64));
+    assert_eq!(status_before_tamper["active_task"], Value::from(1_u64));
+    assert_eq!(status_before_tamper["active_step"], Value::from(1_u64));
 
     let plan_path = repo.join(PLAN_REL);
     let plan_source =
@@ -1744,122 +1689,83 @@ fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_
     );
     fs::write(&plan_path, tampered).expect("FS-13 tampered plan source should be writable");
 
-    let status_real_after_tamper = run_featureforge_json(
+    let status_after_tamper = run_featureforge_json(
         repo,
         state,
         &["plan", "execution", "status", "--plan", PLAN_REL],
-        true,
         "FS-13 compiled-cli status after markdown note tamper",
     );
-    let status_direct_after_tamper = run_featureforge_json(
-        repo,
-        state,
-        &["plan", "execution", "status", "--plan", PLAN_REL],
-        false,
-        "FS-13 direct status after markdown note tamper",
-    );
     assert_eq!(
-        status_real_after_tamper["active_task"],
+        status_after_tamper["active_task"],
         Value::from(1_u64),
         "FS-13 compiled-cli status must keep authoritative active open-step target despite markdown tamper"
     );
-    assert_eq!(status_real_after_tamper["active_step"], Value::from(1_u64));
-    assert_eq!(status_real_after_tamper["resume_task"], Value::Null);
-    assert_eq!(
-        status_direct_after_tamper["active_task"],
-        status_real_after_tamper["active_task"]
-    );
-    assert_eq!(
-        status_direct_after_tamper["active_step"],
-        status_real_after_tamper["active_step"]
-    );
-    assert_eq!(
-        status_direct_after_tamper["resume_task"],
-        status_real_after_tamper["resume_task"]
-    );
+    assert_eq!(status_after_tamper["active_step"], Value::from(1_u64));
+    assert_eq!(status_after_tamper["resume_task"], Value::Null);
 
     update_authoritative_harness_state(repo, state, &[("current_open_step_state", Value::Null)]);
 
-    let status_real_without_authority = run_featureforge_json(
+    let status_without_authority = run_featureforge_json(
         repo,
         state,
         &["plan", "execution", "status", "--plan", PLAN_REL],
-        true,
         "FS-13 compiled-cli status should ignore legacy markdown note when authoritative open-step state is absent",
     );
-    let status_direct_without_authority = run_featureforge_json(
-        repo,
-        state,
-        &["plan", "execution", "status", "--plan", PLAN_REL],
-        false,
-        "FS-13 direct status should ignore legacy markdown note when authoritative open-step state is absent",
+
+    assert_eq!(
+        status_without_authority["active_task"],
+        Value::Null,
+        "FS-13 status must not derive active_task from markdown-only open-step notes when authoritative state is absent: {status_without_authority:?}",
+    );
+    assert_eq!(
+        status_without_authority["active_step"],
+        Value::Null,
+        "FS-13 status must not derive active_step from markdown-only open-step notes when authoritative state is absent: {status_without_authority:?}",
+    );
+    assert_eq!(
+        status_without_authority["resume_task"],
+        Value::Null,
+        "FS-13 status must not derive resume_task from markdown-only open-step notes when authoritative state is absent: {status_without_authority:?}",
+    );
+    assert_eq!(
+        status_without_authority["resume_step"],
+        Value::Null,
+        "FS-13 status must not derive resume_step from markdown-only open-step notes when authoritative state is absent: {status_without_authority:?}",
     );
 
-    for payload in [
-        &status_real_without_authority,
-        &status_direct_without_authority,
-    ] {
-        assert_eq!(
-            payload["active_task"],
-            Value::Null,
-            "FS-13 status must not derive active_task from markdown-only open-step notes when authoritative state is absent: {payload:?}",
-        );
-        assert_eq!(
-            payload["active_step"],
-            Value::Null,
-            "FS-13 status must not derive active_step from markdown-only open-step notes when authoritative state is absent: {payload:?}",
-        );
-        assert_eq!(
-            payload["resume_task"],
-            Value::Null,
-            "FS-13 status must not derive resume_task from markdown-only open-step notes when authoritative state is absent: {payload:?}",
-        );
-        assert_eq!(
-            payload["resume_step"],
-            Value::Null,
-            "FS-13 status must not derive resume_step from markdown-only open-step notes when authoritative state is absent: {payload:?}",
-        );
-    }
-
-    let operator_real_without_authority = run_featureforge_json(
+    let operator_without_authority = run_featureforge_json(
         repo,
         state,
         &["workflow", "operator", "--plan", PLAN_REL, "--json"],
-        true,
         "FS-13 compiled-cli operator should ignore legacy markdown note when authoritative open-step state is absent",
     );
-    let operator_direct_without_authority = run_featureforge_json(
-        repo,
-        state,
-        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
-        false,
-        "FS-13 direct operator should ignore legacy markdown note when authoritative open-step state is absent",
-    );
 
-    for payload in [
-        &operator_real_without_authority,
-        &operator_direct_without_authority,
-    ] {
-        let recommended = payload["recommended_command"].as_str().unwrap_or("");
-        let recommended_argv = payload["recommended_public_command_argv"]
-            .as_array()
-            .expect("FS-13 operator should expose executable public argv for re-entry after authority loss");
-        let command_kind = payload["execution_command_context"]["command_kind"]
+    let recommended = operator_without_authority["recommended_command"]
+        .as_str()
+        .unwrap_or("");
+    let recommended_argv = operator_without_authority["recommended_public_command_argv"]
+        .as_array()
+        .expect(
+            "FS-13 operator should expose executable public argv for re-entry after authority loss",
+        );
+    let command_kind = operator_without_authority["execution_command_context"]["command_kind"]
+        .as_str()
+        .expect("FS-13 operator should expose execution command kind after authority loss");
+    assert_eq!(
+        operator_without_authority["next_action"],
+        "continue execution"
+    );
+    assert_eq!(command_kind, "begin");
+    assert!(
+        recommended.starts_with("featureforge plan execution begin "),
+        "FS-13 operator should recover through the typed public begin route instead of legacy markdown note state when authoritative open-step state is absent: {operator_without_authority:?}",
+    );
+    assert!(
+        recommended_argv.iter().all(|value| value
             .as_str()
-            .expect("FS-13 operator should expose execution command kind after authority loss");
-        assert_eq!(payload["next_action"], "continue execution");
-        assert_eq!(command_kind, "begin");
-        assert!(
-            recommended.starts_with("featureforge plan execution begin "),
-            "FS-13 operator should recover through the typed public begin route instead of legacy markdown note state when authoritative open-step state is absent: {payload:?}",
-        );
-        assert!(
-            recommended_argv.iter().all(|value| value
-                .as_str()
-                .is_some_and(|arg| !matches!(arg, "reopen" | "resume"))),
-            "FS-13 operator must not derive reopen/resume from markdown-only note text when authoritative open-step state is absent: {payload:?}",
-        );
-    }
+            .is_some_and(|arg| !matches!(arg, "reopen" | "resume"))),
+        "FS-13 operator must not derive reopen/resume from markdown-only note text when authoritative open-step state is absent: {operator_without_authority:?}",
+    );
 }
 
 #[test]
