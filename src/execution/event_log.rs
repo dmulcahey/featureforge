@@ -9,16 +9,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::context::load_execution_context_without_authority_overlay;
+use crate::execution::approved_plan_discovery::infer_unique_engineering_approved_plan_path;
+use crate::execution::command_eligibility::PublicCommandKind;
 use crate::execution::fields::FIELD_HANDOFF_REQUIRED;
-use crate::execution::follow_up::RepairFollowUpRecord;
-use crate::execution::reducer::{
-    EventAuthoritySnapshot, reduce_event_authority_for_migration_parity,
-};
-use crate::execution::router::route_runtime_state;
-use crate::execution::semantic_identity::semantic_workspace_snapshot;
+use crate::execution::follow_up::{RepairFollowUpRecord, RepairTargetScope};
+use crate::execution::phase::BLOCKED_RUNTIME_BUG_STOP_REPORT_GUIDANCE;
 use crate::execution::state::ExecutionRuntime;
-use crate::execution::transitions::AuthoritativeTransitionState;
 use crate::git::sha256_hex;
 use crate::paths::write_atomic as write_atomic_file;
 use crate::paths::{harness_state_path, normalize_identifier_token};
@@ -61,6 +57,15 @@ fn enter_in_flight_migration(state_path: &Path, payload: &Value) -> InFlightMigr
         state_path: state_path.to_path_buf(),
         previous_payload,
     }
+}
+
+pub(crate) fn with_in_flight_migration_payload_for_state_path<T>(
+    state_path: &Path,
+    payload: &Value,
+    work: impl FnOnce() -> Result<T, JsonFailure>,
+) -> Result<T, JsonFailure> {
+    let _in_flight_migration_guard = enter_in_flight_migration(state_path, payload);
+    work()
 }
 
 const RUN_METADATA_FIELDS: &[&str] = &[
@@ -181,6 +186,15 @@ const DISPATCH_EVENT_FIELDS: &[&str] = &[
     "strategy_cycle_break_checkpoint_fingerprint",
 ];
 
+const DISPATCH_PRIMARY_EVENT_FIELDS: &[&str] = &[
+    "current_task_review_dispatch_id",
+    "current_final_review_dispatch_id",
+    "strategy_review_dispatch_lineage",
+    "strategy_review_dispatch_lineage_history",
+    "final_review_dispatch_lineage",
+    "final_review_dispatch_lineage_history",
+];
+
 const TASK_CLOSURE_EVENT_FIELDS: &[&str] = &[
     "current_open_step_state",
     "harness_phase",
@@ -212,6 +226,57 @@ const BRANCH_CLOSURE_EVENT_FIELDS: &[&str] = &[
     "current_branch_closure_reviewed_state_id",
     "current_branch_closure_contract_identity",
     "superseded_branch_closure_ids",
+    "review_state_repair_follow_up_record",
+    "review_state_repair_follow_up",
+    "review_state_repair_follow_up_task",
+    "review_state_repair_follow_up_step",
+    "review_state_repair_follow_up_closure_record_id",
+    "release_readiness_record_history",
+    "current_release_readiness_record_id",
+    "current_release_readiness_result",
+    "current_release_readiness_summary_hash",
+    "release_docs_state",
+    "last_release_docs_artifact_fingerprint",
+    "final_review_record_history",
+    "current_final_review_branch_closure_id",
+    "current_final_review_dispatch_id",
+    "current_final_review_reviewer_source",
+    "current_final_review_reviewer_id",
+    "current_final_review_result",
+    "current_final_review_summary_hash",
+    "current_final_review_record_id",
+    "final_review_state",
+    "last_final_review_artifact_fingerprint",
+    "final_review_dispatch_lineage",
+    "final_review_dispatch_lineage_history",
+    "browser_qa_record_history",
+    "current_qa_branch_closure_id",
+    "current_qa_result",
+    "current_qa_summary_hash",
+    "current_qa_record_id",
+    "browser_qa_state",
+    "last_browser_qa_artifact_fingerprint",
+    "finish_review_gate_pass_branch_closure_id",
+    "harness_phase",
+];
+
+const BRANCH_CLOSURE_PRIMARY_EVENT_FIELDS: &[&str] = &[
+    "branch_closure_records",
+    "current_branch_closure_id",
+    "current_branch_closure_reviewed_state_id",
+    "current_branch_closure_contract_identity",
+    "superseded_branch_closure_ids",
+];
+
+const BRANCH_CLOSURE_REPAIR_EVENT_FIELDS: &[&str] = &[
+    "review_state_repair_follow_up_record",
+    "review_state_repair_follow_up",
+    "review_state_repair_follow_up_task",
+    "review_state_repair_follow_up_step",
+    "review_state_repair_follow_up_closure_record_id",
+];
+
+const RELEASE_READINESS_EVENT_FIELDS: &[&str] = &[
     "release_readiness_record_history",
     "current_release_readiness_record_id",
     "current_release_readiness_result",
@@ -235,35 +300,15 @@ const BRANCH_CLOSURE_EVENT_FIELDS: &[&str] = &[
     "current_qa_record_id",
     "browser_qa_state",
     "last_browser_qa_artifact_fingerprint",
-    "harness_phase",
-];
-
-const RELEASE_READINESS_EVENT_FIELDS: &[&str] = &[
-    "release_readiness_record_history",
-    "current_release_readiness_record_id",
-    "current_release_readiness_result",
-    "current_release_readiness_summary_hash",
-    "release_docs_state",
-    "last_release_docs_artifact_fingerprint",
-    "current_final_review_branch_closure_id",
-    "current_final_review_dispatch_id",
-    "current_final_review_reviewer_source",
-    "current_final_review_reviewer_id",
-    "current_final_review_result",
-    "current_final_review_summary_hash",
-    "current_final_review_record_id",
-    "final_review_state",
-    "last_final_review_artifact_fingerprint",
-    "current_qa_branch_closure_id",
-    "current_qa_result",
-    "current_qa_summary_hash",
-    "current_qa_record_id",
-    "browser_qa_state",
-    "last_browser_qa_artifact_fingerprint",
     "final_review_dispatch_lineage",
     "final_review_dispatch_lineage_history",
     "finish_review_gate_pass_branch_closure_id",
     "harness_phase",
+];
+
+const RELEASE_READINESS_PRIMARY_EVENT_FIELDS: &[&str] = &[
+    "release_readiness_record_history",
+    "current_release_readiness_record_id",
 ];
 
 const FINAL_REVIEW_EVENT_FIELDS: &[&str] = &[
@@ -277,6 +322,7 @@ const FINAL_REVIEW_EVENT_FIELDS: &[&str] = &[
     "current_final_review_record_id",
     "final_review_state",
     "last_final_review_artifact_fingerprint",
+    "browser_qa_record_history",
     "current_qa_branch_closure_id",
     "current_qa_result",
     "current_qa_summary_hash",
@@ -285,6 +331,11 @@ const FINAL_REVIEW_EVENT_FIELDS: &[&str] = &[
     "last_browser_qa_artifact_fingerprint",
     "finish_review_gate_pass_branch_closure_id",
     "harness_phase",
+];
+
+const FINAL_REVIEW_PRIMARY_EVENT_FIELDS: &[&str] = &[
+    "final_review_record_history",
+    "current_final_review_record_id",
 ];
 
 const QA_EVENT_FIELDS: &[&str] = &[
@@ -298,6 +349,8 @@ const QA_EVENT_FIELDS: &[&str] = &[
     "finish_review_gate_pass_branch_closure_id",
     "harness_phase",
 ];
+
+const QA_PRIMARY_EVENT_FIELDS: &[&str] = &["browser_qa_record_history", "current_qa_record_id"];
 
 const REPAIR_EVENT_FIELDS: &[&str] = &[
     "current_open_step_state",
@@ -805,6 +858,11 @@ event_fact_payload! { BranchClosureEventFacts {
     current_branch_closure_reviewed_state_id => "current_branch_closure_reviewed_state_id",
     current_branch_closure_contract_identity => "current_branch_closure_contract_identity",
     superseded_branch_closure_ids => "superseded_branch_closure_ids",
+    review_state_repair_follow_up_record => "review_state_repair_follow_up_record",
+    review_state_repair_follow_up => "review_state_repair_follow_up",
+    review_state_repair_follow_up_task => "review_state_repair_follow_up_task",
+    review_state_repair_follow_up_step => "review_state_repair_follow_up_step",
+    review_state_repair_follow_up_closure_record_id => "review_state_repair_follow_up_closure_record_id",
     release_readiness_record_history => "release_readiness_record_history",
     current_release_readiness_record_id => "current_release_readiness_record_id",
     current_release_readiness_result => "current_release_readiness_result",
@@ -817,6 +875,8 @@ event_fact_payload! { BranchClosureEventFacts {
     current_final_review_result => "current_final_review_result",
     current_final_review_summary_hash => "current_final_review_summary_hash",
     current_final_review_record_id => "current_final_review_record_id",
+    final_review_dispatch_lineage => "final_review_dispatch_lineage",
+    final_review_dispatch_lineage_history => "final_review_dispatch_lineage_history",
     browser_qa_record_history => "browser_qa_record_history",
     current_qa_branch_closure_id => "current_qa_branch_closure_id",
     current_qa_result => "current_qa_result",
@@ -831,6 +891,7 @@ event_fact_payload! { ReleaseReadinessEventFacts {
     current_release_readiness_record_id => "current_release_readiness_record_id",
     current_release_readiness_result => "current_release_readiness_result",
     current_release_readiness_summary_hash => "current_release_readiness_summary_hash",
+    final_review_record_history => "final_review_record_history",
     current_final_review_branch_closure_id => "current_final_review_branch_closure_id",
     current_final_review_dispatch_id => "current_final_review_dispatch_id",
     current_final_review_reviewer_source => "current_final_review_reviewer_source",
@@ -838,6 +899,7 @@ event_fact_payload! { ReleaseReadinessEventFacts {
     current_final_review_result => "current_final_review_result",
     current_final_review_summary_hash => "current_final_review_summary_hash",
     current_final_review_record_id => "current_final_review_record_id",
+    browser_qa_record_history => "browser_qa_record_history",
     current_qa_branch_closure_id => "current_qa_branch_closure_id",
     current_qa_result => "current_qa_result",
     current_qa_summary_hash => "current_qa_summary_hash",
@@ -857,6 +919,7 @@ event_fact_payload! { FinalReviewEventFacts {
     current_final_review_result => "current_final_review_result",
     current_final_review_summary_hash => "current_final_review_summary_hash",
     current_final_review_record_id => "current_final_review_record_id",
+    browser_qa_record_history => "browser_qa_record_history",
     current_qa_branch_closure_id => "current_qa_branch_closure_id",
     current_qa_result => "current_qa_result",
     current_qa_summary_hash => "current_qa_summary_hash",
@@ -1220,6 +1283,151 @@ pub fn load_reduced_authoritative_state_for_tests(
     load_reduced_authoritative_state_for_state_path(state_path)
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct LegacyMigrationParityCandidate {
+    pub(crate) state_path: PathBuf,
+    pub(crate) legacy_state: Value,
+    pub(crate) reduced_state: Value,
+}
+
+const LEGACY_MIGRATION_ROUTE_PARITY_MARKER_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct LegacyMigrationRouteParityMarker {
+    schema_version: u32,
+    legacy_state_backup_sha256: String,
+    event_log_sha256: String,
+}
+
+pub(crate) fn legacy_migration_parity_candidate_for_state_path(
+    state_path: &Path,
+) -> Result<Option<LegacyMigrationParityCandidate>, JsonFailure> {
+    let backup_path = legacy_state_backup_path_for_state_path(state_path);
+    if !ensure_regular_file_if_present(&backup_path, "Legacy authoritative backup")? {
+        return Ok(None);
+    }
+    let events_path = events_log_path_for_state_path(state_path);
+    if legacy_migration_route_parity_marker_is_current(state_path, &backup_path, &events_path)? {
+        return Ok(None);
+    }
+    let events = load_event_log(&events_path)?;
+    validate_event_log(&events)?;
+    if !event_log_contains_only_migration_import(&events) {
+        return Ok(None);
+    }
+    let legacy_source = fs::read_to_string(&backup_path).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Could not read legacy authoritative backup {}: {error}",
+                backup_path.display()
+            ),
+        )
+    })?;
+    let legacy_state: Value = serde_json::from_str(&legacy_source).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Legacy authoritative backup is malformed in {}: {error}",
+                backup_path.display()
+            ),
+        )
+    })?;
+    let reduced_state = reduce_events_to_state(&events).ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::BlockedRuntimeBug,
+            format!(
+                "blocked_runtime_bug: event-log migration parity candidate failed because reduced state is empty. {BLOCKED_RUNTIME_BUG_STOP_REPORT_GUIDANCE}"
+            ),
+        )
+    })?;
+    Ok(Some(LegacyMigrationParityCandidate {
+        state_path: state_path.to_path_buf(),
+        legacy_state,
+        reduced_state,
+    }))
+}
+
+pub(crate) fn best_effort_record_legacy_migration_route_parity_validated_for_state_path(
+    state_path: &Path,
+) {
+    let backup_path = legacy_state_backup_path_for_state_path(state_path);
+    let events_path = events_log_path_for_state_path(state_path);
+    let marker = match legacy_migration_route_parity_marker(&backup_path, &events_path) {
+        Ok(marker) => marker,
+        Err(_) => return,
+    };
+    let marker_path = legacy_migration_route_parity_marker_path_for_state_path(state_path);
+    let Ok(serialized) = serde_json::to_string_pretty(&marker) else {
+        return;
+    };
+    let _ = write_atomic_file(&marker_path, serialized);
+}
+
+fn legacy_migration_route_parity_marker_is_current(
+    state_path: &Path,
+    backup_path: &Path,
+    events_path: &Path,
+) -> Result<bool, JsonFailure> {
+    let marker_path = legacy_migration_route_parity_marker_path_for_state_path(state_path);
+    let Some(marker_source) = read_optional_regular_file_lossy(&marker_path) else {
+        return Ok(false);
+    };
+    let Ok(recorded) = serde_json::from_str::<LegacyMigrationRouteParityMarker>(&marker_source)
+    else {
+        return Ok(false);
+    };
+    if recorded.schema_version != LEGACY_MIGRATION_ROUTE_PARITY_MARKER_SCHEMA_VERSION {
+        return Ok(false);
+    }
+    Ok(recorded == legacy_migration_route_parity_marker(backup_path, events_path)?)
+}
+
+fn legacy_migration_route_parity_marker(
+    backup_path: &Path,
+    events_path: &Path,
+) -> Result<LegacyMigrationRouteParityMarker, JsonFailure> {
+    Ok(LegacyMigrationRouteParityMarker {
+        schema_version: LEGACY_MIGRATION_ROUTE_PARITY_MARKER_SCHEMA_VERSION,
+        legacy_state_backup_sha256: file_sha256(backup_path, "Legacy authoritative backup")?,
+        event_log_sha256: file_sha256(events_path, "Authoritative event log")?,
+    })
+}
+
+fn legacy_migration_route_parity_marker_path_for_state_path(state_path: &Path) -> PathBuf {
+    state_path.with_file_name("state.legacy.route-parity.json")
+}
+
+fn read_optional_regular_file_lossy(path: &Path) -> Option<String> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    fs::read_to_string(path).ok()
+}
+
+fn file_sha256(path: &Path, label: &str) -> Result<String, JsonFailure> {
+    let bytes = fs::read(path).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!("Could not read {label} {}: {error}", path.display()),
+        )
+    })?;
+    Ok(sha256_hex(&bytes))
+}
+
+fn event_log_contains_only_migration_import(events: &[ExecutionEventEnvelope]) -> bool {
+    !events.is_empty()
+        && events
+            .first()
+            .is_some_and(|event| matches!(event.payload, ExecutionEvent::MigrationImported { .. }))
+        && events.iter().all(|event| {
+            event
+                .command
+                .starts_with("migrate_legacy_authoritative_state")
+        })
+}
+
 pub(crate) fn append_typed_state_event_for_state_path(
     state_path: &Path,
     command: &str,
@@ -1422,7 +1630,7 @@ fn ensure_event_log_migrated_from_legacy_state_path(
         )
     })?;
     let plan_path = json_string(&state_payload, "source_plan_path")
-        .or_else(|| runtime.and_then(infer_unique_approved_plan_path));
+        .or_else(|| runtime.and_then(infer_unique_engineering_approved_plan_path));
     let plan_revision = json_u32(&state_payload, "source_plan_revision");
     let execution_run_id =
         json_string_from_path(&state_payload, &["run_identity", "execution_run_id"])
@@ -1461,12 +1669,7 @@ fn ensure_event_log_migrated_from_legacy_state_path(
         staged_events.push(replay_event);
     }
     validate_event_log(&staged_events)?;
-    validate_migration_parity(
-        &migration_parity_source,
-        &staged_events,
-        runtime,
-        legacy_state_path,
-    )?;
+    validate_migration_parity(&migration_parity_source, &staged_events)?;
 
     let lock_path = events_lock_path_for_state_path(legacy_state_path);
     let _lock_guard = acquire_event_log_lock(&lock_path)?;
@@ -3010,11 +3213,13 @@ fn event_from_command_authoritative_delta(
     _reason: &str,
     step_hint: Option<(u32, u32)>,
 ) -> Result<ExecutionEvent, JsonFailure> {
+    let public_command_kind = PublicCommandKind::from_public_mutation_token(command.trim());
+    let command_is_complete = public_command_kind == Some(PublicCommandKind::Complete);
     let open_step_task = step_hint
         .map(|(task, _)| task)
         .or_else(|| json_u32_from_path(state, &["current_open_step_state", "task"]))
         .or_else(|| {
-            (command == "complete")
+            command_is_complete
                 .then(|| json_u32_from_path(current_state, &["current_open_step_state", "task"]))
                 .flatten()
         });
@@ -3022,7 +3227,7 @@ fn event_from_command_authoritative_delta(
         .map(|(_, step)| step)
         .or_else(|| json_u32_from_path(state, &["current_open_step_state", "step"]))
         .or_else(|| {
-            (command == "complete")
+            command_is_complete
                 .then(|| json_u32_from_path(current_state, &["current_open_step_state", "step"]))
                 .flatten()
         });
@@ -3047,42 +3252,65 @@ fn event_from_command_authoritative_delta(
         collect_changed_authoritative_fields(current_state, state, REPAIR_EVENT_FIELDS);
     let strategy_state =
         collect_changed_authoritative_fields(current_state, state, STRATEGY_EVENT_FIELDS);
-    match command.trim() {
-        "begin" => Ok(ExecutionEvent::Begin {
-            task: open_step_task,
-            step: open_step_step,
-            facts: Box::new(step_state.into()),
-        }),
+    let command = command.trim();
+    if let Some(public_command) = PublicCommandKind::from_public_mutation_token(command) {
+        match public_command {
+            PublicCommandKind::Begin => {
+                return Ok(ExecutionEvent::Begin {
+                    task: open_step_task,
+                    step: open_step_step,
+                    facts: Box::new(step_state.into()),
+                });
+            }
+            PublicCommandKind::Complete => {
+                return Ok(ExecutionEvent::Complete {
+                    task: open_step_task,
+                    step: open_step_step,
+                    facts: Box::new(step_state.into()),
+                });
+            }
+            PublicCommandKind::Reopen => {
+                return Ok(ExecutionEvent::Reopen {
+                    task: open_step_task,
+                    step: open_step_step,
+                    facts: Box::new(step_state.into()),
+                });
+            }
+            PublicCommandKind::Transfer => {
+                return Ok(ExecutionEvent::Transfer {
+                    scope: json_string(state, "current_transfer_scope"),
+                    assignee: json_string(state, "current_transfer_to"),
+                    facts: Box::new(
+                        collect_changed_authoritative_fields(
+                            current_state,
+                            state,
+                            TRANSFER_EVENT_FIELDS,
+                        )
+                        .into(),
+                    ),
+                });
+            }
+            PublicCommandKind::WorkflowOperator
+            | PublicCommandKind::Status
+            | PublicCommandKind::RepairReviewState
+            | PublicCommandKind::CloseCurrentTask
+            | PublicCommandKind::AdvanceLateStage
+            | PublicCommandKind::MaterializeProjectionsStateDirOnly => {}
+        }
+    }
+    match command {
         "note" => Ok(ExecutionEvent::Note {
             task: open_step_task,
             step: open_step_step,
             note_state: open_step_note_state,
             facts: Box::new(step_state.into()),
         }),
-        "complete" => Ok(ExecutionEvent::Complete {
-            task: open_step_task,
-            step: open_step_step,
-            facts: Box::new(step_state.into()),
-        }),
-        "reopen" => Ok(ExecutionEvent::Reopen {
-            task: open_step_task,
-            step: open_step_step,
-            facts: Box::new(step_state.into()),
-        }),
-        "transfer" => Ok(ExecutionEvent::Transfer {
-            scope: json_string(state, "current_transfer_scope"),
-            assignee: json_string(state, "current_transfer_to"),
-            facts: Box::new(
-                collect_changed_authoritative_fields(current_state, state, TRANSFER_EVENT_FIELDS)
-                    .into(),
-            ),
-        }),
         "record_review_dispatch" => Ok(ExecutionEvent::DispatchRecorded {
             scope: dispatch_scope_from_state(state),
             dispatch_id: current_dispatch_id_from_state(state),
             facts: Box::new(dispatch_state.into()),
         }),
-        "advance_late_stage" if advance_late_stage_dispatch_state_changed(current_state, state) => {
+        "close_current_task" if dispatch_state_changed(current_state, state) => {
             Ok(ExecutionEvent::DispatchRecorded {
                 scope: dispatch_scope_from_state(state),
                 dispatch_id: current_dispatch_id_from_state(state),
@@ -3098,29 +3326,76 @@ fn event_from_command_authoritative_delta(
             branch_closure_id: json_string(state, "current_branch_closure_id"),
             facts: Box::new(branch_closure_state.into()),
         }),
+        crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE
+            if branch_closure_state_changed(current_state, state) =>
+        {
+            Ok(ExecutionEvent::BranchClosureRecorded {
+                branch_closure_id: json_string(state, "current_branch_closure_id"),
+                facts: Box::new(branch_closure_state.into()),
+            })
+        }
         "record_release_readiness" => Ok(ExecutionEvent::ReleaseReadinessRecorded {
             release_readiness_record_id: json_string(state, "current_release_readiness_record_id"),
             facts: Box::new(release_readiness_state.into()),
         }),
+        crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE
+            if release_readiness_state_changed(current_state, state) =>
+        {
+            Ok(ExecutionEvent::ReleaseReadinessRecorded {
+                release_readiness_record_id: json_string(
+                    state,
+                    "current_release_readiness_record_id",
+                ),
+                facts: Box::new(release_readiness_state.into()),
+            })
+        }
         "record_final_review" => Ok(ExecutionEvent::FinalReviewRecorded {
             final_review_record_id: json_string(state, "current_final_review_record_id"),
             dispatch_id: json_string(state, "current_final_review_dispatch_id"),
             facts: Box::new(final_review_state.into()),
         }),
+        crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE
+            if final_review_state_changed(current_state, state) =>
+        {
+            Ok(ExecutionEvent::FinalReviewRecorded {
+                final_review_record_id: json_string(state, "current_final_review_record_id"),
+                dispatch_id: json_string(state, "current_final_review_dispatch_id"),
+                facts: Box::new(final_review_state.into()),
+            })
+        }
         "record_qa" => Ok(ExecutionEvent::QaRecorded {
             qa_record_id: json_string(state, "current_qa_record_id"),
             facts: Box::new(qa_state.into()),
         }),
-        "repair_review_state" => Ok(match follow_up_record {
-            Some(record) => ExecutionEvent::RepairFollowUpSet {
-                record: Some(record),
-                facts: Box::new(repair_state.into()),
-            },
-            None => ExecutionEvent::RepairFollowUpCleared {
-                facts: Box::new(repair_state.into()),
-            },
-        }),
-        "gate_review" | "advance_late_stage" => {
+        crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE
+            if qa_state_changed(current_state, state) =>
+        {
+            Ok(ExecutionEvent::QaRecorded {
+                qa_record_id: json_string(state, "current_qa_record_id"),
+                facts: Box::new(qa_state.into()),
+            })
+        }
+        crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE
+            if dispatch_state_changed(current_state, state) =>
+        {
+            Ok(ExecutionEvent::DispatchRecorded {
+                scope: dispatch_scope_from_state(state),
+                dispatch_id: current_dispatch_id_from_state(state),
+                facts: Box::new(dispatch_state.into()),
+            })
+        }
+        crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE => {
+            Ok(match follow_up_record {
+                Some(record) => ExecutionEvent::RepairFollowUpSet {
+                    record: Some(record),
+                    facts: Box::new(repair_state.into()),
+                },
+                None => ExecutionEvent::RepairFollowUpCleared {
+                    facts: Box::new(repair_state.into()),
+                },
+            })
+        }
+        "gate_review" | crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE => {
             if strategy_fingerprint.is_some() || strategy_kind.is_some() {
                 Ok(ExecutionEvent::StrategyCheckpointRecorded {
                     checkpoint_kind: strategy_kind,
@@ -3163,11 +3438,14 @@ fn event_from_command_authoritative_delta(
                     .into(),
             ),
         }),
-        "record_handoff" => Ok(ExecutionEvent::HandoffRecorded {
-            facts: Box::new(
-                collect_changed_authoritative_fields(current_state, state, HANDOFF_FIELDS).into(),
-            ),
-        }),
+        crate::execution::review_route_tokens::FOLLOW_UP_RECORD_HANDOFF => {
+            Ok(ExecutionEvent::HandoffRecorded {
+                facts: Box::new(
+                    collect_changed_authoritative_fields(current_state, state, HANDOFF_FIELDS)
+                        .into(),
+                ),
+            })
+        }
         other => Err(JsonFailure::new(
             FailureClass::PartialAuthoritativeMutation,
             format!(
@@ -3259,8 +3537,40 @@ fn current_dispatch_id_from_state(state: &Value) -> Option<String> {
         .or_else(|| json_string(state, "current_final_review_dispatch_id"))
 }
 
-fn advance_late_stage_dispatch_state_changed(current_state: &Value, state: &Value) -> bool {
-    DISPATCH_EVENT_FIELDS
+fn dispatch_state_changed(current_state: &Value, state: &Value) -> bool {
+    event_fields_changed(current_state, state, DISPATCH_PRIMARY_EVENT_FIELDS)
+}
+
+fn branch_closure_state_changed(current_state: &Value, state: &Value) -> bool {
+    event_fields_changed(current_state, state, BRANCH_CLOSURE_PRIMARY_EVENT_FIELDS)
+        || branch_closure_repair_follow_up_changed(current_state, state)
+}
+
+fn branch_closure_repair_follow_up_changed(current_state: &Value, state: &Value) -> bool {
+    event_fields_changed(current_state, state, BRANCH_CLOSURE_REPAIR_EVENT_FIELDS)
+        && (repair_follow_up_targets_branch_closure(current_state)
+            || repair_follow_up_targets_branch_closure(state))
+}
+
+fn repair_follow_up_targets_branch_closure(state: &Value) -> bool {
+    repair_follow_up_record_from_state(state)
+        .is_some_and(|record| record.target_scope == RepairTargetScope::BranchClosure)
+}
+
+fn release_readiness_state_changed(current_state: &Value, state: &Value) -> bool {
+    event_fields_changed(current_state, state, RELEASE_READINESS_PRIMARY_EVENT_FIELDS)
+}
+
+fn final_review_state_changed(current_state: &Value, state: &Value) -> bool {
+    event_fields_changed(current_state, state, FINAL_REVIEW_PRIMARY_EVENT_FIELDS)
+}
+
+fn qa_state_changed(current_state: &Value, state: &Value) -> bool {
+    event_fields_changed(current_state, state, QA_PRIMARY_EVENT_FIELDS)
+}
+
+fn event_fields_changed(current_state: &Value, state: &Value, fields: &[&str]) -> bool {
+    fields
         .iter()
         .any(|field| changed_authoritative_field_value(current_state, state, field).is_some())
 }
@@ -3393,280 +3703,6 @@ fn migration_projection_default_value(field: &str) -> Value {
         FIELD_HANDOFF_REQUIRED | "strategy_reset_required" => Value::Bool(false),
         _ => Value::Null,
     }
-}
-
-fn migration_route_parity_projection(
-    state: &Value,
-    runtime: Option<&ExecutionRuntime>,
-    state_path: &Path,
-) -> Result<Value, JsonFailure> {
-    if let Some(runtime) = runtime {
-        return migration_route_parity_projection_from_router(state, runtime, state_path);
-    }
-    let mut projection = serde_json::Map::new();
-    for key in ["phase", "phase_detail", "next_action"] {
-        if let Some(value) = route_string(state, key) {
-            projection.insert(key.to_owned(), Value::String(value));
-        }
-    }
-    if let Some(command) = route_string(state, "recommended_command") {
-        projection.insert(
-            String::from("recommended_command_shape"),
-            Value::String(command_shape(Some(command.as_str()))),
-        );
-    }
-    if let Some(command) = state
-        .get("next_public_action")
-        .and_then(|value| value.get("command"))
-        .and_then(Value::as_str)
-    {
-        projection.insert(
-            String::from("next_public_action_shape"),
-            Value::String(command_shape(Some(command))),
-        );
-    }
-    if projection.is_empty() {
-        projection.insert(
-            String::from("phase"),
-            Value::String(legacy_route_phase_from_authority(state)),
-        );
-        projection.insert(
-            String::from("phase_detail"),
-            Value::String(legacy_route_phase_detail_from_authority(state)),
-        );
-        projection.insert(
-            String::from("next_action_shape"),
-            Value::String(legacy_route_next_action_shape_from_authority(state)),
-        );
-    }
-    Ok(Value::Object(projection))
-}
-
-fn migration_route_parity_projection_from_router(
-    state: &Value,
-    runtime: &ExecutionRuntime,
-    state_path: &Path,
-) -> Result<Value, JsonFailure> {
-    let plan_path = json_string(state, "source_plan_path")
-        .or_else(|| infer_unique_approved_plan_path(runtime))
-        .ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::BlockedRuntimeBug,
-                "blocked_runtime_bug: event-log migration route parity requires source_plan_path or exactly one approved plan in the runtime repo.",
-            )
-        })?;
-    let _candidate_payload_guard = enter_in_flight_migration(state_path, state);
-    let context = load_execution_context_without_authority_overlay(runtime, Path::new(&plan_path))?;
-    let authoritative_state = AuthoritativeTransitionState::from_reduced_event_payload(
-        state_path.to_path_buf(),
-        state.clone(),
-    )?;
-    let runtime_state = reduce_event_authority_for_migration_parity(EventAuthoritySnapshot {
-        context: &context,
-        event_authority_state: Some(&authoritative_state),
-        semantic_workspace: semantic_workspace_snapshot(&context)?,
-    })?;
-    let route_decision = route_runtime_state(&runtime_state, false);
-    let mut projection = serde_json::Map::new();
-    projection.insert(
-        String::from("state_kind"),
-        Value::String(route_decision.state_kind),
-    );
-    projection.insert(String::from("phase"), Value::String(route_decision.phase));
-    projection.insert(
-        String::from("phase_detail"),
-        Value::String(route_decision.phase_detail),
-    );
-    projection.insert(
-        String::from("review_state_status"),
-        Value::String(route_decision.review_state_status),
-    );
-    projection.insert(
-        String::from("next_action"),
-        Value::String(route_decision.next_action),
-    );
-    if let Some(command) = route_decision.recommended_command {
-        projection.insert(String::from("recommended_command"), Value::String(command));
-    }
-    if let Some(required_follow_up) = route_decision.required_follow_up {
-        projection.insert(
-            String::from("required_follow_up"),
-            Value::String(required_follow_up),
-        );
-    }
-    if let Some(next_public_action) = route_decision.next_public_action {
-        projection.insert(
-            String::from("next_public_action"),
-            serde_json::to_value(next_public_action).map_err(|error| {
-                JsonFailure::new(
-                    FailureClass::BlockedRuntimeBug,
-                    format!(
-                        "blocked_runtime_bug: event-log migration route parity could not serialize next_public_action: {error}"
-                    ),
-                )
-            })?,
-        );
-    }
-    projection.insert(
-        String::from("blocking_reason_codes"),
-        serde_json::to_value(route_decision.blocking_reason_codes).map_err(|error| {
-            JsonFailure::new(
-                FailureClass::BlockedRuntimeBug,
-                format!(
-                    "blocked_runtime_bug: event-log migration route parity could not serialize blocking_reason_codes: {error}"
-                ),
-            )
-        })?,
-    );
-    Ok(Value::Object(projection))
-}
-
-fn legacy_route_phase_from_authority(state: &Value) -> String {
-    match json_string(state, "harness_phase").as_deref() {
-        Some(crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION) => {
-            String::from(crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION)
-        }
-        Some(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING) => {
-            String::from(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING)
-        }
-        Some(crate::execution::phase::PHASE_FINAL_REVIEW_PENDING) => {
-            String::from(crate::execution::phase::PHASE_FINAL_REVIEW_PENDING)
-        }
-        Some(crate::execution::phase::PHASE_QA_PENDING) => {
-            String::from(crate::execution::phase::PHASE_QA_PENDING)
-        }
-        Some(crate::execution::phase::PHASE_EXECUTING) | Some("repairing") => {
-            String::from(crate::execution::phase::PHASE_EXECUTING)
-        }
-        Some(crate::execution::phase::PHASE_EXECUTION_PREFLIGHT) => {
-            String::from(crate::execution::phase::PHASE_EXECUTION_PREFLIGHT)
-        }
-        _ => String::from(crate::execution::phase::PHASE_IMPLEMENTATION_HANDOFF),
-    }
-}
-
-fn legacy_route_phase_detail_from_authority(state: &Value) -> String {
-    if state
-        .get("current_open_step_state")
-        .is_some_and(|value| !value.is_null())
-    {
-        return String::from(crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS);
-    }
-    if newest_current_task_from_state(state).is_some()
-        && json_string(state, "current_branch_closure_id").is_none()
-    {
-        return String::from(
-            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
-        );
-    }
-    match json_string(state, "harness_phase").as_deref() {
-        Some(crate::execution::phase::PHASE_READY_FOR_BRANCH_COMPLETION) => {
-            String::from(crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY)
-        }
-        Some(crate::execution::phase::PHASE_DOCUMENT_RELEASE_PENDING) => {
-            String::from(crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY)
-        }
-        Some(crate::execution::phase::PHASE_FINAL_REVIEW_PENDING) => {
-            String::from(crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED)
-        }
-        Some(crate::execution::phase::PHASE_QA_PENDING) => {
-            String::from(crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED)
-        }
-        Some(crate::execution::phase::PHASE_EXECUTION_PREFLIGHT) => {
-            String::from(crate::execution::phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED)
-        }
-        Some(crate::execution::phase::PHASE_EXECUTING) | Some("repairing") => {
-            String::from(crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS)
-        }
-        _ => String::from("implementation_handoff_required"),
-    }
-}
-
-fn legacy_route_next_action_shape_from_authority(state: &Value) -> String {
-    command_shape(
-        match legacy_route_phase_detail_from_authority(state).as_str() {
-            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
-            | crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
-            | crate::execution::phase::DETAIL_FINAL_REVIEW_RECORDING_READY
-            | crate::execution::phase::DETAIL_QA_RECORDING_REQUIRED
-            | crate::execution::phase::DETAIL_FINISH_COMPLETION_GATE_READY => {
-                Some("featureforge plan execution advance-late-stage")
-            }
-            crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS => Some("featureforge plan execution complete"),
-            crate::execution::phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED => Some("featureforge plan execution begin"),
-            _ => None,
-        },
-    )
-}
-
-fn route_string(state: &Value, key: &str) -> Option<String> {
-    state
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn infer_unique_approved_plan_path(runtime: &ExecutionRuntime) -> Option<String> {
-    let mut stack = vec![runtime.repo_root.join("docs/featureforge/plans")];
-    let mut candidates = Vec::new();
-    while let Some(dir) = stack.pop() {
-        let entries = fs::read_dir(&dir).ok()?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            if metadata.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if !metadata.is_file()
-                || path.extension().and_then(|value| value.to_str()) != Some("md")
-            {
-                continue;
-            }
-            let Ok(source) = fs::read_to_string(&path) else {
-                continue;
-            };
-            if !source.contains("**Workflow State:** Engineering Approved") {
-                continue;
-            }
-            let rel = path
-                .strip_prefix(&runtime.repo_root)
-                .ok()?
-                .to_string_lossy()
-                .replace('\\', "/");
-            candidates.push(rel);
-            if candidates.len() > 1 {
-                return None;
-            }
-        }
-    }
-    candidates.pop()
-}
-
-fn command_shape(command: Option<&str>) -> String {
-    let Some(command) = command.map(str::trim).filter(|value| !value.is_empty()) else {
-        return String::from("none");
-    };
-    for token in [
-        "workflow operator",
-        "plan execution status",
-        "plan execution repair-review-state",
-        "plan execution begin",
-        "plan execution complete",
-        "plan execution reopen",
-        "plan execution transfer",
-        "plan execution close-current-task",
-        "plan execution advance-late-stage",
-    ] {
-        if command.contains(token) {
-            return token.to_owned();
-        }
-    }
-    String::from("other")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -3908,7 +3944,7 @@ fn validate_migration_replay_coverage(
         return Err(JsonFailure::new(
             FailureClass::BlockedRuntimeBug,
             format!(
-                "blocked_runtime_bug: event-log migration replay omitted expected record-status transitions: {missing_transitions:?}"
+                "blocked_runtime_bug: event-log migration replay omitted expected record-status transitions: {missing_transitions:?}. {BLOCKED_RUNTIME_BUG_STOP_REPORT_GUIDANCE}"
             ),
         ));
     }
@@ -3923,7 +3959,7 @@ fn validate_migration_replay_coverage(
         return Err(JsonFailure::new(
             FailureClass::BlockedRuntimeBug,
             format!(
-                "blocked_runtime_bug: event-log migration replay omitted current task-closure events: {missing_task_closure_replay:?}"
+                "blocked_runtime_bug: event-log migration replay omitted current task-closure events: {missing_task_closure_replay:?}. {BLOCKED_RUNTIME_BUG_STOP_REPORT_GUIDANCE}"
             ),
         ));
     }
@@ -3938,7 +3974,7 @@ fn validate_migration_replay_coverage(
         return Err(JsonFailure::new(
             FailureClass::BlockedRuntimeBug,
             format!(
-                "blocked_runtime_bug: event-log migration replay omitted completed-step events: {missing_completed_step_replay:?}"
+                "blocked_runtime_bug: event-log migration replay omitted completed-step events: {missing_completed_step_replay:?}. {BLOCKED_RUNTIME_BUG_STOP_REPORT_GUIDANCE}"
             ),
         ));
     }
@@ -3949,28 +3985,15 @@ fn validate_migration_replay_coverage(
 fn validate_migration_parity(
     legacy_state: &Value,
     migrated_events: &[ExecutionEventEnvelope],
-    runtime: Option<&ExecutionRuntime>,
-    legacy_state_path: &Path,
 ) -> Result<(), JsonFailure> {
     let reduced_state = match reduce_events_to_state(migrated_events) {
         Some(reduced_state) => reduced_state,
         None => {
-            let legacy_route_projection =
-                migration_route_parity_projection(legacy_state, runtime, legacy_state_path)?;
-            if !legacy_route_projection
-                .as_object()
-                .is_none_or(serde_json::Map::is_empty)
-            {
-                return Err(JsonFailure::new(
-                    FailureClass::BlockedRuntimeBug,
-                    format!(
-                        "blocked_runtime_bug: event-log migration route parity mismatch.\nlegacy={legacy_route_projection}\nreduced=null"
-                    ),
-                ));
-            }
             return Err(JsonFailure::new(
                 FailureClass::BlockedRuntimeBug,
-                "blocked_runtime_bug: event-log migration parity failed because reduced state is empty.",
+                format!(
+                    "blocked_runtime_bug: event-log migration parity failed because reduced state is empty. {BLOCKED_RUNTIME_BUG_STOP_REPORT_GUIDANCE}"
+                ),
             ));
         }
     };
@@ -3980,19 +4003,7 @@ fn validate_migration_parity(
         return Err(JsonFailure::new(
             FailureClass::BlockedRuntimeBug,
             format!(
-                "blocked_runtime_bug: event-log migration parity mismatch for authoritative closure/dispatch/checkpoint fields.\nlegacy={legacy_projection}\nreduced={reduced_projection}"
-            ),
-        ));
-    }
-    let legacy_route_projection =
-        migration_route_parity_projection(legacy_state, runtime, legacy_state_path)?;
-    let reduced_route_projection =
-        migration_route_parity_projection(&reduced_state, runtime, legacy_state_path)?;
-    if legacy_route_projection != reduced_route_projection {
-        return Err(JsonFailure::new(
-            FailureClass::BlockedRuntimeBug,
-            format!(
-                "blocked_runtime_bug: event-log migration route parity mismatch.\nlegacy={legacy_route_projection}\nreduced={reduced_route_projection}"
+                "blocked_runtime_bug: event-log migration parity mismatch for authoritative closure/dispatch/checkpoint fields. {BLOCKED_RUNTIME_BUG_STOP_REPORT_GUIDANCE}\nlegacy={legacy_projection}\nreduced={reduced_projection}"
             ),
         ));
     }
@@ -4082,17 +4093,19 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
-    use std::path::Path;
 
     use serde_json::{Value, json};
 
     use super::{
-        AuthoritativeFactBuilder, BranchContext, EventEnvelopeMetadata, ExecutionEvent,
-        StepEventFacts, ensure_event_log_migrated_from_legacy_state_path,
-        event_from_command_authoritative_delta, events_log_path_for_state_path,
+        AuthoritativeFactBuilder, BranchContext, EventEnvelopeMetadata, EventFactPayload,
+        ExecutionEvent, StepEventFacts,
+        best_effort_record_legacy_migration_route_parity_validated_for_state_path,
+        ensure_event_log_migrated_from_legacy_state_path, event_from_command_authoritative_delta,
+        events_log_path_for_state_path, legacy_migration_parity_candidate_for_state_path,
+        legacy_migration_route_parity_marker_path_for_state_path,
         legacy_state_backup_path_for_state_path, load_event_log,
-        load_reduced_authoritative_state_for_state_path, next_event_envelope, validate_event_log,
-        validate_migration_parity,
+        load_reduced_authoritative_state_for_state_path, migration_replay_events_from_legacy_state,
+        next_event_envelope, validate_event_log, validate_migration_parity, write_event_log_atomic,
     };
     use crate::diagnostics::FailureClass;
 
@@ -4353,9 +4366,8 @@ mod tests {
         .expect("typed mismatch event should envelope");
         events.push(mismatched_snapshot);
 
-        let error =
-            validate_migration_parity(&legacy_state, &events, None, Path::new("state.json"))
-                .expect_err("parity mismatch must fail closed");
+        let error = validate_migration_parity(&legacy_state, &events)
+            .expect_err("parity mismatch must fail closed");
         assert_eq!(
             error.error_class,
             FailureClass::BlockedRuntimeBug.as_str(),
@@ -4366,6 +4378,13 @@ mod tests {
                 .message
                 .contains(crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG),
             "parity mismatch should explicitly surface blocked_runtime_bug, got {}",
+            error.message
+        );
+        assert!(
+            error
+                .message
+                .contains(crate::execution::phase::BLOCKED_RUNTIME_BUG_STOP_REPORT_GUIDANCE),
+            "parity mismatch should explicitly tell callers to stop/report, got {}",
             error.message
         );
     }
@@ -4436,9 +4455,8 @@ mod tests {
         staged_events.push(mismatched_refresh);
 
         validate_event_log(&staged_events).expect("staged events should validate structurally");
-        let error =
-            validate_migration_parity(&legacy_state, &staged_events, None, Path::new("state.json"))
-                .expect_err("parity mismatch must fail before publish");
+        let error = validate_migration_parity(&legacy_state, &staged_events)
+            .expect_err("parity mismatch must fail before publish");
         assert_eq!(error.error_class, FailureClass::BlockedRuntimeBug.as_str());
         assert!(
             backup_path.exists(),
@@ -4451,7 +4469,11 @@ mod tests {
     }
 
     #[test]
-    fn migration_route_parity_failure_rejects_lost_legacy_route_truth() {
+    fn legacy_migration_parity_candidate_reads_migration_only_legacy_backup() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
+        let state_path = tempdir.path().join("state.json");
+        let backup_path = legacy_state_backup_path_for_state_path(&state_path);
+        let events_path = events_log_path_for_state_path(&state_path);
         let mut legacy_state = minimal_legacy_state();
         let legacy_root = legacy_state
             .as_object_mut()
@@ -4472,54 +4494,73 @@ mod tests {
             String::from("recommended_command"),
             Value::from("featureforge plan execution begin --plan docs/featureforge/plans/example.md --task 1 --step 1"),
         );
+        fs::write(
+            &backup_path,
+            serde_json::to_string_pretty(&legacy_state)
+                .expect("legacy backup fixture should serialize"),
+        )
+        .expect("legacy backup fixture should write");
         let branch_context = BranchContext {
             repo_slug: String::from("repo"),
             branch_name: String::from("feature-branch"),
             safe_branch: String::from("feature-branch"),
         };
-        let events = vec![
-            next_event_envelope(
-                &[],
+        let mut events = Vec::new();
+        let migration_event = next_event_envelope(
+            &events,
+            EventEnvelopeMetadata {
+                command: String::from("migrate_legacy_authoritative_state"),
+                plan_path: Some(String::from("docs/featureforge/plans/example.md")),
+                plan_revision: Some(1),
+                execution_run_id: Some(String::from("run-1")),
+                branch_context: branch_context.clone(),
+            },
+            ExecutionEvent::MigrationImported {
+                legacy_state_backup_path: backup_path.display().to_string(),
+            },
+        )
+        .expect("migration marker should envelope");
+        events.push(migration_event);
+        for replay_payload in migration_replay_events_from_legacy_state(&legacy_state) {
+            let replay_event = next_event_envelope(
+                &events,
                 EventEnvelopeMetadata {
-                    command: String::from("migrate_legacy_authoritative_state"),
+                    command: String::from("migrate_legacy_authoritative_state_replay"),
                     plan_path: Some(String::from("docs/featureforge/plans/example.md")),
                     plan_revision: Some(1),
                     execution_run_id: Some(String::from("run-1")),
                     branch_context: branch_context.clone(),
                 },
-                ExecutionEvent::MigrationImported {
-                    legacy_state_backup_path: String::from("state.legacy.json"),
-                },
+                replay_payload,
             )
-            .expect("migration marker should envelope"),
-            next_event_envelope(
-                &[],
-                EventEnvelopeMetadata {
-                    command: String::from("migrate_legacy_authoritative_state_import"),
-                    plan_path: Some(String::from("docs/featureforge/plans/example.md")),
-                    plan_revision: Some(1),
-                    execution_run_id: Some(String::from("run-1")),
-                    branch_context,
-                },
-                ExecutionEvent::Begin {
-                    task: None,
-                    step: None,
-                    facts: Box::<StepEventFacts>::default(),
-                },
-            )
-            .expect("empty route-loss event should envelope"),
-        ];
+            .expect("migration replay event should envelope");
+            events.push(replay_event);
+        }
+        write_event_log_atomic(&events_path, &events).expect("event log should write");
 
-        let error =
-            validate_migration_parity(&legacy_state, &events, None, Path::new("state.json"))
-                .expect_err("lost legacy route truth must fail migration parity");
-        assert_eq!(error.error_class, FailureClass::BlockedRuntimeBug.as_str());
+        let candidate = legacy_migration_parity_candidate_for_state_path(&state_path)
+            .expect("candidate lookup should succeed")
+            .expect("migration-only event log should expose a legacy parity candidate");
+        assert_eq!(
+            candidate.legacy_state["phase"],
+            Value::from(crate::execution::phase::PHASE_EXECUTING),
+            "higher-level route parity must be able to compare legacy route fields from backup",
+        );
         assert!(
-            error
-                .message
-                .contains("event-log migration route parity mismatch"),
-            "route parity failure should be explicit, got {}",
-            error.message
+            candidate.reduced_state.is_object(),
+            "candidate should include reduced event-authoritative state for higher-level route parity"
+        );
+
+        best_effort_record_legacy_migration_route_parity_validated_for_state_path(&state_path);
+        assert!(
+            legacy_migration_route_parity_marker_path_for_state_path(&state_path).is_file(),
+            "successful route-parity validation should persist a digest-bound skip marker",
+        );
+        assert!(
+            legacy_migration_parity_candidate_for_state_path(&state_path)
+                .expect("candidate lookup should succeed after marker write")
+                .is_none(),
+            "the same migration-only event log should not repeatedly recompute route parity after a successful validation",
         );
     }
 
@@ -4664,6 +4705,242 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_release_readiness_event_carries_retired_final_and_qa_history() {
+        let before = json!({
+            "release_readiness_record_history": {},
+            "current_release_readiness_record_id": null,
+            "final_review_record_history": {
+                "final-old": {
+                    "record_id": "final-old",
+                    "record_status": "current"
+                }
+            },
+            "current_final_review_record_id": "final-old",
+            "browser_qa_record_history": {
+                "qa-old": {
+                    "record_id": "qa-old",
+                    "record_status": "current"
+                }
+            },
+            "current_qa_record_id": "qa-old",
+            "release_docs_state": "fresh",
+            "final_review_state": "fresh",
+            "browser_qa_state": "fresh"
+        });
+        let after = json!({
+            "release_readiness_record_history": {
+                "release-new": {
+                    "record_id": "release-new",
+                    "record_status": "current"
+                }
+            },
+            "current_release_readiness_record_id": "release-new",
+            "final_review_record_history": {
+                "final-old": {
+                    "record_id": "final-old",
+                    "record_status": "historical"
+                }
+            },
+            "current_final_review_record_id": null,
+            "browser_qa_record_history": {
+                "qa-old": {
+                    "record_id": "qa-old",
+                    "record_status": "historical"
+                }
+            },
+            "current_qa_record_id": null,
+            "release_docs_state": "stale",
+            "final_review_state": "stale",
+            "browser_qa_state": "stale"
+        });
+
+        let event = event_from_command_authoritative_delta(
+            crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE,
+            &before,
+            &after,
+            "",
+            None,
+        )
+        .expect("aggregate release-readiness delta should map to typed event");
+        let ExecutionEvent::ReleaseReadinessRecorded { facts, .. } = event else {
+            panic!("aggregate release-readiness delta should produce ReleaseReadinessRecorded");
+        };
+
+        assert!(
+            facts.get("final_review_record_history").is_some(),
+            "release-readiness event facts must preserve final-review supersession history"
+        );
+        assert!(
+            facts.get("browser_qa_record_history").is_some(),
+            "release-readiness event facts must preserve QA supersession history"
+        );
+        assert!(
+            facts.get("release_docs_state").is_none()
+                && facts.get("final_review_state").is_none()
+                && facts.get("browser_qa_state").is_none(),
+            "projection summary fields must stay out of authoritative event facts"
+        );
+    }
+
+    #[test]
+    fn aggregate_final_review_event_carries_retired_qa_history() {
+        let before = json!({
+            "final_review_record_history": {},
+            "current_final_review_record_id": null,
+            "browser_qa_record_history": {
+                "qa-old": {
+                    "record_id": "qa-old",
+                    "record_status": "current"
+                }
+            },
+            "current_qa_record_id": "qa-old",
+            "final_review_state": "fresh",
+            "browser_qa_state": "fresh"
+        });
+        let after = json!({
+            "final_review_record_history": {
+                "final-new": {
+                    "record_id": "final-new",
+                    "record_status": "current"
+                }
+            },
+            "current_final_review_record_id": "final-new",
+            "browser_qa_record_history": {
+                "qa-old": {
+                    "record_id": "qa-old",
+                    "record_status": "historical"
+                }
+            },
+            "current_qa_record_id": null,
+            "final_review_state": "fresh",
+            "browser_qa_state": "stale"
+        });
+
+        let event = event_from_command_authoritative_delta(
+            crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE,
+            &before,
+            &after,
+            "",
+            None,
+        )
+        .expect("aggregate final-review delta should map to typed event");
+        let ExecutionEvent::FinalReviewRecorded { facts, .. } = event else {
+            panic!("aggregate final-review delta should produce FinalReviewRecorded");
+        };
+
+        assert!(
+            facts.get("browser_qa_record_history").is_some(),
+            "final-review event facts must preserve QA supersession history"
+        );
+        assert!(
+            facts.get("final_review_state").is_none() && facts.get("browser_qa_state").is_none(),
+            "projection summary fields must stay out of authoritative event facts"
+        );
+    }
+
+    #[test]
+    fn aggregate_branch_closure_repair_event_replays_overlay_and_follow_up_clear() {
+        let before = json!({
+            "branch_closure_records": {
+                "branch-current": {
+                    "record_id": "branch-current",
+                    "record_status": "current"
+                }
+            },
+            "current_branch_closure_id": "branch-current",
+            "current_branch_closure_reviewed_state_id": "reviewed-stale",
+            "current_branch_closure_contract_identity": "contract-stale",
+            "review_state_repair_follow_up_record": {
+                "kind": crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE,
+                "target_scope": "branch_closure",
+                "target_record_id": "branch-current",
+                "created_sequence": 42,
+                "expires_on_plan_fingerprint_change": true
+            },
+            "review_state_repair_follow_up": null,
+            "review_state_repair_follow_up_task": null,
+            "review_state_repair_follow_up_step": null,
+            "review_state_repair_follow_up_closure_record_id": null
+        });
+        let after = json!({
+            "branch_closure_records": {
+                "branch-current": {
+                    "record_id": "branch-current",
+                    "record_status": "current"
+                }
+            },
+            "current_branch_closure_id": "branch-current",
+            "current_branch_closure_reviewed_state_id": "reviewed-current",
+            "current_branch_closure_contract_identity": "contract-current"
+        });
+
+        let event = event_from_command_authoritative_delta(
+            crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE,
+            &before,
+            &after,
+            "",
+            None,
+        )
+        .expect("aggregate branch-closure repair delta should map to typed event");
+        let ExecutionEvent::BranchClosureRecorded {
+            branch_closure_id,
+            facts,
+        } = &event
+        else {
+            panic!("aggregate branch-closure repair delta should produce BranchClosureRecorded");
+        };
+        assert_eq!(branch_closure_id.as_deref(), Some("branch-current"));
+        assert_eq!(
+            facts.get("current_branch_closure_reviewed_state_id"),
+            Some(&Value::from("reviewed-current")),
+            "branch-closure repair events must preserve restored current reviewed-state binding"
+        );
+        assert_eq!(
+            facts.get("review_state_repair_follow_up_record"),
+            Some(&Value::Null),
+            "branch-closure repair events must preserve repair follow-up clearing"
+        );
+
+        let envelope = next_event_envelope(
+            &[],
+            EventEnvelopeMetadata {
+                command: String::from(
+                    crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE,
+                ),
+                plan_path: Some(String::from("docs/featureforge/plans/example.md")),
+                plan_revision: Some(1),
+                execution_run_id: Some(String::from("run-1")),
+                branch_context: BranchContext {
+                    repo_slug: String::from("repo"),
+                    branch_name: String::from("feature-branch"),
+                    safe_branch: String::from("feature-branch"),
+                },
+            },
+            event,
+        )
+        .expect("aggregate branch-closure repair event should envelope");
+        let mut reduced = before.clone();
+        assert!(
+            super::apply_typed_event_to_state(&mut reduced, &envelope),
+            "aggregate branch-closure repair event should apply typed facts"
+        );
+        assert_eq!(
+            reduced["current_branch_closure_reviewed_state_id"],
+            "reviewed-current"
+        );
+        assert_eq!(
+            reduced["current_branch_closure_contract_identity"],
+            "contract-current"
+        );
+        assert!(
+            reduced
+                .get("review_state_repair_follow_up_record")
+                .is_none(),
+            "event replay should clear the persisted repair follow-up record"
+        );
+    }
+
+    #[test]
     fn record_status_transition_events_reduce_into_authoritative_record_maps() {
         let branch_context = BranchContext {
             repo_slug: String::from("repo"),
@@ -4682,7 +4959,9 @@ mod tests {
             ExecutionEvent::RecordStatusTransition {
                 record_family: String::from("branch_closure_record"),
                 record_id: Some(String::from("branch-closure-1")),
-                record_status: Some(String::from("stale_unreviewed")),
+                record_status: Some(String::from(
+                    crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED,
+                )),
                 record_sequence: Some(42),
             },
         )
@@ -4692,7 +4971,10 @@ mod tests {
             .expect("record-status transition should reduce to authoritative state");
         let record = &reduced["branch_closure_records"]["branch-closure-1"];
         assert_eq!(record["record_id"], "branch-closure-1");
-        assert_eq!(record["record_status"], "stale_unreviewed");
+        assert_eq!(
+            record["record_status"],
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
+        );
         assert_eq!(record["record_sequence"], 42);
     }
 
@@ -4732,7 +5014,7 @@ mod tests {
                     "record_id": "branch-stale",
                     "branch_closure_id": "branch-stale",
                     "record_sequence": 4,
-                    "record_status": "stale_unreviewed"
+                    "record_status": crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
                 }
             },
             "superseded_branch_closure_ids": [],
@@ -4792,9 +5074,8 @@ mod tests {
             "migration should emit explicit superseded record-status transitions"
         );
         assert!(
-            transitions
-                .iter()
-                .any(|(status, _)| status.as_deref() == Some("stale_unreviewed")),
+            transitions.iter().any(|(status, _)| status.as_deref()
+                == Some(crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED)),
             "migration should emit explicit stale_unreviewed record-status transitions"
         );
         let sorted_sequences = {

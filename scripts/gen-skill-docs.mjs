@@ -9,6 +9,32 @@ export const ROOT = path.resolve(MODULE_DIR, '..');
 export const SKILLS_DIR = path.join(ROOT, 'skills');
 export const GENERATOR_CMD = 'node scripts/gen-skill-docs.mjs';
 
+export const ROUTE_LAW_MODE = Object.freeze({
+  FULL: 'full',
+  REFERENCE: 'reference',
+  NONE: 'none',
+});
+
+export const ROUTE_OWNING_GENERATED_SKILLS = Object.freeze([
+  'document-release',
+  'executing-plans',
+  'finishing-a-development-branch',
+  'plan-eng-review',
+  'requesting-code-review',
+  'subagent-driven-development',
+  'using-featureforge',
+]);
+
+const ROUTE_OWNING_GENERATED_SKILL_SET = new Set(ROUTE_OWNING_GENERATED_SKILLS);
+
+export function routeLawModeForSkill(skill) {
+  return ROUTE_OWNING_GENERATED_SKILL_SET.has(skill) ? ROUTE_LAW_MODE.FULL : ROUTE_LAW_MODE.REFERENCE;
+}
+
+export function routeLawModeForTemplate(templatePath) {
+  return routeLawModeForSkill(path.basename(path.dirname(templatePath)));
+}
+
 export function buildRootDetection() {
   return [
     '_REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)',
@@ -47,7 +73,8 @@ export function buildBaseShellLines() {
     '    "$_FEATUREFORGE_BIN" "$@"',
     '    return $?',
     '  fi',
-    '  "$@"',
+    '  echo "featureforge: refusing non-featureforge public argv: $1" >&2',
+    '  return 2',
     '}',
   ];
 }
@@ -55,13 +82,15 @@ export function buildBaseShellLines() {
 export function buildInstalledControlPlaneSection() {
   return `## Installed Control Plane
 
-Live FeatureForge workflow routing is install-owned:
-- use only \`$_FEATUREFORGE_BIN\` for live workflow control-plane commands
-- do not route live workflow commands through \`./bin/featureforge\`
-- do not route live workflow commands through \`target/debug/featureforge\`
-- do not route live workflow commands through \`cargo run\`
+Live workflow routing uses only \`$_FEATUREFORGE_BIN\`; never use \`./bin/featureforge\`, \`target/debug/featureforge\`, or \`cargo run\` for live routing. Query workflow/operator JSON with \`$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json\`.
 
-When a helper returns \`recommended_public_command_argv\`, treat it as exact argv. If \`recommended_public_command_argv[0] == "featureforge"\`, execute through the installed runtime by replacing argv[0] with \`$_FEATUREFORGE_BIN\` (for example via \`_featureforge_exec_public_argv ...\`).`;
+If the installed runtime/root cannot be resolved, stop before making workflow mutations. Use only typed operator JSON route surfaces: execute \`recommended_public_command_argv\` when present; when \`recommended_public_command_template\` appears, treat \`required_inputs\` as validation metadata and materialize templates only by rerunning \`$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --input NAME=VALUE --json\`. Detailed binding and route-specific stop rules live in \`$_FEATUREFORGE_ROOT/references/operator-route-authority.md\`. Treat display-only \`recommended_command\` as non-executable; if no typed executable surface exists, stop and report the route diagnostic.`;
+}
+
+export function buildRuntimeRouteReferenceSection() {
+  return `## Runtime Route Reference
+
+This skill does not own live workflow routing. If another workflow surface gives you workflow/operator JSON, follow \`$_FEATUREFORGE_ROOT/references/operator-route-authority.md\` instead of reconstructing route law here.`;
 }
 
 export function buildUsingFeatureForgeShellLines() {
@@ -131,7 +160,20 @@ Honor the active repo instruction chain from \`AGENTS.md\`, \`AGENTS.override.md
 These review skills are public FeatureForge skills for Codex and GitHub Copilot local installs. See \`$_FEATUREFORGE_ROOT/references/agent-grounding.md\` for install-surface notes.`;
 }
 
-export function generatePreamble({ review }) {
+function routeLawSectionForMode(routeLawMode) {
+  if (routeLawMode === ROUTE_LAW_MODE.FULL) {
+    return buildInstalledControlPlaneSection();
+  }
+  if (routeLawMode === ROUTE_LAW_MODE.REFERENCE) {
+    return buildRuntimeRouteReferenceSection();
+  }
+  if (routeLawMode === ROUTE_LAW_MODE.NONE) {
+    return '';
+  }
+  throw new Error(`Unknown route law mode: ${routeLawMode}`);
+}
+
+export function generatePreamble({ review, routeLawMode = ROUTE_LAW_MODE.FULL }) {
   const shellLines = review ? buildReviewShellLines() : buildBaseShellLines();
   const parts = [
     '## Preamble (run first)',
@@ -139,9 +181,12 @@ export function generatePreamble({ review }) {
     '```bash',
     ...shellLines,
     '```',
-    buildInstalledControlPlaneSection(),
-    buildSearchBeforeBuildingSection(),
   ];
+  const routeLawSection = routeLawSectionForMode(routeLawMode);
+  if (routeLawSection) {
+    parts.push(routeLawSection);
+  }
+  parts.push(buildSearchBeforeBuildingSection());
 
   if (review) {
     parts.push('', buildAgentGrounding());
@@ -158,13 +203,20 @@ export function generateUsingFeatureForgePreamble() {
   return generatePreamble({ review: false });
 }
 
-function isUsingFeatureForgeTemplate(templatePath) {
-  return path.basename(path.dirname(templatePath)) === 'using-featureforge';
+export function buildOperatorRouteAuthoritySection() {
+  return `### Reviewed-Closure Route Authority
+
+Reviewed-closure and late-stage handoffs are operator-owned. Keep workflow/operator JSON as the route authority; use \`$_FEATUREFORGE_ROOT/references/operator-route-authority.md\` for route-specific binding detail and \`$_FEATUREFORGE_ROOT/docs/featureforge/reference/2026-04-01-review-state-reference.md\` only for the review-state mental model.
+
+Use \`$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready --json\` only after an external task-review or final-review result is in hand; do not use that hint for release-readiness, document-release, or QA routing.
+
+Do not duplicate route tables, infer low-level dispatch-lineage commands, or manually edit runtime-owned records, derived markdown projections, or \`**Execution Note:**\` lines to recover routing state. Follow operator JSON and the canonical route reference.`;
 }
 
 export const RESOLVERS = {
-  BASE_PREAMBLE: () => generatePreamble({ review: false }),
-  REVIEW_PREAMBLE: () => generatePreamble({ review: true }),
+  BASE_PREAMBLE: (templatePath) => generatePreamble({ review: false, routeLawMode: routeLawModeForTemplate(templatePath) }),
+  REVIEW_PREAMBLE: (templatePath) => generatePreamble({ review: true, routeLawMode: routeLawModeForTemplate(templatePath) }),
+  OPERATOR_ROUTE_AUTHORITY: () => buildOperatorRouteAuthoritySection(),
   USING_FEATUREFORGE_BYPASS_GATE: () => buildUsingFeatureForgeBypassGateSection(),
   USING_FEATUREFORGE_NORMAL_STACK: () => buildUsingFeatureForgeNormalStackSection(),
 };

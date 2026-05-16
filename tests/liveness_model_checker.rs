@@ -2,12 +2,21 @@
 mod files_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/public_featureforge_cli.rs"]
+mod public_featureforge_cli;
+#[path = "support/internal_public_runtime_in_process.rs"]
+mod semantic_public_argv_runtime;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
+// This suite is an internal semantic/liveness model checker. It uses in-process
+// helpers to keep the state matrix cheap, then samples a shipped compiled-CLI
+// parity edge so the public argv runner does not drift from the real boundary.
+// Do not cite this file as shipped-runtime public-flow proof; that proof lives
+// in the compiled-CLI public runtime flow gate and public route goldens.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::process::Command;
 
 use featureforge::execution::semantic_identity::task_definition_identity_for_task;
 use featureforge::execution::state::ExecutionRuntime;
@@ -18,6 +27,11 @@ use serde_json::{Value, json};
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-04-01-liveness-model-plan.md";
 const SPEC_REL: &str = "docs/featureforge/specs/2026-04-01-liveness-model-spec.md";
+// The generator tests cover every legal task-count shape. This executed edge
+// test uses one multi-task shape to keep the expensive runtime mutation matrix
+// representative without making the full suite depend on duplicate one-task
+// executions.
+const RUNTIME_EXECUTED_LIVENESS_TASK_COUNTS: &[u8] = &[3];
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct ProgressMetric {
     targetless_stale_without_diagnostic: u8,
@@ -55,6 +69,9 @@ struct SyntheticState {
     current_stale_overlap_present: bool,
     resume_exact_disagreement_present: bool,
 }
+
+type SyntheticCasePredicate = fn(&SyntheticState) -> bool;
+type RequiredSyntheticCase<'a> = (&'a str, SyntheticCasePredicate);
 
 impl SyntheticState {
     fn base(completed_tasks: u8) -> Self {
@@ -117,6 +134,8 @@ struct LivenessPlanExecutionStatus {
     #[serde(default)]
     recommended_public_command_argv: LivenessRecommendedPublicCommandArgv,
     #[serde(default)]
+    required_follow_up: Option<String>,
+    #[serde(default)]
     required_inputs: Vec<Value>,
     #[serde(default)]
     blocking_scope: Option<String>,
@@ -130,10 +149,71 @@ struct LivenessPlanExecutionStatus {
     resume_task: Option<u32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LivenessSemanticPublicCommandKey {
+    command_kind: LivenessPublicCommandKind,
+    task: Option<u32>,
+    step: Option<u32>,
+    mode: Option<String>,
+    transfer_mode: Option<String>,
+    transfer_scope: Option<String>,
+    source: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LivenessRouteSignature {
+    phase_detail: String,
+    review_state_status: String,
+    reason_codes: Vec<String>,
+    blocking_reason_codes: Vec<String>,
+    state_kind: String,
+    next_action: String,
+    recommended_public_command: Option<LivenessSemanticPublicCommandKey>,
+    required_follow_up: Option<String>,
+    required_input_names: Vec<String>,
+    blocking_scope: Option<String>,
+    active_task: Option<u32>,
+    blocking_task: Option<u32>,
+    resume_task: Option<u32>,
+    next_public_action_command: Option<String>,
+    blocker_categories: Vec<String>,
+    blocker_next_public_action_commands: Vec<Option<String>>,
+    public_repair_target_count: usize,
+}
+
 #[derive(Debug, Clone)]
 struct LivenessPublicCommand {
     argv: Vec<String>,
-    display: String,
+    kind: LivenessPublicCommandKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LivenessPublicCommandKind {
+    WorkflowOperator,
+    PlanExecutionBegin,
+    PlanExecutionCloseCurrentTask,
+    PlanExecutionComplete,
+    PlanExecutionReopen,
+    PlanExecutionTransfer,
+    PlanExecutionAdvanceLateStage,
+    PlanExecutionMaterializeProjections,
+    PlanExecutionRepairReviewState,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LivenessRuntimeRunner {
+    SemanticInProcess,
+    ShippedCli,
+}
+
+impl LivenessRuntimeRunner {
+    fn label(self) -> &'static str {
+        match self {
+            Self::SemanticInProcess => "semantic in-process public argv",
+            Self::ShippedCli => "shipped compiled CLI",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -146,12 +226,11 @@ struct LivenessBlocker {
     #[serde(default)]
     category: String,
     #[serde(default)]
-    next_public_action: Option<String>,
+    next_public_action: Option<LivenessNextPublicAction>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct LivenessExecutionCommandContext {
-    #[serde(default)]
     task_number: Option<u32>,
 }
 
@@ -403,28 +482,38 @@ fn write_variant_harness_state(fixture: &SyntheticFixtureContext<'_>, synthetic:
         };
 
     if synthetic.stale_boundary_present {
-        let stale_task = if synthetic.downstream_stale_step_present
+        let mut stale_tasks = Vec::new();
+        if synthetic.downstream_stale_step_present
+            && synthetic.downstream_interrupted_projection_present
             && boundary_task < u32::from(fixture.total_tasks)
         {
-            boundary_task.saturating_add(1)
+            stale_tasks.push(boundary_task);
+            stale_tasks.push(boundary_task.saturating_add(1));
+        } else if synthetic.downstream_stale_step_present
+            && boundary_task < u32::from(fixture.total_tasks)
+        {
+            stale_tasks.push(boundary_task.saturating_add(1));
         } else {
-            boundary_task
-        };
-        history_records.insert(format!("task-{stale_task}-stale"), {
-            let mut stale_record = closure_record(
-                "git_tree:0000000000000000000000000000000000000000",
-                fixture.task_contract_identities,
-                fixture.task_completion_lineages,
-                stale_task,
-            );
-            stale_record["closure_record_id"] = Value::from(format!("closure-{stale_task}-stale"));
-            stale_record["review_summary_hash"] = Value::from("cccccccc");
-            stale_record["verification_summary_hash"] = Value::from("dddddddd");
-            stale_record["closure_status"] = Value::from("stale_unreviewed");
-            stale_record["record_status"] = Value::from("stale_unreviewed");
-            stale_record["record_sequence"] = Value::from(0);
-            stale_record
-        });
+            stale_tasks.push(boundary_task);
+        }
+        for stale_task in stale_tasks {
+            history_records.insert(format!("task-{stale_task}-stale"), {
+                let mut stale_record = closure_record(
+                    "git_tree:0000000000000000000000000000000000000000",
+                    fixture.task_contract_identities,
+                    fixture.task_completion_lineages,
+                    stale_task,
+                );
+                stale_record["closure_record_id"] =
+                    Value::from(format!("closure-{stale_task}-stale"));
+                stale_record["review_summary_hash"] = Value::from("cccccccc");
+                stale_record["verification_summary_hash"] = Value::from("dddddddd");
+                stale_record["closure_status"] = Value::from("stale_unreviewed");
+                stale_record["record_status"] = Value::from("stale_unreviewed");
+                stale_record["record_sequence"] = Value::from(0);
+                stale_record
+            });
+        }
     }
 
     if synthetic.late_stage_blocker_present {
@@ -664,29 +753,150 @@ fn runtime_for_status(repo: &Path, state: &Path) -> ExecutionRuntime {
     runtime
 }
 
-fn status_value(runtime: &ExecutionRuntime, context: &str) -> LivenessPlanExecutionStatus {
-    let output = run_featureforge_real_cli(
+fn semantic_status_value(runtime: &ExecutionRuntime, context: &str) -> LivenessPlanExecutionStatus {
+    status_value_with_runner(runtime, context, LivenessRuntimeRunner::SemanticInProcess)
+}
+
+fn shipped_cli_status_value(
+    runtime: &ExecutionRuntime,
+    context: &str,
+) -> LivenessPlanExecutionStatus {
+    status_value_with_runner(runtime, context, LivenessRuntimeRunner::ShippedCli)
+}
+
+fn status_value_with_runner(
+    runtime: &ExecutionRuntime,
+    context: &str,
+    runner: LivenessRuntimeRunner,
+) -> LivenessPlanExecutionStatus {
+    let output = run_featureforge_public_argv_with_runner(
         runtime,
         ["plan", "execution", "status", "--plan", PLAN_REL],
         context,
+        runner,
     );
     assert!(
         output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        "{context} should succeed through {}, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        runner.label(),
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(
-            "{context} should emit liveness status JSON: {error}\nstdout:\n{}\nstderr:\n{}",
+            "{context} should emit liveness status JSON through {}: {error}\nstdout:\n{}\nstderr:\n{}",
+            runner.label(),
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         )
     })
 }
 
-fn migrate_variant_to_event_authority(state_path: &Path, context: &str) {
+fn route_signature(status: &LivenessPlanExecutionStatus) -> LivenessRouteSignature {
+    LivenessRouteSignature {
+        phase_detail: status.phase_detail.clone(),
+        review_state_status: status.review_state_status.clone(),
+        reason_codes: stable_reason_codes(&status.reason_codes),
+        blocking_reason_codes: stable_reason_codes(&status.blocking_reason_codes),
+        state_kind: status.state_kind.clone(),
+        next_action: status.next_action.clone(),
+        recommended_public_command: status
+            .recommended_public_command_argv
+            .as_deref()
+            .map(liveness_semantic_public_command_key),
+        required_follow_up: status.required_follow_up.clone(),
+        required_input_names: status
+            .required_inputs
+            .iter()
+            .map(|input| {
+                input
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<unnamed>")
+                    .to_owned()
+            })
+            .collect(),
+        blocking_scope: status.blocking_scope.clone(),
+        active_task: status.active_task,
+        blocking_task: status.blocking_task,
+        resume_task: status.resume_task,
+        next_public_action_command: status
+            .next_public_action
+            .as_ref()
+            .map(|action| action.command.clone()),
+        blocker_categories: status
+            .blockers
+            .iter()
+            .map(|blocker| blocker.category.clone())
+            .collect(),
+        blocker_next_public_action_commands: status
+            .blockers
+            .iter()
+            .map(|blocker| {
+                blocker
+                    .next_public_action
+                    .as_ref()
+                    .map(|action| action.command.clone())
+            })
+            .collect(),
+        public_repair_target_count: status.public_repair_targets.len(),
+    }
+}
+
+fn stable_reason_codes(reason_codes: &[String]) -> Vec<String> {
+    reason_codes
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn prepare_synthetic_liveness_fixture(
+    repo: &Path,
+    state: &Path,
+    total_tasks: u8,
+    completed_tasks: u8,
+    steps_per_task: u8,
+    synthetic: SyntheticState,
+    context_label: &str,
+) {
+    let state_path = harness_state_file_path(repo, state);
+    clear_liveness_authority(&state_path);
+    write_spec_and_plan(repo, total_tasks, completed_tasks, steps_per_task);
+    let task_contract_identities = task_contract_identities(repo, state, total_tasks);
+    let task_completion_lineages = task_completion_lineage_fingerprints(repo, state, total_tasks);
+    let context = semantic_execution_context(repo, state);
+    let branch_definition_identity =
+        featureforge::execution::semantic_identity::branch_definition_identity_for_context(
+            &context,
+        );
+    let repo_slug = context.runtime.repo_slug.clone();
+    let branch_name = context.runtime.branch_name.clone();
+    let reviewed_state_id = format!(
+        "git_tree:{}",
+        featureforge::execution::state::current_tracked_tree_sha(repo)
+            .expect("liveness fixture should resolve current tracked tree")
+    );
+    let fixture = SyntheticFixtureContext {
+        reviewed_state_id: &reviewed_state_id,
+        state_path: &state_path,
+        total_tasks,
+        task_contract_identities: &task_contract_identities,
+        task_completion_lineages: &task_completion_lineages,
+        branch_definition_identity: &branch_definition_identity,
+        repo_slug: &repo_slug,
+        branch_name: &branch_name,
+    };
+    write_variant_harness_state(&fixture, synthetic);
+    apply_synthetic_worktree_variants(repo, synthetic);
+    synthetic_migrate_variant_to_event_authority(&state_path, context_label);
+}
+
+fn synthetic_migrate_variant_to_event_authority(state_path: &Path, context: &str) {
+    // Synthetic model-state generation only: each generated authority snapshot
+    // is then exercised through exact public command parsing/runtime edges for liveness.
     let payload: Value = serde_json::from_str(
         &std::fs::read_to_string(state_path).unwrap_or_else(|error| {
             panic!("{context} should read synthetic state fixture: {error}")
@@ -722,7 +932,7 @@ fn apply_synthetic_worktree_variants(repo: &Path, synthetic: SyntheticState) {
 
 fn contains_hidden_command_token(command: &str) -> bool {
     [
-        &[" workflow record-pivot "][..],
+        &[" workflow ", "record", "-pivot "][..],
         &[" plan execution ", "pre", "flight "],
         &[" plan execution recommend "],
         &[" plan execution ", "record", "-review-dispatch "],
@@ -925,24 +1135,25 @@ fn public_edge_satisfies_liveness_contract(
     if after < before {
         return true;
     }
-    if let (Some(before_command), Some(after_command)) = (
-        materialized_status_command(before_status),
-        materialized_status_command(after_status),
-    ) && before_command == after_command
-        && is_public_mutation_repeat_guard_command(after_status, &after_command)
+    if let (Some(before_argv), Some(after_argv)) = (
+        before_status.recommended_public_command_argv.as_deref(),
+        after_status.recommended_public_command_argv.as_deref(),
+    ) && semantic_public_mutation_key(before_status, before_argv)
+        == semantic_public_mutation_key(after_status, after_argv)
+        && is_public_mutation_repeat_guard_command(after_status, after_argv)
     {
         return false;
     }
-    if let (Some(before_command), Some(after_command)) = (
-        materialized_status_command(before_status),
-        materialized_status_command(after_status),
-    ) && semantic_public_mutation_key(&before_command)
-        != semantic_public_mutation_key(&after_command)
-        && is_public_mutation_repeat_guard_command(after_status, &after_command)
+    if let (Some(before_argv), Some(after_argv)) = (
+        before_status.recommended_public_command_argv.as_deref(),
+        after_status.recommended_public_command_argv.as_deref(),
+    ) && semantic_public_mutation_key(before_status, before_argv)
+        != semantic_public_mutation_key(after_status, after_argv)
+        && is_public_mutation_repeat_guard_command(after_status, after_argv)
     {
         return true;
     }
-    if after_status.recommended_command == before_status.recommended_command
+    if after_status.recommended_public_command_argv == before_status.recommended_public_command_argv
         && after_status.phase_detail == before_status.phase_detail
         && after_status.blocking_reason_codes == before_status.blocking_reason_codes
     {
@@ -986,12 +1197,97 @@ fn display_status_command(status: &LivenessPlanExecutionStatus) -> Option<String
             status
                 .blockers
                 .iter()
-                .find_map(|blocker| blocker.next_public_action.clone())
+                .filter_map(|blocker| blocker.next_public_action.as_ref())
+                .map(|action| action.command.clone())
+                .next()
         })
 }
 
 fn exact_public_argv_display(argv: &[String]) -> String {
     argv.join(" ")
+}
+
+fn public_command_kind_from_argv(argv: &[String]) -> LivenessPublicCommandKind {
+    match argv
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["featureforge", "workflow", "operator", ..] => LivenessPublicCommandKind::WorkflowOperator,
+        ["featureforge", "plan", "execution", "begin", ..] => {
+            LivenessPublicCommandKind::PlanExecutionBegin
+        }
+        [
+            "featureforge",
+            "plan",
+            "execution",
+            "close-current-task",
+            ..,
+        ] => LivenessPublicCommandKind::PlanExecutionCloseCurrentTask,
+        ["featureforge", "plan", "execution", "complete", ..] => {
+            LivenessPublicCommandKind::PlanExecutionComplete
+        }
+        ["featureforge", "plan", "execution", "reopen", ..] => {
+            LivenessPublicCommandKind::PlanExecutionReopen
+        }
+        ["featureforge", "plan", "execution", "transfer", ..] => {
+            LivenessPublicCommandKind::PlanExecutionTransfer
+        }
+        [
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            ..,
+        ] => LivenessPublicCommandKind::PlanExecutionAdvanceLateStage,
+        [
+            "featureforge",
+            "plan",
+            "execution",
+            "materialize-projections",
+            ..,
+        ] => LivenessPublicCommandKind::PlanExecutionMaterializeProjections,
+        [
+            "featureforge",
+            "plan",
+            "execution",
+            "repair-review-state",
+            ..,
+        ] => LivenessPublicCommandKind::PlanExecutionRepairReviewState,
+        _ => LivenessPublicCommandKind::Other,
+    }
+}
+
+fn liveness_semantic_public_command_key(argv: &[String]) -> LivenessSemanticPublicCommandKey {
+    LivenessSemanticPublicCommandKey {
+        command_kind: public_command_kind_from_argv(argv),
+        task: argv_flag_value(argv, "--task")
+            .or_else(|| argv_flag_value(argv, "--repair-task"))
+            .and_then(|value| value.parse().ok()),
+        step: argv_flag_value(argv, "--step")
+            .or_else(|| argv_flag_value(argv, "--repair-step"))
+            .and_then(|value| value.parse().ok()),
+        mode: argv_flag_value(argv, "--mode").map(str::to_owned),
+        transfer_mode: liveness_transfer_mode_for_argv(argv),
+        transfer_scope: argv_flag_value(argv, "--scope").map(str::to_owned),
+        source: argv_flag_value(argv, "--source").map(str::to_owned),
+    }
+}
+
+fn liveness_transfer_mode_for_argv(argv: &[String]) -> Option<String> {
+    if public_command_kind_from_argv(argv) != LivenessPublicCommandKind::PlanExecutionTransfer {
+        return argv_flag_value(argv, "--transfer-mode").map(str::to_owned);
+    }
+    if argv_flag_value(argv, "--repair-task").is_some()
+        || argv_flag_value(argv, "--repair-step").is_some()
+    {
+        return Some(String::from("repair-step"));
+    }
+    if argv_flag_value(argv, "--scope").is_some() {
+        return Some(String::from("workflow-handoff"));
+    }
+    argv_flag_value(argv, "--transfer-mode").map(str::to_owned)
 }
 
 fn exact_public_command_from_status(
@@ -1002,7 +1298,7 @@ fn exact_public_command_from_status(
         .as_ref()
         .map(|argv| LivenessPublicCommand {
             argv: argv.clone(),
-            display: exact_public_argv_display(argv),
+            kind: public_command_kind_from_argv(argv),
         })
 }
 
@@ -1013,51 +1309,72 @@ fn status_missing_public_inputs(status: &LivenessPlanExecutionStatus) -> bool {
 fn exact_public_progress_command(
     runtime: &ExecutionRuntime,
     status: &LivenessPlanExecutionStatus,
+    runner: LivenessRuntimeRunner,
 ) -> Option<LivenessPublicCommand> {
     if let Some(command) = exact_public_command_from_status(status) {
         return Some(command);
     }
-    workflow_operator_recommended_public_command_real_cli(runtime)
+    workflow_operator_recommended_public_command(runtime, runner)
         .ok()
         .flatten()
 }
 
-fn execute_public_progress_edge(
+fn execute_semantic_public_progress_edge(
     runtime: &ExecutionRuntime,
-    _state: &Path,
     status: &LivenessPlanExecutionStatus,
 ) -> Result<Option<LivenessPlanExecutionStatus>, String> {
-    let Some(command) = exact_public_progress_command(runtime, status) else {
+    execute_public_progress_edge_with_runner(
+        runtime,
+        status,
+        LivenessRuntimeRunner::SemanticInProcess,
+    )
+}
+
+fn execute_public_progress_edge_with_runner(
+    runtime: &ExecutionRuntime,
+    status: &LivenessPlanExecutionStatus,
+    runner: LivenessRuntimeRunner,
+) -> Result<Option<LivenessPlanExecutionStatus>, String> {
+    let Some(command) = exact_public_progress_command(runtime, status, runner) else {
         return Ok(None);
     };
-    execute_exact_public_command(runtime, status, &command.argv)?;
-    Ok(Some(status_value(
+    execute_exact_public_command_with_runner(runtime, status, &command.argv, runner)?;
+    Ok(Some(status_value_with_runner(
         runtime,
-        &format!("liveness successor after `{}`", command.display),
+        &format!(
+            "liveness successor after {} edge `{}`",
+            runner.label(),
+            exact_public_argv_display(&command.argv)
+        ),
+        runner,
     )))
 }
 
-fn execute_exact_public_command(
+fn execute_exact_public_command_with_runner(
     runtime: &ExecutionRuntime,
     status: &LivenessPlanExecutionStatus,
     argv: &[String],
+    runner: LivenessRuntimeRunner,
 ) -> Result<(), String> {
     assert_exact_public_argv_is_executable(argv)?;
     let words = argv.iter().map(String::as_str).collect::<Vec<_>>();
     match words.as_slice() {
         ["featureforge", "workflow", "operator", ..] => {
             let exact_args = argv[1..].iter().map(String::as_str);
-            let exact_output = run_featureforge_real_cli(
+            let exact_output = run_featureforge_public_argv_with_runner(
                 runtime,
                 exact_args,
                 &format!(
-                    "liveness exact public edge `{}`",
+                    "liveness exact {} edge `{}`",
+                    runner.label(),
                     exact_public_argv_display(argv)
                 ),
+                runner,
             );
             if !exact_output.status.success() {
                 return Err(format!(
-                    "workflow operator exact public edge failed: {}\nstdout:\n{}\nstderr:\n{}",
+                    "workflow operator exact {} edge failed: {}\nstdout:\n{}\nstderr:\n{}",
+                    runner.label(),
                     exact_public_argv_display(argv),
                     String::from_utf8_lossy(&exact_output.stdout),
                     String::from_utf8_lossy(&exact_output.stderr)
@@ -1066,7 +1383,8 @@ fn execute_exact_public_command(
             let operator_value: Value = serde_json::from_slice(&exact_output.stdout).map_err(
                 |error| {
                     format!(
-                        "workflow operator exact public edge should emit JSON from exact argv `{}`: {error}\nstdout:\n{}\nstderr:\n{}",
+                        "workflow operator exact {} edge should emit JSON from exact argv `{}`: {error}\nstdout:\n{}\nstderr:\n{}",
+                        runner.label(),
                         exact_public_argv_display(argv),
                         String::from_utf8_lossy(&exact_output.stdout),
                         String::from_utf8_lossy(&exact_output.stderr)
@@ -1076,42 +1394,55 @@ fn execute_exact_public_command(
             let Some(operator_command) = public_command_from_json_value(
                 &operator_value,
                 &format!(
-                    "workflow operator exact public edge `{}`",
+                    "workflow operator exact {} edge `{}`",
+                    runner.label(),
                     exact_public_argv_display(argv)
                 ),
             )?
             else {
                 return Err(String::from(
-                    "workflow operator public edge did not return a concrete successor argv",
+                    "workflow operator public argv edge did not return a concrete successor argv",
                 ));
             };
-            if is_workflow_operator_command(&operator_command.display) {
+            if operator_command.kind == LivenessPublicCommandKind::WorkflowOperator {
                 return Err(format!(
-                    "workflow operator public edge looped back to itself instead of surfacing a concrete successor: {}",
-                    operator_command.display
+                    "workflow operator public argv edge looped back to itself instead of surfacing a concrete successor: {}",
+                    exact_public_argv_display(&operator_command.argv)
                 ));
             }
             let mut routed_status = status.clone();
-            routed_status.recommended_command = Some(operator_command.display.clone());
+            routed_status.recommended_command =
+                Some(exact_public_argv_display(&operator_command.argv));
             routed_status.recommended_public_command_argv = Some(operator_command.argv.clone());
             routed_status.required_inputs.clear();
             routed_status.next_public_action = None;
             routed_status.blockers.clear();
-            execute_exact_public_command(runtime, &routed_status, &operator_command.argv)
+            execute_exact_public_command_with_runner(
+                runtime,
+                &routed_status,
+                &operator_command.argv,
+                runner,
+            )
         }
         ["featureforge", "plan", "execution", args @ ..] => {
-            let output = run_featureforge_real_cli(
+            let output = run_featureforge_public_argv_with_runner(
                 runtime,
                 std::iter::once("plan")
                     .chain(std::iter::once("execution"))
                     .chain(args.iter().copied()),
-                &format!("liveness public edge `{}`", exact_public_argv_display(argv)),
+                &format!(
+                    "liveness {} edge `{}`",
+                    runner.label(),
+                    exact_public_argv_display(argv)
+                ),
+                runner,
             );
             if output.status.success() {
                 Ok(())
             } else {
                 Err(format!(
-                    "liveness public edge failed: {}\nstatus_phase_detail={}\nstatus_recommended_command={:?}\nstdout:\n{}\nstderr:\n{}",
+                    "liveness {} edge failed: {}\nstatus_phase_detail={}\nstatus_recommended_command={:?}\nstdout:\n{}\nstderr:\n{}",
+                    runner.label(),
                     exact_public_argv_display(argv),
                     status.phase_detail,
                     status.recommended_command,
@@ -1121,30 +1452,33 @@ fn execute_exact_public_command(
             }
         }
         _ => Err(format!(
-            "liveness public edge is not a supported public FeatureForge command: {}",
+            "liveness public argv edge is not a supported public FeatureForge command: {}",
             exact_public_argv_display(argv)
         )),
     }
 }
 
-fn workflow_operator_recommended_public_command_real_cli(
+fn workflow_operator_recommended_public_command(
     runtime: &ExecutionRuntime,
+    runner: LivenessRuntimeRunner,
 ) -> Result<Option<LivenessPublicCommand>, String> {
-    let output = run_featureforge_real_cli(
+    let output = run_featureforge_public_argv_with_runner(
         runtime,
         ["workflow", "operator", "--plan", PLAN_REL, "--json"],
-        "liveness workflow operator public edge",
+        "liveness workflow operator public argv edge",
+        runner,
     );
     if !output.status.success() {
         return Err(format!(
-            "workflow operator public edge failed\nstdout:\n{}\nstderr:\n{}",
+            "workflow operator {} edge failed\nstdout:\n{}\nstderr:\n{}",
+            runner.label(),
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ));
     }
     let value: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("workflow operator public edge should emit JSON: {error}"))?;
-    public_command_from_json_value(&value, "workflow operator public edge")
+        .map_err(|error| format!("workflow operator public argv edge should emit JSON: {error}"))?;
+    public_command_from_json_value(&value, "workflow operator public argv edge")
 }
 
 fn public_command_from_json_value(
@@ -1171,6 +1505,7 @@ fn public_command_from_json_value(
                     blockers.iter().any(|blocker| {
                         blocker
                             .get("next_public_action")
+                            .and_then(|action| action.get("command"))
                             .and_then(Value::as_str)
                             .is_some()
                     })
@@ -1202,11 +1537,7 @@ fn public_command_from_json_value(
         .collect::<Result<Vec<_>, _>>()?;
     assert_exact_public_argv_is_executable(&argv)?;
     Ok(Some(LivenessPublicCommand {
-        display: value
-            .get("recommended_command")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .unwrap_or_else(|| exact_public_argv_display(&argv)),
+        kind: public_command_kind_from_argv(&argv),
         argv,
     }))
 }
@@ -1236,30 +1567,34 @@ fn assert_exact_public_argv_is_executable(argv: &[String]) -> Result<(), String>
     Ok(())
 }
 
-fn run_featureforge_real_cli<'a>(
+fn run_featureforge_public_argv_with_runner<'a>(
     runtime: &ExecutionRuntime,
     args: impl IntoIterator<Item = &'a str>,
     context: &str,
+    runner: LivenessRuntimeRunner,
 ) -> std::process::Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_featureforge"));
-    command
-        .current_dir(&runtime.repo_root)
-        .env("FEATUREFORGE_STATE_DIR", &runtime.state_dir)
-        .args(args);
-    process_support::run(command, context)
-}
-
-fn is_workflow_operator_command(command: &str) -> bool {
-    shlex::split(command).is_some_and(|parts| {
-        matches!(
-            parts
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .as_slice(),
-            ["featureforge", "workflow", "operator", ..]
-        )
-    })
+    let args = args.into_iter().collect::<Vec<_>>();
+    match runner {
+        LivenessRuntimeRunner::SemanticInProcess => {
+            semantic_public_argv_runtime::run_semantic_public_argv_in_process(
+                &runtime.repo_root,
+                &runtime.state_dir,
+                args.iter().copied(),
+                context,
+            )
+        }
+        LivenessRuntimeRunner::ShippedCli => {
+            public_featureforge_cli::run_featureforge_with_env_control_real_cli(
+                Some(&runtime.repo_root),
+                Some(&runtime.state_dir),
+                None,
+                &[],
+                &[],
+                &args,
+                context,
+            )
+        }
+    }
 }
 
 fn public_argv_part_has_template_token(part: &str) -> bool {
@@ -1287,25 +1622,22 @@ fn public_argv_part_has_template_token(part: &str) -> bool {
     })
 }
 
-fn reopen_target(command: &str) -> Option<(u32, u32)> {
-    let parts = shlex::split(command)?;
-    let words = parts.iter().map(String::as_str).collect::<Vec<_>>();
+fn argv_flag_value<'a>(argv: &'a [String], flag: &str) -> Option<&'a str> {
+    argv.windows(2)
+        .find_map(|window| (window[0] == flag).then_some(window[1].as_str()))
+}
+
+fn reopen_target(argv: &[String]) -> Option<(u32, u32)> {
+    let words = argv.iter().map(String::as_str).collect::<Vec<_>>();
     if !words
         .windows(3)
         .any(|window| window == ["plan", "execution", "reopen"])
     {
         return None;
     }
-    let task = flag_value_u32(&words, "--task")?;
-    let step = flag_value_u32(&words, "--step")?;
+    let task = argv_flag_value(argv, "--task")?.parse::<u32>().ok()?;
+    let step = argv_flag_value(argv, "--step")?.parse::<u32>().ok()?;
     Some((task, step))
-}
-
-fn flag_value_u32(words: &[&str], flag: &str) -> Option<u32> {
-    words
-        .windows(2)
-        .find_map(|window| (window[0] == flag).then_some(window[1]))
-        .and_then(|value| value.parse::<u32>().ok())
 }
 
 fn substantive_repo_work_invalidates_current_closure(synthetic: SyntheticState) -> bool {
@@ -1315,16 +1647,17 @@ fn substantive_repo_work_invalidates_current_closure(synthetic: SyntheticState) 
 fn assert_no_same_current_task_reopen_without_substantive_work(
     label: &str,
     synthetic: SyntheticState,
-    command: &str,
+    argv: &[String],
 ) {
     if synthetic.completed_tasks == 0
         || substantive_repo_work_invalidates_current_closure(synthetic)
     {
         return;
     }
-    let Some((task, step)) = reopen_target(command) else {
+    let Some((task, step)) = reopen_target(argv) else {
         return;
     };
+    let command = exact_public_argv_display(argv);
     assert!(
         task > u32::from(synthetic.completed_tasks),
         "{label} must not recommend reopening already-current Task {task} Step {step} without substantive repo work invalidating that closure; command={command}"
@@ -1334,31 +1667,32 @@ fn assert_no_same_current_task_reopen_without_substantive_work(
 fn assert_multistep_reopen_uses_shared_exact_command_semantics(
     label: &str,
     synthetic: SyntheticState,
-    command: &str,
+    argv: &[String],
 ) {
     if synthetic.steps_per_task <= 1 || synthetic.completed_tasks == 0 {
         return;
     }
-    let Some((task, step)) = reopen_target(command) else {
+    let Some((task, step)) = reopen_target(argv) else {
         return;
     };
     if task > u32::from(synthetic.completed_tasks) {
         return;
     }
+    let command = exact_public_argv_display(argv);
     assert_eq!(
         step,
         u32::from(synthetic.steps_per_task),
         "{label} must reopen the latest attempted step for completed multi-step Task {task}; command={command}"
     );
     assert!(
-        command.contains("--source featureforge:executing-plans"),
+        argv_flag_value(argv, "--source") == Some("featureforge:executing-plans"),
         "{label} must derive reopen source from the shared exact-command execution mode; command={command}"
     );
 }
 
-fn assert_reopen_liveness_contract(label: &str, synthetic: SyntheticState, command: &str) {
-    assert_no_same_current_task_reopen_without_substantive_work(label, synthetic, command);
-    assert_multistep_reopen_uses_shared_exact_command_semantics(label, synthetic, command);
+fn assert_reopen_liveness_contract(label: &str, synthetic: SyntheticState, argv: &[String]) {
+    assert_no_same_current_task_reopen_without_substantive_work(label, synthetic, argv);
+    assert_multistep_reopen_uses_shared_exact_command_semantics(label, synthetic, argv);
 }
 
 fn assert_targetless_stale_does_not_fabricate_current_task(
@@ -1386,13 +1720,30 @@ fn assert_targetless_stale_does_not_fabricate_current_task(
     );
 }
 
-fn is_repair_review_state_command(command: &str) -> bool {
-    shlex::split(command).is_some_and(|parts| {
-        let words = parts.iter().map(String::as_str).collect::<Vec<_>>();
-        words
-            .windows(3)
-            .any(|window| window == ["plan", "execution", "repair-review-state"])
-    })
+fn assert_earliest_stale_boundary_preempts_later_overlay(
+    label: &str,
+    synthetic: SyntheticState,
+    status: &LivenessPlanExecutionStatus,
+) {
+    if !(synthetic.stale_boundary_present
+        && synthetic.downstream_stale_step_present
+        && synthetic.downstream_interrupted_projection_present)
+        || status.review_state_status != "stale_unreviewed"
+        || status.stale_unreviewed_closures.is_empty()
+        || is_diagnostic_status(status)
+    {
+        return;
+    }
+    let earliest_task = u32::from(synthetic.completed_tasks.max(1));
+    assert_eq!(
+        status.blocking_task,
+        Some(earliest_task),
+        "{label} must converge on the earliest unresolved stale boundary before later stale/interrupted overlays: {status:?}"
+    );
+}
+
+fn is_repair_review_state_command(argv: &[String]) -> bool {
+    public_command_kind_from_argv(argv) == LivenessPublicCommandKind::PlanExecutionRepairReviewState
 }
 
 fn assert_repair_review_state_successor_contract(
@@ -1400,7 +1751,8 @@ fn assert_repair_review_state_successor_contract(
     before: &LivenessPlanExecutionStatus,
     after: &LivenessPlanExecutionStatus,
 ) {
-    let same_tuple = after.recommended_command == before.recommended_command
+    let same_tuple = after.recommended_public_command_argv
+        == before.recommended_public_command_argv
         && after.phase_detail == before.phase_detail
         && after.blocking_reason_codes == before.blocking_reason_codes;
     assert!(
@@ -1434,13 +1786,25 @@ fn assert_repair_review_state_successor_contract(
             .as_ref()
             .and_then(|context| context.task_number)
             .is_some()
+        || before.blocking_task.zip(after.blocking_task).is_some_and(
+            |(before_task, after_task)| {
+                after_task > before_task
+                    && earlier_stale_boundary_consumed(before, before_task, after)
+            },
+        )
         || after.state_kind == "waiting_external_input"
-        || after.recommended_command.as_deref().is_some_and(|command| {
-            command.contains(" begin ")
-                || command.contains(" complete ")
-                || command.contains(" reopen ")
-                || command.contains(" close-current-task ")
-        });
+        || after
+            .recommended_public_command_argv
+            .as_ref()
+            .is_some_and(|argv| {
+                matches!(
+                    public_command_kind_from_argv(argv),
+                    LivenessPublicCommandKind::PlanExecutionBegin
+                        | LivenessPublicCommandKind::PlanExecutionComplete
+                        | LivenessPublicCommandKind::PlanExecutionReopen
+                        | LivenessPublicCommandKind::PlanExecutionCloseCurrentTask
+                )
+            });
 
     assert!(
         records_closure || records_late_stage || diagnostic || advances,
@@ -1448,14 +1812,35 @@ fn assert_repair_review_state_successor_contract(
     );
 }
 
-fn public_command_kind(command: &str) -> Option<String> {
-    let parts = shlex::split(command)?;
-    let words = parts.iter().map(String::as_str).collect::<Vec<_>>();
-    match words.as_slice() {
-        ["featureforge", "workflow", "operator", ..] => Some(String::from("workflow operator")),
-        ["featureforge", "plan", "execution", command_kind, ..] => Some((*command_kind).to_owned()),
-        _ => None,
+fn earlier_stale_boundary_consumed(
+    before: &LivenessPlanExecutionStatus,
+    before_task: u32,
+    after: &LivenessPlanExecutionStatus,
+) -> bool {
+    if before.review_state_status != "stale_unreviewed"
+        || before.blocking_task != Some(before_task)
+        || before.stale_unreviewed_closures.is_empty()
+    {
+        return true;
     }
+    after.review_state_status != "stale_unreviewed"
+        || after.stale_unreviewed_closures.is_empty()
+        || !status_stale_closure_ids_reference_task(after, before_task)
+}
+
+fn status_stale_closure_ids_reference_task(
+    status: &LivenessPlanExecutionStatus,
+    task: u32,
+) -> bool {
+    let task_marker = format!("task-{task}");
+    let closure_marker = format!("closure-{task}");
+    status.stale_unreviewed_closures.iter().any(|record_id| {
+        record_id == &task_marker
+            || record_id.starts_with(&format!("{task_marker}-"))
+            || record_id.contains(&format!("-{task}-"))
+            || record_id == &closure_marker
+            || record_id.starts_with(&format!("{closure_marker}-"))
+    })
 }
 
 fn reaches_real_work_or_wait(status: &LivenessPlanExecutionStatus) -> bool {
@@ -1495,7 +1880,7 @@ fn assert_diagnostic_status_shape(label: &str, status: &LivenessPlanExecutionSta
         "{label} diagnostic status must not expose route blockers: {status:?}"
     );
     assert_ne!(
-        status.next_action, "repair review state / reenter execution",
+        status.next_action, "repair review state",
         "{label} diagnostic status must not publish repair/reentry next_action wording: {status:?}"
     );
     assert_eq!(
@@ -1504,23 +1889,29 @@ fn assert_diagnostic_status_shape(label: &str, status: &LivenessPlanExecutionSta
     );
 }
 
-fn is_legal_real_work_command(command: &str) -> bool {
-    public_command_kind(command)
-        .is_some_and(|kind| matches!(kind.as_str(), "begin" | "complete" | "reopen" | "transfer"))
+fn is_legal_real_work_command(argv: &[String]) -> bool {
+    matches!(
+        public_command_kind_from_argv(argv),
+        LivenessPublicCommandKind::PlanExecutionBegin
+            | LivenessPublicCommandKind::PlanExecutionComplete
+            | LivenessPublicCommandKind::PlanExecutionReopen
+            | LivenessPublicCommandKind::PlanExecutionTransfer
+    )
 }
 
 fn is_replayable_real_work_command(
     synthetic: SyntheticState,
     _status: &LivenessPlanExecutionStatus,
-    command: &str,
+    argv: &[String],
 ) -> bool {
-    match public_command_kind(command).as_deref() {
-        Some("begin" | "transfer") => true,
+    match public_command_kind_from_argv(argv) {
+        LivenessPublicCommandKind::PlanExecutionBegin
+        | LivenessPublicCommandKind::PlanExecutionTransfer => true,
         // Completing a step is a human-work boundary. Bounded liveness stops
         // there unless the runtime emits a fully-bound executable argv for
         // substantive task work.
-        Some("complete") => false,
-        Some("reopen") => reopen_target(command)
+        LivenessPublicCommandKind::PlanExecutionComplete => false,
+        LivenessPublicCommandKind::PlanExecutionReopen => reopen_target(argv)
             .is_some_and(|(task, _step)| task <= u32::from(synthetic.completed_tasks)),
         _ => false,
     }
@@ -1528,105 +1919,118 @@ fn is_replayable_real_work_command(
 
 fn command_requires_external_result_input(
     status: &LivenessPlanExecutionStatus,
-    command: &str,
+    argv: &[String],
 ) -> bool {
-    match public_command_kind(command).as_deref() {
-        Some("close-current-task") => true,
-        Some("advance-late-stage") => {
+    match public_command_kind_from_argv(argv) {
+        LivenessPublicCommandKind::PlanExecutionCloseCurrentTask => true,
+        LivenessPublicCommandKind::PlanExecutionAdvanceLateStage => {
             matches!(
                 status.phase_detail.as_str(),
                 "release_readiness_recording_ready"
                     | "release_blocker_resolution_required"
                     | "final_review_recording_ready"
                     | "qa_recording_required"
-            ) && (!command.contains("--result")
-                || command.contains("ready|blocked")
-                || command.contains("pass|fail")
-                || command.contains("<path>")
-                || command.contains("<source>")
-                || command.contains("<id>"))
+            ) && (argv_flag_value(argv, "--result").is_none()
+                || argv
+                    .iter()
+                    .any(|part| public_argv_part_has_template_token(part)))
         }
         _ => false,
     }
 }
 
-fn assert_public_command_is_safe(label: &str, command: &str) {
+fn assert_public_command_is_safe(label: &str, argv: &[String]) {
+    let command = exact_public_argv_display(argv);
     assert!(
-        command.starts_with("featureforge "),
-        "{label} recommended command must remain public: {command}"
+        argv.first().map(String::as_str) == Some("featureforge"),
+        "{label} recommended argv must remain public: {command}"
     );
     assert!(
-        !contains_hidden_command_token(command),
+        !contains_hidden_command_token(&command),
         "{label} recommended command must not route through hidden command lanes: {command}"
     );
 }
 
-fn liveness_route_key(status: &LivenessPlanExecutionStatus, command: &str) -> String {
+fn liveness_route_key(status: &LivenessPlanExecutionStatus, argv: &[String]) -> String {
     format!(
-        "phase={};command={};scope={:?};task={:?};reasons={:?};blocking_reasons={:?}",
+        "phase={};review={};state={};follow_up={:?};command={:?};scope={:?};task={:?};step={:?};reasons={:?};blocking_reasons={:?}",
         status.phase_detail,
-        command,
+        status.review_state_status,
+        status.state_kind,
+        status.required_follow_up,
+        liveness_semantic_public_command_key(argv),
         status.blocking_scope,
         status.blocking_task,
-        status.reason_codes,
-        status.blocking_reason_codes
+        argv_flag_value(argv, "--step").and_then(|value| value.parse::<u32>().ok()),
+        stable_reason_codes(&status.reason_codes),
+        stable_reason_codes(&status.blocking_reason_codes)
     )
 }
 
 fn is_runtime_management_mutation_command(
     status: &LivenessPlanExecutionStatus,
-    command: &str,
+    argv: &[String],
 ) -> bool {
-    if is_legal_real_work_command(command)
-        || command_requires_external_result_input(status, command)
-    {
+    if is_legal_real_work_command(argv) || command_requires_external_result_input(status, argv) {
         return false;
     }
 
-    public_command_kind(command).is_some_and(|kind| {
-        matches!(
-            kind.as_str(),
-            "advance-late-stage" | "materialize-projections" | "repair-review-state"
-        )
-    })
+    matches!(
+        public_command_kind_from_argv(argv),
+        LivenessPublicCommandKind::PlanExecutionAdvanceLateStage
+            | LivenessPublicCommandKind::PlanExecutionMaterializeProjections
+            | LivenessPublicCommandKind::PlanExecutionRepairReviewState
+    )
 }
 
 fn is_public_mutation_repeat_guard_command(
     status: &LivenessPlanExecutionStatus,
-    command: &str,
+    argv: &[String],
 ) -> bool {
-    if command_requires_external_result_input(status, command) {
+    if command_requires_external_result_input(status, argv) {
         return false;
     }
 
-    public_command_kind(command).is_some_and(|kind| {
-        matches!(
-            kind.as_str(),
-            "advance-late-stage"
-                | "begin"
-                | "complete"
-                | "materialize-projections"
-                | "reopen"
-                | "repair-review-state"
-                | "transfer"
-        )
-    })
+    matches!(
+        public_command_kind_from_argv(argv),
+        LivenessPublicCommandKind::PlanExecutionAdvanceLateStage
+            | LivenessPublicCommandKind::PlanExecutionBegin
+            | LivenessPublicCommandKind::PlanExecutionComplete
+            | LivenessPublicCommandKind::PlanExecutionMaterializeProjections
+            | LivenessPublicCommandKind::PlanExecutionReopen
+            | LivenessPublicCommandKind::PlanExecutionRepairReviewState
+            | LivenessPublicCommandKind::PlanExecutionTransfer
+    )
 }
 
-fn semantic_public_mutation_key(command: &str) -> String {
-    command.to_owned()
+fn semantic_public_mutation_key(status: &LivenessPlanExecutionStatus, argv: &[String]) -> String {
+    let command = liveness_semantic_public_command_key(argv);
+    if public_command_kind_from_argv(argv)
+        == LivenessPublicCommandKind::PlanExecutionRepairReviewState
+    {
+        let execution_task = status
+            .execution_command_context
+            .as_ref()
+            .and_then(|context| context.task_number);
+        return format!(
+            "{command:?};blocking_task={:?};execution_task={:?}",
+            status.blocking_task, execution_task
+        );
+    }
+    format!("{command:?}")
 }
 
 fn remember_public_mutation_command(
     seen_commands: &mut BTreeSet<String>,
     status: &LivenessPlanExecutionStatus,
-    command: &str,
+    argv: &[String],
 ) -> Result<(), String> {
-    if is_public_mutation_repeat_guard_command(status, command)
-        && !seen_commands.insert(semantic_public_mutation_key(command))
+    if is_public_mutation_repeat_guard_command(status, argv)
+        && !seen_commands.insert(semantic_public_mutation_key(status, argv))
     {
         return Err(format!(
-            "repeated public mutation before convergence: {command}"
+            "repeated public mutation before convergence: {}",
+            exact_public_argv_display(argv)
         ));
     }
     Ok(())
@@ -1634,7 +2038,6 @@ fn remember_public_mutation_command(
 
 struct BoundedLivenessContext<'a> {
     runtime: &'a ExecutionRuntime,
-    state: &'a Path,
     total_tasks: u8,
     label: &'a str,
     synthetic: SyntheticState,
@@ -1644,7 +2047,7 @@ fn assert_bounded_runtime_management_path_converges(
     context: &BoundedLivenessContext<'_>,
     first_status: &LivenessPlanExecutionStatus,
     first_successor: &LivenessPlanExecutionStatus,
-    first_command: Option<&str>,
+    first_command: Option<&[String]>,
 ) {
     let mut seen_route_keys = BTreeSet::new();
     let mut seen_public_mutation_commands = BTreeSet::new();
@@ -1666,9 +2069,9 @@ fn assert_bounded_runtime_management_path_converges(
             return;
         }
 
-        let maybe_command = materialized_status_command(&current);
+        let maybe_command = current.recommended_public_command_argv.as_deref();
         if reaches_real_work_or_wait(&current)
-            && maybe_command.as_deref().is_none_or(|command| {
+            && maybe_command.is_none_or(|command| {
                 !is_replayable_real_work_command(context.synthetic, &current, command)
             })
         {
@@ -1681,36 +2084,37 @@ fn assert_bounded_runtime_management_path_converges(
                 context.label
             )
         });
-        assert_public_command_is_safe(context.label, &command);
-        assert_reopen_liveness_contract(context.label, context.synthetic, &command);
-        let route_key = liveness_route_key(&current, &command);
+        assert_public_command_is_safe(context.label, command);
+        assert_reopen_liveness_contract(context.label, context.synthetic, command);
+        let route_key = liveness_route_key(&current, command);
         assert!(
             seen_route_keys.insert(route_key.clone()),
             "{} repeated the same public route tuple after an intervening edge instead of converging; repeated={route_key}; previous={previous:?}; current={current:?}",
             context.label
         );
-        remember_public_mutation_command(&mut seen_public_mutation_commands, &current, &command)
+        remember_public_mutation_command(&mut seen_public_mutation_commands, &current, command)
             .unwrap_or_else(|error| {
                 panic!(
                     "{} {error}; previous={previous:?}; current={current:?}",
                     context.label
                 )
             });
-        if command_requires_external_result_input(&current, &command) {
+        if command_requires_external_result_input(&current, command) {
             return;
         }
-        if is_legal_real_work_command(&command)
-            && !is_replayable_real_work_command(context.synthetic, &current, &command)
+        if is_legal_real_work_command(command)
+            && !is_replayable_real_work_command(context.synthetic, &current, command)
         {
             return;
         }
 
         let before = progress_metric_from_status(&current, context.total_tasks);
-        let successor = execute_public_progress_edge(context.runtime, context.state, &current)
+        let successor = execute_semantic_public_progress_edge(context.runtime, &current)
             .unwrap_or_else(|error| {
                 panic!(
-                    "{} bounded convergence edge {edge} should execute `{command}`: {error}",
-                    context.label
+                    "{} bounded convergence edge {edge} should execute `{}`: {error}",
+                    context.label,
+                    exact_public_argv_display(command)
                 )
             })
             .unwrap_or_else(|| {
@@ -1725,7 +2129,7 @@ fn assert_bounded_runtime_management_path_converges(
             "{} bounded convergence edge {edge} must reduce the metric, expose a different blocker, or reach a diagnostic; before={before:?} after={after:?} current={current:?} successor={successor:?}",
             context.label
         );
-        if is_repair_review_state_command(&command) {
+        if is_repair_review_state_command(command) {
             assert_repair_review_state_successor_contract(context.label, &current, &successor);
         }
         previous = current;
@@ -1739,9 +2143,9 @@ fn assert_bounded_runtime_management_path_converges(
     {
         return;
     }
-    let maybe_command = materialized_status_command(&current);
+    let maybe_command = current.recommended_public_command_argv.as_deref();
     if reaches_real_work_or_wait(&current)
-        && maybe_command.as_deref().is_none_or(|command| {
+        && maybe_command.is_none_or(|command| {
             !is_replayable_real_work_command(context.synthetic, &current, command)
         })
     {
@@ -1749,17 +2153,17 @@ fn assert_bounded_runtime_management_path_converges(
     }
     let command = maybe_command.unwrap_or_else(|| {
         panic!(
-            "{} public runtime-management path exhausted the bounded replay in a non-converged commandless state after excluding real work, wait, and diagnostics: current={current:?}",
+            "{} semantic public-argv runtime-management path exhausted the bounded replay in a non-converged commandless state after excluding real work, wait, and diagnostics: current={current:?}",
             context.label
         )
     });
-    assert_reopen_liveness_contract(context.label, context.synthetic, &command);
-    remember_public_mutation_command(&mut seen_public_mutation_commands, &current, &command)
+    assert_reopen_liveness_contract(context.label, context.synthetic, command);
+    remember_public_mutation_command(&mut seen_public_mutation_commands, &current, command)
         .unwrap_or_else(|error| panic!("{} {error}; current={current:?}", context.label));
-    let route_key = liveness_route_key(&current, &command);
+    let route_key = liveness_route_key(&current, command);
     assert!(
         !seen_route_keys.contains(&route_key)
-            || command_requires_external_result_input(&current, &command),
+            || command_requires_external_result_input(&current, command),
         "{} public mutation path repeated a prior route tuple within three edges; repeated={route_key}; current={current:?}",
         context.label
     );
@@ -1768,11 +2172,15 @@ fn assert_bounded_runtime_management_path_converges(
 fn minimal_liveness_status(
     phase_detail: &str,
     blocking_reason_codes: Vec<String>,
-    recommended_command: Option<String>,
+    recommended_public_command_argv: Option<Vec<String>>,
 ) -> LivenessPlanExecutionStatus {
-    let recommended_public_command_argv = recommended_command
-        .as_deref()
-        .and_then(exact_argv_for_test_command);
+    if let Some(argv) = recommended_public_command_argv.as_ref() {
+        assert_exact_public_argv_is_executable(argv)
+            .expect("minimal liveness fixtures must receive exact typed public argv");
+    }
+    let recommended_command = recommended_public_command_argv
+        .as_ref()
+        .map(|argv| exact_public_argv_display(argv));
     LivenessPlanExecutionStatus {
         phase_detail: phase_detail.to_owned(),
         review_state_status: String::from("stale_unreviewed"),
@@ -1787,6 +2195,7 @@ fn minimal_liveness_status(
         next_action: String::from("repair review state"),
         recommended_command,
         recommended_public_command_argv,
+        required_follow_up: None,
         required_inputs: Vec::new(),
         blocking_scope: Some(String::from("task")),
         execution_command_context: None,
@@ -1794,6 +2203,16 @@ fn minimal_liveness_status(
         blocking_task: Some(1),
         resume_task: None,
     }
+}
+
+fn minimal_display_only_liveness_status(
+    phase_detail: &str,
+    blocking_reason_codes: Vec<String>,
+    recommended_command: String,
+) -> LivenessPlanExecutionStatus {
+    let mut status = minimal_liveness_status(phase_detail, blocking_reason_codes, None);
+    status.recommended_command = Some(recommended_command);
+    status
 }
 
 fn task_closure_required_inputs() -> Vec<Value> {
@@ -1816,35 +2235,61 @@ fn task_closure_required_inputs() -> Vec<Value> {
     ]
 }
 
-fn exact_argv_for_test_command(command: &str) -> Option<Vec<String>> {
-    let argv = shlex::split(command)?;
-    assert_exact_public_argv_is_executable(&argv)
-        .ok()
-        .map(|()| argv)
+fn test_public_argv(parts: &[&str]) -> Vec<String> {
+    parts.iter().map(|part| (*part).to_owned()).collect()
+}
+
+fn exact_test_public_argv(parts: &[&str]) -> Vec<String> {
+    let argv = test_public_argv(parts);
+    assert_exact_public_argv_is_executable(&argv).expect("test argv should be exact public argv");
+    argv
 }
 
 #[test]
-fn exact_argv_for_test_command_rejects_split_optional_verification_placeholder() {
-    let command = String::from(
-        "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --review-result pass --review-summary-file review.md --verification-result pass [when verification ran]",
-    );
-
+fn exact_public_argv_rejects_optional_verification_placeholder() {
+    let argv = test_public_argv(&[
+        "featureforge",
+        "plan",
+        "execution",
+        "close-current-task",
+        "--plan",
+        "docs/plan.md",
+        "--task",
+        "1",
+        "--review-result",
+        "pass",
+        "--review-summary-file",
+        "review.md",
+        "--verification-result",
+        "pass",
+        "[when verification ran]",
+    ]);
     assert!(
-        exact_argv_for_test_command(&command).is_none(),
-        "display-only optional verification prose must not be materialized into executable argv"
+        assert_exact_public_argv_is_executable(&argv).is_err(),
+        "optional verification prose must not be accepted as executable argv"
     );
 
-    let status = minimal_liveness_status("task_closure_recording_ready", Vec::new(), Some(command));
+    let status = minimal_display_only_liveness_status(
+        "task_closure_recording_ready",
+        Vec::new(),
+        exact_public_argv_display(&argv),
+    );
     assert!(
         status.recommended_public_command_argv.is_none(),
-        "liveness fixtures must model split optional prose as missing typed input, not argv"
+        "liveness fixtures must keep optional prose display-only unless exact typed argv is supplied"
     );
 }
 
 #[test]
 fn repeated_public_mutation_detection_ignores_reason_churn() {
-    let command =
-        String::from("featureforge plan execution repair-review-state --plan docs/plan.md");
+    let command = exact_test_public_argv(&[
+        "featureforge",
+        "plan",
+        "execution",
+        "repair-review-state",
+        "--plan",
+        "docs/plan.md",
+    ]);
     let mut seen_commands = BTreeSet::new();
     let before = minimal_liveness_status(
         "execution_reentry_required",
@@ -1857,10 +2302,25 @@ fn repeated_public_mutation_detection_ignores_reason_churn() {
         Some(command.clone()),
     );
 
-    remember_public_mutation_command(&mut seen_commands, &before, &command)
-        .expect("first runtime-management mutation should be accepted");
+    remember_public_mutation_command(
+        &mut seen_commands,
+        &before,
+        before
+            .recommended_public_command_argv
+            .as_deref()
+            .expect("test command should materialize typed argv"),
+    )
+    .expect("first runtime-management mutation should be accepted");
     assert!(
-        remember_public_mutation_command(&mut seen_commands, &after, &command).is_err(),
+        remember_public_mutation_command(
+            &mut seen_commands,
+            &after,
+            after
+                .recommended_public_command_argv
+                .as_deref()
+                .expect("test command should materialize typed argv")
+        )
+        .is_err(),
         "repeated runtime-management mutation must be rejected even when route metadata changes"
     );
     assert!(
@@ -1873,8 +2333,18 @@ fn repeated_public_mutation_detection_ignores_reason_churn() {
         "public-edge liveness must reject the same runtime-management mutation with changed reasons"
     );
 
-    let reopen =
-        String::from("featureforge plan execution reopen --plan docs/plan.md --task 1 --step 1");
+    let reopen = exact_test_public_argv(&[
+        "featureforge",
+        "plan",
+        "execution",
+        "reopen",
+        "--plan",
+        "docs/plan.md",
+        "--task",
+        "1",
+        "--step",
+        "1",
+    ]);
     let before = minimal_liveness_status(
         "execution_reentry_required",
         vec![String::from("current_task_closure_stale")],
@@ -1886,10 +2356,25 @@ fn repeated_public_mutation_detection_ignores_reason_churn() {
         Some(reopen.clone()),
     );
     let mut seen_commands = BTreeSet::new();
-    remember_public_mutation_command(&mut seen_commands, &before, &reopen)
-        .expect("first real-work mutation should be accepted");
+    remember_public_mutation_command(
+        &mut seen_commands,
+        &before,
+        before
+            .recommended_public_command_argv
+            .as_deref()
+            .expect("test reopen should materialize typed argv"),
+    )
+    .expect("first real-work mutation should be accepted");
     assert!(
-        remember_public_mutation_command(&mut seen_commands, &after, &reopen).is_err(),
+        remember_public_mutation_command(
+            &mut seen_commands,
+            &after,
+            after
+                .recommended_public_command_argv
+                .as_deref()
+                .expect("test reopen should materialize typed argv")
+        )
+        .is_err(),
         "repeated reopen mutation must be rejected even when route metadata changes"
     );
     assert!(
@@ -1904,11 +2389,153 @@ fn repeated_public_mutation_detection_ignores_reason_churn() {
 }
 
 #[test]
+fn repeated_public_mutation_detection_ignores_fingerprint_churn() {
+    let begin_with_fingerprint = |fingerprint: &str| {
+        exact_test_public_argv(&[
+            "featureforge",
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            "docs/plan.md",
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--expect-execution-fingerprint",
+            fingerprint,
+            "--source",
+            "featureforge:executing-plans",
+        ])
+    };
+    let before_command = begin_with_fingerprint("fingerprint-a");
+    let after_command = begin_with_fingerprint("fingerprint-b");
+    let before = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("execution_reentry_required")],
+        Some(before_command.clone()),
+    );
+    let after = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("execution_reentry_required")],
+        Some(after_command.clone()),
+    );
+    let mut seen_commands = BTreeSet::new();
+
+    remember_public_mutation_command(&mut seen_commands, &before, &before_command)
+        .expect("first begin mutation should be accepted");
+    assert!(
+        remember_public_mutation_command(&mut seen_commands, &after, &after_command).is_err(),
+        "fingerprint-only argv changes must not be treated as public-route progress"
+    );
+    assert_eq!(
+        semantic_public_mutation_key(&before, &before_command),
+        semantic_public_mutation_key(&after, &after_command),
+        "semantic mutation keys must exclude --expect-execution-fingerprint values"
+    );
+    assert!(
+        !public_edge_satisfies_liveness_contract(
+            &before,
+            ProgressMetric::default(),
+            &after,
+            ProgressMetric::default(),
+        ),
+        "public-edge liveness must reject fingerprint-only command churn"
+    );
+}
+
+#[test]
+fn repeated_public_mutation_detection_distinguishes_transfer_repair_targets() {
+    let transfer_repair = |task: &str, step: &str, fingerprint: &str| {
+        exact_test_public_argv(&[
+            "featureforge",
+            "plan",
+            "execution",
+            "transfer",
+            "--plan",
+            "docs/plan.md",
+            "--repair-task",
+            task,
+            "--repair-step",
+            step,
+            "--expect-execution-fingerprint",
+            fingerprint,
+        ])
+    };
+    let task_1 = transfer_repair("1", "1", "fingerprint-a");
+    let task_1_fingerprint_churn = transfer_repair("1", "1", "fingerprint-b");
+    let task_2 = transfer_repair("2", "1", "fingerprint-c");
+    let task_1_status = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("execution_reentry_required")],
+        Some(task_1.clone()),
+    );
+    let task_1_fingerprint_churn_status = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("execution_reentry_required")],
+        Some(task_1_fingerprint_churn.clone()),
+    );
+    let task_2_status = minimal_liveness_status(
+        "execution_reentry_required",
+        vec![String::from("execution_reentry_required")],
+        Some(task_2.clone()),
+    );
+
+    assert_eq!(
+        liveness_semantic_public_command_key(&task_1),
+        liveness_semantic_public_command_key(&task_1_fingerprint_churn),
+        "semantic transfer repair identity must ignore volatile expect-fingerprint argv values"
+    );
+    assert_ne!(
+        liveness_semantic_public_command_key(&task_1),
+        liveness_semantic_public_command_key(&task_2),
+        "semantic transfer repair identity must include --repair-task/--repair-step targets"
+    );
+    assert_eq!(
+        liveness_semantic_public_command_key(&task_1)
+            .transfer_mode
+            .as_deref(),
+        Some("repair-step")
+    );
+
+    let mut seen_commands = BTreeSet::new();
+    remember_public_mutation_command(&mut seen_commands, &task_1_status, &task_1)
+        .expect("first transfer repair mutation should be accepted");
+    assert!(
+        remember_public_mutation_command(
+            &mut seen_commands,
+            &task_1_fingerprint_churn_status,
+            &task_1_fingerprint_churn
+        )
+        .is_err(),
+        "fingerprint-only transfer repair churn must be treated as a repeated route"
+    );
+    remember_public_mutation_command(&mut seen_commands, &task_2_status, &task_2)
+        .expect("different transfer repair target should be treated as real progress");
+}
+
+#[test]
 fn repeated_public_mutation_detection_rejects_repair_to_repeated_reopen_sequence() {
-    let repair =
-        String::from("featureforge plan execution repair-review-state --plan docs/plan.md");
-    let reopen =
-        String::from("featureforge plan execution reopen --plan docs/plan.md --task 1 --step 1");
+    let repair = exact_test_public_argv(&[
+        "featureforge",
+        "plan",
+        "execution",
+        "repair-review-state",
+        "--plan",
+        "docs/plan.md",
+    ]);
+    let reopen = exact_test_public_argv(&[
+        "featureforge",
+        "plan",
+        "execution",
+        "reopen",
+        "--plan",
+        "docs/plan.md",
+        "--task",
+        "1",
+        "--step",
+        "1",
+    ]);
     let mut seen_commands = BTreeSet::new();
     let repair_status = minimal_liveness_status(
         "runtime_reconcile_required",
@@ -1928,20 +2555,50 @@ fn repeated_public_mutation_detection_rejects_repair_to_repeated_reopen_sequence
         Some(reopen.clone()),
     );
 
-    remember_public_mutation_command(&mut seen_commands, &repair_status, &repair)
-        .expect("repair-review-state should be accepted as the first public mutation");
-    remember_public_mutation_command(&mut seen_commands, &reopen_status, &reopen)
-        .expect("first reopen after repair-review-state should be accepted and replayed");
+    remember_public_mutation_command(
+        &mut seen_commands,
+        &repair_status,
+        repair_status
+            .recommended_public_command_argv
+            .as_deref()
+            .expect("test repair command should materialize typed argv"),
+    )
+    .expect("repair-review-state should be accepted as the first public mutation");
+    remember_public_mutation_command(
+        &mut seen_commands,
+        &reopen_status,
+        reopen_status
+            .recommended_public_command_argv
+            .as_deref()
+            .expect("test reopen command should materialize typed argv"),
+    )
+    .expect("first reopen after repair-review-state should be accepted and replayed");
     assert!(
-        remember_public_mutation_command(&mut seen_commands, &repeated_reopen_status, &reopen)
-            .is_err(),
+        remember_public_mutation_command(
+            &mut seen_commands,
+            &repeated_reopen_status,
+            repeated_reopen_status
+                .recommended_public_command_argv
+                .as_deref()
+                .expect("test repeated reopen should materialize typed argv")
+        )
+        .is_err(),
         "bounded liveness replay must fail repair-review-state -> reopen -> same reopen loops"
     );
 }
 
 #[test]
 fn close_current_task_is_a_real_recording_boundary_for_liveness() {
-    let command = "featureforge plan execution close-current-task --plan docs/plan.md --task 1";
+    let argv = exact_test_public_argv(&[
+        "featureforge",
+        "plan",
+        "execution",
+        "close-current-task",
+        "--plan",
+        "docs/plan.md",
+        "--task",
+        "1",
+    ]);
     let mut status = minimal_liveness_status(
         "task_closure_recording_ready",
         vec![String::from("task_closure_baseline_repair_candidate")],
@@ -1964,11 +2621,11 @@ fn close_current_task_is_a_real_recording_boundary_for_liveness() {
         "the liveness external-input fixture must not model missing values with executable-looking display templates"
     );
     assert!(
-        command_requires_external_result_input(&status, command),
+        command_requires_external_result_input(&status, &argv),
         "close-current-task records review and verification results, so bounded runtime-management liveness should stop at that real-work boundary"
     );
     assert!(
-        !is_runtime_management_mutation_command(&status, command),
+        !is_runtime_management_mutation_command(&status, &argv),
         "close-current-task must not be classified as runtime-management churn"
     );
 }
@@ -2052,9 +2709,19 @@ fn same_current_reopen_guard_uses_exact_public_argv_lanes() {
         completed_tasks: 2,
         ..SyntheticState::base(2)
     };
-    let command =
-        String::from("featureforge plan execution reopen --plan docs/plan.md --task 2 --step 1");
-    let argv = exact_argv_for_test_command(&command).expect("test reopen command should be exact");
+    let argv = exact_test_public_argv(&[
+        "featureforge",
+        "plan",
+        "execution",
+        "reopen",
+        "--plan",
+        "docs/plan.md",
+        "--task",
+        "2",
+        "--step",
+        "1",
+    ]);
+    let command = exact_public_argv_display(&argv);
 
     let mut display_only_next_action =
         minimal_liveness_status("execution_reentry_required", Vec::new(), None);
@@ -2066,9 +2733,8 @@ fn same_current_reopen_guard_uses_exact_public_argv_lanes() {
         "display-only next_public_action must not become an executable public command"
     );
 
-    let mut exact_next_action =
-        minimal_liveness_status("execution_reentry_required", Vec::new(), None);
-    exact_next_action.recommended_public_command_argv = Some(argv.clone());
+    let exact_next_action =
+        minimal_liveness_status("execution_reentry_required", Vec::new(), Some(argv.clone()));
     let effective = materialized_status_command(&exact_next_action)
         .expect("recommended_public_command_argv should be the effective public command");
     assert_eq!(effective, command);
@@ -2077,7 +2743,10 @@ fn same_current_reopen_guard_uses_exact_public_argv_lanes() {
             assert_reopen_liveness_contract(
                 "effective next_public_action reopen",
                 synthetic,
-                &effective,
+                exact_next_action
+                    .recommended_public_command_argv
+                    .as_deref()
+                    .expect("exact next-action argv should exist"),
             );
         })
         .is_err(),
@@ -2088,21 +2757,30 @@ fn same_current_reopen_guard_uses_exact_public_argv_lanes() {
         minimal_liveness_status("execution_reentry_required", Vec::new(), None);
     display_only_blocker.blockers = vec![LivenessBlocker {
         category: String::from("stale"),
-        next_public_action: Some(command.clone()),
+        next_public_action: Some(LivenessNextPublicAction {
+            command: command.clone(),
+        }),
     }];
     assert!(
         materialized_status_command(&display_only_blocker).is_none(),
         "display-only blocker action must not become an executable public command"
     );
 
-    let mut exact_blocker = minimal_liveness_status("execution_reentry_required", Vec::new(), None);
-    exact_blocker.recommended_public_command_argv = Some(argv);
+    let exact_blocker =
+        minimal_liveness_status("execution_reentry_required", Vec::new(), Some(argv));
     let effective = materialized_status_command(&exact_blocker)
         .expect("recommended_public_command_argv should be the effective blocker command");
     assert_eq!(effective, command);
     assert!(
         std::panic::catch_unwind(|| {
-            assert_reopen_liveness_contract("effective blocker reopen", synthetic, &effective);
+            assert_reopen_liveness_contract(
+                "effective blocker reopen",
+                synthetic,
+                exact_blocker
+                    .recommended_public_command_argv
+                    .as_deref()
+                    .expect("exact blocker argv should exist"),
+            );
         })
         .is_err(),
         "same-current reopen guard must reject blocker-action reopen loops"
@@ -2117,9 +2795,20 @@ fn multistep_reopen_guard_rejects_step_or_source_divergence() {
         stale_boundary_present: true,
         ..SyntheticState::base(2)
     };
-    let step_one_reopen = String::from(
-        "featureforge plan execution reopen --plan docs/plan.md --task 2 --step 1 --source featureforge:executing-plans",
-    );
+    let step_one_reopen = exact_test_public_argv(&[
+        "featureforge",
+        "plan",
+        "execution",
+        "reopen",
+        "--plan",
+        "docs/plan.md",
+        "--task",
+        "2",
+        "--step",
+        "1",
+        "--source",
+        "featureforge:executing-plans",
+    ]);
     assert!(
         std::panic::catch_unwind(|| {
             assert_reopen_liveness_contract(
@@ -2131,9 +2820,20 @@ fn multistep_reopen_guard_rejects_step_or_source_divergence() {
         .is_err(),
         "multistep reopen guard must reject stale routes that fall back to step 1"
     );
-    let wrong_source_reopen = String::from(
-        "featureforge plan execution reopen --plan docs/plan.md --task 2 --step 2 --source featureforge:subagent-driven-development",
-    );
+    let wrong_source_reopen = exact_test_public_argv(&[
+        "featureforge",
+        "plan",
+        "execution",
+        "reopen",
+        "--plan",
+        "docs/plan.md",
+        "--task",
+        "2",
+        "--step",
+        "2",
+        "--source",
+        "featureforge:subagent-driven-development",
+    ]);
     assert!(
         std::panic::catch_unwind(|| {
             assert_reopen_liveness_contract(
@@ -2145,9 +2845,20 @@ fn multistep_reopen_guard_rejects_step_or_source_divergence() {
         .is_err(),
         "multistep reopen guard must reject stale routes that bypass shared execution-source derivation"
     );
-    let shared_exact_reopen = String::from(
-        "featureforge plan execution reopen --plan docs/plan.md --task 2 --step 2 --source featureforge:executing-plans",
-    );
+    let shared_exact_reopen = exact_test_public_argv(&[
+        "featureforge",
+        "plan",
+        "execution",
+        "reopen",
+        "--plan",
+        "docs/plan.md",
+        "--task",
+        "2",
+        "--step",
+        "2",
+        "--source",
+        "featureforge:executing-plans",
+    ]);
     assert_reopen_liveness_contract(
         "multistep stale reopen exact command",
         synthetic,
@@ -2264,7 +2975,81 @@ fn production_loop_liveness_cases(total_tasks: u8) -> Vec<SyntheticState> {
             downstream_interrupted_projection_present: true,
             ..SyntheticState::base(active_completed)
         },
+        SyntheticState {
+            steps_per_task: 2,
+            stale_boundary_present: true,
+            downstream_stale_step_present: true,
+            downstream_interrupted_projection_present: true,
+            ..SyntheticState::base(active_completed)
+        },
     ]
+}
+
+fn runtime_executed_liveness_case_is_representative(total_tasks: u8, case: SyntheticState) -> bool {
+    let active_completed = total_tasks.saturating_sub(1).max(1);
+    if [
+        SyntheticState::base(0),
+        SyntheticState::base(active_completed),
+        SyntheticState {
+            stale_boundary_present: true,
+            ..SyntheticState::base(active_completed)
+        },
+        SyntheticState {
+            stale_boundary_present: true,
+            resume_exact_disagreement_present: true,
+            ..SyntheticState::base(active_completed)
+        },
+    ]
+    .contains(&case)
+    {
+        return true;
+    }
+
+    case.completed_tasks == active_completed
+        && ((case.current_stale_overlap_present
+            && case
+                == SyntheticState {
+                    current_stale_overlap_present: true,
+                    ..SyntheticState::base(active_completed)
+                })
+            || (case.stale_cycle_break_overlay_present
+                && case
+                    == SyntheticState {
+                        stale_cycle_break_overlay_present: true,
+                        ..SyntheticState::base(active_completed)
+                    })
+            || (case.targetless_stale_present
+                && case
+                    == SyntheticState {
+                        targetless_stale_present: true,
+                        current_branch_closure_null: true,
+                        ..SyntheticState::base(active_completed)
+                    })
+            || (case.downstream_stale_step_present
+                && case
+                    == SyntheticState {
+                        stale_boundary_present: true,
+                        downstream_stale_step_present: true,
+                        ..SyntheticState::base(active_completed)
+                    })
+            || (case.downstream_interrupted_projection_present
+                && case
+                    == SyntheticState {
+                        steps_per_task: 2,
+                        stale_boundary_present: true,
+                        downstream_interrupted_projection_present: true,
+                        ..SyntheticState::base(active_completed)
+                    })
+            || (case.downstream_stale_step_present
+                && case.downstream_interrupted_projection_present
+                && case
+                    == SyntheticState {
+                        steps_per_task: 2,
+                        stale_boundary_present: true,
+                        downstream_stale_step_present: true,
+                        downstream_interrupted_projection_present: true,
+                        ..SyntheticState::base(active_completed)
+                    }))
 }
 
 #[test]
@@ -2401,97 +3186,189 @@ fn synthetic_liveness_generator_covers_full_legal_variant_space() {
                 .any(|case| case.downstream_interrupted_projection_present),
             "missing nested interruption production-loop variant for {total_tasks} tasks"
         );
+        assert!(
+            cases.iter().any(|case| {
+                case.stale_boundary_present
+                    && case.downstream_stale_step_present
+                    && case.downstream_interrupted_projection_present
+            }),
+            "missing earlier stale boundary plus later stale/interrupted overlay variant for {total_tasks} tasks"
+        );
+        let executed_cases = cases
+            .iter()
+            .filter(|case| runtime_executed_liveness_case_is_representative(total_tasks, **case))
+            .count();
+        assert!(
+            executed_cases >= 9 && executed_cases < cases.len(),
+            "runtime-executed liveness replay should keep a representative but bounded case set for {total_tasks} tasks; got {executed_cases} of {}",
+            cases.len()
+        );
     }
 }
 
-fn assert_production_loop_case_is_modeled(
+fn assert_runtime_executed_production_loop_case(
+    label: &str,
+    mut matches_case: impl FnMut(&SyntheticState) -> bool,
+) {
+    let cases = synthetic_liveness_cases(3);
+    assert!(
+        cases.iter().copied().any(|case| {
+            runtime_executed_liveness_case_is_representative(3, case) && matches_case(&case)
+        }),
+        "{label} must be present in the runtime-executed representative liveness set"
+    );
+}
+
+fn assert_fixture_only_production_loop_case_is_modeled(
     label: &str,
     matches_case: impl FnMut(&SyntheticState) -> bool,
 ) {
     let cases = synthetic_liveness_cases(3);
     assert!(
         cases.iter().any(matches_case),
-        "{label} must be present in the liveness model case set"
+        "{label} must be present in the fixture-only liveness model case set"
     );
 }
 
 #[test]
 fn liveness_current_stale_overlap_blocks_without_reopen_or_hidden_command() {
-    assert_production_loop_case_is_modeled("current/stale closure overlap", |case| {
+    assert_runtime_executed_production_loop_case("current/stale closure overlap", |case| {
         case.completed_tasks > 0 && case.current_stale_overlap_present
     });
 }
 
 #[test]
 fn liveness_already_current_cycle_break_clears_or_routes_forward() {
-    assert_production_loop_case_is_modeled("FS-01 already-current cycle-break", |case| {
+    assert_runtime_executed_production_loop_case("FS-01 already-current cycle-break", |case| {
         case.completed_tasks > 0 && case.stale_cycle_break_overlay_present
     });
 }
 
 #[test]
 fn liveness_stale_unreviewed_without_target_diagnostics_not_reopen() {
-    assert_production_loop_case_is_modeled("FS-02 targetless stale diagnostic", |case| {
+    assert_runtime_executed_production_loop_case("FS-02 targetless stale diagnostic", |case| {
         case.targetless_stale_present && !case.stale_boundary_present
     });
 }
 
 #[test]
-fn liveness_orphan_late_stage_history_does_not_reopen_current_task() {
-    assert_production_loop_case_is_modeled("FS-03 orphan late-stage history", |case| {
-        case.current_branch_closure_null && case.orphan_milestone_records_present
-    });
+fn fixture_model_includes_orphan_late_stage_history_case() {
+    assert_fixture_only_production_loop_case_is_modeled(
+        "FS-03 orphan late-stage history",
+        |case| case.current_branch_closure_null && case.orphan_milestone_records_present,
+    );
 }
 
 #[test]
-fn liveness_projection_dirty_preflight_does_not_block() {
-    assert_production_loop_case_is_modeled("FS-04 projection-only dirtiness", |case| {
-        case.runtime_projection_dirtiness_present
-    });
+fn fixture_model_includes_projection_dirty_preflight_case() {
+    assert_fixture_only_production_loop_case_is_modeled(
+        "FS-04 projection-only dirtiness",
+        |case| case.runtime_projection_dirtiness_present,
+    );
 }
 
 #[test]
-fn liveness_summary_hash_drift_does_not_reenter_execution() {
-    assert_production_loop_case_is_modeled("FS-05 summary-hash drift", |case| {
+fn fixture_model_includes_summary_hash_drift_case() {
+    assert_fixture_only_production_loop_case_is_modeled("FS-05 summary-hash drift", |case| {
         case.summary_hash_drift_present
     });
 }
 
 #[test]
 fn liveness_downstream_stale_step_after_prior_closure_routes_to_downstream_not_prior_task() {
-    assert_production_loop_case_is_modeled("downstream stale step", |case| {
+    assert_runtime_executed_production_loop_case("downstream stale step", |case| {
         case.stale_boundary_present && case.downstream_stale_step_present
     });
 }
 
 #[test]
-fn liveness_downstream_stale_with_projection_churn_routes_forward() {
-    assert_production_loop_case_is_modeled("downstream stale with projection churn", |case| {
-        case.stale_boundary_present
-            && case.downstream_stale_step_present
-            && case.runtime_projection_dirtiness_present
-    });
+fn fixture_model_includes_downstream_stale_with_projection_churn_case() {
+    assert_fixture_only_production_loop_case_is_modeled(
+        "downstream stale with projection churn",
+        |case| {
+            case.stale_boundary_present
+                && case.downstream_stale_step_present
+                && case.runtime_projection_dirtiness_present
+        },
+    );
 }
 
 #[test]
-fn liveness_token_only_repair_follow_up_diagnostics_not_reopen() {
-    assert_production_loop_case_is_modeled("token-only repair follow-up", |case| {
+fn fixture_model_includes_token_only_repair_follow_up_case() {
+    assert_fixture_only_production_loop_case_is_modeled("token-only repair follow-up", |case| {
         case.targetless_stale_present && !case.stale_boundary_present
     });
 }
 
 #[test]
 fn liveness_resume_task_disagreement_never_overrides_exact_legal_command() {
-    assert_production_loop_case_is_modeled("resume/exact-command disagreement", |case| {
+    assert_runtime_executed_production_loop_case("resume/exact-command disagreement", |case| {
         case.resume_exact_disagreement_present
     });
 }
 
 #[test]
 fn liveness_nested_interruption_does_not_strand_earliest_stale_boundary() {
-    assert_production_loop_case_is_modeled("nested interruption", |case| {
+    assert_runtime_executed_production_loop_case("nested interruption", |case| {
         case.steps_per_task > 1 && case.downstream_interrupted_projection_present
     });
+}
+
+#[test]
+fn liveness_earlier_stale_boundary_preempts_later_stale_interrupted_overlay() {
+    assert_runtime_executed_production_loop_case(
+        "earlier stale plus later stale/interrupted overlay",
+        |case| {
+            case.steps_per_task > 1
+                && case.stale_boundary_present
+                && case.downstream_stale_step_present
+                && case.downstream_interrupted_projection_present
+        },
+    );
+}
+
+#[test]
+fn runtime_executed_liveness_representatives_cover_critical_stuck_state_families() {
+    let cases = synthetic_liveness_cases(3)
+        .into_iter()
+        .filter(|case| runtime_executed_liveness_case_is_representative(3, *case))
+        .collect::<Vec<_>>();
+    let required: [RequiredSyntheticCase<'_>; 6] = [
+        ("current/stale overlap", |case: &SyntheticState| {
+            case.current_stale_overlap_present
+        }),
+        ("cycle-break", |case: &SyntheticState| {
+            case.stale_cycle_break_overlay_present
+        }),
+        ("targetless stale", |case: &SyntheticState| {
+            case.targetless_stale_present && !case.stale_boundary_present
+        }),
+        ("downstream stale", |case: &SyntheticState| {
+            case.stale_boundary_present
+                && case.downstream_stale_step_present
+                && !case.downstream_interrupted_projection_present
+        }),
+        ("downstream interruption", |case: &SyntheticState| {
+            case.stale_boundary_present
+                && case.downstream_interrupted_projection_present
+                && !case.downstream_stale_step_present
+        }),
+        (
+            "downstream stale plus interruption",
+            |case: &SyntheticState| {
+                case.steps_per_task > 1
+                    && case.stale_boundary_present
+                    && case.downstream_stale_step_present
+                    && case.downstream_interrupted_projection_present
+            },
+        ),
+    ];
+    for (label, matches_case) in required {
+        assert!(
+            cases.iter().any(matches_case),
+            "runtime-executed liveness representatives must include {label}; representatives={cases:?}"
+        );
+    }
 }
 
 #[test]
@@ -2502,7 +3379,7 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
     let state_path = harness_state_file_path(repo, state);
     let mut executed_successor_edges = 0usize;
 
-    for total_tasks in 1_u8..=5_u8 {
+    for &total_tasks in RUNTIME_EXECUTED_LIVENESS_TASK_COUNTS {
         let runtime = runtime_for_status(repo, state);
         let mut cases_by_fixture_shape = BTreeMap::<(u8, u8), Vec<SyntheticState>>::new();
         for synthetic in synthetic_liveness_cases(total_tasks) {
@@ -2540,11 +3417,18 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 repo_slug: &repo_slug,
                 branch_name: &branch_name,
             };
+            let mut worktree_requires_restore = false;
             for synthetic in cases {
-                write_spec_and_plan(repo, total_tasks, completed_tasks, steps_per_task);
+                if !runtime_executed_liveness_case_is_representative(total_tasks, synthetic) {
+                    continue;
+                }
+                if worktree_requires_restore {
+                    write_spec_and_plan(repo, total_tasks, completed_tasks, steps_per_task);
+                }
                 write_variant_harness_state(&fixture, synthetic);
                 apply_synthetic_worktree_variants(repo, synthetic);
-                migrate_variant_to_event_authority(
+                worktree_requires_restore = synthetic.runtime_projection_dirtiness_present;
+                synthetic_migrate_variant_to_event_authority(
                     &state_path,
                     "liveness synthetic authority migration",
                 );
@@ -2552,10 +3436,11 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 let label = format!(
                     "runtime-liveness total_tasks={total_tasks} completed_tasks={completed_tasks} synthetic={synthetic:?}",
                 );
-                let status = status_value(&runtime, &label);
+                let status = semantic_status_value(&runtime, &label);
                 let state_kind = status.state_kind.as_str();
                 let public_command = materialized_status_command(&status);
                 assert_targetless_stale_does_not_fabricate_current_task(&label, synthetic, &status);
+                assert_earliest_stale_boundary_preempts_later_overlay(&label, synthetic, &status);
 
                 if state_kind == "terminal" {
                     assert!(
@@ -2629,10 +3514,16 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                     continue;
                 }
 
-                if let Some(command) = public_command.as_deref() {
-                    assert_public_command_is_safe(&label, command);
+                if public_command.is_some() {
+                    let command_argv = status
+                        .recommended_public_command_argv
+                        .as_deref()
+                        .expect("materialized command should come from typed argv");
+                    assert_public_command_is_safe(&label, command_argv);
                     assert_no_same_current_task_reopen_without_substantive_work(
-                        &label, synthetic, command,
+                        &label,
+                        synthetic,
+                        command_argv,
                     );
                 } else {
                     panic!(
@@ -2640,19 +3531,20 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                     );
                 }
                 let before = progress_metric_from_status(&status, total_tasks);
-                let successor = execute_public_progress_edge(&runtime, state, &status)
+                let successor = execute_semantic_public_progress_edge(&runtime, &status)
                     .unwrap_or_else(|error| {
-                        panic!("{label} should execute public progress edge: {error}")
+                        panic!("{label} should execute semantic public argv edge: {error}")
                     });
                 let successor = successor.unwrap_or_else(|| {
-                    panic!("{label} should execute a concrete public progress edge from {status:?}")
+                    panic!("{label} should execute a concrete semantic public argv edge from {status:?}")
                 });
                 let after = progress_metric_from_status(&successor, total_tasks);
                 assert!(
                     public_edge_satisfies_liveness_contract(&status, before, &successor, after),
-                    "real public progress edge must reduce the metric, expose a different true blocker, emit a deterministic diagnostic, or resolve already-current state; before={before:?} after={after:?} status={status:?} successor={successor:?}"
+                    "semantic public argv edge must reduce the metric, expose a different true blocker, emit a deterministic diagnostic, or resolve already-current state; before={before:?} after={after:?} status={status:?} successor={successor:?}"
                 );
-                if public_command
+                if status
+                    .recommended_public_command_argv
                     .as_deref()
                     .is_some_and(is_repair_review_state_command)
                 {
@@ -2660,7 +3552,6 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 }
                 let bounded_context = BoundedLivenessContext {
                     runtime: &runtime,
-                    state,
                     total_tasks,
                     label: &label,
                     synthetic,
@@ -2669,15 +3560,93 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                     &bounded_context,
                     &status,
                     &successor,
-                    public_command.as_deref(),
+                    status.recommended_public_command_argv.as_deref(),
                 );
                 executed_successor_edges = executed_successor_edges.saturating_add(1);
             }
         }
     }
     assert!(
-        executed_successor_edges >= 8,
-        "liveness checker must execute a meaningful set of real public successor edges, got {executed_successor_edges}",
+        executed_successor_edges >= 3,
+        "liveness checker must execute a meaningful set of semantic public argv successor edges, got {executed_successor_edges}",
+    );
+}
+
+#[test]
+fn liveness_semantic_public_argv_runner_matches_shipped_cli_for_sampled_edge() {
+    let (semantic_repo_dir, semantic_state_dir) =
+        workflow_support::init_repo("runtime-liveness-semantic-parity");
+    let (shipped_repo_dir, shipped_state_dir) =
+        workflow_support::init_repo("runtime-liveness-shipped-parity");
+    let semantic_repo = semantic_repo_dir.path();
+    let shipped_repo = shipped_repo_dir.path();
+    let semantic_state = semantic_state_dir.path();
+    let shipped_state = shipped_state_dir.path();
+    let synthetic = SyntheticState::base(0);
+
+    prepare_synthetic_liveness_fixture(
+        semantic_repo,
+        semantic_state,
+        1,
+        0,
+        1,
+        synthetic,
+        "liveness semantic parity fixture migration",
+    );
+    prepare_synthetic_liveness_fixture(
+        shipped_repo,
+        shipped_state,
+        1,
+        0,
+        1,
+        synthetic,
+        "liveness shipped CLI parity fixture migration",
+    );
+
+    let semantic_runtime = runtime_for_status(semantic_repo, semantic_state);
+    let shipped_runtime = runtime_for_status(shipped_repo, shipped_state);
+    let semantic_before =
+        semantic_status_value(&semantic_runtime, "liveness semantic parity before edge");
+    let shipped_before =
+        shipped_cli_status_value(&shipped_runtime, "liveness shipped CLI parity before edge");
+    assert_eq!(
+        route_signature(&semantic_before),
+        route_signature(&shipped_before),
+        "semantic in-process and shipped CLI status should agree before the sampled public edge"
+    );
+
+    let command = exact_public_command_from_status(&semantic_before)
+        .expect("sampled parity status should expose exact typed public argv");
+    assert_eq!(
+        command.kind,
+        LivenessPublicCommandKind::PlanExecutionBegin,
+        "sampled parity edge should cover a side-effecting begin mutation, got {:?}",
+        command.argv
+    );
+    assert_public_command_is_safe("liveness shipped CLI parity sampled edge", &command.argv);
+    execute_exact_public_command_with_runner(
+        &semantic_runtime,
+        &semantic_before,
+        &command.argv,
+        LivenessRuntimeRunner::SemanticInProcess,
+    )
+    .unwrap_or_else(|error| panic!("semantic sampled public edge should execute: {error}"));
+    execute_exact_public_command_with_runner(
+        &shipped_runtime,
+        &shipped_before,
+        &command.argv,
+        LivenessRuntimeRunner::ShippedCli,
+    )
+    .unwrap_or_else(|error| panic!("shipped CLI sampled public edge should execute: {error}"));
+
+    let semantic_after =
+        semantic_status_value(&semantic_runtime, "liveness semantic parity after edge");
+    let shipped_after =
+        shipped_cli_status_value(&shipped_runtime, "liveness shipped CLI parity after edge");
+    assert_eq!(
+        route_signature(&semantic_after),
+        route_signature(&shipped_after),
+        "semantic in-process and shipped CLI status should agree after the sampled public edge"
     );
 }
 
@@ -2720,12 +3689,12 @@ fn runtime_liveness_model_checker_never_emits_hidden_recommendations() {
             },
             SyntheticState::base(0),
         );
-        migrate_variant_to_event_authority(
+        synthetic_migrate_variant_to_event_authority(
             &state_path,
             "liveness hidden-check authority migration",
         );
 
-        let status = status_value(
+        let status = semantic_status_value(
             &runtime,
             &format!("runtime-hidden-check total_tasks={total_tasks}"),
         );

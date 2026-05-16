@@ -1,22 +1,48 @@
-use super::*;
+use super::{
+    AuthoritativeTransitionStateRef, ExecutionContext, FailureClass, GateResult, GateState,
+    JsonFailure, PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
+    current_branch_gate_bindings_from_authoritative_state, evaluate_pre_checkpoint_finish_gate,
+    gate_review_base_result, gate_review_from_context_with_authoritative_state,
+    load_authoritative_transition_state, load_status_authoritative_overlay_checked,
+    normalize_optional_overlay_value, public_typed_operator_route_remediation_for_plan,
+    shared_current_late_stage_branch_bindings,
+    usable_current_branch_closure_identity_from_authoritative_state,
+};
+use crate::execution::gate_reason_codes::qa_requirement_missing_or_invalid_reason_code;
 
 pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
+    let authoritative_state = load_authoritative_transition_state(context);
+    gate_finish_from_context_with_authoritative_state(
+        context,
+        authoritative_state.as_ref().map(|state| state.as_ref()),
+    )
+}
+
+pub(crate) fn gate_finish_from_context_with_authoritative_state(
+    context: &ExecutionContext,
+    authoritative_state: AuthoritativeTransitionStateRef<'_>,
+) -> GateResult {
     let mut gate = GateState::default();
     enforce_finish_dependency_index_truth(context, &mut gate);
-    merge_gate_result(&mut gate, gate_review_base_result(context, false));
+    merge_gate_result(
+        &mut gate,
+        gate_review_base_result(context, false, authoritative_state),
+    );
     if !gate.allowed {
         return gate.finish();
     }
     let pre_checkpoint_allowed =
-        evaluate_pre_checkpoint_finish_gate(context, &mut gate) && gate.allowed;
+        evaluate_pre_checkpoint_finish_gate(context, &mut gate, authoritative_state)
+            && gate.allowed;
     if gate
         .reason_codes
         .iter()
-        .any(|code| code == "qa_requirement_missing_or_invalid")
+        .any(|code| qa_requirement_missing_or_invalid_reason_code(code))
     {
         return gate.finish();
     }
-    let review_truth_result = gate_review_from_context(context);
+    let review_truth_result =
+        gate_review_from_context_with_authoritative_state(context, authoritative_state, true);
     merge_gate_result_without_failure_class(&mut gate, &review_truth_result);
     if !review_truth_result.allowed {
         gate.allowed = false;
@@ -31,16 +57,17 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         return gate.finish();
     }
 
-    match finish_review_gate_checkpoint_matches_current_branch_closure(context) {
+    match finish_review_gate_checkpoint_matches_current_branch_closure(context, authoritative_state)
+    {
         Ok(true) => {}
         Ok(false) => {
             gate.fail(
                 FailureClass::ExecutionStateNotReady,
                 "finish_review_gate_checkpoint_missing",
                 "Finish readiness requires a persisted finish-review checkpoint for the current branch closure.",
-                format!(
-                    "Run `featureforge workflow operator --plan {}` and complete the recommended public command sequence before finishing.",
-                    context.plan_rel
+                public_typed_operator_route_remediation_for_plan(
+                    "Record the finish-review checkpoint before finishing.",
+                    &context.plan_rel,
                 ),
             );
         }
@@ -62,11 +89,18 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
 
 pub(super) fn finish_review_gate_checkpoint_matches_current_branch_closure(
     context: &ExecutionContext,
+    authoritative_state: AuthoritativeTransitionStateRef<'_>,
 ) -> Result<bool, JsonFailure> {
-    let Some(current_branch_closure_id) = current_branch_closure_id(context) else {
+    let Some(authoritative_state) = authoritative_state.map_err(|error| error.clone())? else {
         return Ok(false);
     };
-    let Some(authoritative_state) = load_authoritative_transition_state(context)? else {
+    let Some(current_branch_closure_id) = current_branch_gate_bindings_from_authoritative_state(
+        context,
+        Some(authoritative_state),
+        false,
+    )
+    .current_branch_closure_id
+    else {
         return Ok(false);
     };
     Ok(authoritative_state
@@ -97,6 +131,7 @@ fn merge_gate_result_impl(target: &mut GateState, incoming: GateResult, merge_fa
         current_branch_closure_id: _,
         finish_review_gate_pass_branch_closure_id: _,
         recommended_command: _,
+        recommended_public_command_template,
         required_inputs,
         rederive_via_workflow_operator: _,
     } = incoming;
@@ -133,6 +168,9 @@ fn merge_gate_result_impl(target: &mut GateState, incoming: GateResult, merge_fa
             target.diagnostics.push(diagnostic);
         }
     }
+    if target.recommended_public_command_template.is_none() {
+        target.recommended_public_command_template = recommended_public_command_template;
+    }
     for required_input in required_inputs {
         if !target.required_inputs.contains(&required_input) {
             target.required_inputs.push(required_input);
@@ -152,6 +190,7 @@ fn should_replace_gate_failure_class(current: &str, incoming: &str) -> bool {
 pub(super) fn enforce_review_authoritative_late_gate_truth(
     context: &ExecutionContext,
     gate: &mut GateState,
+    authoritative_state: AuthoritativeTransitionStateRef<'_>,
 ) {
     let overlay = match load_status_authoritative_overlay_checked(context) {
         Ok(overlay) => overlay,
@@ -159,7 +198,7 @@ pub(super) fn enforce_review_authoritative_late_gate_truth(
             gate.fail(
                 FailureClass::MalformedExecutionState,
                 "authoritative_state_unavailable",
-                error.message,
+                error.message.clone(),
                 PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
             );
             return;
@@ -170,14 +209,14 @@ pub(super) fn enforce_review_authoritative_late_gate_truth(
     };
 
     validate_review_dependency_index_truth(overlay.dependency_index_state.as_deref(), gate);
-    let authoritative_state = match load_authoritative_transition_state(context) {
+    let authoritative_state = match authoritative_state {
         Ok(Some(authoritative_state)) => authoritative_state,
         Ok(None) => return,
         Err(error) => {
             gate.fail(
                 FailureClass::MalformedExecutionState,
                 "authoritative_state_unavailable",
-                error.message,
+                error.message.clone(),
                 PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
             );
             return;
@@ -185,12 +224,12 @@ pub(super) fn enforce_review_authoritative_late_gate_truth(
     };
     let Some(current_identity) = usable_current_branch_closure_identity_from_authoritative_state(
         context,
-        Some(&authoritative_state),
+        Some(authoritative_state),
     ) else {
         return;
     };
     let late_stage_bindings = shared_current_late_stage_branch_bindings(
-        Some(&authoritative_state),
+        Some(authoritative_state),
         Some(&current_identity.branch_closure_id),
         Some(&current_identity.reviewed_state_id),
     );

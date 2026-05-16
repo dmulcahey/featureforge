@@ -13,10 +13,10 @@ You are a reviewer. You may inspect the provided files, packet, summaries, and c
 2. Compare the diff against `{PLAN_OR_REQUIREMENTS}`
 3. When provided, read the approved plan and execution evidence paths below
 4. Use the provided base branch and commit range below
-5. Apply the checklist from `review/checklist.md`
+5. Apply the checklist from `$_REPO_ROOT/review/checklist.md` when present, otherwise `$_FEATUREFORGE_ROOT/review/checklist.md`
 6. Categorize issues as Critical, Important, or Minor
 7. Assess production readiness, including plan deviation against completed task packets when plan-routed context is present
-8. For plan-routed work, apply `review/plan-task-contract.md` as authoritative law for task obligations and hard-fail reuse
+8. For plan-routed work, apply `$_FEATUREFORGE_ROOT/review/plan-task-contract.md` as authoritative law for task obligations and hard-fail reuse
 
 When `{APPROVED_PLAN_PATH}` is provided for workflow-routed final review, you are the dedicated independent reviewer for the terminal whole-diff gate. Stay independent from the implementation context that produced the diff.
 
@@ -56,8 +56,10 @@ Treat `{BASE_BRANCH}` as authoritative when it is provided.
 If it is missing, stop and request explicit `BASE_BRANCH` instead of deriving it locally or running workflow commands.
 
 ```bash
-CHECKLIST_PATH="review/checklist.md"
-[ -f "$CHECKLIST_PATH" ] || CHECKLIST_PATH="$HOME/.featureforge/install/review/checklist.md"
+REPO_ROOT="${_REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+FEATUREFORGE_ROOT="${_FEATUREFORGE_ROOT:-$HOME/.featureforge/install}"
+CHECKLIST_PATH="$REPO_ROOT/review/checklist.md"
+[ -f "$CHECKLIST_PATH" ] || CHECKLIST_PATH="$FEATUREFORGE_ROOT/review/checklist.md"
 [ -z "{APPROVED_PLAN_PATH}" ] || cat "{APPROVED_PLAN_PATH}"
 [ -z "{EXECUTION_EVIDENCE_PATH}" ] || cat "{EXECUTION_EVIDENCE_PATH}"
 if [ -z "{BASE_BRANCH}" ]; then
@@ -95,7 +97,7 @@ cat "$CHECKLIST_PATH"
    - Any missing verification, edge cases, or release hygiene?
    - Any indexed `Done when` obligation or hard `Constraint` from completed task packets unmet?
    - Any avoidable duplicate implementation of substantive production behavior that should have reused a shared implementation?
-   - If duplicate production behavior is present, block landing unless the diff names one approved exception category from `review/plan-task-contract.md` and the boundary rationale.
+   - If duplicate production behavior is present, block landing unless the diff names one approved exception category from `$_FEATUREFORGE_ROOT/review/plan-task-contract.md` and the boundary rationale.
    - Any reuse finding must name the duplicated behavior, the shared implementation home, why duplication is harmful, and the smallest defensible consolidation path.
    - Scope reuse hard failures to substantive production behavior such as parsers, normalizers, validators, routing logic, eligibility logic, policy enforcement, prompt assembly, shared state transitions, artifact binding, and freshness decisions.
 
@@ -110,7 +112,7 @@ cat "$CHECKLIST_PATH"
    - If a change is reasonable but unapproved, flag it as plan deviation rather than silently accepting it.
    - If a task packet named a shared implementation home, fail any implementation that builds a parallel parser, normalizer, validator, router, eligibility check, policy gate, prompt assembler, state transition, artifact-binding check, or freshness decision instead.
 
-8. Apply the reuse hard-fail examples from `review/plan-task-contract.md`:
+8. Apply the reuse hard-fail examples from `$_FEATUREFORGE_ROOT/review/plan-task-contract.md`:
    - Example hard fail: a diff adds a second repo-relative path normalizer for review packets while an existing shared path helper owns canonical normalization.
    - Example allowed exception: generated schema output repeats field names from one source template and identifies the `generated code` exception.
 
@@ -152,7 +154,7 @@ Do not create, repair, search for, or reference runtime-owned projection files. 
 [Deterministic repair-packet findings for lower-risk style, optimization, documentation, or TODO issues]
 
 **For each issue:**
-- Use the deterministic review finding shape from `review/plan-task-contract.md`.
+- Use the deterministic review finding shape from `$_FEATUREFORGE_ROOT/review/plan-task-contract.md`.
 - Include `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail: yes|no`.
 - For task-contract failures, use canonical `DONE_WHEN_N` or `CONSTRAINT_N` obligation IDs when available.
 - Keep `Required Fix` as the smallest acceptable repair delta; do not paraphrase concrete failures into general feedback.

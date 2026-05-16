@@ -1,3 +1,5 @@
+#[path = "support/public_flow_scan.rs"]
+mod public_flow_scan;
 #[path = "support/rust_source_scan.rs"]
 mod rust_source_scan;
 
@@ -64,7 +66,12 @@ const FORBIDDEN_STALE_TARGET_FABRICATION_PATTERNS: &[(&str, &str)] = &[
     ),
     (
         "src/execution/next_action.rs",
-        "status.execution_reentry_target_source.as_deref() == Some(\"closure_graph_stale_target\")",
+        concat!(
+            "status.execution_reentry_target_source.as_deref() == Some(\"",
+            "closure_graph",
+            "_stale_target",
+            "\")",
+        ),
     ),
     (
         "src/execution/state.rs",
@@ -80,28 +87,6 @@ const STATE_DIRECT_GATE_COMMAND_BODIES: &[&str] = &[
     concat!("pre", "flight_from_context"),
     "gate_review_from_context",
     "gate_finish_from_context",
-];
-
-const PUBLIC_COMMAND_BOUNDARY_FORBIDDEN_TEST_HELPER_PATTERNS: &[(&str, &[&str])] = &[
-    (
-        "tests/support/workflow_direct.rs",
-        &[
-            "LegacyWorkflowCli",
-            "LegacyWorkflowCommand",
-            "allow_legacy_removed_commands",
-            "WorkflowPlanFidelityCli",
-            "record_plan_fidelity_receipt_with_state_dir",
-        ],
-    ),
-    (
-        "tests/support/plan_execution_direct.rs",
-        &[
-            "run_runtime_",
-            "run_internal_",
-            "run_record_plan_fidelity",
-            "record_plan_fidelity_receipt_with_state_dir",
-        ],
-    ),
 ];
 
 const INTERNAL_PLAN_EXECUTION_ARG_STRUCTS: &[&str] = &[
@@ -121,30 +106,11 @@ const INTERNAL_PLAN_EXECUTION_ARG_STRUCTS: &[&str] = &[
     "NoteArgs",
 ];
 
-const ROUTING_AUTHORITY_RECEIPT_FREE_FILES: &[&str] = &[
-    "src/execution/command_eligibility.rs",
-    "src/execution/current_truth.rs",
-    "src/execution/next_action.rs",
-    "src/execution/query.rs",
-    "src/execution/router.rs",
-    "src/workflow/operator.rs",
-    "src/workflow/status.rs",
-];
-
 #[test]
 fn public_command_boundary_test_helpers_do_not_expose_removed_or_hidden_workflow_commands() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut violations = Vec::new();
-
-    for (relative, forbidden_patterns) in PUBLIC_COMMAND_BOUNDARY_FORBIDDEN_TEST_HELPER_PATTERNS {
-        let source = fs::read_to_string(repo_root.join(relative))
-            .unwrap_or_else(|error| panic!("{relative} should be readable: {error}"));
-        for forbidden_pattern in *forbidden_patterns {
-            if source.contains(forbidden_pattern) {
-                violations.push(format!("{relative} contains `{forbidden_pattern}`"));
-            }
-        }
-    }
+    let violations =
+        public_flow_scan::public_command_boundary_forbidden_test_helper_violations(repo_root);
 
     assert!(
         violations.is_empty(),
@@ -175,22 +141,126 @@ fn plan_execution_cli_module_contains_only_public_command_args() {
 }
 
 #[test]
-fn production_routing_authority_uses_artifacts_not_receipts() {
+fn public_aggregate_mutations_own_event_log_command_identity() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut violations = Vec::new();
+    let advance_source =
+        fs::read_to_string(repo_root.join("src/execution/commands/advance_late_stage.rs"))
+            .expect("advance_late_stage source should be readable");
+    let advance_impl = rust_function_body(&advance_source, "advance_late_stage_impl")
+        .expect("advance_late_stage_impl should exist");
+    let close_source =
+        fs::read_to_string(repo_root.join("src/execution/commands/close_current_task.rs"))
+            .expect("close_current_task source should be readable");
+    let close_impl = rust_function_body(&close_source, "close_current_task")
+        .expect("close_current_task should exist");
 
-    for relative in ROUTING_AUTHORITY_RECEIPT_FREE_FILES {
-        let source = fs::read_to_string(repo_root.join(relative))
-            .unwrap_or_else(|error| panic!("{relative} should be readable: {error}"));
-        if source.to_ascii_lowercase().contains("receipt") {
-            violations.push(format!("{relative} contains receipt terminology"));
-        }
+    let hidden_advance_owners = [
+        "EventCommandOwner::InternalRecordBranchClosure",
+        "EventCommandOwner::InternalRecordReleaseReadiness",
+        "EventCommandOwner::InternalRecordFinalReview",
+        "EventCommandOwner::InternalRecordQa",
+        "EventCommandOwner::InternalRecordReviewDispatch",
+        "\"record_branch_closure\"",
+        "\"record_release_readiness\"",
+        "\"record_final_review\"",
+        "\"record_qa\"",
+        "\"record_review_dispatch\"",
+    ];
+    for forbidden in hidden_advance_owners {
+        assert!(
+            !advance_impl.contains(forbidden),
+            "advance_late_stage_impl must persist authoritative event envelopes through the public aggregate owner, not `{forbidden}`"
+        );
     }
+    assert!(
+        advance_impl.contains("EventCommandOwner::PublicAdvanceLateStage"),
+        "advance_late_stage_impl must pass the typed public aggregate event owner into normal-path recording helpers"
+    );
+    let release_primitive_impl = rust_function_body(&advance_source, "record_release_readiness")
+        .expect("record_release_readiness should exist");
+    assert!(
+        release_primitive_impl.contains("EventCommandOwner::InternalRecordReleaseReadiness"),
+        "internal record_release_readiness compatibility path must keep primitive event owner identity"
+    );
+    assert!(
+        !release_primitive_impl.contains("EventCommandOwner::PublicAdvanceLateStage"),
+        "internal record_release_readiness compatibility path must not persist under the public aggregate event owner"
+    );
+    let final_review_primitive_impl = rust_function_body(&advance_source, "record_final_review")
+        .expect("record_final_review should exist");
+    assert!(
+        final_review_primitive_impl.contains("EventCommandOwner::InternalRecordFinalReview"),
+        "internal record_final_review compatibility path must keep primitive event owner identity"
+    );
+    assert!(
+        !final_review_primitive_impl.contains("EventCommandOwner::PublicAdvanceLateStage"),
+        "internal record_final_review compatibility path must not persist under the public aggregate event owner"
+    );
+
+    let hidden_close_owners = [
+        "EventCommandOwner::InternalRecordReviewDispatch",
+        "\"record_review_dispatch\"",
+    ];
+    for forbidden in hidden_close_owners {
+        assert!(
+            !close_impl.contains(forbidden),
+            "close_current_task must refresh dispatch lineage through the public aggregate owner, not `{forbidden}`"
+        );
+    }
+    assert!(
+        close_impl.contains("EventCommandOwner::PublicCloseCurrentTask"),
+        "close_current_task must pass the typed public aggregate event owner into dispatch refresh"
+    );
+
+    let branch_truth_source =
+        fs::read_to_string(repo_root.join("src/execution/commands/common/branch_closure_truth.rs"))
+            .expect("branch_closure_truth source should be readable");
+    for helper_name in [
+        "branch_closure_already_current_output",
+        "branch_closure_already_current_empty_lineage_exemption_output",
+    ] {
+        let helper_body = rust_function_body(&branch_truth_source, helper_name)
+            .unwrap_or_else(|| panic!("{helper_name} should exist"));
+        assert!(
+            helper_body.contains("command_owner.as_str()"),
+            "{helper_name} must persist already-current branch-closure repair events with caller-owned command identity"
+        );
+        assert!(
+            !helper_body.contains("\"record_branch_closure\""),
+            "{helper_name} must not hard-code hidden primitive command identity"
+        );
+    }
+}
+
+#[test]
+fn close_current_task_propagates_worktree_lease_cleanup_failures() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let close_source =
+        fs::read_to_string(repo_root.join("src/execution/commands/close_current_task.rs"))
+            .expect("close_current_task source should be readable");
+    let close_impl = rust_function_body(&close_source, "close_current_task")
+        .expect("close_current_task should exist");
+    let _cleanup_helper = rust_function_body(
+        &close_source,
+        "release_resolved_worktree_leases_after_current_task_closure",
+    )
+    .expect("close-current-task cleanup helper should exist");
 
     assert!(
-        violations.is_empty(),
-        "public routing authority must not depend on receipt-shaped runtime contracts:\n{}",
-        violations.join("\n")
+        !close_source
+            .contains("let _ = release_worktree_leases_for_current_task_closures_and_persist"),
+        "close-current-task must not silently discard worktree lease cleanup failures"
+    );
+    assert!(
+        close_impl.contains("release_resolved_worktree_leases_after_current_task_closure")
+            && close_impl.contains(")?;"),
+        "close-current-task must propagate cleanup helper failures before reporting clean success"
+    );
+    assert!(
+        close_source.contains(") -> Result<(), JsonFailure>")
+            && close_source.contains("worktree lease cleanup failed")
+            && close_source.contains("task closure remains authoritative"),
+        "cleanup failure diagnostics must state that closure authority is known while cleanup failed"
     );
 }
 
@@ -275,21 +345,25 @@ fn gate_and_stale_decisioning_do_not_split_after_reducer() {
 #[test]
 fn target_bound_repair_follow_up_bindings_cover_task_scoped_kinds() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let review_state = fs::read_to_string(repo_root.join("src/execution/review_state.rs"))
-        .expect("review_state source should be readable");
-    let target_binding = rust_function_body(&review_state, "repair_follow_up_target_binding")
-        .expect("review_state should contain repair_follow_up_target_binding");
+    let repair_route_decision =
+        fs::read_to_string(repo_root.join("src/execution/repair_route_decision.rs"))
+            .expect("repair_route_decision source should be readable");
+    let target_binding =
+        rust_function_body(&repair_route_decision, "repair_follow_up_target_binding")
+            .expect("shared repair route decision should contain repair_follow_up_target_binding");
     assert!(
-        target_binding.contains("Some(\"record_task_closure\")")
+        target_binding.contains("Some(RepairFollowUpKind::CloseTask)")
             && target_binding.contains("close_task_repair_follow_up_target"),
-        "record_task_closure follow-ups must bind a task target through the shared close-task helper"
+        "close-task repair follow-ups must bind a task target through the shared close-task helper"
     );
-    let close_task_target = rust_function_body(&review_state, "close_task_repair_follow_up_target")
-        .expect("review_state should contain close_task_repair_follow_up_target");
+    let close_task_target =
+        rust_function_body(&repair_route_decision, "close_task_repair_follow_up_target").expect(
+            "shared repair route decision should contain close_task_repair_follow_up_target",
+        );
     assert!(
         close_task_target.contains("repair_plan\n        .target_task")
-            && close_task_target.contains("post_repair_route_action.task_number")
-            && close_task_target.contains("post_repair_route_action.blocking_task"),
+            && close_task_target.contains("repair_plan.post_route_task")
+            && close_task_target.contains("repair_plan.post_route_blocking_task"),
         "close-task repair follow-up binding must derive a deterministic task target from repair-plan routing state"
     );
 }

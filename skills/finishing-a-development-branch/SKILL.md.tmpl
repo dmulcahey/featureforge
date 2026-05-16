@@ -44,7 +44,7 @@ Stop. Don't proceed to Step 2.
 
 If a fresh review has not already been resolved for the current diff, you may invoke `featureforge:requesting-code-review` as a non-terminal checkpoint before presenting completion options.
 
-For workflow-routed terminal completion, this checkpoint does not replace the required terminal review gate that runs after `featureforge:document-release` and before any runtime-routed `featureforge:qa-only` handoff.
+For workflow-routed terminal completion, this checkpoint does not replace any later operator-selected final-review lane. If a selected release or metadata lane changes repo state, requery workflow/operator and request final review only when it selects that lane.
 
 - Resolve all Critical issues before continuing
 - Resolve Important issues unless the user explicitly accepts the risk
@@ -57,33 +57,29 @@ For workflow-routed terminal completion, this checkpoint does not replace the re
 Before presenting completion options:
 
 - If the current work was executed from an approved FeatureForge plan, require the exact approved plan path from the current execution workflow context before presenting completion options.
-- Run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` and require a branch-completion-ready route before presenting completion options.
+- Run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` and require a branch-completion-ready route before presenting completion options.
 - If the exact approved plan path is unavailable or workflow/operator fails, stop and return to the current execution flow instead of guessing.
 - Use `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only when you need additional diagnostics (`active_task`, `blocking_task`, `resume_task`, `evidence_path`, checkpoint fingerprints) to explain a blocker.
-- For workflow-routed terminal completion, do not run the terminal review gate in this step. Run it only after `featureforge:document-release` and before any runtime-routed `featureforge:qa-only` handoff.
+- For workflow-routed terminal completion, do not run a memorized terminal review or QA chain in this step. Requery workflow/operator and run only the lane or typed argv/template it selects.
 - If the current work is not governed by an approved FeatureForge plan, skip this execution-state gate and continue.
 - rejects branch-completion handoff if the approved plan is execution-dirty or malformed
 - must not allow branch completion while any checked-off plan step still lacks semantic implementation evidence
 - consumes the same execution evidence artifact used by terminal final review
 - must fail closed when it detects a missed reopen or stale evidence, but must not call `reopen` itself
 
-### Step 1.75: Required Document Release Gate
+### Step 1.75: Release, Review, and QA Routing
 
-For workflow-routed work, require the `document-release` pass before presenting completion options.
+Do not run a fixed terminal sequence from memory. Run `featureforge:document-release`, terminal `featureforge:requesting-code-review`, `featureforge:qa-only`, or `advance-late-stage` only when workflow/operator selects that handoff lane or returns the selected public argv/template route for it. The canonical route reference owns detailed binding and recovery law.
 
-Required release-readiness pass for workflow-routed work before completion.
+If workflow/operator routes QA, keep it downstream of a current final-review pass; do not move QA ahead by skill-order memory.
 
-For workflow-routed terminal completion, keep the order strict: `featureforge:document-release` -> terminal `featureforge:requesting-code-review` -> `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` -> any required `featureforge:qa-only` handoff -> `advance-late-stage` only when operator reports `phase_detail=qa_recording_required` -> rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` and follow its next finish command.
+When in doubt on late-stage routing vocabulary, use `$_FEATUREFORGE_ROOT/review/late-stage-precedence-reference.md`; do not treat that reference as executable ordering authority.
 
-Any required `featureforge:qa-only` handoff is downstream of that terminal final-review pass. Do not move QA ahead of the post-document-release `featureforge:requesting-code-review` gate.
-
-When in doubt on late-stage routing language, use `review/late-stage-precedence-reference.md` as the shared phase/action/skill table.
-
-For workflow-routed work, if the repo has release-facing docs or metadata such as `CHANGELOG.md`, `RELEASE-NOTES.md`, `VERSION`, `TODOS.md`, `README.md`, or platform workflow docs, do not treat documentation as optional cleanup. Route through `featureforge:document-release` first unless a fresh pass already happened in the current workflow.
+For workflow-routed work, release-facing docs or metadata such as `CHANGELOG.md`, `RELEASE-NOTES.md`, `VERSION`, `TODOS.md`, `README.md`, or platform workflow docs are context for the operator-selected release-doc lane. Do not invoke `featureforge:document-release` from file presence alone; run it only when workflow/operator selects that handoff lane or returns its selected typed argv/template route.
 
 For ad-hoc or non-workflow-routed work, keep `document-release` available as an optional cleanup pass when the diff clearly changes release-facing docs or handoff material, but do not turn it into a universal pre-completion gate.
 
-If `featureforge:document-release` writes repo files or changes release metadata, treat any earlier code review as stale and loop back through `featureforge:requesting-code-review` before presenting completion options.
+If `featureforge:document-release` writes repo files or changes release metadata, treat any earlier code review as stale. Requery workflow/operator and run `featureforge:requesting-code-review` only when the operator selects the terminal final-review lane.
 
 A document-release rewrite also makes any earlier browser QA stale if browser QA is still required for the current HEAD, so do not reuse pre-document-release QA artifacts as the final finish-gate input.
 
@@ -99,7 +95,7 @@ Before moving on, perform a short Gate F-style confirmation:
 
 If the current work is governed by an approved FeatureForge plan, treat the approved plan's normalized `**QA Requirement:** required|not-required` metadata as authoritative for workflow-routed finish gating.
 
-For workflow-routed work, this step validates QA applicability and current-branch test-plan freshness only. It does not authorize running `featureforge:qa-only` yet; terminal `featureforge:requesting-code-review` and the next `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` reroute still come first.
+For workflow-routed work, this step validates QA applicability and optional current-branch test-plan scoping only. It does not authorize running `featureforge:qa-only` yet; requery `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` and follow the selected route.
 
 Match current-branch artifacts by their `**Branch:**` header, not by a filename substring glob, so `my-feature` cannot masquerade as `feature`.
 
@@ -115,7 +111,7 @@ PLAN_ARTIFACT=""
 for CANDIDATE in $(ls -t "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"/*-test-plan-*.md 2>/dev/null); do
   [ -f "$CANDIDATE" ] || continue
   ARTIFACT_BRANCH=$(sed -n 's/^\*\*Branch:\*\* //p' "$CANDIDATE" | head -1)
-  if [ "$ARTIFACT_BRANCH" = "$BRANCH" ]; then
+  if [ "$ARTIFACT_BRANCH" = "$_BRANCH" ]; then
     PLAN_ARTIFACT="$CANDIDATE"
     break
   fi
@@ -127,41 +123,35 @@ Treat the current-branch test-plan artifact as a QA scope/provenance input only 
 
 If that artifact names pages, routes, or browser interactions, use it to scope the required QA handoff when QA is required or when the user explicitly wants extra browser validation.
 
-A project-wide or generic test-plan artifact may help scope ad-hoc QA, but it does not satisfy helper-backed finish readiness when approved-plan `QA Requirement` is `required`. Only the current-branch artifact counts for that freshness check.
+A project-wide or generic test-plan artifact may help scope ad-hoc QA, but it is not finish-gate control-plane truth. For workflow-routed QA recording and finish readiness, missing or stale source test-plan projections are diagnostic-only when workflow/operator routes QA or branch completion from current runtime-owned state.
 
-If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <path>`; do not guess from test-plan prose.
+If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop, rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`, and follow the Installed Control Plane section plus the canonical route reference; do not guess from test-plan prose or hard-code a repair command from memory.
 
-If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before invoking `featureforge:qa-only` or late-stage completion commands.
+If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, do not stop solely to regenerate it before `featureforge:qa-only`, QA outcome recording, or finish-gate commands. Treat the missing source test-plan projection as diagnostic-only unless workflow/operator explicitly routes to a test-plan refresh lane.
 
-If workflow/operator reports `test_plan_refresh_required`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
+If workflow/operator JSON reports `qa_pending` with `phase_detail=test_plan_refresh_required`, perform only that handoff: return to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
 
 If a fresh `qa-only` report already happened in the current workflow, continue silently.
 
 For workflow-routed work, require the QA handoff only when workflow/operator later routes to `qa_pending`; do not infer the final QA gate from Step 1.85 alone.
 
-If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before the operator-routed QA or finish-gate steps.
-
 ### Step 1.9: Finish Gate
 
-If the current work is governed by an approved FeatureForge plan, use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` as the late-stage routing source after `featureforge:document-release` and the terminal `featureforge:requesting-code-review` gate are current.
+If the current work is governed by an approved FeatureForge plan, use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` as the late-stage routing source after each selected lane completes.
 
-If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and the terminal `featureforge:requesting-code-review` gate are current, rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` and follow the exact `phase_detail`-driven next finish command before presenting completion options.
+Do not assume release docs, final review, QA, or finish is next because another skill says it usually is; apply the Installed Control Plane section and canonical route reference to the current operator JSON until branch completion options are routable.
 
-If the operator reports `qa_pending` with `phase_detail=test_plan_refresh_required`, hand control back to `featureforge:plan-eng-review` before QA or branch completion.
-
-If the operator reports `qa_pending` with `phase_detail=qa_recording_required`, use input shape `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>` only after substituting concrete values, then rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>`.
-
-If the operator reports `ready_for_branch_completion`, run the exact `recommended_public_command_argv` when present and rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` until branch completion options are actually routable. If `recommended_public_command_argv[0] == "featureforge"`, run it through `$_FEATUREFORGE_BIN` (or `_featureforge_exec_public_argv`) instead of PATH/workspace-runtime resolution. Do not shell-parse or whitespace-split `recommended_command`; it is display-only compatibility text.
+For routed QA outcome recording or `ready_for_branch_completion`, apply the Installed Control Plane section and canonical route reference, then rerun `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` until branch completion options are actually routable.
 
 If the operator reports any other late-stage phase/detail pair, follow that exact operator result instead of forcing QA or finish-gate commands from memory.
 
-For workflow-routed terminal completion, if no fresh post-document-release dedicated-independent review exists for the current `HEAD`, invoke `featureforge:requesting-code-review` before presenting branch completion options.
+For workflow-routed terminal completion, if no fresh post-document-release dedicated-independent review exists for the current `HEAD`, requery workflow/operator and run `featureforge:requesting-code-review` only when it owns the selected final-review lane.
 
-Low-level compatibility finish commands remain expert/debug-only surfaces; follow workflow/operator for normal routing instead of invoking compatibility commands from memory.
+Follow workflow/operator for normal finish routing. If no typed public argv/template is present, stop and report the route diagnostic instead of invoking compatibility commands from memory.
 
 If the current work is governed by an approved FeatureForge plan and workflow/operator does not route to branch completion, stop and return to the current execution flow; do not present completion options against stale QA or release artifacts.
 
-If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.
+If the current work is not governed by an approved FeatureForge plan, skip this workflow-routed finish gate and continue with the normal completion flow.
 
 ### Step 1.95: Protected-Branch Repo-Write Gate
 
@@ -171,7 +161,7 @@ Before executing any completion option that mutates repo state, run the shared r
 $_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:finishing-a-development-branch --task-id <current-branch-finish> --write-target branch-finish
 ```
 
-- If the helper returns `allowed`, continue with the selected completion path.
+- If the repo-safety check returns `allowed`, continue with the selected completion path.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact completion scope.
 - If the user explicitly approves protected-branch completion writes, approve the full completion scope with `$_FEATUREFORGE_BIN repo-safety approve --stage featureforge:finishing-a-development-branch --task-id <current-branch-finish> --reason "<explicit user approval>" --write-target branch-finish [--write-target git-merge] [--write-target git-push] [--write-target git-worktree-cleanup]`, then re-check before continuing.
 - Before a follow-on `git merge`, `git push`, or worktree cleanup, re-run the gate with the same task id and approved write-target set.

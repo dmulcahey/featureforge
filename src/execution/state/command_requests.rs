@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BeginArgs, CompleteArgs, FailureClass, JsonFailure, NoteArgs, NoteState, NoteStateArg, PathBuf,
+    ReopenArgs, TransferArgs, normalize_whitespace,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RebuildEvidenceRequest {
@@ -88,6 +91,12 @@ pub enum TransferRequestMode {
         scope: String,
         to: String,
     },
+}
+
+const TRANSFER_LEGACY_ROUTE_AUTHORITY_GUIDANCE: &str = "transfer legacy repair-step shape is compatibility-only and route-authorized; agents must copy it from workflow/operator `recommended_public_command_argv` or bind the returned `recommended_public_command_template`.";
+
+fn transfer_legacy_required_field_message(flag: &str) -> String {
+    format!("{TRANSFER_LEGACY_ROUTE_AUTHORITY_GUIDANCE} Missing `{flag}`.")
 }
 
 pub fn normalize_begin_request(args: &BeginArgs) -> BeginRequest {
@@ -216,7 +225,7 @@ pub fn normalize_transfer_request(args: &TransferArgs) -> Result<TransferRequest
     if routed_shape_present && legacy_shape_present {
         return Err(JsonFailure::new(
             FailureClass::InvalidCommandInput,
-            "transfer accepts either the routed handoff shape (--scope/--to/--reason) or the legacy repair-step shape (--repair-task/--repair-step/--source/--expect-execution-fingerprint), but not both at once.",
+            "transfer accepts either the routed handoff shape (--scope/--to/--reason) or the compatibility-only route-authorized legacy repair-step shape (--repair-task/--repair-step/--source/--expect-execution-fingerprint), but not both at once. Agents must copy the legacy shape from workflow/operator `recommended_public_command_argv` or bind the returned `recommended_public_command_template`.",
         ));
     }
 
@@ -244,26 +253,26 @@ pub fn normalize_transfer_request(args: &TransferArgs) -> Result<TransferRequest
     let repair_task = args.repair_task.ok_or_else(|| {
         JsonFailure::new(
             FailureClass::InvalidCommandInput,
-            "transfer legacy repair-step mode requires --repair-task.",
+            transfer_legacy_required_field_message("--repair-task"),
         )
     })?;
     let repair_step = args.repair_step.ok_or_else(|| {
         JsonFailure::new(
             FailureClass::InvalidCommandInput,
-            "transfer legacy repair-step mode requires --repair-step.",
+            transfer_legacy_required_field_message("--repair-step"),
         )
     })?;
     let source = args.source.ok_or_else(|| {
         JsonFailure::new(
             FailureClass::InvalidCommandInput,
-            "transfer legacy repair-step mode requires --source.",
+            transfer_legacy_required_field_message("--source"),
         )
     })?;
     let expect_execution_fingerprint =
         args.expect_execution_fingerprint.clone().ok_or_else(|| {
             JsonFailure::new(
                 FailureClass::InvalidCommandInput,
-                "transfer legacy repair-step mode requires --expect-execution-fingerprint.",
+                transfer_legacy_required_field_message("--expect-execution-fingerprint"),
             )
         })?;
 

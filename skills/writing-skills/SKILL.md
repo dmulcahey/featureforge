@@ -38,18 +38,13 @@ _featureforge_exec_public_argv() {
     "$_FEATUREFORGE_BIN" "$@"
     return $?
   fi
-  "$@"
+  echo "featureforge: refusing non-featureforge public argv: $1" >&2
+  return 2
 }
 ```
-## Installed Control Plane
+## Runtime Route Reference
 
-Live FeatureForge workflow routing is install-owned:
-- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
-- do not route live workflow commands through `./bin/featureforge`
-- do not route live workflow commands through `target/debug/featureforge`
-- do not route live workflow commands through `cargo run`
-
-When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
+This skill does not own live workflow routing. If another workflow surface gives you workflow/operator JSON, follow `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` instead of reconstructing route law here.
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -87,7 +82,7 @@ Load these only when their detail is needed:
 - `$_FEATUREFORGE_ROOT/skills/writing-skills/copilot-best-practices.md`: GitHub Copilot local-install compatibility notes.
 - `$_FEATUREFORGE_ROOT/skills/writing-skills/testing-skills-with-subagents.md`: full RED/GREEN/REFACTOR pressure-test methodology.
 - `$_FEATUREFORGE_ROOT/skills/writing-skills/persuasion-principles.md`: rationale for discipline-enforcing wording.
-- `$_FEATUREFORGE_ROOT/skills/writing-skills/graphviz-conventions.dot` and `render-graphs.js`: optional flowchart style and rendering helpers.
+- `$_FEATUREFORGE_ROOT/skills/writing-skills/graphviz-conventions.dot` and `$_FEATUREFORGE_ROOT/skills/writing-skills/render-graphs.js`: optional flowchart style and rendering helpers.
 
 ## When to Create or Edit a Skill
 
@@ -159,7 +154,7 @@ Keep Codex and GitHub Copilot behavior aligned:
 - Put canonical skills under repo `skills/` and install/link them into each platform's discovery path.
 - Preserve workflow ordering and output contracts across platforms; only discovery paths and platform-specific tool names should vary.
 - Keep descriptions trigger-only for both platforms.
-- Keep supporting files packaged beside the skill and referenced with portable relative paths or `$_FEATUREFORGE_ROOT/...` paths.
+- Keep supporting files packaged beside the skill and referenced with portable relative paths or concrete installed-root paths derived from `$_FEATUREFORGE_ROOT`.
 
 See the Codex and Copilot companion references for platform-specific details.
 

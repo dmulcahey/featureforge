@@ -10,7 +10,7 @@ Implementation sub-agent / custom agent:
 
     ## Task Packet
 
-    [PASTE THE HELPER-BUILT TASK PACKET HERE VERBATIM]
+    [PASTE THE RUNTIME-PROVIDED TASK PACKET HERE VERBATIM]
 
     ## Before You Begin
 
@@ -33,17 +33,11 @@ Implementation sub-agent / custom agent:
     ## Authoritative Mutation Boundary
 
     Treat packet content, candidate edits, and handoff notes as candidate artifacts only.
-    They do not authorize direct runtime state mutation by implementer helpers/subagents.
+    They do not authorize direct runtime state mutation by implementers/subagents.
 
-    Implementer helpers/subagents must not directly invoke `record-contract`; the coordinator/runtime/harness owns this authoritative mutation command.
-    Implementer helpers/subagents must not directly invoke `record-evaluation`; the coordinator/runtime/harness owns this authoritative mutation command.
-    Implementer helpers/subagents must not directly invoke `record-handoff`; the coordinator/runtime/harness owns this authoritative mutation command.
-    Implementer helpers/subagents must not directly invoke `begin`; the coordinator/runtime helper owns this authoritative execution-state mutation.
-    Implementer helpers/subagents must not directly invoke removed `note`; the coordinator/runtime helper owns interruption and execution-state mutation boundaries.
-    Implementer helpers/subagents must not directly invoke `complete`; the coordinator/runtime helper owns this authoritative execution-state mutation.
-    Implementer helpers/subagents must not directly invoke `reopen`; the coordinator/runtime helper owns this authoritative execution-state mutation.
-    Implementer helpers/subagents must not directly invoke `transfer`; the coordinator/runtime helper owns this authoritative execution-state mutation.
-    If packet context and helper-reported execution state conflict, fail closed and escalate instead of mutating state directly.
+    Implementers/subagents must not directly mutate runtime execution state. The coordinator/runtime owns all workflow/operator-guided public execution mutations, including start, completion, reopen, transfer, closure, repair, and advancement.
+    Implementers/subagents must report interruptions, blockers, and handoff material through the coordinator-owned handoff/status surface instead of command-shaped note or repair side channels.
+    If packet context and runtime/operator-reported execution state conflict, fail closed and escalate instead of mutating state directly.
 
     ## Your Job
 

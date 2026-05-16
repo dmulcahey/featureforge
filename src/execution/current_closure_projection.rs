@@ -1,10 +1,10 @@
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::context::ExecutionContext;
-use crate::execution::read_model_support::{
+use crate::execution::status::PublicReviewStateTaskClosure;
+use crate::execution::status_support::{
     task_boundary_reason_code_from_message, task_closure_matches_current_workspace,
     validate_current_task_closure_record,
 };
-use crate::execution::status::PublicReviewStateTaskClosure;
 use crate::execution::transitions::{
     AuthoritativeTransitionState, CurrentTaskClosureRecord, RawCurrentTaskClosureStateEntry,
     load_authoritative_transition_state,
@@ -26,41 +26,57 @@ pub(crate) struct CurrentTaskClosureStructuralFailure {
     pub(crate) message: String,
 }
 
-pub(crate) fn project_current_task_closures(
+pub(crate) fn project_current_task_closures_from_authoritative_state(
     context: &ExecutionContext,
     authoritative_state: Option<&AuthoritativeTransitionState>,
 ) -> Result<Vec<PublicReviewStateTaskClosure>, JsonFailure> {
-    let records = match authoritative_state {
-        Some(state) => still_current_task_closure_records_from_authoritative_state(context, state)?,
-        None => still_current_task_closure_records(context)?,
-    };
+    let records = authoritative_state.map_or_else(
+        || Ok(Vec::new()),
+        |state| still_current_task_closure_records_from_authoritative_state(context, state),
+    )?;
     Ok(records
         .into_iter()
         .map(public_task_closure_from_record)
         .collect())
 }
 
-pub(crate) fn project_current_task_closure_repair_reason_codes(
+pub(crate) fn project_current_task_closure_repair_reason_codes_from_authoritative_state(
     context: &ExecutionContext,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
 ) -> Vec<String> {
     if context.steps.iter().any(|step| !step.checked) {
         return Vec::new();
     }
-    let Ok(structural_failures) = structural_current_task_closure_failures(context) else {
+    let structural_failures = authoritative_state.map_or_else(Vec::new, |state| {
+        structural_current_task_closure_failures_from_authoritative_state(context, state)
+    });
+    let current_records = authoritative_state.map_or_else(Vec::new, |state| {
+        valid_current_task_closure_records_from_authoritative_state(context, state)
+    });
+    project_current_task_closure_repair_reason_codes_from_records(
+        context,
+        structural_failures,
+        current_records,
+    )
+}
+
+pub(crate) fn project_current_task_closure_repair_reason_codes_from_records(
+    context: &ExecutionContext,
+    structural_failures: Vec<CurrentTaskClosureStructuralFailure>,
+    current_records: Vec<CurrentTaskClosureRecord>,
+) -> Vec<String> {
+    if context.steps.iter().any(|step| !step.checked) {
         return Vec::new();
     };
     let mut reason_codes = Vec::new();
     for failure in structural_failures {
         push_reason_code_once(&mut reason_codes, &failure.reason_code);
     }
-    let Ok(current_records) = valid_current_task_closure_records(context) else {
-        return reason_codes;
-    };
     for record in current_records {
         match task_closure_matches_current_workspace(context, &record) {
             Ok(true) => {}
             Ok(false) => {
-                push_reason_code_once(&mut reason_codes, "prior_task_current_closure_stale");
+                push_reason_code_once(&mut reason_codes, crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_STALE);
             }
             Err(error) => {
                 if let Some(reason_code) = task_boundary_reason_code_from_message(&error.message) {
@@ -79,6 +95,18 @@ pub(crate) fn structural_current_task_closure_failures(
     let Some(authoritative_state) = authoritative_state.as_ref() else {
         return Ok(Vec::new());
     };
+    Ok(
+        structural_current_task_closure_failures_from_authoritative_state(
+            context,
+            authoritative_state,
+        ),
+    )
+}
+
+pub(crate) fn structural_current_task_closure_failures_from_authoritative_state(
+    context: &ExecutionContext,
+    authoritative_state: &AuthoritativeTransitionState,
+) -> Vec<CurrentTaskClosureStructuralFailure> {
     let recoverable_current_records = authoritative_state.current_task_closure_results();
     let mut failures = authoritative_state
         .raw_current_task_closure_state_entries()
@@ -108,23 +136,10 @@ pub(crate) fn structural_current_task_closure_failures(
                 current_task_closure_structural_failure_from_record(context, record)
             }),
     );
-    Ok(failures)
+    failures
 }
 
-pub(crate) fn valid_current_task_closure_records(
-    context: &ExecutionContext,
-) -> Result<Vec<CurrentTaskClosureRecord>, JsonFailure> {
-    let authoritative_state = load_authoritative_transition_state(context)?;
-    let Some(authoritative_state) = authoritative_state.as_ref() else {
-        return Ok(Vec::new());
-    };
-    Ok(valid_current_task_closure_records_from_authoritative_state(
-        context,
-        authoritative_state,
-    ))
-}
-
-fn valid_current_task_closure_records_from_authoritative_state(
+pub(crate) fn valid_current_task_closure_records_from_authoritative_state(
     context: &ExecutionContext,
     authoritative_state: &AuthoritativeTransitionState,
 ) -> Vec<CurrentTaskClosureRecord> {
@@ -164,16 +179,6 @@ pub(crate) fn still_current_task_closure_records_from_authoritative_state(
     Ok(records)
 }
 
-pub(crate) fn stale_current_task_closure_records(
-    context: &ExecutionContext,
-) -> Result<Vec<CurrentTaskClosureRecord>, JsonFailure> {
-    let authoritative_state = load_authoritative_transition_state(context)?;
-    let Some(authoritative_state) = authoritative_state.as_ref() else {
-        return Ok(Vec::new());
-    };
-    stale_current_task_closure_records_from_authoritative_state(context, authoritative_state)
-}
-
 pub(crate) fn stale_current_task_closure_records_from_authoritative_state(
     context: &ExecutionContext,
     authoritative_state: &AuthoritativeTransitionState,
@@ -207,7 +212,10 @@ pub(crate) fn current_task_closure_overlay_restore_required(
 ) -> Result<bool, JsonFailure> {
     Ok(load_authoritative_transition_state(context)?
         .as_ref()
-        .is_some_and(AuthoritativeTransitionState::current_task_closure_overlay_needs_restore))
+        .is_some_and(|state| {
+            state.current_task_closure_overlay_needs_restore()
+                && state.current_task_closure_results().is_empty()
+        }))
 }
 
 pub(crate) fn task_current_closure_status_from_authoritative_state(
@@ -247,14 +255,14 @@ fn invalid_current_task_closure_error_for_raw_entry(
     match entry.task {
         Some(task_number) => task_boundary_error(
             FailureClass::ExecutionStateNotReady,
-            "prior_task_current_closure_invalid",
+            crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_INVALID,
             format!(
                 "Task {task_number} current task closure is malformed or missing authoritative provenance for the active approved plan."
             ),
         ),
         None => task_boundary_error(
             FailureClass::ExecutionStateNotReady,
-            "prior_task_current_closure_invalid",
+            crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_INVALID,
             format!(
                 "Current task-closure entry `{}` is malformed or not bound to a valid task for the active approved plan.",
                 entry.scope_key
@@ -276,7 +284,7 @@ fn current_task_closure_structural_failure_from_entry(
         scope_key: entry.scope_key,
         closure_record_id: entry.closure_record_id,
         reason_code: task_boundary_reason_code_from_message(&error.message)
-            .unwrap_or("prior_task_current_closure_invalid")
+            .unwrap_or(crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_INVALID)
             .to_owned(),
         message: error.message,
     })
@@ -292,7 +300,7 @@ fn current_task_closure_structural_failure_from_record(
         scope_key: format!("task-{}", record.task),
         closure_record_id: Some(record.closure_record_id),
         reason_code: task_boundary_reason_code_from_message(&error.message)
-            .unwrap_or("prior_task_current_closure_invalid")
+            .unwrap_or(crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_INVALID)
             .to_owned(),
         message: error.message,
     })
@@ -349,8 +357,8 @@ mod tests {
     #[test]
     fn repair_reason_projection_deduplicates_reason_codes() {
         let mut reason_codes = Vec::new();
-        push_reason_code_once(&mut reason_codes, "prior_task_current_closure_stale");
-        push_reason_code_once(&mut reason_codes, "prior_task_current_closure_stale");
-        assert_eq!(reason_codes, ["prior_task_current_closure_stale"]);
+        push_reason_code_once(&mut reason_codes, crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_STALE);
+        push_reason_code_once(&mut reason_codes, crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_STALE);
+        assert_eq!(reason_codes, [crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_STALE]);
     }
 }

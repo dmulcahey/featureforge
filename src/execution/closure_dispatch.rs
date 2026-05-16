@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::closure_diagnostics::task_closure_dispatch_lineage_reason_code;
+use crate::execution::command_eligibility::PublicCommandKind;
 use crate::execution::context::{ExecutionContext, NoteState};
 use crate::execution::current_truth::{
     current_final_review_dispatch_id as shared_current_final_review_dispatch_id,
@@ -11,6 +12,7 @@ use crate::execution::internal_args::{RecordReviewDispatchArgs, ReviewDispatchSc
 use crate::execution::leases::{
     StatusAuthoritativeOverlay, load_status_authoritative_overlay_checked,
 };
+use crate::execution::next_action::NEXT_ACTION_CLOSE_CURRENT_TASK;
 use crate::execution::phase;
 use crate::execution::read_model::{
     final_review_dispatch_still_current_for_gates, has_authoritative_late_stage_progress,
@@ -19,14 +21,14 @@ use crate::execution::read_model::{
     usable_current_branch_closure_identity,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
-use crate::execution::read_model_support::{
+use crate::execution::semantic_identity::semantic_workspace_snapshot;
+use crate::execution::stale_target_selection::select_route_projected_stale_boundary_task;
+use crate::execution::status::PlanExecutionStatus;
+use crate::execution::status_support::{
     active_step, context_all_task_scopes_closed_by_authority, latest_attempted_step_for_task,
-    pre_reducer_earliest_unresolved_stale_task,
     task_closure_baseline_repair_candidate_with_stale_target, task_closure_recording_prerequisites,
     task_completion_lineage_fingerprint,
 };
-use crate::execution::semantic_identity::semantic_workspace_snapshot;
-use crate::execution::status::PlanExecutionStatus;
 use crate::execution::transitions::{
     AuthoritativeTransitionState, load_authoritative_transition_state,
 };
@@ -227,7 +229,7 @@ pub(crate) fn ensure_task_dispatch_id_matches(
     Err(JsonFailure::new(
         FailureClass::ExecutionStateNotReady,
         format!(
-            "close-current-task requires a current task review dispatch lineage for task {task}."
+            "close-current-task requires current runtime-owned task review state for task {task}. Re-query workflow operator/status and follow its typed public route."
         ),
     ))
 }
@@ -258,7 +260,7 @@ pub(crate) fn task_dispatch_reviewed_state_status(
     .ok_or_else(|| {
         JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
-            "close-current-task requires authoritative review-dispatch lineage state.",
+            "close-current-task requires authoritative runtime-owned task review state. Re-query workflow operator/status and follow its typed public route.",
         )
     })
 }
@@ -296,7 +298,7 @@ pub(crate) fn ensure_final_review_dispatch_id_matches(
     let overlay = load_status_authoritative_overlay_checked(context)?.ok_or_else(|| {
         JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
-            "advance-late-stage final-review path requires authoritative dispatch lineage state.",
+            "advance-late-stage final-review path requires authoritative runtime-owned final-review state. Re-query workflow operator/status and follow its typed public route.",
         )
     })?;
     let branch_lineage_matches = overlay
@@ -311,7 +313,7 @@ pub(crate) fn ensure_final_review_dispatch_id_matches(
         if branch_lineage_matches {
             "advance-late-stage final-review path requires a non-empty current final-review dispatch id."
         } else {
-            "advance-late-stage final-review path requires a current final-review dispatch lineage."
+            "advance-late-stage final-review path requires current runtime-owned final-review state. Re-query workflow operator/status and follow its typed public route."
         },
     ))
 }
@@ -326,7 +328,7 @@ pub(crate) fn validate_review_dispatch_request(
             let requested_task = args.task.ok_or_else(|| {
                 JsonFailure::new(
                     FailureClass::InvalidCommandInput,
-                    "task-scoped review-dispatch recording requires --task <n>.",
+                    "Task-scoped review-dispatch update requires --task <n>.",
                 )
             })?;
             let observed_task = match cycle_target {
@@ -335,14 +337,14 @@ pub(crate) fn validate_review_dispatch_request(
                     return Err(JsonFailure::new(
                         FailureClass::InvalidCommandInput,
                         format!(
-                            "task-scoped review-dispatch recording for Task {requested_task} is invalid because the approved plan is already at final-review dispatch scope."
+                            "Task-scoped review-dispatch update for Task {requested_task} is invalid because the approved plan is already at final-review dispatch scope."
                         ),
                     ));
                 }
                 ReviewDispatchCycleTarget::None => {
                     return Err(JsonFailure::new(
                         FailureClass::ExecutionStateNotReady,
-                        "task-scoped review-dispatch recording requires a current task review-dispatch target.",
+                        "Task-scoped review-dispatch update requires a current task review-dispatch target.",
                     ));
                 }
             };
@@ -350,7 +352,7 @@ pub(crate) fn validate_review_dispatch_request(
                 return Err(JsonFailure::new(
                     FailureClass::InvalidCommandInput,
                     format!(
-                        "task-scoped review-dispatch recording for Task {requested_task} does not match the current task review-dispatch target Task {observed_task} for plan {}.",
+                        "Task-scoped review-dispatch update for Task {requested_task} does not match the current task review-dispatch target Task {observed_task} for plan {}.",
                         context.plan_rel
                     ),
                 ));
@@ -579,29 +581,22 @@ fn review_dispatch_task_boundary_target(
     }
     let earliest_stale_boundary_task = status
         .as_ref()
-        .and_then(|status| pre_reducer_earliest_unresolved_stale_task(context, status));
+        .and_then(select_route_projected_stale_boundary_task);
     if let Some(stale_task) = earliest_stale_boundary_task
         .filter(|task_number| review_dispatch_boundary_blocked_for_task(context, *task_number))
     {
-        let step_number = latest_attempted_step_for_task(context, stale_task).or_else(|| {
-            context
-                .steps
-                .iter()
-                .filter(|step| step.task_number == stale_task)
-                .map(|step| step.step_number)
-                .max()
-        })?;
+        let step_number = latest_dispatch_step_for_task(context, stale_task)?;
         return Some(ReviewDispatchCycleTarget::Bound(stale_task, step_number));
     }
     if let Some(status) = status.as_ref() {
         let boundary_reason_present = status.reason_codes.iter().any(|reason_code| {
             matches!(
                 reason_code.as_str(),
-                "prior_task_current_closure_missing"
-                    | "prior_task_current_closure_stale"
-                    | "prior_task_current_closure_invalid"
-                    | "prior_task_current_closure_reviewed_state_malformed"
-                    | "task_cycle_break_active"
+                crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_MISSING
+                    | crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_STALE
+                    | crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_INVALID
+                    | crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_REVIEWED_STATE_MALFORMED
+                    | crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_TASK_CYCLE_BREAK_ACTIVE
             )
         });
         if boundary_reason_present
@@ -611,15 +606,7 @@ fn review_dispatch_task_boundary_target(
                 .or(status.active_task)
             && review_dispatch_boundary_blocked_for_task(context, task_number)
         {
-            let step_number =
-                latest_attempted_step_for_task(context, task_number).or_else(|| {
-                    context
-                        .steps
-                        .iter()
-                        .filter(|step| step.task_number == task_number)
-                        .map(|step| step.step_number)
-                        .max()
-                })?;
+            let step_number = latest_dispatch_step_for_task(context, task_number)?;
             return Some(ReviewDispatchCycleTarget::Bound(task_number, step_number));
         }
     }
@@ -636,22 +623,26 @@ fn review_dispatch_task_boundary_target(
                     context,
                     status,
                     *candidate_task,
-                    pre_reducer_earliest_unresolved_stale_task(context, status),
+                    select_route_projected_stale_boundary_task(status),
                 )
                 .ok()
                 .flatten()
                 .is_some()
             })
     })?;
-    let step_number = latest_attempted_step_for_task(context, task_number).or_else(|| {
+    let step_number = latest_dispatch_step_for_task(context, task_number)?;
+    Some(ReviewDispatchCycleTarget::Bound(task_number, step_number))
+}
+
+fn latest_dispatch_step_for_task(context: &ExecutionContext, task_number: u32) -> Option<u32> {
+    latest_attempted_step_for_task(context, task_number).or_else(|| {
         context
             .steps
             .iter()
             .filter(|step| step.task_number == task_number)
             .map(|step| step.step_number)
             .max()
-    })?;
-    Some(ReviewDispatchCycleTarget::Bound(task_number, step_number))
+    })
 }
 
 fn public_close_current_task_cycle_target(
@@ -660,14 +651,16 @@ fn public_close_current_task_cycle_target(
 ) -> Option<ReviewDispatchCycleTarget> {
     let close_current_task_route = status.phase_detail
         == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
-        || status.next_action == "close current task";
+        || status.next_action == NEXT_ACTION_CLOSE_CURRENT_TASK;
     if !close_current_task_route {
         return None;
     }
     let task_number = status
         .public_repair_targets
         .iter()
-        .find(|target| target.command_kind == "close-current-task")
+        .find(|target| {
+            PublicCommandKind::CloseCurrentTask.matches_public_mutation_token(&target.command_kind)
+        })
         .and_then(|target| target.task)
         .or_else(|| {
             status
@@ -676,14 +669,7 @@ fn public_close_current_task_cycle_target(
                 .and_then(|context| context.task_number)
         })
         .or(status.blocking_task)?;
-    let step_number = latest_attempted_step_for_task(context, task_number).or_else(|| {
-        context
-            .steps
-            .iter()
-            .filter(|step| step.task_number == task_number)
-            .map(|step| step.step_number)
-            .max()
-    })?;
+    let step_number = latest_dispatch_step_for_task(context, task_number)?;
     Some(ReviewDispatchCycleTarget::Bound(task_number, step_number))
 }
 

@@ -1,4 +1,12 @@
-use super::*;
+#[cfg(test)]
+use super::FailureClass;
+use super::{
+    AuthoritativeTransitionState, BTreeSet, CurrentTaskClosureMaterialization,
+    CurrentTaskClosureWrite, EvidenceAttempt, ExecutionContext, ExecutionEvidence,
+    ExecutionRuntime, JsonFailure, Path, RebuildEvidenceCandidate, RebuildEvidenceTarget,
+    TaskClosureLineageRefresh, claim_step_write_authority, commit_object_fingerprint,
+    load_authoritative_transition_state, record_current_task_closure,
+};
 
 #[cfg(test)]
 pub(in crate::execution::commands) fn rebuild_downstream_truth_stale(

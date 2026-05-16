@@ -42,18 +42,15 @@ _featureforge_exec_public_argv() {
     "$_FEATUREFORGE_BIN" "$@"
     return $?
   fi
-  "$@"
+  echo "featureforge: refusing non-featureforge public argv: $1" >&2
+  return 2
 }
 ```
 ## Installed Control Plane
 
-Live FeatureForge workflow routing is install-owned:
-- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
-- do not route live workflow commands through `./bin/featureforge`
-- do not route live workflow commands through `target/debug/featureforge`
-- do not route live workflow commands through `cargo run`
+Live workflow routing uses only `$_FEATUREFORGE_BIN`; never use `./bin/featureforge`, `target/debug/featureforge`, or `cargo run` for live routing. Query workflow/operator JSON with `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`.
 
-When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
+If the installed runtime/root cannot be resolved, stop before making workflow mutations. Use only typed operator JSON route surfaces: execute `recommended_public_command_argv` when present; when `recommended_public_command_template` appears, treat `required_inputs` as validation metadata and materialize templates only by rerunning `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --input NAME=VALUE --json`. Detailed binding and route-specific stop rules live in `$_FEATUREFORGE_ROOT/references/operator-route-authority.md`. Treat display-only `recommended_command` as non-executable; if no typed executable surface exists, stop and report the route diagnostic.
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -77,13 +74,9 @@ For every interactive user question, use this structure:
 Per-skill instructions may add additional formatting rules on top of this baseline.
 
 
-<EXTREMELY-IMPORTANT>
-If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.
-
-IF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.
-
-This is not negotiable. This is not optional. You cannot rationalize your way out of this.
-</EXTREMELY-IMPORTANT>
+<IMPORTANT>
+Check relevant or requested skills before responding or acting unless an explicit user instruction forbids skill use or gives a conflicting process. User instructions always win.
+</IMPORTANT>
 
 ## Instruction Priority
 
@@ -107,13 +100,13 @@ Legacy Claude, Cursor, and OpenCode-specific loading flows are intentionally uns
 
 ## Platform Adaptation
 
-These skills are written for Codex and GitHub Copilot local installs. See `references/codex-tools.md` for platform-native primitives used in the workflow.
+These skills are written for Codex and GitHub Copilot local installs. See skill-local `references/codex-tools.md` for platform-native primitives used in the workflow.
 
 # Using Skills
 
-## The Rule
+## Skill Selection Rule
 
-**Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.
+Before responding or acting, load skills that are requested by name or clearly relevant to the task. If applicability is uncertain, briefly check the most likely skill; if it turns out not to apply, stop using it and continue with the user's requested process.
 
 ```dot
 digraph skill_flow {
@@ -121,7 +114,7 @@ digraph skill_flow {
     "About to EnterPlanMode?" [shape=doublecircle];
     "Already brainstormed?" [shape=diamond];
     "Invoke brainstorming skill" [shape=box];
-    "Might any skill apply?" [shape=diamond];
+    "Could a skill apply?" [shape=diamond];
     "Load relevant skill" [shape=box];
     "Announce: 'Using [skill] to [purpose]'" [shape=box];
     "Has checklist?" [shape=diamond];
@@ -131,12 +124,12 @@ digraph skill_flow {
 
     "About to EnterPlanMode?" -> "Already brainstormed?";
     "Already brainstormed?" -> "Invoke brainstorming skill" [label="no"];
-    "Already brainstormed?" -> "Might any skill apply?" [label="yes"];
-    "Invoke brainstorming skill" -> "Might any skill apply?";
+    "Already brainstormed?" -> "Could a skill apply?" [label="yes"];
+    "Invoke brainstorming skill" -> "Could a skill apply?";
 
-    "User message received" -> "Might any skill apply?";
-    "Might any skill apply?" -> "Load relevant skill" [label="yes, even 1%"];
-    "Might any skill apply?" -> "Respond (including clarifications)" [label="definitely not"];
+    "User message received" -> "Could a skill apply?";
+    "Could a skill apply?" -> "Load relevant skill" [label="yes"];
+    "Could a skill apply?" -> "Respond (including clarifications)" [label="no"];
     "Load relevant skill" -> "Announce: 'Using [skill] to [purpose]'";
     "Announce: 'Using [skill] to [purpose]'" -> "Has checklist?";
     "Has checklist?" -> "Create task-tracking item per checklist entry" [label="yes"];
@@ -145,24 +138,7 @@ digraph skill_flow {
 }
 ```
 
-## Red Flags
-
-These thoughts mean STOP—you're rationalizing:
-
-| Thought | Reality |
-|---------|---------|
-| "This is just a simple question" | Questions are tasks. Check for skills. |
-| "I need more context first" | Skill check comes BEFORE clarifying questions. |
-| "Let me explore the codebase first" | Skills tell you HOW to explore. Check first. |
-| "I can check git/files quickly" | Files lack conversation context. Check for skills. |
-| "Let me gather information first" | Skills tell you HOW to gather information. |
-| "This doesn't need a formal skill" | If a skill exists, use it. |
-| "I remember this skill" | Skills evolve. Read current version. |
-| "This doesn't count as a task" | Action = task. Check for skills. |
-| "The skill is overkill" | Simple things become complex. Use it. |
-| "I'll just do this one thing first" | Check BEFORE doing anything. |
-| "This feels productive" | Undisciplined action wastes time. Skills prevent this. |
-| "I know what that means" | Knowing the concept ≠ using the skill. Invoke it. |
+Do not gather code context, ask clarifying questions, or start implementation before checking a clearly relevant skill, unless the user has explicitly forbidden that skill or workflow.
 
 ## Skill Priority
 
@@ -192,66 +168,30 @@ Do NOT jump from brainstorming straight to implementation. For workflow-routed w
 Artifact-state routing requirements:
 
 - Plan exists, is `Draft`, and `Last Reviewed By` is not `plan-eng-review`: invoke `featureforge:plan-eng-review`.
-- Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and the current plan-fidelity review artifact is missing, stale, malformed, non-pass, or non-independent: invoke `featureforge:plan-fidelity-review`.
+- Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and the current plan-fidelity review artifact is missing, stale, malformed, or non-independent: invoke `featureforge:plan-fidelity-review`.
+- Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and the current plan-fidelity review artifact is non-pass: invoke `featureforge:plan-eng-review`.
 - Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and has a matching pass plan-fidelity review artifact: invoke `featureforge:plan-eng-review`.
-
-### Helper-first routing
-
-If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` first for orientation/diagnosis, then call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` for authoritative routing. If no approved plan path is known, resolve the plan path through the normal planning/review handoff rather than calling removed workflow status surfaces.
-
-- If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.
-- Use `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path>` when the user asks for diagnosis or orientation and show the compact dashboard directly.
-- Do not fall back from doctor to the legacy workflow-status route; if doctor fails, fail closed and repair the doctor/operator route path.
-- If the JSON result reports `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` using that exact approved plan path.
-- Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs` as the authoritative public routing contract. `recommended_command` is display-only compatibility text for humans.
-- If workflow/operator returns a non-empty `recommended_public_command_argv`, invoke that argv vector exactly. If `recommended_public_command_argv[0] == "featureforge"`, replace argv[0] with `$_FEATUREFORGE_BIN` (or execute via `_featureforge_exec_public_argv`) before running it. Do not shell-parse or whitespace-split `recommended_command`.
-- If workflow/operator omits `recommended_public_command_argv`, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator. If `next_action` is `runtime diagnostic required`, stop on that diagnostic instead of inventing repair/reentry commands. Do not infer missing argv by parsing `recommended_command`.
-- Treat `resume_task` and `resume_step` from `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` as advisory diagnostics only; if they disagree with workflow/operator `recommended_public_command_argv`, follow the argv from workflow/operator.
-- Do not introduce or route to `$_FEATUREFORGE_BIN plan execution recover`; recovery remains on existing operator-routed public commands.
-- When workflow/operator reports `phase_detail=task_closure_recording_ready`, the replay lane is complete enough to refresh closure truth; run the routed `close-current-task` command and do not reopen the same step again.
-- Treat human-readable projection artifacts and companion markdown as derived output, not routing authority.
-- Treat repo-local projection exports under `docs/featureforge/projections/` as optional human-readable output. Normal routing comes from workflow/operator and event-authoritative status, not from editing or refreshing projection files.
-- Use `$_FEATUREFORGE_BIN plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` for state-dir-only diagnostic projection refreshes. If a repo-local human-readable projection export is explicitly requested, add `--repo-export --confirm-repo-export`; approved plan and evidence files are not modified, and materialization is never required for normal progress.
-- Hidden compatibility/debug command entrypoints are removed from the public CLI; keep normal progression on public commands only.
-- Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.
-- If workflow/operator reports `phase` `executing`, route directly to the runtime-selected execution owner (`featureforge:executing-plans` or `featureforge:subagent-driven-development`) and keep routing anchored to workflow/operator `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv`.
-- In that helper-backed execution flow, treat `execution_started` as an executor-resume signal only when workflow/operator reports `phase` `executing`.
-- If workflow/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.
-- For terminal workflow sequencing, preserve the runtime-owned order: `document_release_pending` before terminal `final_review_pending`, then `qa_pending`, then `ready_for_branch_completion`.
-- Treat helper `request_code_review` routing as context-sensitive: it can represent terminal final review or a non-terminal task-boundary checkpoint when reason codes include `prior_task_review_*`.
-- When documenting or explaining that late-stage order, use `review/late-stage-precedence-reference.md` so routing language stays grounded in the runtime table.
-- Only fall back to manual artifact inspection if the helper itself is unavailable or fails.
-
-When the helper succeeds, route using workflow/operator for approved-plan routing plus the explicit project-memory carveout above, and do not re-derive execution or late-stage state manually.
 
 #### Explicit Project-Memory Route Signals
 
-Treat the request as explicit project-memory intent when it clearly asks to:
+Short-circuit runtime-derived workflow routes and execution handoff paths to `featureforge:project-memory` only when the user clearly asks to:
 
 - set up or repair project memory under `docs/project_notes/`
-- log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or record durable issue breadcrumbs in project memory
+- log a bug fix, record a decision, update key facts, or record durable issue breadcrumbs in repo-visible project memory
 - invoke `featureforge:project-memory` or work on project memory itself
 - write to, create, append to, or otherwise edit a concrete `docs/project_notes/README.md`, `bugs.md`, `decisions.md`, `key_facts.md`, or `issues.md` path
 
-Read-only questions about `docs/project_notes/*`, or explicit negation of `featureforge:project-memory`, project-memory setup, durable-memory recording, or concrete path mutations, are not enough by themselves.
+Read-only questions about `docs/project_notes/*`, or explicit negation of `featureforge:project-memory`, project-memory setup, durable-memory recording, or concrete path mutations, are not enough by themselves. Do not add `featureforge:project-memory` to the default mandatory workflow stack; when the user is not explicitly asking to work on project memory itself, follow the active workflow owner first and treat project memory as optional follow-up support.
 
-If those signals are absent, keep the helper-derived workflow route.
+### Runtime-first routing
 
-### Manual fallback routing
+If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` only for orientation/diagnosis, then call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` as route authority. The generated Installed Control Plane section and canonical route reference at `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` own typed argv/template binding, task-closure replay, repair, late-stage lanes, and stop rules; recovery remains on operator-routed public commands.
 
-If helper calls fail:
-
-- Do not re-derive `phase`, `phase_detail`, readiness, or late-stage precedence from markdown headers.
-- Do not invent or continue a parallel manual routing graph.
-- Retry helper routing after fixing runtime/environment issues (binary path, state-dir binding, repo root).
-- If helper routing still cannot be recovered, fail closed to the earlier safe stage (`featureforge:brainstorming`) or remain in the current execution flow; do not route directly into implementation or late-stage recording from fallback logic.
-
-### Explicit Project-Memory Routing
-
-- Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.
-- Do not add `featureforge:project-memory` to the default mandatory workflow stack.
-- When product-work artifact state already points at another active workflow stage, follow that workflow owner first and treat project memory as optional follow-up support unless the user is explicitly asking to work on project memory itself, in which case the explicit project-memory route above takes precedence over helper-derived workflow routes and execution handoff paths.
-- In manual fallback, choose this route only for explicit memory-oriented requests; vague mentions of notes or docs are not enough.
+- If no approved plan path is known, resolve it through the normal planning/review handoff rather than removed workflow status surfaces.
+- Treat `phase_detail=task_closure_recording_ready` as the routed task-closure replay lane, and treat projection artifacts as derived output, not routing authority.
+- If operator reports `phase` `executing`, route to the runtime-selected execution owner; treat `execution_started` as a resume signal only in that phase.
+- If operator reports task closure, repair, document release, final review, QA, branch completion, or another diagnostic route, follow only the selected route surface instead of resuming execution or terminal sequencing from memory.
+- If doctor/operator fails, fix only obvious binary, state-dir, or repo-root binding and rerun. If routing still cannot be recovered, stop and report unresolved route binding; do not reconstruct routing from artifacts manually. Do not re-derive `phase`, `phase_detail`, readiness, or late-stage precedence from markdown headers.
 
 ## User Instructions
 

@@ -60,10 +60,10 @@ fn internal_only_compatibility_plan_execution_help_surface_hides_low_level_compa
             "Intent-level review-state repair command.",
             "Intent-level task-closure command.",
             "Intent-level late-stage progression command.",
-            "Execution step start recorder.",
-            "Execution step completion recorder.",
-            "Execution task reopen recorder.",
-            "Execution handoff transfer recorder.",
+            "Start execution for a plan step.",
+            "Complete an execution step.",
+            "Reopen a plan step for more work.",
+            "Transfer workflow ownership or repair-step work.",
         ] {
             assert!(
                 stdout.contains(description),

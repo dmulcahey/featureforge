@@ -8,7 +8,9 @@ use crate::contracts::spec::parse_spec_source;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::context::ExecutionContext;
 use crate::execution::harness::{HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
+use crate::execution::next_action::NEXT_ACTION_PLANNING_REENTRY;
 use crate::execution::phase;
+use crate::execution::route_plan::STATE_KIND_PLANNING_REENTRY_REQUIRED;
 use crate::execution::status::PlanExecutionStatus;
 
 pub(crate) fn apply_pre_execution_plan_fidelity_gate(
@@ -27,8 +29,8 @@ pub(crate) fn apply_pre_execution_plan_fidelity_gate(
     status.phase = Some(String::from(phase::PHASE_PIVOT_REQUIRED));
     status.harness_phase = HarnessPhase::PivotRequired;
     status.phase_detail = String::from(phase::DETAIL_PLANNING_REENTRY_REQUIRED);
-    status.state_kind = String::from("waiting_external_input");
-    status.next_action = String::from("pivot / return to planning");
+    status.state_kind = String::from(STATE_KIND_PLANNING_REENTRY_REQUIRED);
+    status.next_action = String::from(NEXT_ACTION_PLANNING_REENTRY);
     status.review_state_status = String::from("clean");
     status.recording_context = None;
     status.execution_command_context = None;
@@ -43,6 +45,7 @@ pub(crate) fn apply_pre_execution_plan_fidelity_gate(
     status.blockers.clear();
     status.recommended_public_command = None;
     status.recommended_public_command_argv = None;
+    status.recommended_public_command_template = None;
     status.required_inputs.clear();
     status.recommended_command = None;
 }

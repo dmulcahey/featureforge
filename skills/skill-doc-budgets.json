@@ -1,18 +1,25 @@
 {
   "mode": "enforce",
-  "total_generated_skill_lines_max": 5600,
+  "total_generated_skill_lines_max": 5015,
+  "unbudgeted_generated_skill_lines_max": 160,
   "skills": {
-    "plan-ceo-review": { "max_lines": 600 },
-    "writing-skills": { "max_lines": 500 },
-    "plan-eng-review": { "max_lines": 450 },
-    "subagent-driven-development": { "max_lines": 400 },
-    "finishing-a-development-branch": { "max_lines": 325 },
-    "test-driven-development": { "max_lines": 340 },
-    "systematic-debugging": { "max_lines": 300 },
-    "writing-plans": { "max_lines": 320 },
-    "document-release": { "max_lines": 275 },
-    "qa-only": { "max_lines": 260 },
-    "requesting-code-review": { "max_lines": 240 },
-    "executing-plans": { "max_lines": 240 }
+    "brainstorming": { "max_lines": 300 },
+    "dispatching-parallel-agents": { "max_lines": 275 },
+    "plan-ceo-review": { "max_lines": 275 },
+    "writing-skills": { "max_lines": 240 },
+    "plan-eng-review": { "max_lines": 390 },
+    "subagent-driven-development": { "max_lines": 360 },
+    "using-featureforge": { "max_lines": 260 },
+    "finishing-a-development-branch": { "max_lines": 320 },
+    "test-driven-development": { "max_lines": 260 },
+    "systematic-debugging": { "max_lines": 310 },
+    "writing-plans": { "max_lines": 340 },
+    "document-release": { "max_lines": 250 },
+    "qa-only": { "max_lines": 275 },
+    "receiving-code-review": { "max_lines": 300 },
+    "requesting-code-review": { "max_lines": 250 },
+    "executing-plans": { "max_lines": 230 },
+    "using-git-worktrees": { "max_lines": 300 },
+    "verification-before-completion": { "max_lines": 230 }
   }
 }

@@ -8,7 +8,10 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::contracts::plan::{PlanDocument, PlanTask, parse_plan_file};
+use crate::contracts::plan::{
+    PLAN_WORKFLOW_STATE_ENGINEERING_APPROVED, PlanDocument, PlanTask, parse_plan_file,
+    plan_last_reviewer_is_valid_for_state,
+};
 use crate::contracts::task_contract::{
     RuntimeExecutionNoteProjectionBlock, known_runtime_step_projection_lines,
     parse_task_step_projection_line,
@@ -27,6 +30,7 @@ use crate::execution::semantic_identity::{
     normalized_plan_source_for_semantic_identity, semantic_workspace_snapshot,
     task_definition_identity_for_task,
 };
+use crate::execution::task_scope_key::task_scope_key_task_number;
 use crate::execution::transitions::{
     AuthoritativeTransitionState, OpenStepStateRecord,
     authoritative_state_optional_string_field_for_runtime,
@@ -182,6 +186,7 @@ pub fn load_execution_context(
         TrackedEvidenceProjectionPolicy::Ignore,
         ApprovedArtifactSelectionPolicy::RequireUnique,
         true,
+        PlanCleanlinessPolicy::EnforceCleanNewPlan,
     )
 }
 
@@ -196,6 +201,7 @@ pub fn load_execution_context_for_mutation(
         TrackedEvidenceProjectionPolicy::Ignore,
         ApprovedArtifactSelectionPolicy::AllowExactPlan,
         true,
+        PlanCleanlinessPolicy::EnforceCleanNewPlan,
     )
 }
 
@@ -210,6 +216,7 @@ pub(crate) fn load_execution_context_for_rebuild(
         TrackedEvidenceProjectionPolicy::AllowExplicitImport,
         ApprovedArtifactSelectionPolicy::AllowExactPlan,
         true,
+        PlanCleanlinessPolicy::EnforceCleanNewPlan,
     )
 }
 
@@ -224,6 +231,7 @@ pub(crate) fn load_execution_context_for_exact_plan(
         TrackedEvidenceProjectionPolicy::Ignore,
         ApprovedArtifactSelectionPolicy::AllowExactPlan,
         true,
+        PlanCleanlinessPolicy::EnforceCleanNewPlan,
     )
 }
 
@@ -238,6 +246,22 @@ pub(crate) fn load_execution_context_without_authority_overlay(
         TrackedEvidenceProjectionPolicy::Ignore,
         ApprovedArtifactSelectionPolicy::AllowExactPlan,
         false,
+        PlanCleanlinessPolicy::EnforceCleanNewPlan,
+    )
+}
+
+pub(crate) fn load_execution_context_for_migration_parity(
+    runtime: &ExecutionRuntime,
+    plan_path: &Path,
+) -> Result<ExecutionContext, JsonFailure> {
+    load_execution_context_with_policies(
+        runtime,
+        plan_path,
+        LegacyEvidencePolicy::Allow,
+        TrackedEvidenceProjectionPolicy::AllowExplicitImport,
+        ApprovedArtifactSelectionPolicy::AllowExactPlan,
+        false,
+        PlanCleanlinessPolicy::AllowLegacyMigrationState,
     )
 }
 
@@ -254,6 +278,12 @@ enum TrackedEvidenceProjectionPolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanCleanlinessPolicy {
+    EnforceCleanNewPlan,
+    AllowLegacyMigrationState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ApprovedArtifactSelectionPolicy {
     RequireUnique,
     AllowExactPlan,
@@ -266,6 +296,7 @@ fn load_execution_context_with_policies(
     tracked_evidence_policy: TrackedEvidenceProjectionPolicy,
     selection_policy: ApprovedArtifactSelectionPolicy,
     apply_authority_overlay: bool,
+    plan_cleanliness_policy: PlanCleanlinessPolicy,
 ) -> Result<ExecutionContext, JsonFailure> {
     let plan_rel = normalize_plan_path(plan_path)?;
     let plan_abs = runtime.repo_root.join(&plan_rel);
@@ -282,7 +313,7 @@ fn load_execution_context_with_policies(
             format!("Approved plan headers are missing or malformed: {error}"),
         )
     })?;
-    if plan_document.workflow_state != "Engineering Approved" {
+    if plan_document.workflow_state != PLAN_WORKFLOW_STATE_ENGINEERING_APPROVED {
         return Err(JsonFailure::new(
             FailureClass::PlanNotExecutionReady,
             "Plan is not Engineering Approved.",
@@ -297,7 +328,10 @@ fn load_execution_context_with_policies(
             ));
         }
     }
-    if plan_document.last_reviewed_by != "plan-eng-review" {
+    if !plan_last_reviewer_is_valid_for_state(
+        &plan_document.workflow_state,
+        &plan_document.last_reviewed_by,
+    ) {
         return Err(JsonFailure::new(
             FailureClass::PlanNotExecutionReady,
             "Approved plan Last Reviewed By header is missing or malformed.",
@@ -440,7 +474,8 @@ fn load_execution_context_with_policies(
     }
     refresh_execution_fingerprint(&mut context);
 
-    if context.plan_document.execution_mode == "none"
+    if plan_cleanliness_policy == PlanCleanlinessPolicy::EnforceCleanNewPlan
+        && context.plan_document.execution_mode == "none"
         && (markdown_has_checked_steps || markdown_has_open_step_notes)
     {
         return Err(JsonFailure::new(
@@ -902,23 +937,24 @@ fn overlay_task_closure_completed_steps(
 }
 
 fn task_number_from_closure_record_key(record_key: &str) -> Option<u32> {
-    record_key
-        .strip_prefix("task-")
-        .unwrap_or(record_key)
-        .parse::<u32>()
-        .ok()
+    task_scope_key_task_number(record_key)
 }
 
 fn task_number_from_task_closure_record(
     record_key: &str,
     record: &serde_json::Value,
 ) -> Option<u32> {
-    record
-        .get("task")
-        .or_else(|| record.get("task_number"))
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .or_else(|| task_number_from_closure_record_key(record_key))
+    let task = task_number_from_closure_record_key(record_key)?;
+    for field in ["task", "task_number"] {
+        let Some(value) = record.get(field) else {
+            continue;
+        };
+        let payload_task = value.as_u64().and_then(|value| u32::try_from(value).ok())?;
+        if payload_task != task {
+            return None;
+        }
+    }
+    Some(task)
 }
 
 pub(crate) fn same_branch_worktrees(current_repo_root: &Path) -> Vec<PathBuf> {
@@ -1209,7 +1245,11 @@ fn approved_plan_candidate_paths(
         .into_iter()
         .filter_map(|path| {
             let headers = parse_headers_file(&path);
-            if headers.get("Workflow State").map(String::as_str) != Some("Engineering Approved") {
+            let workflow_state = headers
+                .get("Workflow State")
+                .map(String::as_str)
+                .unwrap_or_default();
+            if workflow_state != PLAN_WORKFLOW_STATE_ENGINEERING_APPROVED {
                 return None;
             }
             let execution_mode_valid = matches!(
@@ -1218,8 +1258,13 @@ fn approved_plan_candidate_paths(
                     | Some("featureforge:executing-plans")
                     | Some("featureforge:subagent-driven-development")
             );
-            let reviewed_by_valid =
-                headers.get("Last Reviewed By").map(String::as_str) == Some("plan-eng-review");
+            let reviewed_by_valid = plan_last_reviewer_is_valid_for_state(
+                workflow_state,
+                headers
+                    .get("Last Reviewed By")
+                    .map(String::as_str)
+                    .unwrap_or_default(),
+            );
             let source_path_matches =
                 headers.get("Source Spec") == Some(&format!("`{source_spec_path}`"));
             let source_revision_matches = headers
@@ -2423,4 +2468,37 @@ fn parse_contract_render(source: &str) -> String {
     }
 
     format!("{}\n", rendered.join("\n"))
+}
+
+#[cfg(test)]
+mod task_closure_record_scope_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn current_task_closure_record_scope_comes_from_canonical_key() {
+        assert_eq!(
+            task_number_from_task_closure_record("task-1", &json!({"task": 1, "task_number": 1})),
+            Some(1)
+        );
+        assert_eq!(
+            task_number_from_task_closure_record("task-2", &json!({})),
+            Some(2)
+        );
+
+        for (record_key, record) in [
+            ("1", json!({"task": 1})),
+            ("task-1-extra", json!({"task_number": 1})),
+            ("malformed-scope", json!({"task": 1, "task_number": 1})),
+            ("task-1", json!({"task": 2})),
+            ("task-1", json!({"task_number": 2})),
+            ("task-1", json!({"task": "1"})),
+        ] {
+            assert_eq!(
+                task_number_from_task_closure_record(record_key, &record),
+                None,
+                "{record_key:?} with payload {record:?} must not bind a current task closure"
+            );
+        }
+    }
 }

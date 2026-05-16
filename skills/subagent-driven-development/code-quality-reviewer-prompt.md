@@ -12,13 +12,13 @@ You are a reviewer. You may inspect the provided files, packet, summaries, and c
 
 ```
 Code-reviewer sub-agent / custom agent:
-  Use template at ../requesting-code-review/code-reviewer.md
+  Use template at `$_FEATUREFORGE_ROOT/skills/requesting-code-review/code-reviewer.md`
 
-  TASK_PACKET: [helper-built task packet]
+  TASK_PACKET: [runtime-provided task packet]
   WHAT_WAS_IMPLEMENTED: [from implementer's report]
   PLAN_OR_REQUIREMENTS: Task N from [plan-file]
   APPROVED_PLAN_PATH: [exact approved plan path for plan-routed final review, otherwise blank]
-  EXECUTION_EVIDENCE_PATH: [helper-reported evidence path for plan-routed final review, otherwise blank]
+  EXECUTION_EVIDENCE_PATH: [runtime-owned execution evidence path for plan-routed final review, otherwise blank]
   BASE_BRANCH: [runtime-provided base branch for plan-routed review, otherwise explicitly provided base branch]
   BASE_SHA: [commit before task]
   HEAD_SHA: [current commit]
@@ -36,7 +36,7 @@ Code-reviewer sub-agent / custom agent:
 - Treat avoidable duplicate implementation as a hard failure even when the feature behavior works.
 - Every reuse or duplication issue must include a stable finding ID and the violated packet obligation ID, such as `CONSTRAINT_2` or `DONE_WHEN_1`.
 - Name the smallest corrective action needed to consolidate or justify the duplicated behavior.
-- Use the deterministic review finding shape from `review/plan-task-contract.md` for every concrete issue:
+- Use the deterministic review finding shape from `$_FEATUREFORGE_ROOT/review/plan-task-contract.md` for every concrete issue:
   `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail: yes|no`.
 - Do not use general feedback when a concrete checklist section, task field, or packet-assigned obligation can be named.
 - Return a reuse assessment matrix with pass/fail rows for each packet reuse expectation and each duplication check.

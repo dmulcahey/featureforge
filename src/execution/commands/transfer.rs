@@ -4,6 +4,9 @@ use crate::execution::handoff::{
     current_workflow_transfer_record_path, latest_matching_workflow_transfer_request_record,
     write_workflow_transfer_record,
 };
+use crate::execution::public_command_types::{
+    PublicCommandInputRequirement, RecommendedPublicCommandArgv, RecommendedPublicCommandTemplate,
+};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -22,6 +25,8 @@ pub struct TransferOutput {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: RecommendedPublicCommandArgv,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_template: RecommendedPublicCommandTemplate,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,15 +91,11 @@ fn transfer_repair_step(
     let transfer_status = public_status_from_context_with_shared_routing(runtime, &context, false)?;
     require_public_mutation(
         &transfer_status,
-        PublicMutationRequest {
-            kind: PublicMutationKind::Transfer,
-            task: Some(repair_task),
-            step: Some(repair_step),
-            expect_execution_fingerprint: Some(expect_execution_fingerprint.to_owned()),
-            transfer_mode: Some(PublicTransferMode::RepairStep),
-            transfer_scope: None,
-            command_name: "transfer",
-        },
+        PublicMutationRequest::transfer_repair_step(
+            repair_task,
+            repair_step,
+            Some(expect_execution_fingerprint.to_owned()),
+        ),
         FailureClass::ExecutionStateNotReady,
     )?;
     let mut authoritative_state = load_authoritative_transition_state(&context)?;
@@ -164,7 +165,7 @@ fn transfer_repair_step(
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         persist_authoritative_state_with_rollback(
             authoritative_state,
-            "transfer",
+            PublicCommandKind::Transfer.public_mutation_token(),
             &context.plan_abs,
             &context.plan_source,
             &context.evidence_abs,
@@ -195,20 +196,11 @@ fn record_workflow_transfer(
         ));
     };
     let status = status_with_shared_routing_or_context(runtime, plan, &context)?;
-    require_public_mutation(
+    let authorization = require_public_mutation_decision(
         &status,
-        PublicMutationRequest {
-            kind: PublicMutationKind::Transfer,
-            task: None,
-            step: None,
-            expect_execution_fingerprint: None,
-            transfer_mode: Some(PublicTransferMode::WorkflowHandoff),
-            transfer_scope: Some(scope.to_owned()),
-            command_name: "transfer",
-        },
+        PublicMutationRequest::transfer_handoff(Some(scope.to_owned())),
         FailureClass::ExecutionStateNotReady,
     )?;
-    let operator = current_workflow_operator(runtime, plan, false)?;
     let head_sha = current_head_sha(&runtime.repo_root)?;
     let decision_scope = shared_handoff_decision_scope(
         status.active_task,
@@ -227,14 +219,10 @@ fn record_workflow_transfer(
         decision_scope,
     };
     let input = WorkflowTransferRecordInput { scope, to, reason };
-    let operator_routes_handoff = operator.phase_detail
-        == crate::execution::phase::DETAIL_HANDOFF_RECORDING_REQUIRED
-        && matches!(
-            operator.phase.as_str(),
-            crate::execution::phase::PHASE_HANDOFF_REQUIRED
-                | crate::execution::phase::PHASE_EXECUTING
-        );
-    if !operator_routes_handoff {
+    if !matches!(
+        authorization.source,
+        Some(MutationEligibilitySource::ExactRoute)
+    ) {
         let (recommended_command, recommended_public_command_argv) =
             workflow_operator_requery_surfaces(plan, false);
         return Ok(TransferOutput {
@@ -243,24 +231,26 @@ fn record_workflow_transfer(
             to: to.to_owned(),
             reason: reason.to_owned(),
             record_path: None,
-            code: Some(String::from("out_of_phase_requery_required")),
+            code: Some(String::from(OUT_OF_PHASE_REQUERY_REQUIRED_CODE)),
             recommended_command: Some(recommended_command),
             recommended_public_command_argv: Some(recommended_public_command_argv),
+            recommended_public_command_template: None,
             required_inputs: Vec::new(),
             rederive_via_workflow_operator: Some(true),
             trace_summary: String::from(
-                "transfer failed closed because workflow/operator does not currently route to handoff recording.",
+                "transfer failed closed because public mutation authority did not authorize an exact handoff route.",
             ),
         });
     }
     if decision_scope.is_some_and(|expected_scope| scope != expected_scope) {
-        let recommended_public_command =
-            decision_scope.map(|expected_scope| PublicCommand::TransferHandoff {
-                plan: context.plan_rel.clone(),
-                scope: expected_scope.to_owned(),
-            });
-        let (recommended_command, recommended_public_command_argv) =
-            optional_public_command_surfaces(recommended_public_command.as_ref());
+        let recommended_public_command = decision_scope.map(|expected_scope| {
+            transfer_handoff_public_command(&context.plan_rel, expected_scope)
+        });
+        let (
+            recommended_command,
+            recommended_public_command_argv,
+            recommended_public_command_template,
+        ) = optional_public_command_surfaces(recommended_public_command.as_ref());
         let required_inputs =
             required_inputs_for_public_command(recommended_public_command.as_ref());
         return Ok(TransferOutput {
@@ -272,6 +262,7 @@ fn record_workflow_transfer(
             code: None,
             recommended_command,
             recommended_public_command_argv,
+            recommended_public_command_template,
             required_inputs,
             rederive_via_workflow_operator: None,
             trace_summary: String::from(
@@ -307,6 +298,7 @@ fn record_workflow_transfer(
             code: None,
             recommended_command: None,
             recommended_public_command_argv: None,
+            recommended_public_command_template: None,
             required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
             trace_summary: String::from(
@@ -325,6 +317,7 @@ fn record_workflow_transfer(
             code: None,
             recommended_command: None,
             recommended_public_command_argv: None,
+            recommended_public_command_template: None,
             required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
             trace_summary: String::from(
@@ -350,6 +343,7 @@ fn record_workflow_transfer(
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        recommended_public_command_template: None,
         required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         trace_summary: String::from(
@@ -367,5 +361,8 @@ fn record_runtime_handoff_checkpoint_and_persist(
         &record_path.display().to_string(),
         record_fingerprint,
     )?;
-    persist_authoritative_state_without_rollback(authoritative_state, "transfer")
+    persist_authoritative_state_without_rollback(
+        authoritative_state,
+        PublicCommandKind::Transfer.public_mutation_token(),
+    )
 }

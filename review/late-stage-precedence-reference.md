@@ -1,38 +1,41 @@
 # Late-Stage Precedence Reference
 
-This reference is runtime-owned and must stay aligned with:
+Runtime owns late-stage precedence. Do not maintain a second phase matrix in
+this markdown file.
 
-- `src/workflow/late_stage_precedence.rs` (`PRECEDENCE_ROWS`)
-- `src/workflow/operator.rs` (phase -> next action -> recommended skill routing)
+Use these runtime-owned surfaces instead:
 
-Use this table when skill/docs wording needs an explicit late-stage routing source.
-
-| Release Gate | Review Gate | QA Gate | Phase | Next Action (Public Contract) | Recommended Skill | Reason Family |
-| --- | --- | --- | --- | --- | --- | --- |
-| blocked | blocked | blocked | `document_release_pending` | derived from phase_detail: advance late stage (branch-closure refresh lane); resolve release blocker | `featureforge:document-release` | `release_readiness` |
-| blocked | blocked | ready | `document_release_pending` | derived from phase_detail: advance late stage (branch-closure refresh lane); resolve release blocker | `featureforge:document-release` | `release_readiness` |
-| blocked | ready | blocked | `document_release_pending` | derived from phase_detail: advance late stage (branch-closure refresh lane); resolve release blocker | `featureforge:document-release` | `release_readiness` |
-| blocked | ready | ready | `document_release_pending` | derived from phase_detail: advance late stage (branch-closure refresh lane); resolve release blocker | `featureforge:document-release` | `release_readiness` |
-| ready | blocked | blocked | `final_review_pending` | derived from phase_detail: request final review; wait for external review result; advance late stage | `featureforge:requesting-code-review` | `final_review_freshness` |
-| ready | blocked | ready | `final_review_pending` | derived from phase_detail: request final review; wait for external review result; advance late stage | `featureforge:requesting-code-review` | `final_review_freshness` |
-| ready | ready | blocked | `qa_pending` | derived from phase_detail: run QA; refresh test plan | `featureforge:qa-only` | `qa_freshness` |
-| ready | ready | ready | `ready_for_branch_completion` | derived from phase_detail: finish branch | `featureforge:finishing-a-development-branch` | `all_fresh` |
+- `src/execution/late_stage_precedence.rs` owns the `PRECEDENCE_ROWS` data used
+  by execution status assembly and workflow status/operator presentation.
+- `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`
+  owns the current public phase, next action, recommended skill, typed argv, and
+  template route.
+- `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` owns detailed
+  argv/template binding and route-specific stop rules.
 
 ## Command-Boundary Semantics
 
-- Legacy finish-gate compatibility commands are compatibility/debug boundaries, not normal-path commands.
-- low-level `record-*` commands are compatibility/debug boundaries and must not be required by normal-path guidance.
-- For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`.
-- `requesting-code-review` also supports non-terminal checkpoint/task-boundary reviews when runtime reason codes require it (for example `prior_task_review_*`).
-- `document_release_pending` keeps two distinct public next actions by `phase_detail`: `advance late stage` and `resolve release blocker`.
-- `final_review_pending` keeps three distinct public next actions by `phase_detail`: `request final review`, `wait for external review result`, and `advance late stage`.
-- `qa_pending` keeps two distinct public next actions by `phase_detail`: `run QA` and `refresh test plan`.
-- `ready_for_branch_completion` keeps one public next action: `finish branch`.
+- Legacy finish-gate compatibility commands are compatibility/debug boundaries,
+  not normal-path commands.
+- Low-level `record-*` commands are compatibility/debug boundaries and must not
+  be required by normal-path guidance.
+- When workflow/operator selects a terminal late-stage lane, execute that selected
+  typed route or selected handoff lane. Do not use this reference to run a
+  memorized chain.
+- `requesting-code-review` also supports non-terminal checkpoint/task-boundary
+  reviews when runtime reason codes require it, for example
+  `prior_task_review_*`.
+- Do not infer branch closure, release readiness, final review, QA, or finish
+  progression from companion markdown artifacts. Query workflow/operator again
+  after each external result or runtime-owned recording command.
 
-## Notes
+## Preemption Notes
 
-- `review_state_status=missing_current_closure` preempts the normal late-stage table and reroutes back to `document_release_pending` with the branch-closure refresh lane of `advance late stage`; late-stage work must not remain in `final_review_pending` or `qa_pending` once the current branch closure is gone.
-- `review_state_status=stale_unreviewed` preempts the normal late-stage table and reroutes first to `executing` with `repair review state / reenter execution` so runtime-owned repair can re-establish current reviewed truth before any more late-stage recording.
-- If the approved plan does not declare `Late-Stage Surface` metadata, branch reroute cannot be classified as trusted late-stage-only; runtime must fail closed to execution reentry and surface that blocker explicitly.
-- `qa_pending` routing can be preempted by helper-owned test-plan refresh requirements (`featureforge:plan-eng-review`) when workflow/operator sees stale, missing, malformed, or provenance-invalid current-branch test-plan artifacts; the user sees this directly as `phase_detail=test_plan_refresh_required` before QA recording or branch-completion progression.
-- If runtime guards detect malformed or unknown late-stage inputs, helper outputs fail closed.
+- Missing or stale current reviewed truth can preempt the visible late-stage
+  lane and route back to runtime-owned repair or branch-closure refresh.
+- Missing `Late-Stage Surface` metadata means branch reroute cannot be trusted
+  as late-stage-only; runtime must fail closed and surface the blocker.
+- Test-plan projection drift is diagnostic-only for QA recording and branch
+  completion once runtime-owned branch closure, final-review, and QA record
+  truth are current. Runtime-owned corruption, unsafe bindings, or non-regular
+  authoritative artifacts still fail closed.

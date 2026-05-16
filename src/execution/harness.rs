@@ -68,6 +68,20 @@ impl HarnessPhase {
     pub fn is_public_phase(value: &str) -> bool {
         Self::ALL.iter().any(|phase| phase.as_str() == value)
     }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        value.parse().ok()
+    }
+
+    pub const fn is_late_stage(self) -> bool {
+        matches!(
+            self,
+            Self::FinalReviewPending
+                | Self::QaPending
+                | Self::DocumentReleasePending
+                | Self::ReadyForBranchCompletion
+        )
+    }
 }
 
 impl fmt::Display for HarnessPhase {

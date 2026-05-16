@@ -1,61 +1,54 @@
 use std::sync::OnceLock;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::follow_up::{FollowUpAliasContext, FollowUpKind, normalize_follow_up_alias};
+pub use crate::execution::public_command_types::{
+    PublicCommandInputBinding, PublicCommandInputBindingKind, PublicCommandInputKind,
+    PublicCommandInputRequirement, PublicCommandInputValues, PublicCommandTemplate,
+    PublicCommandTemplateBindingError, PublicCommandTemplateInput, materialize_public_command_argv,
+};
+use crate::execution::public_route_guidance::{
+    EXECUTE_RECOMMENDED_PUBLIC_ARGV_GUIDANCE, OPERATOR_ROUTE_AUTHORITY_REFERENCE,
+    WORKFLOW_OPERATOR_TEMPLATE_JSON_QUERY, workflow_operator_json_display_command,
+};
 use crate::execution::query::{
     ExecutionRoutingState,
     normalize_public_follow_up_alias as shared_normalize_public_follow_up_alias,
     required_follow_up_from_routing as shared_required_follow_up_from_routing,
 };
+use crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE;
+use crate::execution::route_plan::{
+    external_wait_state_is_external_wait, state_kind_blocks_local_mutation,
+    state_kind_is_blocked_runtime_bug, state_kind_is_external_wait,
+    state_kind_is_runtime_reconcile_required, state_kind_or_phase_is_runtime_diagnostic,
+};
 use crate::execution::state::PlanExecutionStatus;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
+mod command_kind;
+mod execution_target;
 mod late_stage;
+mod mutation_request;
 
+pub use command_kind::{
+    PUBLIC_EXECUTION_COMMAND_KIND_VALUES, PUBLIC_REPAIR_TARGET_COMMAND_KIND_VALUES,
+    PublicCommandKind, public_mutation_command_tokens,
+};
+pub(crate) use execution_target::{
+    PublicExecutionCommandTarget, execution_template_inputs_are_bindable,
+};
 pub use late_stage::PublicAdvanceLateStageMode;
-pub(crate) use late_stage::public_advance_late_stage_mode_for_phase_detail;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PublicMutationKind {
-    Begin,
-    Complete,
-    Reopen,
-    Transfer,
-    CloseCurrentTask,
-    RepairReviewState,
-    AdvanceLateStage,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublicMutationRequest {
-    pub kind: PublicMutationKind,
-    pub task: Option<u32>,
-    pub step: Option<u32>,
-    pub expect_execution_fingerprint: Option<String>,
-    pub transfer_mode: Option<PublicTransferMode>,
-    pub transfer_scope: Option<String>,
-    pub command_name: &'static str,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PublicCommandKind {
-    WorkflowOperator,
-    Status,
-    RepairReviewState,
-    CloseCurrentTask,
-    AdvanceLateStage,
-    Begin,
-    Complete,
-    Reopen,
-    Transfer,
-    MaterializeProjectionsStateDirOnly,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PublicTransferMode {
-    RepairStep,
-    WorkflowHandoff,
-}
+pub(crate) use late_stage::{
+    public_advance_late_stage_command_for_follow_up,
+    public_advance_late_stage_command_for_phase_detail,
+    public_advance_late_stage_final_review_mutation_request,
+    public_advance_late_stage_mode_for_invocation, public_advance_late_stage_mode_name,
+    public_advance_late_stage_request_mode_matches_routed_public_command,
+    routed_public_command_accepts_final_review_inputs, routed_public_command_is_branch_closure,
+    routed_public_command_is_final_review, routed_public_command_is_final_review_dispatch,
+    routed_public_command_is_finish_completion, routed_public_command_is_finish_review,
+    routed_public_command_is_qa, routed_public_command_is_release_readiness,
+};
+pub use mutation_request::{PublicMutationRequest, PublicTransferMode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublicCommand {
@@ -122,30 +115,6 @@ pub struct PublicCommandInvocation {
     pub argv: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PublicCommandInputKind {
-    Text,
-    Enum,
-    Path,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct PublicCommandInputRequirement {
-    pub name: String,
-    pub kind: PublicCommandInputKind,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub values: Vec<String>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub must_exist: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub required_when: Option<String>,
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MutationEligibilitySource {
     ExactRoute,
@@ -160,42 +129,11 @@ pub struct MutationEligibilityDecision {
     pub detail: String,
 }
 
-impl PublicMutationKind {
-    pub fn from_execution_command_kind(command_kind: &str) -> Option<Self> {
-        match command_kind {
-            "begin" => Some(Self::Begin),
-            "complete" => Some(Self::Complete),
-            "reopen" => Some(Self::Reopen),
-            _ => None,
-        }
-    }
-
-    fn execution_command_kind(&self) -> Option<&'static str> {
-        match self {
-            Self::Begin => Some("begin"),
-            Self::Complete => Some("complete"),
-            Self::Reopen => Some("reopen"),
-            Self::Transfer
-            | Self::CloseCurrentTask
-            | Self::RepairReviewState
-            | Self::AdvanceLateStage => None,
-        }
-    }
-
-    pub fn public_command_name(&self) -> &'static str {
-        match self {
-            Self::Begin => "begin",
-            Self::Complete => "complete",
-            Self::Reopen => "reopen",
-            Self::Transfer => "transfer",
-            Self::CloseCurrentTask => "close-current-task",
-            Self::RepairReviewState => "repair-review-state",
-            Self::AdvanceLateStage => "advance-late-stage",
-        }
-    }
-}
-
 impl PublicCommand {
+    pub fn command_kind_name(&self) -> &'static str {
+        self.kind().as_str()
+    }
+
     pub fn kind(&self) -> PublicCommandKind {
         match self {
             Self::WorkflowOperator { .. } => PublicCommandKind::WorkflowOperator,
@@ -228,6 +166,25 @@ impl PublicCommand {
             | Self::CloseCurrentTask { .. }
             | Self::AdvanceLateStage { .. }
             | Self::MaterializeProjectionsStateDirOnly { .. } => None,
+        }
+    }
+
+    pub fn task_closure_result_inputs_required(&self) -> bool {
+        matches!(
+            self,
+            Self::CloseCurrentTask {
+                result_inputs_required: true,
+                ..
+            }
+        )
+    }
+
+    pub(crate) fn close_current_task_number(&self) -> Option<u32> {
+        match self {
+            Self::CloseCurrentTask {
+                task: Some(task), ..
+            } => Some(*task),
+            _ => None,
         }
     }
 
@@ -578,7 +535,7 @@ impl PublicCommand {
                     "featureforge plan execution advance-late-stage --plan {plan}; requires release-readiness result and summary file inputs"
                 ),
                 PublicAdvanceLateStageMode::FinalReviewDispatch => format!(
-                    "featureforge plan execution advance-late-stage --plan {plan}; records final-review dispatch lineage"
+                    "featureforge plan execution advance-late-stage --plan {plan}; final-review dispatch checkpoint ready"
                 ),
                 PublicAdvanceLateStageMode::Qa => format!(
                     "featureforge plan execution advance-late-stage --plan {plan}; requires QA result and summary file inputs"
@@ -587,7 +544,7 @@ impl PublicCommand {
                     "featureforge plan execution advance-late-stage --plan {plan}; requires final-review reviewer, result, and summary file inputs"
                 ),
                 PublicAdvanceLateStageMode::FinishReview => format!(
-                    "featureforge plan execution advance-late-stage --plan {plan}; records finish-review checkpoint"
+                    "featureforge plan execution advance-late-stage --plan {plan}; finish-review checkpoint ready"
                 ),
                 PublicAdvanceLateStageMode::FinishCompletion => format!(
                     "featureforge plan execution advance-late-stage --plan {plan}; validates finish completion"
@@ -602,10 +559,7 @@ impl PublicCommand {
         }
     }
 
-    pub fn to_invocation(&self) -> Option<PublicCommandInvocation> {
-        if !self.required_inputs().is_empty() {
-            return None;
-        }
+    fn to_base_argv(&self) -> Vec<String> {
         let mut argv = vec![String::from("featureforge")];
         match self {
             Self::WorkflowOperator {
@@ -740,6 +694,47 @@ impl PublicCommand {
                 push_optional_flag(&mut argv, "--scope", scope.as_deref());
             }
         }
+        argv
+    }
+
+    fn to_template_base_argv(&self) -> Vec<String> {
+        let mut argv = self.to_base_argv();
+        if let Self::TransferHandoff { scope, .. } = self
+            && concrete_optional_value(Some(scope)).is_none()
+            && let Some(scope_flag_index) = argv.iter().position(|arg| arg == "--scope")
+            && argv
+                .get(scope_flag_index + 1)
+                .is_some_and(|value| value == scope)
+        {
+            argv.drain(scope_flag_index..=scope_flag_index + 1);
+        }
+        argv
+    }
+
+    pub fn to_input_template(&self) -> Option<PublicCommandTemplate> {
+        let required_inputs = self.required_inputs();
+        if required_inputs.is_empty() {
+            return None;
+        }
+        Some(PublicCommandTemplate {
+            command_kind: self.command_kind_name().to_owned(),
+            base_argv: self.to_template_base_argv(),
+            required_input_names: required_inputs
+                .iter()
+                .map(|input| input.name.clone())
+                .collect(),
+            input_bindings: required_inputs
+                .iter()
+                .map(public_command_template_input)
+                .collect(),
+        })
+    }
+
+    pub fn to_invocation(&self) -> Option<PublicCommandInvocation> {
+        if !self.required_inputs().is_empty() {
+            return None;
+        }
+        let argv = self.to_base_argv();
         if public_argv_has_template_tokens(&argv) {
             return None;
         }
@@ -867,98 +862,56 @@ impl PublicCommand {
 
     pub fn to_mutation_request(&self) -> Option<PublicMutationRequest> {
         match self {
-            Self::RepairReviewState { .. } => Some(PublicMutationRequest {
-                kind: PublicMutationKind::RepairReviewState,
-                task: None,
-                step: None,
-                expect_execution_fingerprint: None,
-                transfer_mode: None,
-                transfer_scope: None,
-                command_name: "repair-review-state",
-            }),
+            Self::RepairReviewState { .. } => Some(PublicMutationRequest::repair_review_state()),
             Self::Begin {
                 task,
                 step,
                 fingerprint,
                 ..
-            } => Some(PublicMutationRequest {
-                kind: PublicMutationKind::Begin,
-                task: Some(*task),
-                step: Some(*step),
-                expect_execution_fingerprint: fingerprint.clone(),
-                transfer_mode: None,
-                transfer_scope: None,
-                command_name: "begin",
-            }),
+            } => Some(PublicMutationRequest::begin(
+                *task,
+                *step,
+                fingerprint.clone(),
+            )),
             Self::Complete {
                 task,
                 step,
                 fingerprint,
                 ..
-            } => Some(PublicMutationRequest {
-                kind: PublicMutationKind::Complete,
-                task: Some(*task),
-                step: Some(*step),
-                expect_execution_fingerprint: fingerprint.clone(),
-                transfer_mode: None,
-                transfer_scope: None,
-                command_name: "complete",
-            }),
+            } => Some(PublicMutationRequest::complete(
+                *task,
+                *step,
+                fingerprint.clone(),
+            )),
             Self::Reopen {
                 task,
                 step,
                 fingerprint,
                 ..
-            } => Some(PublicMutationRequest {
-                kind: PublicMutationKind::Reopen,
-                task: Some(*task),
-                step: Some(*step),
-                expect_execution_fingerprint: fingerprint.clone(),
-                transfer_mode: None,
-                transfer_scope: None,
-                command_name: "reopen",
-            }),
+            } => Some(PublicMutationRequest::reopen(
+                *task,
+                *step,
+                fingerprint.clone(),
+            )),
             Self::TransferRepairStep {
                 task,
                 step,
                 fingerprint,
                 ..
-            } => Some(PublicMutationRequest {
-                kind: PublicMutationKind::Transfer,
-                task: Some(*task),
-                step: Some(*step),
-                expect_execution_fingerprint: fingerprint.clone(),
-                transfer_mode: Some(PublicTransferMode::RepairStep),
-                transfer_scope: None,
-                command_name: "transfer",
-            }),
-            Self::TransferHandoff { scope, .. } => Some(PublicMutationRequest {
-                kind: PublicMutationKind::Transfer,
-                task: None,
-                step: None,
-                expect_execution_fingerprint: None,
-                transfer_mode: Some(PublicTransferMode::WorkflowHandoff),
-                transfer_scope: concrete_optional_value(Some(scope)).map(str::to_owned),
-                command_name: "transfer",
-            }),
-            Self::CloseCurrentTask { task, .. } => Some(PublicMutationRequest {
-                kind: PublicMutationKind::CloseCurrentTask,
-                task: *task,
-                step: None,
-                expect_execution_fingerprint: None,
-                transfer_mode: None,
-                transfer_scope: None,
-                command_name: "close-current-task",
-            }),
-            Self::AdvanceLateStage { .. } => Some(PublicMutationRequest {
-                kind: PublicMutationKind::AdvanceLateStage,
-                task: None,
-                step: None,
-                expect_execution_fingerprint: None,
-                transfer_mode: None,
-                transfer_scope: None,
-                command_name: "advance-late-stage",
-            }),
+            } => Some(PublicMutationRequest::transfer_repair_step(
+                *task,
+                *step,
+                fingerprint.clone(),
+            )),
+            Self::TransferHandoff { scope, .. } => Some(PublicMutationRequest::transfer_handoff(
+                concrete_optional_value(Some(scope)).map(str::to_owned),
+            )),
+            Self::CloseCurrentTask { task, .. } => {
+                Some(PublicMutationRequest::close_current_task(*task))
+            }
+            Self::AdvanceLateStage { mode, .. } => {
+                Some(PublicMutationRequest::advance_late_stage(*mode))
+            }
             Self::WorkflowOperator { .. }
             | Self::Status { .. }
             | Self::MaterializeProjectionsStateDirOnly { .. } => None,
@@ -978,9 +931,14 @@ pub(crate) fn recommended_public_command_display(
     command: Option<&PublicCommand>,
 ) -> Option<String> {
     command.and_then(|command| {
-        command
-            .to_invocation()
-            .map(|_| command.to_display_command())
+        command.to_invocation().map(|_| match command {
+            PublicCommand::WorkflowOperator {
+                external_review_result_ready,
+                json: true,
+                ..
+            } => workflow_operator_json_display_command(*external_review_result_ready).to_owned(),
+            _ => command.to_display_command(),
+        })
     })
 }
 
@@ -992,16 +950,24 @@ pub(crate) fn required_inputs_for_public_command(
         .unwrap_or_default()
 }
 
+pub(crate) fn recommended_public_command_template(
+    command: Option<&PublicCommand>,
+) -> Option<PublicCommandTemplate> {
+    command.and_then(PublicCommand::to_input_template)
+}
+
 pub(crate) fn public_command_recommendation_surfaces(
     command: Option<&PublicCommand>,
 ) -> (
     Option<String>,
     Option<Vec<String>>,
+    Option<PublicCommandTemplate>,
     Vec<PublicCommandInputRequirement>,
 ) {
     (
         recommended_public_command_display(command),
         recommended_public_command_argv(command),
+        recommended_public_command_template(command),
         required_inputs_for_public_command(command),
     )
 }
@@ -1107,6 +1073,60 @@ fn input_existing_path_when(name: &str, required_when: &str) -> PublicCommandInp
     PublicCommandInputRequirement {
         required_when: Some(required_when.to_owned()),
         ..input_existing_path(name)
+    }
+}
+
+fn public_command_template_input(
+    input: &PublicCommandInputRequirement,
+) -> PublicCommandTemplateInput {
+    PublicCommandTemplateInput {
+        name: input.name.clone(),
+        kind: input.kind.clone(),
+        binding: public_command_input_binding(&input.name).unwrap_or_else(|| {
+            panic!(
+                "public command input `{}` must have explicit CLI binding metadata",
+                input.name
+            )
+        }),
+        values: input.values.clone(),
+        must_exist: input.must_exist,
+        required_when: input.required_when.clone(),
+        shell_escape_by_caller: false,
+    }
+}
+
+fn public_command_input_binding(name: &str) -> Option<PublicCommandInputBinding> {
+    Some(match name {
+        "verification_mode" => PublicCommandInputBinding {
+            kind: PublicCommandInputBindingKind::Virtual,
+            flag: None,
+        },
+        "task" => flag_binding("--task"),
+        "source" => flag_binding("--source"),
+        "reason" => flag_binding("--reason"),
+        "expect_execution_fingerprint" => flag_binding("--expect-execution-fingerprint"),
+        "claim" => flag_binding("--claim"),
+        "manual_verify_summary" => flag_binding("--manual-verify-summary"),
+        "verify_command" => flag_binding("--verify-command"),
+        "verify_result" => flag_binding("--verify-result"),
+        "scope" => flag_binding("--scope"),
+        "owner" => flag_binding("--to"),
+        "review_result" => flag_binding("--review-result"),
+        "review_summary_file" => flag_binding("--review-summary-file"),
+        "verification_result" => flag_binding("--verification-result"),
+        "verification_summary_file" => flag_binding("--verification-summary-file"),
+        "result" => flag_binding("--result"),
+        "summary_file" => flag_binding("--summary-file"),
+        "reviewer_source" => flag_binding("--reviewer-source"),
+        "reviewer_id" => flag_binding("--reviewer-id"),
+        _ => return None,
+    })
+}
+
+fn flag_binding(flag: impl Into<String>) -> PublicCommandInputBinding {
+    PublicCommandInputBinding {
+        kind: PublicCommandInputBindingKind::Flag,
+        flag: Some(flag.into()),
     }
 }
 
@@ -1249,33 +1269,59 @@ impl MutationEligibilityDecision {
     }
 }
 
-fn hidden_token(parts: &[&str], separator: &str) -> String {
-    parts.join(separator)
+pub const HIDDEN_COMMAND_OR_FLAG_TOKENS: &[&str] = &[
+    "erpbeq-cvibg",
+    "erpbeq-erivrj-qvfcngpu",
+    "erpbeq-oenapu-pybfher",
+    "erpbeq-eryrnfr-ernqvarff",
+    "erpbeq-svany-erivrj",
+    "erpbeq-dn",
+    "tngr-erivrj",
+    "tngr-svavfu",
+    "erohvyq-rivqrapr",
+    "erpbapvyr-erivrj-fgngr",
+    "cyna rkrphgvba vagreany",
+    "cyna rkrphgvba cersyvtug",
+    "cyna rkrphgvba erpbzzraq",
+    "jbexsybj erpbzzraq",
+    "jbexsybj cersyvtug",
+    "--qvfcngpu-vq",
+    "--oenapu-pybfher-vq",
+];
+
+static HIDDEN_COMMAND_OR_FLAG_TOKEN_STRINGS: OnceLock<Vec<String>> = OnceLock::new();
+
+pub fn hidden_command_or_flag_tokens() -> &'static [String] {
+    HIDDEN_COMMAND_OR_FLAG_TOKEN_STRINGS
+        .get_or_init(|| {
+            HIDDEN_COMMAND_OR_FLAG_TOKENS
+                .iter()
+                .map(|encoded| decode_rot13_ascii(encoded))
+                .collect()
+        })
+        .as_slice()
+}
+
+fn decode_rot13_ascii(encoded: &str) -> String {
+    encoded
+        .bytes()
+        .map(|byte| match byte {
+            b'a'..=b'm' | b'A'..=b'M' => byte + 13,
+            b'n'..=b'z' | b'N'..=b'Z' => byte - 13,
+            _ => byte,
+        })
+        .map(char::from)
+        .collect()
 }
 
 pub(crate) fn hidden_command_tokens() -> &'static [String] {
-    static TOKENS: OnceLock<Vec<String>> = OnceLock::new();
-    TOKENS.get_or_init(|| {
-        vec![
-            hidden_token(&["record", "pivot"], "-"),
-            hidden_token(&["record", "review", "dispatch"], "-"),
-            hidden_token(&["gate", "review"], "-"),
-            hidden_token(&["gate", "finish"], "-"),
-            hidden_token(&["rebuild", "evidence"], "-"),
-            hidden_token(&["plan", "execution", "internal"], " "),
-            hidden_token(&["reconcile", "review", "state"], "-"),
-            hidden_token(&["plan", "execution", "preflight"], " "),
-            hidden_token(&["plan", "execution", "recommend"], " "),
-            hidden_token(&["workflow", "recommend"], " "),
-            hidden_token(&["workflow", "preflight"], " "),
-        ]
-    })
+    hidden_command_or_flag_tokens()
 }
 
 pub(crate) fn command_invokes_hidden_lane(command: &str) -> bool {
     hidden_command_tokens()
         .iter()
-        .any(|token| command.contains(token))
+        .any(|token| command.contains(token.as_str()))
 }
 
 #[cfg(test)]
@@ -1288,48 +1334,54 @@ pub fn decide_public_mutation(
     status: &PlanExecutionStatus,
     request: &PublicMutationRequest,
 ) -> MutationEligibilityDecision {
-    if request.command_name != request.kind.public_command_name() {
+    let Some(command_name) = request.public_command_name() else {
         return MutationEligibilityDecision::reject(
             "mutation_hidden_or_unsupported_command",
             format!(
                 "{} is not a supported public command token for {:?}.",
-                request.command_name, request.kind
+                request.command_name_for_diagnostics(),
+                request.kind
             ),
         );
-    }
+    };
 
-    if status.state_kind == crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG {
+    if state_kind_is_blocked_runtime_bug(&status.state_kind) {
         return MutationEligibilityDecision::reject(
             "mutation_blocked_runtime_bug",
             format!(
                 "{} cannot mutate while public runtime status is blocked_runtime_bug.",
-                request.command_name
+                command_name
             ),
         );
     }
 
-    if status.phase_detail == crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
-        && request.kind != PublicMutationKind::RepairReviewState
-    {
-        return MutationEligibilityDecision::reject(
-            "mutation_runtime_reconcile_required",
-            format!(
-                "{} cannot mutate while public runtime status requires reconcile; repair-review-state is the only eligible mutation lane.",
-                request.command_name
-            ),
-        );
+    if status.phase_detail == crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED {
+        if request.kind != PublicCommandKind::RepairReviewState {
+            return MutationEligibilityDecision::reject(
+                "mutation_runtime_reconcile_required",
+                format!(
+                    "{} cannot mutate while public runtime status requires reconcile.",
+                    command_name
+                ),
+            );
+        }
+        if runtime_reconcile_route_is_diagnostic_only(status) {
+            return MutationEligibilityDecision::reject(
+                "mutation_runtime_reconcile_diagnostic_only",
+                String::from(
+                    "repair-review-state cannot mutate while runtime_reconcile_required is diagnostic-only and no public repair target is bound.",
+                ),
+            );
+        }
     }
 
-    let exact_public_route_exposed = request.kind.execution_command_kind().is_none()
+    let exact_public_route_exposed = request.execution_command_kind().is_none()
         && route_exposes_public_mutation_request(status, request);
     if exact_public_route_exposed && external_wait_exact_route_exception(status, request) {
         return MutationEligibilityDecision::allow(
             MutationEligibilitySource::ExactRoute,
             "mutation_exact_route_authorized",
-            format!(
-                "{} is authorized by the exact public route.",
-                request.command_name
-            ),
+            format!("{command_name} is authorized by the exact public route."),
         );
     }
 
@@ -1338,7 +1390,17 @@ pub fn decide_public_mutation(
             "mutation_waiting_external_input",
             format!(
                 "{} cannot mutate while public runtime status is waiting for external input.",
-                request.command_name
+                command_name
+            ),
+        );
+    }
+
+    if state_kind_blocks_all_public_mutation(status, request) {
+        return MutationEligibilityDecision::reject(
+            "mutation_state_kind_blocks_local_mutation",
+            format!(
+                "{} cannot mutate while public runtime status is state_kind={}; stale exact routes and repair targets are ignored until status/operator exposes a current typed public route.",
+                command_name, status.state_kind
             ),
         );
     }
@@ -1347,37 +1409,11 @@ pub fn decide_public_mutation(
         return MutationEligibilityDecision::allow(
             MutationEligibilitySource::ExactRoute,
             "mutation_exact_route_authorized",
-            format!(
-                "{} is authorized by the exact public route.",
-                request.command_name
-            ),
+            format!("{command_name} is authorized by the exact public route."),
         );
     }
 
-    if request_matches_resume_begin(status, request) {
-        return MutationEligibilityDecision::allow(
-            MutationEligibilitySource::ExactRoute,
-            "mutation_resume_begin_authorized",
-            format!(
-                "{} is authorized by the public execution resume target.",
-                request.command_name
-            ),
-        );
-    }
-
-    if request.kind == PublicMutationKind::RepairReviewState
-        && status.phase_detail == crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
-    {
-        return MutationEligibilityDecision::allow(
-            MutationEligibilitySource::ExactRoute,
-            "mutation_runtime_reconcile_repair_authorized",
-            String::from(
-                "repair-review-state is authorized by the public runtime reconcile route.",
-            ),
-        );
-    }
-
-    if let Some(command_kind) = request.kind.execution_command_kind()
+    if let Some(command_kind) = request.execution_command_kind()
         && status
             .execution_command_context
             .as_ref()
@@ -1393,7 +1429,7 @@ pub fn decide_public_mutation(
             "mutation_exact_route_authorized",
             format!(
                 "{} is authorized by the exact public execution route.",
-                request.command_name
+                command_name
             ),
         );
     }
@@ -1413,7 +1449,7 @@ pub fn decide_public_mutation(
             "mutation_explicit_repair_target_authorized",
             format!(
                 "{} is authorized by an explicit public repair target.",
-                request.command_name
+                command_name
             ),
         );
     }
@@ -1423,7 +1459,7 @@ pub fn decide_public_mutation(
             "mutation_blocked_until_exact_public_route",
             format!(
                 "{} is blocked while the runtime is in phase_detail={} state_kind={}; only the exact public route or an explicit repair target may mutate.",
-                request.command_name, status.phase_detail, status.state_kind
+                command_name, status.phase_detail, status.state_kind
             ),
         );
     }
@@ -1432,46 +1468,40 @@ pub fn decide_public_mutation(
         "mutation_not_route_authorized",
         format!(
             "{} is not the exact public route and no explicit repair target is bound.",
-            request.command_name
+            command_name
         ),
     )
 }
 
 fn status_waits_for_external_review_result(status: &PlanExecutionStatus) -> bool {
-    status.external_wait_state.as_deref() == Some("waiting_for_external_review_result")
+    external_wait_state_is_external_wait(status.external_wait_state.as_deref())
 }
 
 fn external_wait_exact_route_exception(
     status: &PlanExecutionStatus,
     request: &PublicMutationRequest,
 ) -> bool {
-    status.phase_detail == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-        && request.kind == PublicMutationKind::AdvanceLateStage
+    state_kind_is_external_wait(&status.state_kind)
+        && status.phase_detail == crate::execution::phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
+        && request.kind == PublicCommandKind::AdvanceLateStage
 }
 
-pub(crate) fn public_execution_mutation_is_authorized(
+fn state_kind_blocks_all_public_mutation(
     status: &PlanExecutionStatus,
-    command_kind: &str,
-    task: u32,
-    step: Option<u32>,
+    request: &PublicMutationRequest,
 ) -> bool {
-    let Some(kind) = PublicMutationKind::from_execution_command_kind(command_kind) else {
-        return false;
-    };
-    let command_name = kind.public_command_name();
-    decide_public_mutation(
-        status,
-        &PublicMutationRequest {
-            kind,
-            task: Some(task),
-            step,
-            expect_execution_fingerprint: None,
-            transfer_mode: None,
-            transfer_scope: None,
-            command_name,
-        },
-    )
-    .allowed
+    state_kind_blocks_local_mutation(&status.state_kind)
+        && !runtime_reconcile_repair_route_exception(status, request)
+}
+
+fn runtime_reconcile_repair_route_exception(
+    status: &PlanExecutionStatus,
+    request: &PublicMutationRequest,
+) -> bool {
+    request.kind == PublicCommandKind::RepairReviewState
+        && status.phase_detail == crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+        && state_kind_is_runtime_reconcile_required(&status.state_kind)
+        && !runtime_reconcile_route_is_diagnostic_only(status)
 }
 
 #[cfg(test)]
@@ -1487,22 +1517,21 @@ pub(crate) fn require_public_mutation(
     request: PublicMutationRequest,
     failure_class: FailureClass,
 ) -> Result<(), JsonFailure> {
+    require_public_mutation_decision(status, request, failure_class).map(|_| ())
+}
+
+pub(crate) fn require_public_mutation_decision(
+    status: &PlanExecutionStatus,
+    request: PublicMutationRequest,
+    failure_class: FailureClass,
+) -> Result<MutationEligibilityDecision, JsonFailure> {
     let decision = decide_public_mutation(status, &request);
     if decision.allowed {
-        return Ok(());
+        return Ok(decision);
     }
-    let next_public_command = status
-        .recommended_public_command
-        .as_ref()
-        .map(PublicCommand::to_display_command)
-        .or_else(|| {
-            status
-                .next_public_action
-                .as_ref()
-                .map(|action| action.command.clone())
-        })
-        .filter(|command| !command_invokes_hidden_lane(command))
-        .unwrap_or_else(|| String::from("none"));
+    let public_route_summary = public_mutation_failure_route_summary(status);
+    let route_field = public_mutation_failure_route_field(status);
+    let route_guidance = public_mutation_failure_route_guidance(status);
     let task = request
         .task
         .map_or_else(|| String::from("none"), |task| task.to_string());
@@ -1547,51 +1576,132 @@ pub(crate) fn require_public_mutation(
     Err(JsonFailure::new(
         failure_class,
         format!(
-            "{} failed closed: requested task {task} step {step} is not the exact public route and no explicit repair target is bound. Next public action: {next_public_command}. reason_code={}; phase_detail={}; state_kind={}; runtime_reconcile_required={}; blocked_runtime_bug={}; route_reason_codes=[{reason_codes}]; public_repair_targets=[{public_repair_targets}]; blocking_records=[{blocking_records}]; detail={}",
-            request.command_name,
+            "{} failed closed: requested task {task} step {step} is not the exact public route and no explicit repair target is bound. typed_public_route={public_route_summary}; route_field={route_field}; route_guidance={route_guidance}; reason_code={}; phase_detail={}; state_kind={}; runtime_reconcile_required={}; blocked_runtime_bug={}; route_reason_codes=[{reason_codes}]; public_repair_targets=[{public_repair_targets}]; blocking_records=[{blocking_records}]; detail={}",
+            request.command_name_for_diagnostics(),
             decision.reason_code,
             status.phase_detail,
             status.state_kind,
             status.phase_detail == crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED,
-            status.state_kind == crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG,
+            state_kind_is_blocked_runtime_bug(&status.state_kind),
             decision.detail,
         ),
     ))
 }
 
-fn status_blocks_non_exact_public_mutation(status: &PlanExecutionStatus) -> bool {
-    status.phase_detail == crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
-        || matches!(
-            status.state_kind.as_str(),
-            crate::execution::phase::DETAIL_BLOCKED_RUNTIME_BUG
-                | "terminal"
-                | "waiting_external_input"
-        )
+fn public_mutation_failure_route_summary(status: &PlanExecutionStatus) -> String {
+    status
+        .recommended_public_command
+        .as_ref()
+        .map(public_command_diagnostic_summary)
+        .unwrap_or_else(|| String::from("command_kind=none"))
 }
 
-fn request_matches_resume_begin(
-    status: &PlanExecutionStatus,
-    request: &PublicMutationRequest,
-) -> bool {
-    request.kind == PublicMutationKind::Begin
-        && status.phase_detail == crate::execution::phase::DETAIL_EXECUTION_IN_PROGRESS
-        && status.execution_started == "yes"
-        && status.active_task.is_none()
-        && status.active_step.is_none()
-        && status.resume_task == request.task
-        && status.resume_step == request.step
-        && request_fingerprint_matches_status(status, request)
+fn public_command_diagnostic_summary(command: &PublicCommand) -> String {
+    let command_kind = command.command_kind_name();
+    match command {
+        PublicCommand::WorkflowOperator {
+            external_review_result_ready,
+            json,
+            ..
+        } => format!(
+            "command_kind={command_kind},external_review_result_ready={external_review_result_ready},json={json}"
+        ),
+        PublicCommand::Status { .. } | PublicCommand::RepairReviewState { .. } => {
+            format!("command_kind={command_kind}")
+        }
+        PublicCommand::Begin { task, step, .. }
+        | PublicCommand::Complete { task, step, .. }
+        | PublicCommand::Reopen { task, step, .. }
+        | PublicCommand::TransferRepairStep { task, step, .. } => {
+            format!("command_kind={command_kind},task={task},step={step}")
+        }
+        PublicCommand::TransferHandoff { scope, .. } => {
+            format!("command_kind={command_kind},scope={scope}")
+        }
+        PublicCommand::CloseCurrentTask {
+            task,
+            result_inputs_required,
+            ..
+        } => {
+            let task = task.map_or_else(|| String::from("none"), |task| task.to_string());
+            format!(
+                "command_kind={command_kind},task={task},result_inputs_required={result_inputs_required}"
+            )
+        }
+        PublicCommand::AdvanceLateStage { mode, .. } => {
+            format!(
+                "command_kind={command_kind},mode={}",
+                public_advance_late_stage_mode_name(*mode)
+            )
+        }
+        PublicCommand::MaterializeProjectionsStateDirOnly { scope, .. } => {
+            let scope = scope.as_deref().unwrap_or("none");
+            format!("command_kind={command_kind},scope={scope}")
+        }
+    }
+}
+
+fn public_mutation_failure_route_field(status: &PlanExecutionStatus) -> &'static str {
+    if status.recommended_public_command_argv.is_some() {
+        "recommended_public_command_argv"
+    } else if status.recommended_public_command_template.is_some() {
+        "recommended_public_command_template.input_bindings"
+    } else {
+        "none"
+    }
+}
+
+fn public_mutation_failure_route_guidance(status: &PlanExecutionStatus) -> &'static str {
+    if state_kind_or_phase_is_runtime_diagnostic(&status.state_kind, &status.phase_detail)
+        || status.next_action
+            == crate::execution::next_action::NEXT_ACTION_RUNTIME_DIAGNOSTIC_REQUIRED
+    {
+        return "stop on runtime diagnostic; do not retry mutation";
+    }
+    if status.recommended_public_command_argv.is_some() {
+        EXECUTE_RECOMMENDED_PUBLIC_ARGV_GUIDANCE
+    } else if status.recommended_public_command_template.is_some() {
+        WORKFLOW_OPERATOR_TEMPLATE_JSON_QUERY
+    } else {
+        OPERATOR_ROUTE_AUTHORITY_REFERENCE
+    }
+}
+
+pub(crate) fn runtime_reconcile_route_is_diagnostic_only(status: &PlanExecutionStatus) -> bool {
+    status.phase_detail == crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+        && status.recommended_public_command.is_none()
+        && status.recommended_public_command_argv.is_none()
+        && status.recommended_public_command_template.is_none()
+        && status.next_public_action.is_none()
+        && status.public_repair_targets.is_empty()
+}
+
+fn status_blocks_non_exact_public_mutation(status: &PlanExecutionStatus) -> bool {
+    status.phase_detail == crate::execution::phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
+        || state_kind_blocks_local_mutation(&status.state_kind)
 }
 
 fn route_exposes_public_mutation_request(
     status: &PlanExecutionStatus,
     request: &PublicMutationRequest,
 ) -> bool {
-    status
+    let Some(route_request) = status
         .recommended_public_command
         .as_ref()
         .and_then(PublicCommand::to_mutation_request)
-        .is_some_and(|route_request| public_mutation_requests_match(&route_request, request))
+    else {
+        return false;
+    };
+    if route_request.kind == PublicCommandKind::AdvanceLateStage
+        && !public_advance_late_stage_request_mode_matches_routed_public_command(
+            &status.phase_detail,
+            status.recommended_public_command.as_ref(),
+            route_request.advance_late_stage_mode,
+        )
+    {
+        return false;
+    }
+    public_mutation_requests_match(&route_request, request)
 }
 
 fn public_repair_target_matches_request(
@@ -1600,10 +1710,13 @@ fn public_repair_target_matches_request(
     step: Option<u32>,
     request: &PublicMutationRequest,
 ) -> bool {
-    command_kind == request.kind.public_command_name()
+    if request.kind == PublicCommandKind::AdvanceLateStage {
+        return false;
+    }
+    request.kind.matches_public_mutation_token(command_kind)
         && task == request.task
         && step == request.step
-        && (request.kind != PublicMutationKind::Transfer
+        && (request.kind != PublicCommandKind::Transfer
             || request.transfer_mode == Some(PublicTransferMode::RepairStep))
 }
 
@@ -1614,12 +1727,17 @@ fn public_mutation_requests_match(
     if route_request.kind != request.kind {
         return false;
     }
-    if request.kind == PublicMutationKind::Transfer {
+    if request.kind == PublicCommandKind::Transfer {
         return route_request.transfer_mode == request.transfer_mode
             && public_transfer_scope_matches(route_request, request)
             && route_request.task == request.task
             && route_request.step == request.step
             && public_mutation_fingerprint_matches(route_request, request);
+    }
+    if request.kind == PublicCommandKind::AdvanceLateStage
+        && route_request.advance_late_stage_mode != request.advance_late_stage_mode
+    {
+        return false;
     }
     route_request.task == request.task
         && route_request.step == request.step
@@ -1710,7 +1828,87 @@ fn normalize_public_follow_up(follow_up: &str) -> Option<String> {
 }
 
 pub(crate) fn operator_requires_review_state_repair(operator: &ExecutionRoutingState) -> bool {
-    shared_required_follow_up_from_routing(operator).as_deref() == Some("repair_review_state")
+    shared_required_follow_up_from_routing(operator).as_deref()
+        == Some(FOLLOW_UP_REPAIR_REVIEW_STATE)
+}
+
+pub(crate) fn public_advance_late_stage_operator_routes_branch_closure(
+    operator: &ExecutionRoutingState,
+) -> bool {
+    routed_public_command_is_branch_closure(
+        &operator.phase_detail,
+        operator.recommended_public_command.as_ref(),
+    )
+}
+
+pub(crate) fn public_advance_late_stage_operator_routes_release_readiness(
+    operator: &ExecutionRoutingState,
+) -> bool {
+    routed_public_command_is_release_readiness(
+        &operator.phase_detail,
+        operator.recommended_public_command.as_ref(),
+    )
+}
+
+pub(crate) fn public_advance_late_stage_operator_routes_final_review_dispatch(
+    operator: &ExecutionRoutingState,
+) -> bool {
+    routed_public_command_is_final_review_dispatch(
+        &operator.phase_detail,
+        operator.recommended_public_command.as_ref(),
+    )
+}
+
+pub(crate) fn public_advance_late_stage_operator_routes_qa(
+    operator: &ExecutionRoutingState,
+) -> bool {
+    routed_public_command_is_qa(
+        &operator.phase_detail,
+        operator.recommended_public_command.as_ref(),
+    )
+}
+
+pub(crate) fn public_advance_late_stage_operator_routes_final_review(
+    operator: &ExecutionRoutingState,
+) -> bool {
+    routed_public_command_is_final_review(
+        &operator.phase_detail,
+        operator.recommended_public_command.as_ref(),
+    )
+}
+
+pub(crate) fn public_advance_late_stage_operator_accepts_final_review_inputs(
+    operator: &ExecutionRoutingState,
+) -> bool {
+    routed_public_command_accepts_final_review_inputs(
+        &operator.phase_detail,
+        operator.recommended_public_command.as_ref(),
+    )
+}
+
+pub(crate) fn public_advance_late_stage_operator_routes_finish_review(
+    operator: &ExecutionRoutingState,
+) -> bool {
+    routed_public_command_is_finish_review(
+        &operator.phase_detail,
+        operator.recommended_public_command.as_ref(),
+    )
+}
+
+pub(crate) fn public_advance_late_stage_operator_routes_finish_completion(
+    operator: &ExecutionRoutingState,
+) -> bool {
+    routed_public_command_is_finish_completion(
+        &operator.phase_detail,
+        operator.recommended_public_command.as_ref(),
+    )
+}
+
+pub(crate) fn public_advance_late_stage_status_mutation_allowed(
+    status: &PlanExecutionStatus,
+    mode: PublicAdvanceLateStageMode,
+) -> bool {
+    decide_public_mutation(status, &PublicMutationRequest::advance_late_stage(mode)).allowed
 }
 
 pub(crate) fn blocked_follow_up_for_operator(operator: &ExecutionRoutingState) -> Option<String> {
@@ -1725,23 +1923,39 @@ pub(crate) fn close_current_task_required_follow_up(
     blocked_follow_up_for_operator(operator)
 }
 
+pub(crate) fn branch_closure_required_follow_up(
+    operator: &ExecutionRoutingState,
+) -> Option<String> {
+    blocked_follow_up_for_operator(operator).and_then(|required_follow_up| {
+        (normalize_follow_up_alias(Some(&required_follow_up), FollowUpAliasContext::PublicRouting)
+            != Some(FollowUpKind::AdvanceLateStage)
+            || operator.phase_detail
+                == crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS)
+            .then_some(required_follow_up)
+    })
+}
+
 pub(crate) fn late_stage_required_follow_up(
     stage_path: &str,
     operator: &ExecutionRoutingState,
 ) -> Option<String> {
     let required_follow_up = blocked_follow_up_for_operator(operator)?;
+    let required_follow_up_kind = normalize_follow_up_alias(
+        Some(&required_follow_up),
+        FollowUpAliasContext::PublicRouting,
+    )?;
     if stage_path == "release_readiness"
         && !matches!(
-            required_follow_up.as_str(),
-            "advance_late_stage" | "repair_review_state"
+            required_follow_up_kind,
+            FollowUpKind::AdvanceLateStage | FollowUpKind::RepairReviewState
         )
     {
         return None;
     }
     if stage_path == "final_review"
         && !matches!(
-            required_follow_up.as_str(),
-            "request_external_review" | "repair_review_state"
+            required_follow_up_kind,
+            FollowUpKind::RequestExternalReview | FollowUpKind::RepairReviewState
         )
     {
         return None;
@@ -1753,11 +1967,22 @@ pub(crate) fn release_readiness_required_follow_up(
     operator: &ExecutionRoutingState,
 ) -> Option<String> {
     blocked_follow_up_for_operator(operator).and_then(|required_follow_up| {
-        matches!(
-            required_follow_up.as_str(),
-            "advance_late_stage" | "repair_review_state"
-        )
-        .then_some(required_follow_up)
+        match normalize_follow_up_alias(Some(&required_follow_up), FollowUpAliasContext::PublicRouting)?
+        {
+            FollowUpKind::AdvanceLateStage
+                if matches!(
+                    operator.phase_detail.as_str(),
+                    crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
+                        |
+                    crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
+                        | crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED
+                ) =>
+        {
+            Some(required_follow_up)
+        }
+            FollowUpKind::RepairReviewState => Some(required_follow_up),
+        _ => None,
+        }
     })
 }
 

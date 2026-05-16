@@ -9,9 +9,9 @@ CLI args
   -> transition guard / typed public command oracle
   -> append-only event recording
   -> reducer
-  -> read model/status projection
+  -> route-plan selection plus route-owned status projection
+  -> router/read-model/status installation
   -> read-surface invariants
-  -> route decision
   -> workflow operator presentation
 ```
 
@@ -40,12 +40,30 @@ other read models are projections.
 
 `src/execution/reducer.rs` owns conversion from events and current workspace truth into
 `RuntimeState`. Reducer code must eliminate impossible state at the source, such as a
-current task closure also appearing as stale.
+current task closure also appearing as stale. Status assembly may return route-neutral
+facts such as stale-target projection and review-state diagnostics for reducer reuse,
+but public route fields stay empty until the route projection layer applies a
+`RouteDecision`.
 
-`src/execution/read_model.rs`, `src/execution/read_model_support.rs`, and
-`src/execution/status.rs` own projection from reducer truth into public status DTOs.
-They may sanitize and explain invalid derived state, but they should not invent routing
-truth that bypasses the reducer.
+`src/execution/status_support.rs` owns shared execution-status helpers consumed by
+status assembly, read-model presentation, and runtime truth. Call sites must import
+that owner directly; the old `read_model_support.rs` compatibility re-export has been
+removed. `src/execution/status_assembly.rs` owns route-neutral status construction and
+diagnostics; `src/execution/status_assembly/facts.rs` names the intermediate facts
+that reducer/route planning may reuse without reading public route fields as authority.
+`src/execution/status_assembly/exact_route.rs` validates finalized exact execution
+route fields only, with typed surface parsing split between
+`src/execution/status_assembly/exact_route_surfaces.rs`,
+`src/execution/status_assembly/exact_route_template.rs`, and the executable
+argv/template bindability policy in
+`src/execution/command_eligibility/execution_target.rs`; none of these modules may
+infer whether an execution route is required from raw task/resume/context state.
+Raw execution-command route-target selection and target/status matching
+live under `src/execution/route_plan/execution_targets.rs`, using
+`PublicCommandKind` for command-token ownership.
+`src/execution/read_model.rs` and `src/execution/status.rs` own projection from reducer
+truth into public status DTOs. They may sanitize and explain invalid derived state,
+but they should not invent routing truth that bypasses the reducer.
 
 ## Installed Control Plane Diagnostics
 
@@ -74,7 +92,10 @@ explicit, must be recorded in evidence/review provenance, and should almost
 never be used.
 
 `src/execution/invariants.rs` owns read-surface fail-closed checks. Invariants are
-defense in depth; they are not a substitute for reducer correctness.
+defense in depth; they are not a substitute for reducer correctness, and they must
+not reconstruct normal route authority after route-plan finalization. If invariants
+mark a public read surface diagnostic, they clear executable surfaces on the status
+projection and may install only a route-plan-owned diagnostic decision.
 
 `src/execution/phase.rs` owns public phase and phase-detail vocabulary. New status
 phase-detail strings belong there first so status, operator, tests, and docs do not
@@ -91,21 +112,56 @@ state-machine decision, not in the facade.
 
 `src/execution/command_eligibility.rs` defines typed public command objects and
 mutation eligibility checks. Hidden/debug commands are not representable as
-`PublicCommand` variants.
+`PublicCommand` variants. Public mutation CLI tokens are owned by
+`PublicCommandKind`; mutation request kinds derive their command names from that
+typed owner instead of maintaining a second string table.
 
-`src/execution/next_action.rs` and `src/execution/router.rs` decide the next legal
-public action from reducer truth, guards, and current review state. They return typed
-commands before any display string is rendered.
+`src/execution/next_action.rs` is a display/type facade for stable next-action
+labels and the typed candidate DTO. Ordered next-action candidate computation
+lives under `src/execution/route_plan/next_action_choice.rs` and its focused
+child modules; it is consumed only by route-plan selection/finalization. Status
+assembly, router, and command modules must consume route-plan route or command
+projections rather than calling candidate computation as a second route owner.
+The retired `public_route_selection` module has been deleted; do not recreate it
+as a marker or compatibility staging area.
+`src/execution/route_plan.rs` owns final route-plan ordering from reducer truth,
+guards, and current review state. Route-decision DTOs, route constructors,
+next-action route finalization, blocker materialization, state-kind classification,
+follow-up derivation, and route fact helpers live under `src/execution/route_plan/`;
+`src/execution/router.rs` installs the selected route and the route-plan-owned status
+projection into status/operator DTO surfaces. Route planning returns typed commands
+before any display string is rendered.
+Public blocking scope/task projection, route phase normalization, and external
+wait-state derivation live in `src/execution/route_plan/route_semantics.rs`.
+Read/query layers may provide immutable facts, but they must not own those final
+route-control fields.
+Shared route-to-status field assignment, phase-to-harness mapping, and
+projection diagnostics live in `src/execution/route_plan/status_application.rs`
+and the final status projection lives under `src/execution/route_plan/`; router and
+read-model projection must consume that output rather than recomputing blockers or
+route-to-status fields.
+Route planning computes `RoutePlanningFacts` before public route selection, so
+targetless stale, baseline bridge, persisted follow-up, completed-closure
+preemption, and shared next-action decisions are selected in one pass.
+Route-plan finalization may derive blocker-dependent `required_follow_up`,
+normalize diagnostic-only routes, bind public repair targets, and produce the status
+projection before the router sees the decision. Status projection copies
+selected-route metadata such as `execution_reentry_target_source`; it must not
+rederive stale targets, replace the `RouteDecision`, or mutate route-control fields
+after the router has projected the selected route.
 
-`src/workflow/operator.rs` presents the route decision. It exposes
-`recommended_public_command_argv` for machine invocation and may render
-`recommended_command` for human compatibility, but both representations must come from
-the typed public command decision, not from reparsing a hand-written string.
-When `recommended_public_command_argv` is present, consumers invoke it exactly, except installed-control-plane rebinding: if argv[0] is `featureforge`, execute `~/.featureforge/install/bin/featureforge` with argv[1..] unchanged.
-When argv is absent, the route must expose typed `required_inputs` or the
-prerequisite named by `next_action`; consumers satisfy those inputs and rerun the
-operator or status command that owns the route. `recommended_command` is
-display-only compatibility text and must not be parsed or split to recover argv.
+`src/workflow/operator.rs` presents the route decision. Its JSON output exposes
+`recommended_public_command_argv` for machine invocation and
+`recommended_public_command_template` plus `required_inputs` for input-required
+routes. It may render `recommended_command` for human compatibility, but all three
+representations must come from the typed public command decision, not from reparsing
+a hand-written string.
+When `recommended_public_command_argv` is present, consumers execute the typed
+public route through the installed control-plane runtime. Detailed argv binding,
+operator-mediated template materialization, and rebinding rules live in
+`references/operator-route-authority.md`.
+`recommended_command` is display-only compatibility text and must not be parsed or
+split to recover argv.
 When a diagnostic-only route has no argv and no typed inputs,
 `next_action=runtime diagnostic required`; consumers stop on that diagnostic and
 must not invent a repair/reentry command or manually edit runtime artifacts.
@@ -163,13 +219,28 @@ surfaces that real agents cannot call.
 
 The following suites protect these boundaries:
 
-- `tests/public_cli_flow_contracts.rs`: public tests use the compiled CLI and cannot
-  wrap internal helpers, hidden commands, or direct runtime surfaces.
-- `tests/runtime_module_boundaries.rs`: import direction, projection writer, phase
-  literal, and scanner-centralization contracts.
-- `tests/liveness_model_checker.rs`: public paths must either make progress, expose a
-  true blocker, emit a deterministic diagnostic, or resolve an `already_current` state
-  without stale overlays.
+- `tests/public_cli_flow_contracts.rs`: public tests use the compiled CLI,
+  public route goldens, and JSON schema semantics; they cannot wrap internal
+  helpers, hidden commands, or direct runtime/query surfaces unless a named
+  internal semantic boundary test has an explicit scanner exception.
+- `tests/public_flow_scan_contracts.rs`: focused scanner fixtures for the public-flow
+  helper/hidden-command guards consumed by public contract tests. Internal
+  semantic and synthetic setup exceptions are marker based (`internal_semantic_`
+  and `synthetic_`) so the suite does not grow a per-helper allowlist.
+- `tests/runtime_module_boundaries.rs`: import direction, projection writer,
+  phase literal, module ownership, and scanner-centralization boundary
+  contracts. It avoids line caps, child-module name pins, and exact private
+  helper-name pins except where a named boundary-owner entrypoint is itself the
+  contract; route-plan coverage should prefer owner modules, DTO/public
+  entrypoints, route-fact construction, and projection behavior over private
+  helper spellings.
+- `tests/rust_source_scan_contracts.rs`: focused scanner fixtures for import,
+  macro, and phase-detail parser behavior used by boundary tests.
+- `tests/liveness_model_checker.rs`: an internal semantic/liveness matrix checks that
+  route states either make progress, expose a true blocker, emit a deterministic
+  diagnostic, or resolve an `already_current` state without stale overlays. It
+  keeps subprocess cost bounded with a targeted compiled-CLI parity edge rather
+  than treating the full matrix as shipped-CLI proof.
 - `tests/public_replay_churn.rs`: known historical loops are replayed through the public
   CLI.
 - `tests/runtime_behavior_golden.rs` and `tests/packet_and_schema.rs`: public JSON and

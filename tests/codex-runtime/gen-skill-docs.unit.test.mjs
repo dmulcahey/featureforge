@@ -8,10 +8,24 @@ import {
   buildBaseShellLines,
   buildReviewShellLines,
   generatePreamble,
+  buildOperatorRouteAuthoritySection,
+  buildRuntimeRouteReferenceSection,
   buildUsingFeatureForgeShellLines,
   buildUsingFeatureForgeBypassGateSection,
   buildUsingFeatureForgeNormalStackSection,
+  ROUTE_LAW_MODE,
+  ROUTE_OWNING_GENERATED_SKILLS,
+  routeLawModeForSkill,
 } from '../../scripts/gen-skill-docs.mjs';
+
+function assertContainsFragments(content, label, fragments) {
+  for (const fragment of fragments) {
+    assert.ok(
+      content.includes(fragment),
+      `${label} should include core fragment \`${fragment}\``,
+    );
+  }
+}
 
 test('insertGeneratedHeader inserts the generated header after YAML frontmatter', () => {
   const input = ['---', 'name: test', 'description: desc', '---', '', '# Body'].join('\n');
@@ -57,6 +71,26 @@ test('base and review shell builders include their expected contract lines', () 
   assert.equal(buildReviewShellLines().some((line) => line.includes('_TODOS_FORMAT=')), true);
 });
 
+test('operator route authority snippet delegates executable binding to canonical reference', () => {
+  const snippet = buildOperatorRouteAuthoritySection();
+  assert.match(snippet, /Reviewed-Closure Route Authority/);
+  assert.match(snippet, /workflow\/operator JSON as the route authority/);
+  assert.match(snippet, /references\/operator-route-authority\.md/);
+  assert.match(snippet, /Follow operator JSON and the canonical route reference/);
+  assert.doesNotMatch(snippet, /manually edit runtime-owned execution records, derived markdown projections/);
+  assert.doesNotMatch(snippet, /recommended_public_command_argv/);
+  assert.doesNotMatch(snippet, /recommended_public_command_template/);
+  assert.doesNotMatch(snippet, /recommended_command/);
+  assert.doesNotMatch(snippet, /recommended_public_command_template\.input_bindings/);
+  assert.doesNotMatch(snippet, /Late-stage aggregate route coverage:/);
+
+  const reference = buildRuntimeRouteReferenceSection();
+  assert.match(reference, /## Runtime Route Reference/);
+  assert.match(reference, /This skill does not own live workflow routing\./);
+  assert.match(reference, /references\/operator-route-authority\.md/);
+  assert.doesNotMatch(reference, /recommended_public_command_argv/);
+});
+
 test('shared shell builders delegate runtime-root discovery to the helper contract', () => {
   const rootDetection = buildRootDetection().join('\n');
   const baseShell = buildBaseShellLines().join('\n');
@@ -86,6 +120,8 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   assert.match(baseShell, /_featureforge_exec_public_argv\(\)/);
   assert.match(baseShell, /if \[ "\$1" = "featureforge" \]/);
   assert.match(baseShell, /"\$_FEATUREFORGE_BIN" "\$@"/);
+  assert.match(baseShell, /refusing non-featureforge public argv/);
+  assert.doesNotMatch(baseShell, /\n\s*"\$@"\n/);
   assert.doesNotMatch(baseShell, /repo runtime-root --path.*\|\| true/);
   assert.doesNotMatch(baseShell, /\$_REPO_ROOT\/bin\/featureforge/);
   assert.doesNotMatch(baseShell, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/);
@@ -119,35 +155,59 @@ test('using-featureforge template keeps canonical late-stage precedence wording'
     new URL('../../skills/using-featureforge/SKILL.md.tmpl', import.meta.url),
     'utf8',
   );
-  assert.match(
+  assertContainsFragments(usingFeatureForgeTemplate, 'using-featureforge later-phase routing', [
+    'operator reports task closure, repair, document release, final review, QA, branch completion, or another diagnostic route',
+    'follow only the selected route surface',
+    'instead of resuming execution or terminal sequencing from memory',
+    '`execution_started` as a resume signal only in that phase',
+  ]);
+  assert.doesNotMatch(
     usingFeatureForgeTemplate,
-    /If workflow\/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`\./,
+    /workflow\/operator JSON reports a later phase|resume execution just because `execution_started` is `yes`/i,
   );
 
   const lateStageReference = fs.readFileSync(
     new URL('../../review/late-stage-precedence-reference.md', import.meta.url),
     'utf8',
   );
-  assert.match(
-    lateStageReference,
-    /For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`\./,
-  );
+  assertContainsFragments(lateStageReference, 'late-stage precedence reference', [
+    'When workflow/operator selects a terminal late-stage lane',
+    'execute that selected',
+    'Do not use this reference to run a',
+    'memorized chain',
+  ]);
 });
 
-test('generated preambles include the shared Search Before Building section for non-router skills only', () => {
-  const basePreamble = generatePreamble({ review: false });
-  const reviewPreamble = generatePreamble({ review: true });
+test('generated preambles support full route law and compact route reference modes', () => {
+  const basePreamble = generatePreamble({ review: false, routeLawMode: ROUTE_LAW_MODE.FULL });
+  const reviewPreamble = generatePreamble({ review: true, routeLawMode: ROUTE_LAW_MODE.FULL });
 
   for (const preamble of [basePreamble, reviewPreamble]) {
     assert.match(preamble, /## Installed Control Plane/);
-    assert.match(preamble, /use only `\$_FEATUREFORGE_BIN` for live workflow control-plane commands/);
-    assert.match(preamble, /do not route live workflow commands through `\.\/bin\/featureforge`/);
-    assert.match(preamble, /do not route live workflow commands through `target\/debug\/featureforge`/);
-    assert.match(preamble, /do not route live workflow commands through `cargo run`/);
-    assert.match(
-      preamble,
-      /If `recommended_public_command_argv\[0\] == "featureforge"`, execute through the installed runtime by replacing argv\[0\] with `\$_FEATUREFORGE_BIN`/,
-    );
+    assert.doesNotMatch(preamble, /## Runtime Route Reference/);
+    assertContainsFragments(preamble, 'generated preamble installed route law', [
+      'Live workflow routing uses only',
+      '`$_FEATUREFORGE_BIN`',
+      '`./bin/featureforge`',
+      '`target/debug/featureforge`',
+      '`cargo run`',
+      '`$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`',
+      '`recommended_public_command_argv`',
+      '`recommended_public_command_template`',
+      '`required_inputs`',
+      '`$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --input NAME=VALUE --json`',
+      'display-only `recommended_command`',
+      '`recommended_command`',
+      'no typed executable surface exists',
+      'stop and report the route diagnostic',
+      'Detailed binding and route-specific stop rules',
+      'references/operator-route-authority.md',
+      'installed runtime/root cannot be resolved',
+    ]);
+    assert.doesNotMatch(preamble, /recommended_public_command_argv\[0\] == "featureforge"/);
+    assert.doesNotMatch(preamble, /otherwise bind `recommended_public_command_template`/);
+    assert.doesNotMatch(preamble, /rerun that operator query with `--input NAME=VALUE`/);
+    assert.doesNotMatch(preamble, /replacing argv\[0\]/);
     assert.match(preamble, /## Search Before Building/);
     assert.match(
       preamble,
@@ -161,6 +221,27 @@ test('generated preambles include the shared Search Before Building section for 
     assert.match(preamble, /If search is unavailable, disallowed, or unsafe, say so and proceed with repo-local evidence and in-distribution knowledge\./);
     assert.match(preamble, /If safe sanitization is not possible, skip external search\./);
     assert.match(preamble, /See `\$_FEATUREFORGE_ROOT\/references\/search-before-building\.md`\./);
+  }
+
+  const compactPreamble = generatePreamble({ review: false, routeLawMode: ROUTE_LAW_MODE.REFERENCE });
+  assert.doesNotMatch(compactPreamble, /## Installed Control Plane/);
+  assert.match(compactPreamble, /## Runtime Route Reference/);
+  assert.match(compactPreamble, /This skill does not own live workflow routing\./);
+  assert.match(compactPreamble, /`\$_FEATUREFORGE_ROOT\/references\/operator-route-authority\.md`/);
+  assert.doesNotMatch(compactPreamble, /recommended_public_command_argv/);
+  assert.doesNotMatch(compactPreamble, /recommended_public_command_template/);
+  assert.doesNotMatch(compactPreamble, /recommended_command/);
+  assert.match(compactPreamble, /## Search Before Building/);
+
+  const noRoutePreamble = generatePreamble({ review: false, routeLawMode: ROUTE_LAW_MODE.NONE });
+  assert.doesNotMatch(noRoutePreamble, /## Installed Control Plane/);
+  assert.doesNotMatch(noRoutePreamble, /## Runtime Route Reference/);
+  assert.match(noRoutePreamble, /## Search Before Building/);
+
+  assert.equal(routeLawModeForSkill('brainstorming'), ROUTE_LAW_MODE.REFERENCE);
+  assert.ok(ROUTE_OWNING_GENERATED_SKILLS.length > 0, 'route-owning generated skill set should not be empty');
+  for (const skill of ROUTE_OWNING_GENERATED_SKILLS) {
+    assert.equal(routeLawModeForSkill(skill), ROUTE_LAW_MODE.FULL, `${skill} should be declared as a route-owning skill`);
   }
 
   assert.doesNotMatch(basePreamble, /## Contributor Mode/);

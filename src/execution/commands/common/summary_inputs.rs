@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    CloseCurrentTaskArgs, ExecutionContext, FailureClass, JsonFailure, Path,
+    StatusAuthoritativeOverlay, VerificationOutcomeArg, fs, normalize_summary_content,
+    summary_hash,
+};
 
 pub(in crate::execution::commands) fn close_current_task_summary_hashes(
     args: &CloseCurrentTaskArgs,
@@ -23,6 +27,21 @@ pub(in crate::execution::commands) fn close_current_task_summary_hashes(
         String::new()
     };
     Ok((review_summary_hash, verification_summary_hash))
+}
+
+pub(in crate::execution::commands) fn optional_close_current_task_summary_hashes(
+    args: &CloseCurrentTaskArgs,
+) -> Option<(String, String)> {
+    let review_summary_hash = optional_summary_hash(&args.review_summary_file)?;
+    let verification_summary_hash = if matches!(
+        args.verification_result,
+        VerificationOutcomeArg::Pass | VerificationOutcomeArg::Fail
+    ) {
+        optional_summary_hash(args.verification_summary_file.as_ref()?)?
+    } else {
+        String::new()
+    };
+    Some((review_summary_hash, verification_summary_hash))
 }
 
 pub(in crate::execution::commands) fn superseded_branch_closure_ids_from_previous_current(

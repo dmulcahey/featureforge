@@ -1,4 +1,15 @@
-use super::*;
+use super::{
+    AdvanceLateStageOutput, AuthoritativeTransitionState, CurrentFinalReviewAuthorityCheck,
+    EquivalentFinalReviewRerunParams, ExecutionContext, ExecutionRoutingState, ExecutionRuntime,
+    FailureClass, FollowUpKind, JsonFailure, Path, PathBuf,
+    REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, RecordQaOutput, RuntimeGateSnapshot,
+    current_final_review_record_is_still_authoritative,
+    current_test_plan_artifact_path_for_qa_recording, harness_authoritative_artifact_path,
+    load_authoritative_transition_state, optional_summary_hash,
+    public_recovery_contract_for_follow_up, usable_current_branch_closure_identity,
+};
+use std::fs;
+use std::io::ErrorKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::execution::commands) struct CurrentBranchClosureBinding {
@@ -71,13 +82,16 @@ pub(in crate::execution::commands) fn equivalent_current_release_readiness_rerun
     let recovery = public_recovery_contract_for_follow_up(
         Path::new(&context.plan_rel),
         None,
-        (result == "blocked").then(|| String::from("resolve_release_blocker")),
-        PublicFollowUpInputProfile::ReleaseReadiness,
+        (result == "blocked").then(|| {
+            FollowUpKind::ResolveReleaseBlocker
+                .public_token()
+                .to_owned()
+        }),
     );
     Ok(Some(AdvanceLateStageOutput {
         action: String::from("already_current"),
         stage_path: stage_path.to_owned(),
-        intent: String::from("advance_late_stage"),
+        intent: String::from(crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE),
         operation: operation.to_owned(),
         branch_closure_id: Some(current_branch_closure.branch_closure_id.clone()),
         dispatch_id: None,
@@ -85,6 +99,7 @@ pub(in crate::execution::commands) fn equivalent_current_release_readiness_rerun
         code: None,
         recommended_command: recovery.recommended_command,
         recommended_public_command_argv: recovery.recommended_public_command_argv,
+        recommended_public_command_template: recovery.recommended_public_command_template,
         required_inputs: recovery.required_inputs,
         rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
         required_follow_up: recovery.required_follow_up,
@@ -136,12 +151,11 @@ pub(in crate::execution::commands) fn equivalent_current_final_review_rerun(
         Path::new(&context.plan_rel),
         None,
         params.required_follow_up,
-        PublicFollowUpInputProfile::FinalReview,
     );
     Ok(Some(AdvanceLateStageOutput {
         action: String::from("already_current"),
         stage_path: params.stage_path.to_owned(),
-        intent: String::from("advance_late_stage"),
+        intent: String::from(crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE),
         operation: params.operation.to_owned(),
         branch_closure_id: Some(current_branch_closure.branch_closure_id.clone()),
         dispatch_id: Some(params.dispatch_id.to_owned()),
@@ -149,6 +163,7 @@ pub(in crate::execution::commands) fn equivalent_current_final_review_rerun(
         code: None,
         recommended_command: recovery.recommended_command,
         recommended_public_command_argv: recovery.recommended_public_command_argv,
+        recommended_public_command_template: recovery.recommended_public_command_template,
         required_inputs: recovery.required_inputs,
         rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
         required_follow_up: recovery.required_follow_up,
@@ -186,30 +201,10 @@ pub(in crate::execution::commands) fn equivalent_current_browser_qa_rerun(
     ) {
         return Ok(None);
     }
-    let current_record = authoritative_state.current_browser_qa_record();
-    if current_record
-        .as_ref()
-        .and_then(|record| record.source_test_plan_fingerprint.as_deref())
-        .map(str::trim)
-        .filter(|fingerprint| !fingerprint.is_empty())
-        .is_none()
-    {
-        match current_test_plan_artifact_path(context) {
-            Ok(_) => {}
-            Err(error)
-                if error.error_class == FailureClass::ExecutionStateNotReady.as_str()
-                    || error.error_class == FailureClass::QaArtifactNotFresh.as_str() =>
-            {
-                return Ok(None);
-            }
-            Err(error) => return Err(error),
-        }
-    }
     let recovery = public_recovery_contract_for_follow_up(
         Path::new(&context.plan_rel),
         None,
         required_follow_up,
-        PublicFollowUpInputProfile::None,
     );
     Ok(Some(RecordQaOutput {
         action: String::from("already_current"),
@@ -218,6 +213,7 @@ pub(in crate::execution::commands) fn equivalent_current_browser_qa_rerun(
         code: None,
         recommended_command: recovery.recommended_command,
         recommended_public_command_argv: recovery.recommended_public_command_argv,
+        recommended_public_command_template: recovery.recommended_public_command_template,
         required_inputs: recovery.required_inputs,
         rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
         required_follow_up: recovery.required_follow_up,
@@ -280,22 +276,47 @@ pub(in crate::execution::commands) fn current_authoritative_test_plan_path_from_
     authoritative_state: &AuthoritativeTransitionState,
     branch_closure_id: &str,
     final_review_record_id: &str,
-) -> Option<PathBuf> {
-    let record = authoritative_state.current_browser_qa_record()?;
+) -> Result<Option<PathBuf>, JsonFailure> {
+    let Some(record) = authoritative_state.current_browser_qa_record() else {
+        return Ok(None);
+    };
     if record.branch_closure_id != branch_closure_id
         || record.final_review_record_id.as_deref() != Some(final_review_record_id)
     {
-        return None;
+        return Ok(None);
     }
-    let fingerprint = record
+    let Some(fingerprint) = record
         .source_test_plan_fingerprint
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    Some(harness_authoritative_artifact_path(
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let path = harness_authoritative_artifact_path(
         &runtime.state_dir,
         &runtime.repo_slug,
         &runtime.branch_name,
         &format!("test-plan-{fingerprint}.md"),
-    ))
+    );
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Current QA source test-plan projection {} must be a regular file.",
+                    path.display()
+                ),
+            ))
+        }
+        Ok(_) => Ok(Some(path)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Could not inspect current QA source test-plan projection {}: {error}",
+                path.display()
+            ),
+        )),
+    }
 }

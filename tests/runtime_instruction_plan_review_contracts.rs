@@ -93,7 +93,15 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and the current plan-fidelity review artifact is missing, stale, malformed, non-pass, or non-independent: invoke `featureforge:plan-fidelity-review`.",
+        "Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and the current plan-fidelity review artifact is missing, stale, malformed, or non-independent: invoke `featureforge:plan-fidelity-review`.",
+    );
+    assert_file_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "Plan exists, is `Draft`, `Last Reviewed By` is `plan-eng-review`, and the current plan-fidelity review artifact is non-pass: invoke `featureforge:plan-eng-review`.",
+    );
+    assert_file_not_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "missing, stale, malformed, non-pass, or non-independent: invoke `featureforge:plan-fidelity-review`.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -130,6 +138,26 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
         "Do not look for or require a runtime-owned plan-fidelity projection file. The authoritative fidelity evidence is the parseable review artifact surfaced by workflow routing and `plan contract analyze-plan` as `plan_fidelity_review`.",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "Keep engineering-review edits in `Draft`; when every engineering-review issue is resolved, update only `**Last Reviewed By:** plan-eng-review` to mark the plan ready for `featureforge:plan-fidelity-review`.",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "Only after a current pass plan-fidelity review artifact exists for the approval-stable binding surfaced in the route/template should you flip `**Workflow State:** Engineering Approved` as the last step of a successful review.",
+    );
+    assert_file_not_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "Only after a current pass plan-fidelity review artifact exists for the final draft fingerprint",
+    );
+    assert_file_not_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "set `**Last Reviewed By:** plan-eng-review` at the same time",
+    );
+    assert_file_not_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "`**Workflow State:** Engineering Approved` as the last step of a successful review, and set `**Last Reviewed By:** plan-eng-review` at the same time",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),

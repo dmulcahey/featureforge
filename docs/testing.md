@@ -5,9 +5,10 @@ Treat this file as the canonical validation matrix; release-facing install and o
 
 Legacy `tests/codex-runtime/*.sh` harnesses have been removed; use the Rust and Node contract suites below as the active oracle.
 
-## Fast Validation
+## Mandatory Release Gates
 
-Run these commands from the repo root for the core contract surface:
+Run these commands from the repo root for the release contract surface. These
+are mandatory branch/release gates, not optional audit aids:
 
 ```bash
 node scripts/gen-skill-docs.mjs --check
@@ -27,11 +28,11 @@ commands only while iterating on a known failure, then return to
 the task or branch is green. The `--no-fail-fast` flag is required so the run
 captures the full failure set instead of stopping at the first failed binary.
 
-## Runtime Boundary Matrix
+## Focused Runtime Audit Aids
 
 When validating runtime public-surface hardening, generated docs, boundary
-tests, and replay churn fixes, include this focused matrix before the full
-no-fail-fast nextest gate:
+tests, and replay churn fixes, use this focused matrix while iterating before
+the full no-fail-fast nextest gate:
 
 ```bash
 node scripts/gen-skill-docs.mjs --check
@@ -39,9 +40,11 @@ node scripts/gen-agent-docs.mjs --check
 node scripts/run-codex-runtime-tests.mjs
 node --test tests/evals/*.eval.mjs
 cargo test --test public_cli_flow_contracts -- --nocapture
+cargo test --test public_flow_scan_contracts -- --nocapture
 cargo test --test public_replay_churn -- --nocapture
 cargo test --test runtime_behavior_golden -- --nocapture
 cargo test --test runtime_module_boundaries -- --nocapture
+cargo test --test rust_source_scan_contracts -- --nocapture
 cargo test --test liveness_model_checker -- --nocapture
 cargo test --test packet_and_schema -- --nocapture
 cargo test --test workflow_shell_smoke -- --nocapture
@@ -52,9 +55,17 @@ cargo test --test workflow_runtime_final_review -- --nocapture
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Use that matrix to prove the intended surfaces directly. It does not replace
-the branch gate: after focused validation passes, still run
+Use that matrix to prove the intended surfaces directly during audit or
+remediation work. It does not replace the mandatory branch gate: after focused
+validation passes, still run
 `cargo nextest run --all-targets --all-features --no-fail-fast`.
+`cargo test --test liveness_model_checker` in this matrix is internal semantic
+route-convergence coverage with a targeted compiled-CLI parity edge. Do not cite
+it as shipped-runtime public-flow proof; use
+`scripts/run-public-runtime-flow-tests.sh`, public shell smoke suites, and route
+goldens for that boundary. `public_flow_scan_contracts` is static scanner
+self-test coverage; run it in focused validation, but do not count it as
+production public-flow proof.
 
 ## Installed Control Plane Isolation Gate
 
@@ -68,19 +79,11 @@ scripts/verify-installed-control-plane-isolation.sh
 
 The script runs the durable gate in this order:
 
-```bash
-cargo fmt --check
-cargo test --test runtime_module_boundaries -- --nocapture
-cargo test --test runtime_instruction_contracts -- --nocapture
-cargo test --test workflow_runtime -- --nocapture
-cargo test --test workflow_shell_smoke -- --nocapture
-cargo test --test workflow_entry_shell_smoke -- --nocapture
-node scripts/gen-skill-docs.mjs --check
-node --test tests/codex-runtime/skill-doc-contracts.test.mjs
-node scripts/lint-workspace-runtime-evidence.mjs
-cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --all-targets --all-features --no-fail-fast --status-level fail
-```
+1. focused runtime-boundary and workflow smoke suites
+2. generated skill-doc freshness and prompt contracts
+3. workspace runtime evidence linting
+4. strict Clippy
+5. the full no-fail-fast nextest branch gate
 
 This gate keeps the targeted public contracts and the full Rust suite together.
 It must keep evidence linting in the normal verification set so recorded
@@ -128,16 +131,63 @@ scripts/run-public-runtime-flow-tests.sh
 scripts/run-internal-runtime-compatibility-tests.sh
 ```
 
-The public-flow gate runs the compiled-binary public route suites:
-`public_cli_flow_contracts`, `public_replay_churn`, and
-`runtime_behavior_golden`. These suites are the public UX proof for runtime
-reachability and replay churn.
+The public-flow gate is a classified surface. The classification lives in
+`tests/support/public_flow_scan.rs` and is checked against
+`scripts/run-public-runtime-flow-tests.sh` by `public_flow_scan_contracts`.
+The script includes executable public-flow proof suites such as
+`public_replay_churn`, `workflow_shell_smoke`,
+and `workflow_runtime_final_review`;
+mixed public-flow plus internal-semantic suites such as
+`workflow_entry_shell_smoke`, `workflow_runtime`, `plan_execution`,
+`contracts_execution_runtime_boundaries`, and `execution_query`;
+focused public contracts such as `runtime_behavior_golden`,
+`plan_execution_final_review`, `plan_execution_topology`, and
+`execution_harness_state`; and static guards such as
+`public_cli_flow_contracts`. Mixed suites are scanner-protected because their
+public sections still prove shipped behavior, but their internal semantic
+sections must not be cited as pure public-flow proof. Static guards are
+public-flow protection, not end-to-end compiled-CLI transition proof by
+themselves.
+
+`public_flow_scan_contracts` is the scanner self-test suite for injected
+hidden-helper, token-only follow-up, script/classification drift, and
+display-command regressions; run it through
+`cargo test --test public_flow_scan_contracts -- --nocapture` as focused/static
+validation for the gate, not production public-flow proof. `runtime_behavior_golden`
+is focused public contract coverage, not full compiled-CLI transition proof for
+every row. Most rows use the in-process public argv/parser contract runner so
+they can pin route DTO shape without subprocess churn; rows that explicitly
+exercise environment injection still cross the compiled CLI boundary. The
+golden serializes only the external route-contract DTO fields:
+`phase`, `phase_detail`, `next_action`, `review_state_status`, typed
+argv/template surfaces, `required_inputs`, reason/blocking codes, and the
+minimal route context needed by assertions. Some late-stage rows use synthetic
+fixture setup to reach long-lived workflow states; those rows pin public output
+contracts rather than production state construction. `bootstrap_smoke` is the
+packaged-artifact smoke layer: on host-compatible checked-in runtimes it probes
+`bin/featureforge` and the matching prebuilt with one representative typed-route
+status query, while cargo-built public-flow tests remain the behavioral source
+of truth. On platforms without a matching checked-in runtime, that test records
+the packaging boundary and relies on cargo-built public-route proof.
+The goldens intentionally omit display-only `recommended_command`, projection
+payloads, and `workflow_status` for execution-route scenarios.
+`public_replay_churn` is synthetic historical fixture setup plus public
+recovery proof: it may seed impossible legacy states explicitly, but recovery
+assertions must run through the compiled public CLI and must not be counted as
+public setup proof. It also includes public aggregate `advance-late-stage`
+coverage for final-review dispatch and final-review outcome progression, so
+late-stage goldens are no longer the only proof that those states are reachable.
 
 The internal runtime compatibility gate runs tests named
 `internal_only_compatibility*`. It preserves low-level direct-helper coverage
 for legacy and boundary compatibility, but do not count it as public-flow or
 public UX proof. Internal helper results may support compatibility confidence;
 they cannot replace the public-flow gate above.
+
+`tests/plan_execution_final_review.rs` is scanner-protected and included in the
+public-flow gate as focused final-review contract coverage. The same file also
+contains receipt parser and validator unit coverage, so do not relabel it as
+dedicated end-to-end transition proof.
 
 For final runtime cutover checks that touched execution query or workflow-entry
 coverage, extend the matrix with:
@@ -152,8 +202,9 @@ cargo test --test execution_query -- --nocapture
 
 Generated top-level skill prompts are budgeted separately from companion
 references. The active cutover baseline was 7,191 generated top-level
-`skills/*/SKILL.md` lines; the compacted enforce-mode target is at most 5,600
-lines. The budget test prints the current total and per-skill line counts.
+`skills/*/SKILL.md` lines; the active enforce-mode cap lives in
+`skills/skill-doc-budgets.json`. The budget test prints the current total and
+per-skill line counts.
 
 The budget gate must stay in enforce mode for release work:
 
@@ -170,8 +221,8 @@ Release checklists must record prompt-surface failures in two separate lines:
 - Mandatory-law retention: `tests/codex-runtime/skill-doc-contracts.test.mjs`
   fails when compaction removes required workflow routing law, approval law,
   protected-branch repo-safety law, hidden-helper bans, fail-closed stop rules,
-  reviewer-recursion prohibitions, or `recommended_public_command_argv`
-  authority from top-level skill docs.
+  reviewer-recursion prohibitions, or typed workflow-route stop rules from
+  top-level skill docs.
 
 Any change to `skills/skill-doc-budgets.json`, including line limits, enforce
 mode, or the set of budgeted skills, requires explicit prompt-budget review in
@@ -183,18 +234,66 @@ test-fixture updates.
 
 Do not lower prompt budgets by moving mandatory workflow routing law, approval
 law, protected-branch repo-safety law, hidden-helper bans, fail-closed stop
-rules, reviewer-recursion prohibitions, or `recommended_public_command_argv`
-authority entirely into companion references. Companion references can carry
-examples and rationale; active top-level skills must keep terminal gates and
-stop rules directly visible.
+rules, reviewer-recursion prohibitions, or typed workflow-route stop posture
+entirely into companion references. Companion references should carry detailed
+field lists, operator-rerun binding examples, and rationale; active top-level skills must keep
+terminal gates and stop rules directly visible. For route-owning skills, that
+means compact top-level operator JSON law plus a link to
+`references/operator-route-authority.md`, while detailed argv rebinding and
+operator-mediated template materialization stay in the reference.
 
 When content moves into companion references, keep those references discoverable
 from the generated top-level skill docs and included in the packaged skill
 surface.
 
+## Runtime-Safety Audit Archive
+
+Superseded runtime-safety audit-loop artifacts live behind one active index:
+`docs/featureforge/archive/runtime-safety-audit-history/README.md`.
+Keep the current remediation plan under `docs/featureforge/plans/`, move
+superseded loop plans/reports/reference notes into that archive after a later
+loop replaces them, and link the index from active docs instead of individual
+historical loop files.
+
+The archive index records the retention rule, the current active runtime-safety
+plan, and the archived report/plan/reference counts. If a cleanup pass wants to
+delete or further relocate archived files, it must first run the active-reference
+check documented in the index and list exact referenced/unreferenced files.
+
 ## Performance Budget
 
-`cargo test` with no extra args is the canonical full-suite latency budget for this repository. Treat roughly 3 to 4 minutes on a warm local build as the target. If a warm local run regresses past about 240 seconds, stop and profile before merging instead of normalizing the slowdown away.
+The mandatory release matrix above is the canonical branch gate. Its Rust
+component is the full no-fail-fast nextest suite; the checked-in nextest profile
+already keeps live output focused on failures and final slow-test data.
+
+The default nextest profile is intentionally capped in
+`.config/nextest.toml` with `test-threads = 64`. The runtime suites spawn
+isolated git repositories and compiled CLI processes; current local measurement
+on this machine showed 32 workers leaving long runtime/golden tests queued too
+late, while 64 kept the warm full-suite test phase inside the health budget.
+Keep the checked-in cap high enough to preserve the clean-run budget without
+weakening coverage, but recheck full-suite time before changing it again.
+
+Expensive workflow fixture templates are cached outside `target/` under
+`.featureforge/test-cache/test-fixtures/` by default, with
+`FEATUREFORGE_TEST_FIXTURE_CACHE_ROOT` available for local override. The cache is
+keyed by explicit fixture input versions plus source/fixture content, not binary
+mtime or `current_exe()` metadata, so `cargo clean` does not turn every required
+clean rerun into a cold fixture rebuild. If fixture setup semantics change,
+bump the caller-supplied fixture input version in the affected test helper.
+
+Treat roughly 4 to 5 minutes on a clean local run as the preferred health
+target for the full nextest branch gate. The hard remediation trigger is the
+user-approved 10-minute stop rule: before starting a full nextest cycle, first
+confirm no `cargo nextest`, `cargo-nextest`, or `nextest run` process is already
+running; if a full nextest run crosses 10 minutes, stop it, run `cargo clean`,
+rerun the same full nextest command, and profile or fix the introduced
+contention if the clean rerun still crosses the health budget. For warm local
+iteration, roughly 3 to 4 minutes remains the target.
+
+`cargo test` remains useful for focused profiling and compatibility checks, but
+it is not the release branch-gate latency authority when nextest is the command
+used for full verification.
 
 Performance and profiling hardening from broader remediation reports is deliberately out of scope for the plan-review hardening cutover. Treat this section as maintenance guidance for test-suite health, not as evidence that benchmark or profiling work was implemented as part of the task-contract migration.
 
@@ -257,6 +356,7 @@ time -p cargo test --quiet --test plan_execution
 - generated skill-doc structure and freshness
 - explicit skill-doc generation contracts (`gen-skill-docs.unit`, `skill-doc-contracts`, `skill-doc-generation`)
 - generated top-level skill prompt budgets in enforce mode
+- active docs/skills/agent prompt forbidden-vocabulary scans
 - mandatory-law retention, companion-reference packaging, and prompt-scoped reviewer recursion checks
 - active docs and archive layout fixtures
 - workflow-fixture invariants
@@ -286,6 +386,33 @@ The main Rust suites cover:
 - public workflow CLI behavior
 - execution state transitions and plan linkage
 
+Rust tests own compiled CLI behavior, public/private runtime boundary checks,
+Rust module import boundaries, and route-golden DTO/schema parity. They should
+not duplicate active markdown prompt scans that already live in the Node
+contract layer. Add Rust source scanners only when the boundary is Rust-specific
+or the test proves public CLI behavior through the shipped binary.
+
+Keep static Rust assertions tied to durable ownership boundaries. Public-flow
+tests should prefer compiled CLI behavior, public route goldens, and JSON schema
+semantics over private helper names, struct field ordering, or prose snippets.
+`runtime_module_boundaries` should assert import direction, facade/orchestrator
+boundaries, centralized vocabulary/DTO ownership, and public projection behavior.
+Avoid line caps, child-module name pins, and private helper-name pins unless the
+name itself is a boundary-owner API consumed across modules. `public_flow_scan_contracts`
+and `rust_source_scan_contracts` are fixture suites for scanners that protect
+those boundaries; they are not a general architecture-spec language.
+Prefer parser-backed `rust_source_scan` helpers for new Rust-source contracts;
+extend the line-oriented public-flow scanner only for concrete public CLI
+regressions that cannot be expressed through AST or call-path checks.
+
+Before adding any new runtime-boundary scanner assertion, name the audited
+failure class or stable public/import-boundary contract it protects. If the rule
+only preserves a private helper layout, a child-module name, a line-count target,
+or an incidental implementation shape, do not add the scanner. Delete duplicated
+decisioning or test the public route/import boundary instead. Large-module
+documentation is visibility debt tracking, not proof that a module is
+semantically safe.
+
 ### Workflow Status Snapshot
 
 workflow-status snapshot coverage for the ambiguous-spec route lives in `tests/workflow_runtime.rs` and is backed by `tests/fixtures/differential/workflow-status.json`. Treat any mismatch as a contract change that requires explicit fixture review.
@@ -302,11 +429,9 @@ workflow-status snapshot coverage for the ambiguous-spec route lives in `tests/w
 
 Editing skill templates or generated skill docs:
 
-```bash
-node scripts/gen-skill-docs.mjs --check
-node --test tests/codex-runtime/skill-doc-budget.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs
-node scripts/run-codex-runtime-tests.mjs
-```
+Run the mandatory release gates. While iterating, use the prompt surface budget
+gate and `node scripts/run-codex-runtime-tests.mjs` as focused checks before the
+full branch gate.
 
 Editing brainstorm-server runtime scripts or launch wrappers:
 
@@ -314,42 +439,38 @@ Editing brainstorm-server runtime scripts or launch wrappers:
 npm --prefix tests/brainstorm-server test
 ```
 
+Then run the mandatory release gates before release or task completion.
+
 Editing reviewer sources or generated reviewer docs:
 
-```bash
-node scripts/gen-agent-docs.mjs --check
-```
+Run `node scripts/gen-agent-docs.mjs --check` while iterating, then run the
+mandatory release gates.
 
 Editing workflow routing, runtime docs, or execution contracts:
 
-```bash
-cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --all-targets --all-features --no-fail-fast
-```
+Run the mandatory release gates. Use the focused runtime audit aids above only
+to close a known failure before the full branch gate.
 
 ## Runtime Churn Cutover Validation
 
 Runtime churn fixes must prove that public routing advances, reports a precise
 diagnostic, or returns `already_current` without mutating approved files or
-repo-local projection exports. Use targeted iteration while repairing a known failure, but the final
-cutover proof must include the Rust, Node/doc, and source-archive checks below:
+repo-local projection exports. Use targeted iteration while repairing a known
+failure. For final cutover proof, run the mandatory release gates plus these
+runtime-churn extras:
 
 ```bash
-node scripts/gen-skill-docs.mjs
-node scripts/gen-skill-docs.mjs --check
-node scripts/gen-agent-docs.mjs
-node scripts/gen-agent-docs.mjs --check
-node scripts/run-codex-runtime-tests.mjs
-node --test tests/evals/review-accelerator-contract.eval.mjs
-npm --prefix tests/brainstorm-server test
 node scripts/verify-source-archive.mjs
 scripts/run-public-runtime-flow-tests.sh
 scripts/run-internal-runtime-compatibility-tests.sh
 node scripts/lint-workspace-runtime-evidence.mjs
-cargo clippy --all-targets --all-features -- -D warnings
 cargo test --test liveness_model_checker
-cargo nextest run --all-targets --all-features --no-fail-fast
 ```
+
+In that cutover list, `cargo test --test liveness_model_checker` is the
+internal semantic convergence check. It must remain paired with the public
+runtime flow script and the mandatory full nextest gate before any
+shipped-runtime claim.
 
 While repairing a known runtime-churn failure, the focused Rust shards are the
 runtime-instruction shard (`cargo nextest run --test runtime_instruction_contracts --test runtime_instruction_plan_review_contracts --test runtime_instruction_review_contracts`)
@@ -374,6 +495,15 @@ through the compiled public CLI only, reject hidden command/flag use in the
 test wrapper itself, and preserve command-budget assertions for known churn
 dead ends.
 
+Synthetic replay setup boundaries are guarded by
+`public_test_files_do_not_use_internal_helpers_or_hidden_commands`: protected
+public-flow files may call event-log `_for_tests` APIs only from registered
+fixture files and only inside helpers named with the explicit `synthetic_`
+prefix. The scanner maps that marker to the `synthetic_fixture_setup` category;
+do not add per-helper exceptions for ordinary setup code. Add a new fixture file
+to the category only when the state cannot be produced by shipped public
+commands and the test body validates public recovery after setup.
+
 The source-archive verifier must pass from the repository root or from an
 unpacked source archive root. It asserts that clean-archive Node/doc test helper
 modules, including `tests/codex-runtime/helpers/markdown-test-helpers.mjs` and
@@ -388,6 +518,11 @@ interruption projections. It must fail on hidden/debug public recommendations
 and on public commands that neither improve the runtime-derived progress metric,
 expose a different true blocker, emit a deterministic diagnostic, nor resolve an
 `already_current` state without stale overlays.
+The runtime-executed representative subset must include the critical stuck-state
+families that historically caused loops: current/stale overlap, cycle-break,
+targetless stale, downstream stale, downstream interruption, and downstream
+stale plus interruption. Remaining production-loop rows may be fixture-only
+model coverage when they are explicitly named as such.
 
 Normal `begin`, `complete`, `reopen`, `transfer`, `close-current-task`,
 `repair-review-state`, `advance-late-stage`, `workflow operator`, and
@@ -410,39 +545,29 @@ Materialization is never required for normal progress. Confirmed repo exports
 write projection-only files without modifying approved plan or evidence files,
 and must not be recommended by operator routing as required progress.
 
-Historical final-remediation plans used targeted Rust subsets while closing specific failures. For branch proof, task-completion gates, plan-task review loops, and pre-merge verification, use the full Rust nextest suite instead:
-
-```bash
-node scripts/gen-skill-docs.mjs
-node scripts/gen-agent-docs.mjs
-node scripts/run-codex-runtime-tests.mjs
-node scripts/lint-workspace-runtime-evidence.mjs
-node --test tests/evals/review-accelerator-contract.eval.mjs
-cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --all-targets --all-features --no-fail-fast
-```
+Historical final-remediation plans used targeted Rust subsets while closing
+specific failures. For branch proof, task-completion gates, plan-task review
+loops, and pre-merge verification, use the mandatory release gates instead.
 
 Targeted `cargo nextest run --test ...` commands are local debugging tools only. Do not use them as the documented final gate.
 
 Editing runtime strategy-checkpoint, topology recommendation, or final-review deviation contracts:
 
-```bash
-cargo nextest run --all-targets --all-features --no-fail-fast
-```
+Run the mandatory release gates. Use targeted workflow/runtime shards only for
+local failure isolation.
 
 Editing install or update surfaces:
 
-```bash
-cargo nextest run --all-targets --all-features --no-fail-fast
-```
+Run the mandatory release gates and the installed-control-plane isolation gate
+when provenance, routing, generated skills, or workspace-runtime isolation can
+be affected.
 
 Editing packaging or prebuilt artifact refresh flows:
 
-```bash
-cargo nextest run --all-targets --all-features --no-fail-fast
-```
+Run the mandatory release gates. When checked-in prebuilts are part of the
+change, also refresh and verify them explicitly.
 
-When checked-in prebuilt artifacts are part of the change, refresh and verify them explicitly:
+Prebuilt refresh commands:
 
 ```bash
 FEATUREFORGE_PREBUILT_TARGET=darwin-arm64 scripts/refresh-prebuilt-runtime.sh
@@ -460,11 +585,7 @@ the non-execution checks are clean.
 
 If Homebrew `cargo`/`rustc` shadow rustup-managed toolchains on `PATH`, put the rustup toolchain shims first before running the Windows GNU refresh command so the installed `x86_64-pc-windows-gnu` standard library can be found. The GNU cross-build also expects `x86_64-w64-mingw32-gcc` to be available on `PATH`.
 
-Then rerun:
-
-```bash
-cargo nextest run --all-targets --all-features --no-fail-fast
-```
+Then rerun the mandatory release gates.
 
 ## Repo Fixtures
 

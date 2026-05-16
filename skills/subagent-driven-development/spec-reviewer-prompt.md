@@ -4,9 +4,9 @@ Use this template when dispatching a spec compliance reviewer sub-agent or custo
 
 **Purpose:** Verify implementer built what was requested (nothing more, nothing less)
 
-## Review-subagent recursion rule
+## Reviewer recursion prelude
 
-You are a reviewer. You may inspect the provided files, packet, summaries, and context and produce review findings. Do not launch, request, or delegate to additional subagents while performing this review. Do not delegate this review to another reviewer agent. Do not invoke `subagent-driven-development`, `requesting-code-review`, `plan-fidelity-review`, `plan-eng-review`, `plan-ceo-review`, or any other FeatureForge skill/workflow for the purpose of spawning another reviewer. Use only the files, packet, summaries, and context supplied to this review. If the supplied context is insufficient, return a blocked review finding that names the missing context instead of spawning another agent.
+Actual reviewer payloads must include the canonical prompt-only recursion prelude from `$_FEATUREFORGE_ROOT/references/reviewer-recursion-rule.md`. The dispatch payload below includes it verbatim; keep surrounding template guidance short instead of duplicating the full rule outside payload blocks.
 
 ```
 Spec reviewer sub-agent / custom agent:
@@ -20,7 +20,7 @@ Spec reviewer sub-agent / custom agent:
 
     ## Exact Task Packet
 
-    [PASTE THE HELPER-BUILT TASK PACKET HERE VERBATIM]
+    [PASTE THE RUNTIME-PROVIDED TASK PACKET HERE VERBATIM]
 
     ## What Implementer Claims They Built
 
@@ -69,7 +69,7 @@ Spec reviewer sub-agent / custom agent:
     - If the packet itself is insufficient to determine correctness, report `AMBIGUITY_ESCALATION_REQUIRED`.
     - Every issue must include a stable finding ID and the exact violated obligation ID, such as `DONE_WHEN_2` or `CONSTRAINT_1`.
     - Name the smallest corrective action needed to satisfy the violated obligation.
-    - Use the deterministic review finding shape from `review/plan-task-contract.md` for every issue:
+    - Use the deterministic review finding shape from `$_FEATUREFORGE_ROOT/review/plan-task-contract.md` for every issue:
       - `Finding ID`
       - `Severity`
       - `Task`

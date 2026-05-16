@@ -8,6 +8,23 @@ pub(crate) const TARGETLESS_STALE_RECONCILE_PHASE_DETAIL: &str =
 pub(crate) const TARGETLESS_STALE_RECONCILE_DETAIL: &str = "Review state is stale_unreviewed but no authoritative stale task, branch, or milestone target is bound.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TargetlessStaleAuthority {
+    has_authoritative_stale_target: bool,
+}
+
+impl TargetlessStaleAuthority {
+    pub const fn new(has_authoritative_stale_target: bool) -> Self {
+        Self {
+            has_authoritative_stale_target,
+        }
+    }
+
+    pub const fn has_authoritative_stale_target(self) -> bool {
+        self.has_authoritative_stale_target
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TargetlessStaleReconcile;
 
 impl TargetlessStaleReconcile {
@@ -15,19 +32,21 @@ impl TargetlessStaleReconcile {
         status: &PlanExecutionStatus,
         review_state_status: &str,
     ) -> bool {
-        review_state_status == "stale_unreviewed"
-            || status.review_state_status == "stale_unreviewed"
+        review_state_status == crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
+            || status.review_state_status
+                == crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
             || status.phase_detail == crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED
     }
 
     pub(crate) fn status_needs_marker(
         review_state_status: &str,
         stale_unreviewed_closures: &[String],
-        _has_task_closure_baseline_candidate: bool,
+        has_concrete_public_target: bool,
         has_authoritative_stale_target: bool,
     ) -> bool {
-        review_state_status == "stale_unreviewed"
+        review_state_status == crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
             && stale_unreviewed_closures.is_empty()
+            && !has_concrete_public_target
             && !has_authoritative_stale_target
     }
 
@@ -38,20 +57,23 @@ impl TargetlessStaleReconcile {
         if status
             .reason_codes
             .iter()
-            .any(|reason_code| reason_code.as_str() == "negative_result_requires_execution_reentry")
+            .any(|reason_code| reason_code.as_str() == crate::execution::review_route_tokens::REASON_NEGATIVE_RESULT_REQUIRES_EXECUTION_REENTRY)
         {
             return false;
         }
         Self::status_needs_marker(
             &status.review_state_status,
             &status.stale_unreviewed_closures,
-            task_closure_baseline_repair_candidate_reason_present(status),
+            status_has_concrete_public_stale_target(status),
             has_authoritative_stale_target,
         )
     }
 
-    pub(crate) fn status_needs_marker_for_status(status: &PlanExecutionStatus) -> bool {
-        Self::status_has_diagnostic(status)
+    pub(crate) fn status_needs_marker_for_authority(
+        status: &PlanExecutionStatus,
+        authority: TargetlessStaleAuthority,
+    ) -> bool {
+        Self::status_needs_marker_with_authority(status, authority.has_authoritative_stale_target())
     }
 
     pub(crate) fn from_reason_code(reason_code: &str) -> Option<Self> {
@@ -78,6 +100,10 @@ impl TargetlessStaleReconcile {
 
     pub(crate) fn status_has_diagnostic(status: &PlanExecutionStatus) -> bool {
         status.phase_detail == TARGETLESS_STALE_RECONCILE_PHASE_DETAIL
+            && status.review_state_status
+                == crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
+            && status.stale_unreviewed_closures.is_empty()
+            && !status_has_concrete_public_stale_target(status)
             && status
                 .reason_codes
                 .iter()
@@ -114,7 +140,7 @@ impl TargetlessStaleReconcile {
     pub(crate) fn status_blocking_record(
         status: &PlanExecutionStatus,
     ) -> Option<StatusBlockingRecord> {
-        if !Self::status_needs_marker_for_status(status) && !Self::status_has_diagnostic(status) {
+        if !Self::status_has_diagnostic(status) {
             return None;
         }
         Some(StatusBlockingRecord {
@@ -146,5 +172,10 @@ pub(crate) fn task_closure_baseline_repair_candidate_reason_present(
     status
         .reason_codes
         .iter()
-        .any(|code| code == "task_closure_baseline_repair_candidate")
+        .chain(status.blocking_reason_codes.iter())
+        .any(|code| code == crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_TASK_CLOSURE_BASELINE_REPAIR_CANDIDATE)
+}
+
+fn status_has_concrete_public_stale_target(status: &PlanExecutionStatus) -> bool {
+    status.blocking_task.is_some() || task_closure_baseline_repair_candidate_reason_present(status)
 }

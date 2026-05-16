@@ -38,18 +38,13 @@ _featureforge_exec_public_argv() {
     "$_FEATUREFORGE_BIN" "$@"
     return $?
   fi
-  "$@"
+  echo "featureforge: refusing non-featureforge public argv: $1" >&2
+  return 2
 }
 ```
-## Installed Control Plane
+## Runtime Route Reference
 
-Live FeatureForge workflow routing is install-owned:
-- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
-- do not route live workflow commands through `./bin/featureforge`
-- do not route live workflow commands through `target/debug/featureforge`
-- do not route live workflow commands through `cargo run`
-
-When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
+This skill does not own live workflow routing. If another workflow surface gives you workflow/operator JSON, follow `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` instead of reconstructing route law here.
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.

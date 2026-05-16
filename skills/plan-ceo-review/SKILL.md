@@ -38,21 +38,16 @@ _featureforge_exec_public_argv() {
     "$_FEATUREFORGE_BIN" "$@"
     return $?
   fi
-  "$@"
+  echo "featureforge: refusing non-featureforge public argv: $1" >&2
+  return 2
 }
 _TODOS_FORMAT=""
 [ -n "$_FEATUREFORGE_ROOT" ] && [ -f "$_FEATUREFORGE_ROOT/review/TODOS-format.md" ] && _TODOS_FORMAT="$_FEATUREFORGE_ROOT/review/TODOS-format.md"
 [ -z "$_TODOS_FORMAT" ] && [ -f "$_REPO_ROOT/review/TODOS-format.md" ] && _TODOS_FORMAT="$_REPO_ROOT/review/TODOS-format.md"
 ```
-## Installed Control Plane
+## Runtime Route Reference
 
-Live FeatureForge workflow routing is install-owned:
-- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
-- do not route live workflow commands through `./bin/featureforge`
-- do not route live workflow commands through `target/debug/featureforge`
-- do not route live workflow commands through `cargo run`
-
-When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
+This skill does not own live workflow routing. If another workflow surface gives you workflow/operator JSON, follow `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` instead of reconstructing route law here.
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -104,7 +99,7 @@ Write at most 3 reports per session under `~/.featureforge/contributor-logs/{slu
 - If any header line is missing or malformed, normalize the spec to this contract before continuing and treat it as `Draft`.
 - `brainstorming` is only valid while the spec remains `Draft`. A `CEO Approved` spec must end with `**Last Reviewed By:** plan-ceo-review`.
 - When review decisions change the written spec, update the spec document before continuing.
-- After each spec edit (including final approval edits), keep using the same repo-relative spec path in later workflow/operator and writing-plans handoffs; do not route through compatibility-only `workflow sync`.
+- After each spec edit (including final approval edits), keep using the same repo-relative spec path in later workflow/operator and writing-plans handoffs; do not route through retired workflow command surfaces.
 
 **Protected-Branch Repo-Write Gate:**
 
@@ -115,7 +110,7 @@ $_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:plan-ce
 ```
 
 - When the mutation is specifically an approval-header edit, use the same command shape with `--write-target approval-header-write`.
-- If the helper returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact review scope.
+- If the repo-safety check returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact review scope.
 - If the user explicitly approves the protected-branch review write, run:
 
 ```bash
@@ -142,8 +137,8 @@ Use the detailed rubrics, examples, and output templates in `$_FEATUREFORGE_ROOT
 
 - Accelerated review is available only when the user explicitly requests `accelerated` or `accelerator` mode for the current CEO review.
 - Do not activate accelerated review from heuristics, vague wording like "make this fast", saved preferences, or agent-only judgment.
-- Use the existing CEO review sections as canonical boundaries and brief the accelerated reviewer with `skills/plan-ceo-review/accelerated-reviewer-prompt.md`.
-- The reviewer prompt plus `review/review-accelerator-packet-contract.md` define section-packet schema and keep the reviewer limited to draft-only output.
+- Use the existing CEO review sections as canonical boundaries and brief the accelerated reviewer with skill-local `accelerated-reviewer-prompt.md`.
+- The reviewer prompt plus `$_FEATUREFORGE_ROOT/review/review-accelerator-packet-contract.md` define section-packet schema and keep the reviewer limited to draft-only output.
 - Persist accelerated CEO section packets under `~/.featureforge/projects/<slug>/...`; resume only from the last approved-and-applied section boundary.
 - If the source artifact fingerprint changes, treat saved packets as stale and regenerate them before reuse.
 - Final explicit human approval remains unchanged, and only the main review agent may write authoritative artifacts, apply approved patches, or change approval headers.
@@ -202,7 +197,7 @@ After each section, stop. In normal review, use one interactive user question pe
 
 After all sections are complete, optionally get an outside voice. It is informative by default and actionable only if the main reviewer explicitly adopts a finding and patches the authoritative spec body.
 
-- Use `skills/plan-ceo-review/outside-voice-prompt.md` when briefing the outside voice.
+- Use skill-local `outside-voice-prompt.md` when briefing the outside voice.
 - Prefer `codex exec` when available.
 - Label the source as `cross-model` only when the outside voice definitely uses a different model/provider than the main reviewer.
 - If model provenance is the same, unknown, or only a fresh-context rerun of the same reviewer family, label the source as `fresh-context-subagent`.

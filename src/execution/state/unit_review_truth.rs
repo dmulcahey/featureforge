@@ -1,177 +1,48 @@
-use super::*;
+use super::worktree_lease_truth::WorktreeLeaseRunIdentityProbe;
+use super::{
+    BTreeSet, ExecutionContext, ExecutionContract, FailureClass, GateState,
+    INITIAL_AUTHORITATIVE_SEQUENCE, PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
+    PUBLIC_WORKFLOW_OPERATOR_REMEDIATION, Path, PathBuf, WORKTREE_LEASE_VERSION, WorktreeLease,
+    WorktreeLeaseState, authoritative_completed_steps_for_context, commit_object_fingerprint,
+    current_run_plain_unit_review_receipt_paths, fs, harness_authoritative_artifact_path,
+    latest_completed_attempts_by_step, load_status_authoritative_overlay_checked,
+    parse_artifact_document, parse_contract_task_step_scope, sha256_hex, shared_is_ancestor_commit,
+};
 
-pub(super) fn enforce_plain_unit_review_truth(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UnitReviewProofAuthority {
+    /// Runtime-owned active contract state is present, so serial unit-review
+    /// proof is derived from the active contract, completed-attempt provenance,
+    /// and repository commit proof. Markdown receipt artifacts are projections.
+    ActiveContractSerialRuntimeOwned,
+    /// Plain current-run unit-review receipt artifacts have no active contract
+    /// binding. They are diagnostics only and must never control gate routing.
+    PlainReceiptDiagnosticOnly,
+}
+
+pub(super) fn classify_unit_review_proof_authority(
+    active_contract_path: Option<&str>,
+    active_contract_fingerprint: Option<&str>,
+) -> UnitReviewProofAuthority {
+    if active_contract_path.is_none() && active_contract_fingerprint.is_none() {
+        UnitReviewProofAuthority::PlainReceiptDiagnosticOnly
+    } else {
+        UnitReviewProofAuthority::ActiveContractSerialRuntimeOwned
+    }
+}
+
+pub(super) fn warn_plain_unit_review_receipts_diagnostic_only(
     context: &ExecutionContext,
     execution_run_id: &str,
     gate: &mut GateState,
 ) {
-    let current_run_receipts =
-        match current_run_plain_unit_review_receipt_paths(context, execution_run_id) {
-            Ok(paths) => paths,
-            Err(error) => {
-                gate.fail(
-                    FailureClass::MalformedExecutionState,
-                    "plain_unit_review_receipts_unreadable",
-                    error,
-                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-                );
-                return;
-            }
-        };
-    if current_run_receipts.is_empty() {
-        return;
-    }
-
-    let expected_strategy_checkpoint_fingerprint =
-        match authoritative_strategy_checkpoint_fingerprint_checked(context) {
-            Ok(Some(fingerprint)) if !fingerprint.trim().is_empty() => fingerprint,
-            Ok(_) => {
-                gate.fail(
-                    FailureClass::MalformedExecutionState,
-                    "plain_unit_review_receipt_strategy_checkpoint_missing",
-                    "Authoritative strategy checkpoint provenance is missing for current-run unit-review receipt validation.",
-                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-                );
-                return;
-            }
-            Err(error) => {
-                gate.fail(
-                    FailureClass::MalformedExecutionState,
-                    "plain_unit_review_receipt_strategy_checkpoint_missing",
-                    error.message,
-                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-                );
-                return;
-            }
-        };
-
-    let latest_attempts = latest_completed_attempts_by_step(&context.evidence);
-    let expected_receipt_paths = context
-        .steps
-        .iter()
-        .filter(|step| step.checked)
-        .map(|step| {
-            (
-                authoritative_unit_review_receipt_path(
-                    context,
-                    execution_run_id,
-                    step.task_number,
-                    step.step_number,
-                )
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default()
-                .to_owned(),
-                (step.task_number, step.step_number),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-
-    for receipt_path in current_run_receipts {
-        let Some(receipt_file_name) = receipt_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .map(str::to_owned)
-        else {
-            gate.fail(
-                FailureClass::MalformedExecutionState,
-                "plain_unit_review_receipt_malformed",
-                "A current-run unit-review receipt has an unreadable filename.",
-                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-            );
-            return;
-        };
-        let Some((task_number, step_number)) =
-            expected_receipt_paths.get(&receipt_file_name).copied()
-        else {
-            gate.fail(
-                FailureClass::MalformedExecutionState,
-                "plain_unit_review_receipt_malformed",
-                format!(
-                    "Current-run unit-review receipt {} does not match any checked plan step.",
-                    receipt_path.display()
-                ),
-                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-            );
-            return;
-        };
-        let Some(attempt_index) = latest_attempts.get(&(task_number, step_number)).copied() else {
-            gate.fail(
-                FailureClass::StaleExecutionEvidence,
-                "plain_unit_review_receipt_provenance_mismatch",
-                format!(
-                    "Current-run unit-review receipt {} has no completed evidence attempt to validate against.",
-                    receipt_path.display()
-                ),
-                PUBLIC_WORKFLOW_OPERATOR_REMEDIATION,
-            );
-            return;
-        };
-        let attempt = &context.evidence.attempts[attempt_index];
-        let Some(expected_task_packet_fingerprint) = attempt
-            .packet_fingerprint
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            gate.fail(
-                FailureClass::MalformedExecutionState,
-                "plain_unit_review_receipt_malformed",
-                format!(
-                    "Task {} Step {} is missing packet fingerprint provenance required to validate plain unit-review receipts.",
-                    task_number, step_number
-                ),
-                PUBLIC_WORKFLOW_OPERATOR_REMEDIATION,
-            );
-            return;
-        };
-        let Some(expected_reviewed_checkpoint_sha) = attempt
-            .head_sha
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            gate.fail(
-                FailureClass::MalformedExecutionState,
-                "plain_unit_review_receipt_malformed",
-                format!(
-                    "Task {} Step {} is missing reviewed checkpoint provenance required to validate plain unit-review receipts.",
-                    task_number, step_number
-                ),
-                PUBLIC_WORKFLOW_OPERATOR_REMEDIATION,
-            );
-            return;
-        };
-        let review_source = match fs::read_to_string(&receipt_path) {
-            Ok(source) => source,
-            Err(error) => {
-                gate.fail(
-                    FailureClass::ExecutionStateNotReady,
-                    "plain_unit_review_receipt_unreadable",
-                    format!(
-                        "Could not read current-run unit-review receipt {}: {error}",
-                        receipt_path.display()
-                    ),
-                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-                );
-                return;
-            }
-        };
-        if !validate_plain_unit_review_receipt(
-            context,
-            execution_run_id,
-            &review_source,
-            &receipt_path,
-            PlainUnitReviewReceiptExpectations {
-                expected_strategy_checkpoint_fingerprint: expected_strategy_checkpoint_fingerprint
-                    .as_str(),
-                expected_task_packet_fingerprint,
-                expected_reviewed_checkpoint_sha,
-                expected_execution_unit_id: serial_execution_unit_id(task_number, step_number),
-            },
-            gate,
-        ) {
-            return;
+    match current_run_plain_unit_review_receipt_paths(context, execution_run_id) {
+        Ok(paths) if !paths.is_empty() => {
+            gate.warn("plain_unit_review_receipts_diagnostic_only");
+        }
+        Ok(_) => {}
+        Err(_) => {
+            gate.warn("plain_unit_review_receipts_unreadable_diagnostic_only");
         }
     }
 }
@@ -387,16 +258,48 @@ pub(super) fn reconcile_result_proof_fingerprint_for_review(
 pub(super) fn enforce_serial_unit_review_truth(
     context: &ExecutionContext,
     run_identity: &WorktreeLeaseRunIdentityProbe,
+    active_contract: &ExecutionContract,
     active_contract_fingerprint: &str,
     gate: &mut GateState,
 ) {
+    // This path is intentionally not evidence/projection fallback. It is only
+    // reached after authoritative active-contract state has been loaded and
+    // fingerprint-verified by the worktree lease gate.
+    let Some(contract_steps) = serial_unit_review_contract_steps(active_contract, gate) else {
+        return;
+    };
+    let authoritative_completed_steps = match authoritative_completed_steps_for_context(context) {
+        Ok(steps) => steps.unwrap_or_default(),
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "authoritative_completion_state_unavailable",
+                error.message,
+                PUBLIC_WORKFLOW_OPERATOR_REMEDIATION,
+            );
+            return;
+        }
+    };
     let latest_attempts = latest_completed_attempts_by_step(&context.evidence);
-    for step in context.steps.iter().filter(|step| step.checked) {
+    for step in context.steps.iter().filter(|step| {
+        let step_key = (step.task_number, step.step_number);
+        contract_steps.contains(&step_key)
+            && (step.checked || authoritative_completed_steps.contains(&step_key))
+    }) {
         let Some(attempt_index) = latest_attempts
             .get(&(step.task_number, step.step_number))
             .copied()
         else {
-            continue;
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "serial_unit_review_evidence_missing",
+                format!(
+                    "Task {} Step {} is missing the completed attempt provenance required for active-contract serial unit-review gating.",
+                    step.task_number, step.step_number
+                ),
+                PUBLIC_WORKFLOW_OPERATOR_REMEDIATION,
+            );
+            return;
         };
         let attempt = &context.evidence.attempts[attempt_index];
         let Some(approved_task_packet_fingerprint) = attempt
@@ -416,6 +319,22 @@ pub(super) fn enforce_serial_unit_review_truth(
             );
             return;
         };
+        if !active_contract
+            .source_task_packet_fingerprints
+            .iter()
+            .any(|candidate| candidate == approved_task_packet_fingerprint)
+        {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "serial_unit_review_task_packet_not_authoritative",
+                format!(
+                    "Task {} Step {} completed attempt does not bind a task packet from the current authoritative contract.",
+                    step.task_number, step.step_number
+                ),
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
+            );
+            return;
+        }
         let Some(reviewed_checkpoint_commit_sha) = attempt
             .head_sha
             .as_deref()
@@ -473,68 +392,6 @@ pub(super) fn enforce_serial_unit_review_truth(
                 run_identity.execution_run_id, execution_unit_id
             ),
         );
-        let review_metadata = match fs::symlink_metadata(&review_receipt_path) {
-            Ok(metadata) => metadata,
-            Err(error) => {
-                gate.fail(
-                    FailureClass::ExecutionStateNotReady,
-                    "serial_unit_review_receipt_missing",
-                    format!(
-                        "Task {} Step {} is missing its authoritative serial unit-review receipt {}: {error}",
-                        step.task_number,
-                        step.step_number,
-                        review_receipt_path.display()
-                    ),
-                    PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION,
-                );
-                return;
-            }
-        };
-        if review_metadata.file_type().is_symlink() || !review_metadata.is_file() {
-            gate.fail(
-                FailureClass::MalformedExecutionState,
-                "serial_unit_review_receipt_path_invalid",
-                format!(
-                    "Task {} Step {} serial unit-review receipt must be a regular file in {}.",
-                    step.task_number,
-                    step.step_number,
-                    review_receipt_path.display()
-                ),
-                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-            );
-            return;
-        }
-        let review_source = match fs::read_to_string(&review_receipt_path) {
-            Ok(source) => source,
-            Err(error) => {
-                gate.fail(
-                    FailureClass::ExecutionStateNotReady,
-                    "serial_unit_review_receipt_unreadable",
-                    format!(
-                        "Could not read authoritative serial unit-review receipt {}: {error}",
-                        review_receipt_path.display()
-                    ),
-                    PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-                );
-                return;
-            }
-        };
-        let Some(review_receipt_fingerprint) =
-            canonical_unit_review_receipt_fingerprint(&review_source)
-        else {
-            gate.fail(
-                FailureClass::MalformedExecutionState,
-                "serial_unit_review_receipt_fingerprint_unverifiable",
-                format!(
-                    "Task {} Step {} serial unit-review receipt fingerprint is unverifiable in {}.",
-                    step.task_number,
-                    step.step_number,
-                    review_receipt_path.display()
-                ),
-                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-            );
-            return;
-        };
         let pseudo_lease = WorktreeLease {
             lease_version: WORKTREE_LEASE_VERSION,
             authoritative_sequence: INITIAL_AUTHORITATIVE_SEQUENCE + 1,
@@ -568,51 +425,118 @@ pub(super) fn enforce_serial_unit_review_truth(
                 &approved_unit_contract_fingerprint,
             ),
         };
-        let (receipt_checkpoint_commit_sha, receipt_reconciled_result_commit_sha) =
-            match validate_authoritative_unit_review_receipt(
-                context,
-                &run_identity.execution_run_id,
-                &pseudo_lease,
-                &review_source,
-                &review_receipt_path,
-                UnitReviewReceiptExpectations {
-                    expected_execution_context_key: &expected_execution_context_key,
-                    expected_fingerprint: &review_receipt_fingerprint,
-                    expected_task_packet_fingerprint: approved_task_packet_fingerprint,
-                    expected_approved_unit_contract_fingerprint:
-                        &approved_unit_contract_fingerprint,
-                    expected_reconcile_result_commit_sha: reviewed_checkpoint_commit_sha,
-                },
-                gate,
-            ) {
-                Some(values) => values,
-                None => return,
-            };
-        if receipt_checkpoint_commit_sha != reviewed_checkpoint_commit_sha {
-            gate.fail(
-                FailureClass::StaleProvenance,
-                "serial_unit_review_receipt_checkpoint_mismatch",
-                format!(
-                    "Task {} Step {} serial unit-review receipt does not bind the completed step checkpoint.",
-                    step.task_number, step.step_number
-                ),
-                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-            );
-            return;
-        }
-        if receipt_reconciled_result_commit_sha != reviewed_checkpoint_commit_sha {
-            gate.fail(
-                FailureClass::StaleProvenance,
-                "serial_unit_review_receipt_reconcile_result_mismatch",
-                format!(
-                    "Task {} Step {} serial unit-review receipt does not bind the completed step result commit.",
-                    step.task_number, step.step_number
-                ),
-                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-            );
-            return;
-        }
+        warn_on_serial_unit_review_receipt_projection_drift(
+            context,
+            &run_identity.execution_run_id,
+            &pseudo_lease,
+            &review_receipt_path,
+            UnitReviewReceiptExpectations {
+                expected_execution_context_key: &expected_execution_context_key,
+                expected_fingerprint: "",
+                expected_task_packet_fingerprint: approved_task_packet_fingerprint,
+                expected_approved_unit_contract_fingerprint: &approved_unit_contract_fingerprint,
+                expected_reconcile_result_commit_sha: reviewed_checkpoint_commit_sha,
+            },
+            reviewed_checkpoint_commit_sha,
+            gate,
+        );
     }
+}
+
+fn warn_on_serial_unit_review_receipt_projection_drift(
+    context: &ExecutionContext,
+    execution_run_id: &str,
+    pseudo_lease: &WorktreeLease,
+    review_receipt_path: &Path,
+    expectations: UnitReviewReceiptExpectations<'_>,
+    reviewed_checkpoint_commit_sha: &str,
+    gate: &mut GateState,
+) {
+    let review_metadata = match fs::symlink_metadata(review_receipt_path) {
+        Ok(metadata) => metadata,
+        Err(_) => {
+            gate.warn("serial_unit_review_projection_missing_diagnostic_only");
+            return;
+        }
+    };
+    if review_metadata.file_type().is_symlink() || !review_metadata.is_file() {
+        gate.warn("serial_unit_review_projection_path_invalid_diagnostic_only");
+        return;
+    }
+    let review_source = match fs::read_to_string(review_receipt_path) {
+        Ok(source) => source,
+        Err(_) => {
+            gate.warn("serial_unit_review_projection_unreadable_diagnostic_only");
+            return;
+        }
+    };
+    let Some(review_receipt_fingerprint) =
+        canonical_unit_review_receipt_fingerprint(&review_source)
+    else {
+        gate.warn("serial_unit_review_projection_fingerprint_unverifiable_diagnostic_only");
+        return;
+    };
+    let mut diagnostic_gate = GateState::default();
+    let Some((receipt_checkpoint_commit_sha, receipt_reconciled_result_commit_sha)) =
+        validate_authoritative_unit_review_receipt(
+            context,
+            execution_run_id,
+            pseudo_lease,
+            &review_source,
+            review_receipt_path,
+            UnitReviewReceiptExpectations {
+                expected_execution_context_key: expectations.expected_execution_context_key,
+                expected_fingerprint: &review_receipt_fingerprint,
+                expected_task_packet_fingerprint: expectations.expected_task_packet_fingerprint,
+                expected_approved_unit_contract_fingerprint: expectations
+                    .expected_approved_unit_contract_fingerprint,
+                expected_reconcile_result_commit_sha: expectations
+                    .expected_reconcile_result_commit_sha,
+            },
+            &mut diagnostic_gate,
+        )
+    else {
+        for reason_code in diagnostic_gate.reason_codes {
+            gate.warn(&unit_review_projection_warning_code(&reason_code));
+        }
+        return;
+    };
+    if receipt_checkpoint_commit_sha != reviewed_checkpoint_commit_sha {
+        gate.warn("serial_unit_review_projection_checkpoint_mismatch_diagnostic_only");
+    }
+    if receipt_reconciled_result_commit_sha != reviewed_checkpoint_commit_sha {
+        gate.warn("serial_unit_review_projection_reconcile_result_mismatch_diagnostic_only");
+    }
+}
+
+fn unit_review_projection_warning_code(reason_code: &str) -> String {
+    if let Some(suffix) = reason_code.strip_prefix("worktree_lease_review_receipt") {
+        format!("worktree_lease_review_projection{suffix}_diagnostic_only")
+    } else if let Some(suffix) = reason_code.strip_prefix("serial_unit_review_receipt") {
+        format!("serial_unit_review_projection{suffix}_diagnostic_only")
+    } else {
+        format!("{reason_code}_diagnostic_only")
+    }
+}
+
+fn serial_unit_review_contract_steps(
+    active_contract: &ExecutionContract,
+    gate: &mut GateState,
+) -> Option<BTreeSet<(u32, u32)>> {
+    let mut contract_steps = BTreeSet::new();
+    for covered_step in &active_contract.covered_steps {
+        let Some(step_ref) = parse_contract_task_step_scope(covered_step) else {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "serial_unit_review_contract_scope_malformed",
+                "The authoritative active contract has malformed covered step scope required for serial unit-review gating.",
+                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
+            );
+            return None;
+        };
+        contract_steps.insert(step_ref);
+    }
+    Some(contract_steps)
 }
 
 pub(super) struct UnitReviewReceiptExpectations<'a> {
@@ -621,13 +545,6 @@ pub(super) struct UnitReviewReceiptExpectations<'a> {
     pub(super) expected_task_packet_fingerprint: &'a str,
     pub(super) expected_approved_unit_contract_fingerprint: &'a str,
     pub(super) expected_reconcile_result_commit_sha: &'a str,
-}
-
-struct PlainUnitReviewReceiptExpectations<'a> {
-    expected_strategy_checkpoint_fingerprint: &'a str,
-    expected_task_packet_fingerprint: &'a str,
-    expected_reviewed_checkpoint_sha: &'a str,
-    expected_execution_unit_id: String,
 }
 
 pub(super) fn validate_authoritative_unit_review_receipt(
@@ -960,265 +877,6 @@ pub(super) fn validate_authoritative_unit_review_receipt(
         receipt_checkpoint_commit_sha,
         expectations.expected_reconcile_result_commit_sha.to_owned(),
     ))
-}
-
-fn validate_plain_unit_review_receipt(
-    context: &ExecutionContext,
-    execution_run_id: &str,
-    source: &str,
-    receipt_path: &Path,
-    expectations: PlainUnitReviewReceiptExpectations<'_>,
-    gate: &mut GateState,
-) -> bool {
-    let review_document = parse_artifact_document(receipt_path);
-    if review_document.title.as_deref() != Some("# Unit Review Result")
-        || review_document
-            .headers
-            .get("Review Stage")
-            .map(String::as_str)
-            != Some("featureforge:unit-review")
-        || review_document
-            .headers
-            .get("Reviewer Provenance")
-            .map(String::as_str)
-            != Some("dedicated-independent")
-        || !matches!(
-            review_document
-                .headers
-                .get("Reviewer Source")
-                .map(String::as_str)
-                .unwrap_or_default(),
-            "fresh-context-subagent" | "cross-model"
-        )
-        || review_document.headers.get("Result").map(String::as_str) != Some("pass")
-        || review_document
-            .headers
-            .get("Generated By")
-            .map(String::as_str)
-            != Some("featureforge:unit-review")
-    {
-        gate.fail(
-            FailureClass::MalformedExecutionState,
-            "plain_unit_review_receipt_malformed",
-            format!(
-                "Current-run unit-review receipt {} is malformed.",
-                receipt_path.display()
-            ),
-            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-        );
-        return false;
-    }
-
-    for forbidden_header in [
-        "Lease Fingerprint",
-        "Execution Context Key",
-        "Approved Unit Contract Fingerprint",
-        "Reconciled Result SHA",
-        "Reconcile Result Proof Fingerprint",
-        "Reconcile Mode",
-        "Reviewed Worktree",
-    ] {
-        if review_document.headers.contains_key(forbidden_header) {
-            gate.fail(
-                FailureClass::MalformedExecutionState,
-                "plain_unit_review_receipt_malformed",
-                format!(
-                    "Current-run unit-review receipt {} unexpectedly includes {} without an active authoritative contract.",
-                    receipt_path.display(),
-                    forbidden_header
-                ),
-                PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-            );
-            return false;
-        }
-    }
-
-    let expected_file_name = format!(
-        "unit-review-{}-{}.md",
-        execution_run_id, expectations.expected_execution_unit_id
-    );
-    if receipt_path.file_name().and_then(|value| value.to_str())
-        != Some(expected_file_name.as_str())
-    {
-        gate.fail(
-            FailureClass::MalformedExecutionState,
-            "plain_unit_review_receipt_malformed",
-            format!(
-                "Current-run unit-review receipt path {} does not match the reviewed execution unit provenance.",
-                receipt_path.display()
-            ),
-            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-        );
-        return false;
-    }
-
-    let Some(canonical_fingerprint) = canonical_unit_review_receipt_fingerprint(source) else {
-        gate.fail(
-            FailureClass::MalformedExecutionState,
-            "plain_unit_review_receipt_fingerprint_unverifiable",
-            format!(
-                "Current-run unit-review receipt fingerprint is unverifiable in {}.",
-                receipt_path.display()
-            ),
-            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-        );
-        return false;
-    };
-    if review_document
-        .headers
-        .get("Receipt Fingerprint")
-        .map(String::as_str)
-        != Some(canonical_fingerprint.as_str())
-    {
-        gate.fail(
-            FailureClass::ArtifactIntegrityMismatch,
-            "plain_unit_review_receipt_fingerprint_mismatch",
-            format!(
-                "Current-run unit-review receipt fingerprint header does not match canonical content in {}.",
-                receipt_path.display()
-            ),
-            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-        );
-        return false;
-    }
-
-    let mut mismatched_fields = Vec::new();
-    let mut mismatch_details = Vec::new();
-    if review_document
-        .headers
-        .get("Source Plan")
-        .map(String::as_str)
-        != Some(context.plan_rel.as_str())
-    {
-        mismatched_fields.push("Source Plan");
-        mismatch_details.push(format!(
-            "Source Plan expected={} actual={}",
-            context.plan_rel,
-            review_document
-                .headers
-                .get("Source Plan")
-                .map(String::as_str)
-                .unwrap_or("<missing>")
-        ));
-    }
-    if review_document
-        .headers
-        .get("Source Plan Revision")
-        .and_then(|value| value.parse::<u32>().ok())
-        != Some(context.plan_document.plan_revision)
-    {
-        mismatched_fields.push("Source Plan Revision");
-        mismatch_details.push(format!(
-            "Source Plan Revision expected={} actual={}",
-            context.plan_document.plan_revision,
-            review_document
-                .headers
-                .get("Source Plan Revision")
-                .map(String::as_str)
-                .unwrap_or("<missing>")
-        ));
-    }
-    if review_document
-        .headers
-        .get("Execution Run ID")
-        .map(String::as_str)
-        != Some(execution_run_id)
-    {
-        mismatched_fields.push("Execution Run ID");
-        mismatch_details.push(format!(
-            "Execution Run ID expected={} actual={}",
-            execution_run_id,
-            review_document
-                .headers
-                .get("Execution Run ID")
-                .map(String::as_str)
-                .unwrap_or("<missing>")
-        ));
-    }
-    if review_document
-        .headers
-        .get("Execution Unit ID")
-        .map(String::as_str)
-        != Some(expectations.expected_execution_unit_id.as_str())
-    {
-        mismatched_fields.push("Execution Unit ID");
-        mismatch_details.push(format!(
-            "Execution Unit ID expected={} actual={}",
-            expectations.expected_execution_unit_id,
-            review_document
-                .headers
-                .get("Execution Unit ID")
-                .map(String::as_str)
-                .unwrap_or("<missing>")
-        ));
-    }
-    if review_document
-        .headers
-        .get("Strategy Checkpoint Fingerprint")
-        .map(String::as_str)
-        != Some(expectations.expected_strategy_checkpoint_fingerprint)
-    {
-        mismatched_fields.push("Strategy Checkpoint Fingerprint");
-        mismatch_details.push(format!(
-            "Strategy Checkpoint Fingerprint expected={} actual={}",
-            expectations.expected_strategy_checkpoint_fingerprint,
-            review_document
-                .headers
-                .get("Strategy Checkpoint Fingerprint")
-                .map(String::as_str)
-                .unwrap_or("<missing>")
-        ));
-    }
-    if review_document
-        .headers
-        .get("Approved Task Packet Fingerprint")
-        .map(String::as_str)
-        != Some(expectations.expected_task_packet_fingerprint)
-    {
-        mismatched_fields.push("Approved Task Packet Fingerprint");
-        mismatch_details.push(format!(
-            "Approved Task Packet Fingerprint expected={} actual={}",
-            expectations.expected_task_packet_fingerprint,
-            review_document
-                .headers
-                .get("Approved Task Packet Fingerprint")
-                .map(String::as_str)
-                .unwrap_or("<missing>")
-        ));
-    }
-    if review_document
-        .headers
-        .get("Reviewed Checkpoint SHA")
-        .map(String::as_str)
-        != Some(expectations.expected_reviewed_checkpoint_sha)
-    {
-        mismatched_fields.push("Reviewed Checkpoint SHA");
-        mismatch_details.push(format!(
-            "Reviewed Checkpoint SHA expected={} actual={}",
-            expectations.expected_reviewed_checkpoint_sha,
-            review_document
-                .headers
-                .get("Reviewed Checkpoint SHA")
-                .map(String::as_str)
-                .unwrap_or("<missing>")
-        ));
-    }
-    if !mismatched_fields.is_empty() {
-        gate.fail(
-            FailureClass::StaleProvenance,
-            "plain_unit_review_receipt_provenance_mismatch",
-            format!(
-                "Current-run unit-review receipt {} does not match the active task checkpoint provenance (mismatched fields: {}; details: {}).",
-                receipt_path.display(),
-                mismatched_fields.join(", ")
-                , mismatch_details.join("; ")
-            ),
-            PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION,
-        );
-        return false;
-    }
-
-    true
 }
 
 fn canonical_unit_review_receipt_fingerprint(source: &str) -> Option<String> {

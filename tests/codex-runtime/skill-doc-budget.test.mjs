@@ -10,20 +10,6 @@ import {
 
 const BASELINE_GENERATED_SKILL_LINES = 7191;
 const ENFORCE_MODE = 'enforce';
-const HIGH_VOLUME_BUDGETED_SKILLS = [
-  'plan-ceo-review',
-  'writing-skills',
-  'plan-eng-review',
-  'subagent-driven-development',
-  'finishing-a-development-branch',
-  'test-driven-development',
-  'systematic-debugging',
-  'writing-plans',
-  'document-release',
-  'qa-only',
-  'requesting-code-review',
-  'executing-plans',
-];
 
 function generatedSkillLineCount(skill) {
   const content = readUtf8(path.join(SKILLS_DIR, skill, 'SKILL.md'));
@@ -79,16 +65,36 @@ function assertBudgetManifestShape(manifest) {
     manifest.total_generated_skill_lines_max < BASELINE_GENERATED_SKILL_LINES,
     'total budget should represent a real reduction from the 7,191-line baseline',
   );
+  assert.equal(
+    Number.isInteger(manifest.unbudgeted_generated_skill_lines_max),
+    true,
+    'unbudgeted_generated_skill_lines_max should be an integer',
+  );
+  assert.ok(
+    manifest.unbudgeted_generated_skill_lines_max > 0,
+    'unbudgeted_generated_skill_lines_max should be positive',
+  );
+  assert.ok(
+    manifest.unbudgeted_generated_skill_lines_max < 250,
+    'unbudgeted generated skill ceiling should stay low enough to catch bloat moved out of budgeted skills',
+  );
   assert.ok(manifest.skills && typeof manifest.skills === 'object', 'manifest should include per-skill budgets');
 
-  for (const skill of HIGH_VOLUME_BUDGETED_SKILLS) {
-    assert.ok(manifest.skills[skill], `${skill} should be explicitly budgeted`);
+  const budgetedSkillEntries = Object.entries(manifest.skills);
+  assert.ok(
+    budgetedSkillEntries.length > 0,
+    'manifest should define at least one reviewed per-skill budget',
+  );
+
+  for (const [skill, budget] of budgetedSkillEntries) {
+    assert.match(skill, /^[a-z0-9]+(?:-[a-z0-9]+)*$/, `${skill} should use the skill slug format`);
+    assert.ok(budget && typeof budget === 'object', `${skill} budget should be an object`);
     assert.equal(
-      Number.isInteger(manifest.skills[skill].max_lines),
+      Number.isInteger(budget.max_lines),
       true,
       `${skill} max_lines should be an integer`,
     );
-    assert.ok(manifest.skills[skill].max_lines > 0, `${skill} max_lines should be positive`);
+    assert.ok(budget.max_lines > 0, `${skill} max_lines should be positive`);
   }
 }
 
@@ -103,37 +109,37 @@ test('release validation docs keep prompt budget enforcement mandatory and revie
 
   assert.match(
     testingDoc,
-    /node scripts\/run-codex-runtime-tests\.mjs/,
-    'docs/testing.md should keep codex-runtime tests in the release validation matrix',
+    /node scripts\/gen-skill-docs\.mjs --check/,
+    'docs/testing.md should keep generated skill freshness in the release validation matrix',
   );
   assert.match(
     testingDoc,
-    /node --test tests\/codex-runtime\/skill-doc-budget\.test\.mjs tests\/codex-runtime\/skill-doc-contracts\.test\.mjs/,
-    'docs/testing.md should name the prompt-budget and mandatory-law tests together',
+    /node --test tests\/codex-runtime\/skill-doc-budget\.test\.mjs/,
+    'docs/testing.md should name the prompt-budget release gate command',
   );
   assert.match(
     testingDoc,
-    /The budget gate must stay in enforce mode for release work:/,
-    'docs/testing.md should mark prompt budgets as a mandatory release gate',
+    /tests\/codex-runtime\/skill-doc-contracts\.test\.mjs/,
+    'docs/testing.md should keep mandatory-law prompt contract coverage adjacent to the budget gate',
   );
   assert.match(
     testingDoc,
-    /Prompt budget enforcement: `tests\/codex-runtime\/skill-doc-budget\.test\.mjs`[\s\S]*Mandatory-law retention: `tests\/codex-runtime\/skill-doc-contracts\.test\.mjs`/,
-    'release checklist guidance should distinguish budget failures from missing-law failures',
+    /skills\/skill-doc-budgets\.json/,
+    'docs/testing.md should point prompt-budget reviewers to the budget manifest',
   );
   assert.match(
     testingDoc,
-    /Any change to `skills\/skill-doc-budgets\.json`[\s\S]*requires explicit prompt-budget review/,
+    /explicit prompt-budget review/,
     'budget manifest changes should require explicit prompt-budget review',
   );
   assert.match(
     testingDoc,
-    /why the content must remain top-level[\s\S]*why\s+it cannot move to a companion reference[\s\S]*whether any existing top-level\s+prose was removed/,
-    'top-level prompt budget increases should require the reviewed headroom rationale',
+    /top-level skill docs/,
+    'docs/testing.md should keep budget enforcement scoped to generated top-level skill docs',
   );
   assert.match(
     testingDoc,
-    /companion references[\s\S]*discoverable[\s\S]*generated top-level skill docs[\s\S]*packaged skill\s+surface/,
+    /companion references[\s\S]{0,500}discoverable/,
     'companion references should stay discoverable and packaged when content moves out of top-level prompts',
   );
 });
@@ -167,6 +173,16 @@ test('generated skill budget report covers top-level generated SKILL.md files on
     assert.ok(
       counts.perSkill[skill] <= budget.max_lines,
       `${skill} has ${counts.perSkill[skill]} lines, exceeding budget ${budget.max_lines}`,
+    );
+  }
+
+  for (const [skill, count] of Object.entries(counts.perSkill)) {
+    if (manifest.skills[skill]) {
+      continue;
+    }
+    assert.ok(
+      count <= manifest.unbudgeted_generated_skill_lines_max,
+      `${skill} has ${count} lines but is unbudgeted; add a reviewed per-skill budget or keep it <= ${manifest.unbudgeted_generated_skill_lines_max}`,
     );
   }
 });

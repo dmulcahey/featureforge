@@ -1,18 +1,26 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use featureforge::contracts::evidence::read_execution_evidence;
 use featureforge::contracts::packet::{build_task_packet_with_timestamp, write_contract_schemas};
-use featureforge::contracts::plan::parse_plan_file;
+use featureforge::contracts::plan::{PLAN_QA_REQUIREMENT_VALUES, parse_plan_file};
 use featureforge::contracts::spec::parse_spec_file;
+use featureforge::execution::command_eligibility::{
+    PUBLIC_EXECUTION_COMMAND_KIND_VALUES, PUBLIC_REPAIR_TARGET_COMMAND_KIND_VALUES,
+};
+use featureforge::execution::next_action::PUBLIC_NEXT_ACTION_VALUES;
 use featureforge::execution::phase;
 use featureforge::execution::state::write_plan_execution_schema;
+use featureforge::execution::status::{
+    PLAN_EXECUTION_STATUS_RECOMMENDED_PUBLIC_COMMAND_ARGV_SCHEMA_DESCRIPTION,
+    PUBLIC_COMMAND_TEMPLATE_KIND_SCHEMA_DESCRIPTION, REQUIRED_FOLLOW_UP_SCHEMA_DESCRIPTION,
+};
 use featureforge::repo_safety::write_repo_safety_schema;
 use featureforge::update_check::write_update_check_schema;
 use featureforge::workflow::status::write_workflow_schemas;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-22-plan-contract-fixture-design.md";
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-plan-contract-fixture.md";
@@ -363,6 +371,31 @@ fn assert_schema_pointer_enum(
     }
 }
 
+fn assert_schema_pointer_description_contains(
+    schema: &Value,
+    pointer: &str,
+    required_fragments: &[&str],
+    issues: &mut Vec<String>,
+) {
+    let Some(description) = schema
+        .pointer(pointer)
+        .and_then(|value| value.get("description"))
+        .and_then(Value::as_str)
+    else {
+        issues.push(format!(
+            "schema pointer `{pointer}` is missing a string `description`"
+        ));
+        return;
+    };
+    for fragment in required_fragments {
+        if !description.contains(fragment) {
+            issues.push(format!(
+                "schema pointer `{pointer}` description `{description}` is missing `{fragment}`"
+            ));
+        }
+    }
+}
+
 fn assert_schema_pointer_types(
     schema: &Value,
     pointer: &str,
@@ -583,6 +616,311 @@ fn assert_schema_pointer_value(
             "schema pointer `{pointer}` has value {actual_value:?}, expected {expected_value:?}"
         ));
     }
+}
+
+fn assert_schema_pointer_array_items_types(
+    schema: &Value,
+    pointer: &str,
+    expected_types: &[&str],
+    issues: &mut Vec<String>,
+) {
+    let Some(value) = schema.pointer(pointer) else {
+        issues.push(format!("schema is missing pointer `{pointer}`"));
+        return;
+    };
+    let Some(items) = value.get("items") else {
+        issues.push(format!("schema pointer `{pointer}` is missing `items`"));
+        return;
+    };
+    let Some(actual_types) = schema_type_set(schema, items) else {
+        issues.push(format!(
+            "schema pointer `{pointer}` items are missing a usable `type` definition"
+        ));
+        return;
+    };
+    let expected_types: BTreeSet<String> = expected_types
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect();
+    if actual_types != expected_types {
+        issues.push(format!(
+            "schema pointer `{pointer}` items have types {actual_types:?}, expected {expected_types:?}"
+        ));
+    }
+}
+
+fn assert_public_route_schema_contract(
+    label: &str,
+    schema: &Value,
+    phase_types: &[&str],
+    recommended_command_types: &[&str],
+    includes_runtime_context_fields: bool,
+    issues: &mut Vec<String>,
+) {
+    let properties = schema_properties(schema);
+    let required_fields = schema_required_fields(schema, issues);
+    let mut missing_fields = BTreeSet::new();
+    let mut missing_required_fields = BTreeSet::new();
+    let mut non_optional_fields = BTreeSet::new();
+
+    for field in [
+        "phase",
+        "phase_detail",
+        "next_action",
+        "next_public_action",
+        "blockers",
+        "recommended_command",
+        "recommended_public_command_argv",
+        "recommended_public_command_template",
+        "required_inputs",
+        "state_kind",
+    ] {
+        if !properties.contains_key(field) {
+            issues.push(format!("{label} schema is missing route field `{field}`"));
+        }
+    }
+
+    assert_schema_types(
+        schema,
+        properties,
+        "phase",
+        phase_types,
+        issues,
+        &mut missing_fields,
+    );
+    assert_schema_required_field(
+        &required_fields,
+        "phase_detail",
+        issues,
+        &mut missing_required_fields,
+    );
+    assert_schema_required_field(
+        &required_fields,
+        "next_action",
+        issues,
+        &mut missing_required_fields,
+    );
+    assert_schema_types(
+        schema,
+        properties,
+        "recommended_command",
+        recommended_command_types,
+        issues,
+        &mut missing_fields,
+    );
+    assert_schema_optional_field(
+        &required_fields,
+        "recommended_command",
+        issues,
+        &mut non_optional_fields,
+    );
+    assert_schema_types(
+        schema,
+        properties,
+        "recommended_public_command_argv",
+        &["array", "null"],
+        issues,
+        &mut missing_fields,
+    );
+    assert_schema_array_items_types(
+        schema,
+        properties,
+        "recommended_public_command_argv",
+        &["string"],
+        issues,
+        &mut missing_fields,
+    );
+    assert_schema_optional_field(
+        &required_fields,
+        "recommended_public_command_argv",
+        issues,
+        &mut non_optional_fields,
+    );
+    assert_schema_types(
+        schema,
+        properties,
+        "recommended_public_command_template",
+        &["object", "null"],
+        issues,
+        &mut missing_fields,
+    );
+    assert_schema_optional_field(
+        &required_fields,
+        "recommended_public_command_template",
+        issues,
+        &mut non_optional_fields,
+    );
+    assert_schema_types(
+        schema,
+        properties,
+        "required_inputs",
+        &["array"],
+        issues,
+        &mut missing_fields,
+    );
+    assert_schema_array_items_types(
+        schema,
+        properties,
+        "required_inputs",
+        &["object"],
+        issues,
+        &mut missing_fields,
+    );
+    assert_schema_types(
+        schema,
+        properties,
+        "next_public_action",
+        &["object", "null"],
+        issues,
+        &mut missing_fields,
+    );
+    assert_schema_types(
+        schema,
+        properties,
+        "blockers",
+        &["array"],
+        issues,
+        &mut missing_fields,
+    );
+    assert_schema_array_items_types(
+        schema,
+        properties,
+        "blockers",
+        &["object"],
+        issues,
+        &mut missing_fields,
+    );
+
+    if includes_runtime_context_fields {
+        for field in [
+            "recording_context",
+            "execution_command_context",
+            "public_repair_targets",
+        ] {
+            if !properties.contains_key(field) {
+                issues.push(format!(
+                    "{label} schema is missing route metadata field `{field}`"
+                ));
+            }
+        }
+        assert_schema_types(
+            schema,
+            properties,
+            "recording_context",
+            &["object"],
+            issues,
+            &mut missing_fields,
+        );
+        assert_schema_types(
+            schema,
+            properties,
+            "execution_command_context",
+            &["object"],
+            issues,
+            &mut missing_fields,
+        );
+        assert_schema_types(
+            schema,
+            properties,
+            "public_repair_targets",
+            &["array"],
+            issues,
+            &mut missing_fields,
+        );
+        assert_schema_array_items_types(
+            schema,
+            properties,
+            "public_repair_targets",
+            &["object"],
+            issues,
+            &mut missing_fields,
+        );
+    }
+
+    let recommended_public_command_argv_fragments: &[&str] = if label == "plan-execution-status" {
+        &[
+            "Diagnostic mirror of operator-derived public command argv",
+            "workflow operator JSON remains the normal executable route authority",
+        ]
+    } else {
+        &["Executable public command argv"]
+    };
+
+    for (field, fragments) in [
+        (
+            "next_action",
+            &["Display-only route diagnostic label", "not executable"][..],
+        ),
+        (
+            "next_public_action",
+            &[
+                "Optional display-only public route action summary",
+                "not executable",
+            ][..],
+        ),
+        (
+            "recommended_command",
+            &["Display-only compatibility summary", "not executable"][..],
+        ),
+        (
+            "recommended_public_command_argv",
+            recommended_public_command_argv_fragments,
+        ),
+        (
+            "recommended_public_command_template",
+            &[
+                "Non-executable public command template",
+                "input-required routes",
+            ][..],
+        ),
+        (
+            "required_inputs",
+            &["Input names required", "public command template"][..],
+        ),
+    ] {
+        assert_schema_pointer_description_contains(
+            schema,
+            &format!("/properties/{field}"),
+            fragments,
+            issues,
+        );
+    }
+
+    assert_schema_pointer_required(
+        schema,
+        "/$defs/PublicCommandTemplate",
+        &[
+            "command_kind",
+            "base_argv",
+            "required_input_names",
+            "input_bindings",
+        ],
+        issues,
+    );
+    assert_schema_pointer_array_items_types(
+        schema,
+        "/$defs/PublicCommandTemplate/properties/base_argv",
+        &["string"],
+        issues,
+    );
+    assert_schema_pointer_array_items_types(
+        schema,
+        "/$defs/PublicCommandTemplate/properties/input_bindings",
+        &["object"],
+        issues,
+    );
+    assert_schema_pointer_required(
+        schema,
+        "/$defs/PublicCommandTemplateInput",
+        &["name", "kind", "binding", "shell_escape_by_caller"],
+        issues,
+    );
+    assert_schema_pointer_description_contains(
+        schema,
+        "/$defs/PublicCommandTemplate/properties/command_kind",
+        &["Public command intent label", "not executable"],
+        issues,
+    );
 }
 
 fn collect_string_field_values(value: &Value, field: &str, values: &mut BTreeSet<String>) {
@@ -838,7 +1176,14 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_types!("current_qa_branch_closure_id", ["string", "null"], optional);
     check_types!("current_qa_result", ["string", "null"], optional);
     check_types!("qa_requirement", ["string", "null"], optional);
-    check_enum!("qa_requirement", ["required", "not-required"]);
+    assert_schema_enum(
+        &schema,
+        properties,
+        "qa_requirement",
+        PLAN_QA_REQUIREMENT_VALUES,
+        &mut issues,
+        &mut missing_fields,
+    );
     check_types!("evaluator_policy", ["string", "null"], optional);
     check_types!("reset_policy", ["string", "null"], optional);
     check_enum!("reset_policy", ["none", "chunk-boundary", "adaptive"]);
@@ -957,46 +1302,61 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
         &mut missing_fields,
     );
     check_types!("review_state_status", ["string"], required);
-    check_enum!(
+    if let Some(review_state_status) = schema_property(
+        properties,
         "review_state_status",
-        ["clean", "stale_unreviewed", "missing_current_closure"]
-    );
+        &mut issues,
+        &mut missing_fields,
+    ) && schema_enum_set(&schema, review_state_status).is_none()
+    {
+        issues.push(String::from(
+            "property `review_state_status` is missing a usable `enum` definition",
+        ));
+    }
     check_types!("blocking_records", ["array"], required);
     check_array_items!("blocking_records", ["object"]);
     check_types!("next_action", ["string"], required);
-    check_enum!(
+    assert_schema_enum(
+        &schema,
+        properties,
         "next_action",
-        [
-            "advance late stage",
-            "finish branch",
-            "close current task",
-            "continue execution",
-            "runtime diagnostic required",
-            "request final review",
-            "execution reentry required",
-            "hand off",
-            "pivot / return to planning",
-            "refresh test plan",
-            "repair review state / reenter execution",
-            "resolve release blocker",
-            "run QA",
-            "run verification",
-            "wait for external review result"
-        ]
+        PUBLIC_NEXT_ACTION_VALUES,
+        &mut issues,
+        &mut missing_fields,
     );
     check_types!("recommended_command", ["string"], optional);
-    assert_schema_pointer_enum(
+    match schema
+        .pointer("/$defs/RequiredFollowUpSchema")
+        .and_then(|value| schema_enum_set(&schema, value))
+    {
+        Some(values) if values.contains("record_handoff") => {}
+        Some(values) => issues.push(format!(
+            "RequiredFollowUpSchema enum should include record_handoff compatibility metadata, got {values:?}"
+        )),
+        None => issues.push(String::from(
+            "RequiredFollowUpSchema is missing a usable enum definition",
+        )),
+    }
+    assert_schema_pointer_description_contains(
         &schema,
         "/$defs/RequiredFollowUpSchema",
         &[
-            "execution_reentry",
-            "repair_review_state",
-            "request_external_review",
-            "run_verification",
-            "advance_late_stage",
-            "resolve_release_blocker",
-            "record_handoff",
+            "Required follow-up intent token",
+            "record_handoff is compatibility metadata",
+            "not executable",
         ],
+        &mut issues,
+    );
+    assert_schema_pointer_value(
+        &schema,
+        "/$defs/RequiredFollowUpSchema/description",
+        Value::String(REQUIRED_FOLLOW_UP_SCHEMA_DESCRIPTION.to_owned()),
+        &mut issues,
+    );
+    assert_schema_pointer_value(
+        &schema,
+        "/$defs/PublicCommandTemplate/properties/command_kind/description",
+        Value::String(PUBLIC_COMMAND_TEMPLATE_KIND_SCHEMA_DESCRIPTION.to_owned()),
         &mut issues,
     );
     check_types!("recording_context", ["object"], optional);
@@ -1009,21 +1369,13 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     assert_schema_pointer_enum(
         &schema,
         "/$defs/PublicExecutionCommandContext/properties/command_kind",
-        &["begin", "complete", "reopen"],
+        PUBLIC_EXECUTION_COMMAND_KIND_VALUES,
         &mut issues,
     );
     assert_schema_pointer_enum(
         &schema,
         "/$defs/PublicRepairTarget/properties/command_kind",
-        &[
-            "begin",
-            "complete",
-            "reopen",
-            "transfer",
-            "close-current-task",
-            "repair-review-state",
-            "advance-late-stage",
-        ],
+        PUBLIC_REPAIR_TARGET_COMMAND_KIND_VALUES,
         &mut issues,
     );
     assert_schema_pointer_required(
@@ -1314,6 +1666,33 @@ fn checked_in_workflow_schemas_match_generated_output() {
     let checked_in_handoff_json: Value = serde_json::from_str(&checked_in_handoff)
         .expect("checked-in workflow-handoff schema should parse");
     assert_eq!(generated_handoff_json, checked_in_handoff_json);
+    let mut handoff_issues = Vec::new();
+    assert_schema_pointer_value(
+        &generated_handoff_json,
+        "/$defs/RequiredFollowUpSchema/description",
+        Value::String(REQUIRED_FOLLOW_UP_SCHEMA_DESCRIPTION.to_owned()),
+        &mut handoff_issues,
+    );
+    assert_schema_pointer_description_contains(
+        &generated_handoff_json,
+        "/$defs/RequiredFollowUpSchema",
+        &[
+            "Required follow-up intent token",
+            "record_handoff is compatibility metadata",
+            "not executable",
+        ],
+        &mut handoff_issues,
+    );
+    assert_schema_pointer_value(
+        &generated_handoff_json,
+        "/$defs/PublicCommandTemplate/properties/command_kind/description",
+        Value::String(PUBLIC_COMMAND_TEMPLATE_KIND_SCHEMA_DESCRIPTION.to_owned()),
+        &mut handoff_issues,
+    );
+    assert!(
+        handoff_issues.is_empty(),
+        "workflow-handoff RequiredFollowUpSchema should describe record_handoff as a non-command transfer intent: {handoff_issues:?}"
+    );
 
     let generated_operator = fs::read_to_string(schemas_dir.join("workflow-operator.schema.json"))
         .expect("generated workflow-operator schema should read");
@@ -1327,278 +1706,120 @@ fn checked_in_workflow_schemas_match_generated_output() {
     assert_eq!(generated_operator_json, checked_in_operator_json);
 }
 
-const TASK8_PUBLIC_SCHEMA_BASELINE_FILES: &[&str] = &[
-    "plan-contract-analyze.schema.json",
-    "plan-contract-packet.schema.json",
-    "workflow-status.schema.json",
-    "workflow-operator.schema.json",
-    "plan-execution-status.schema.json",
-];
-
-const TASK8_SCHEMA_SHAPE_DEPTH: usize = 4;
-
-fn task8_required_public_schema_semantic_fields(schema_name: &str) -> &'static [&'static str] {
-    match schema_name {
-        "plan-contract-analyze" => &[
-            "contract_state",
-            "diagnostics",
-            "execution_topology_valid",
-            "parallel_lane_ownership_valid",
-            "plan_fidelity_review",
-            "reason_codes",
-            "task_context_sufficient",
-            "task_contract_valid",
-            "task_done_when_deterministic",
-        ],
-        "plan-contract-packet" => &[
-            "constraints",
-            "done_when",
-            "file_entries",
-            "file_scope",
-            "packet_fingerprint",
-            "plan_fingerprint",
-            "requirement_ids",
-            "source_spec_fingerprint",
-            "task_number",
-            "task_title",
-        ],
-        "workflow-status" => &[
-            "diagnostics",
-            "next_skill",
-            "plan_fidelity_review",
-            "reason_codes",
-            "status",
-        ],
-        "workflow-operator" => &[
-            "blocking_reason_codes",
-            "execution_command_context",
-            "next_action",
-            "next_public_action",
-            "phase",
-            "phase_detail",
-            "recommended_command",
-            "recording_context",
-            "review_state_status",
-        ],
-        "plan-execution-status" => &[
-            "blocking_reason_codes",
-            "execution_command_context",
-            "next_action",
-            "next_public_action",
-            "phase",
-            "phase_detail",
-            "reason_codes",
-            "recommended_command",
-            "recording_context",
-            "review_state_status",
-        ],
-        _ => panic!("unknown Task 8 public schema baseline `{schema_name}`"),
-    }
-}
-
-fn string_set_json(values: BTreeSet<String>) -> Value {
-    Value::Array(values.into_iter().map(Value::String).collect())
-}
-
-fn object_keys_json(value: Option<&serde_json::Map<String, Value>>) -> Value {
-    string_set_json(
-        value
-            .into_iter()
-            .flatten()
-            .map(|(key, _)| key)
-            .map(|key| key.to_owned())
-            .collect(),
-    )
-}
-
-fn resolved_schema_variants_or_self<'a>(schema: &'a Value, value: &'a Value) -> Vec<&'a Value> {
-    schema_resolved_variants(schema, value)
-        .or_else(|| resolve_local_schema_ref(schema, value).map(|resolved| vec![resolved]))
-        .unwrap_or_else(|| vec![value])
-}
-
-fn schema_shape_required_json(variants: &[&Value]) -> Value {
-    string_set_json(
-        variants
-            .iter()
-            .filter_map(|variant| variant.get("required").and_then(Value::as_array))
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect(),
-    )
-}
-
-fn schema_shape_properties_json(schema: &Value, variants: &[&Value], depth: usize) -> Value {
-    if depth == 0 {
-        return Value::Object(Default::default());
-    }
-    let mut properties: BTreeMap<String, Value> = BTreeMap::new();
-    for variant in variants {
-        let Some(variant_properties) = variant.get("properties").and_then(Value::as_object) else {
-            continue;
-        };
-        for (name, property) in variant_properties {
-            let signature = schema_shape_signature(schema, property, depth - 1);
-            match properties.get(name).cloned() {
-                Some(existing) if existing == signature => {}
-                Some(existing) => {
-                    properties.insert(
-                        name.clone(),
-                        json!({
-                            "variants": [existing, signature]
-                        }),
-                    );
-                }
-                None => {
-                    properties.insert(name.clone(), signature);
-                }
-            }
-        }
-    }
-    json!(properties)
-}
-
-fn schema_shape_items_json(schema: &Value, variants: &[&Value], depth: usize) -> Value {
-    if depth == 0 {
-        return Value::Null;
-    }
-    let mut items = variants
-        .iter()
-        .filter_map(|variant| variant.get("items"))
-        .map(|item| schema_shape_signature(schema, item, depth - 1))
-        .collect::<Vec<_>>();
-    items.sort_by_key(Value::to_string);
-    items.dedup();
-    match items.as_slice() {
-        [] => Value::Null,
-        [item] => item.clone(),
-        _ => Value::Array(items),
-    }
-}
-
-fn schema_shape_keyword_value(variants: &[&Value], keyword: &str) -> Value {
-    let mut values = variants
-        .iter()
-        .filter_map(|variant| variant.get(keyword))
-        .cloned()
-        .collect::<Vec<_>>();
-    values.sort_by_key(Value::to_string);
-    values.dedup();
-    match values.as_slice() {
-        [] => Value::Null,
-        [value] => value.clone(),
-        _ => Value::Array(values),
-    }
-}
-
-fn schema_shape_signature(schema: &Value, value: &Value, depth: usize) -> Value {
-    let variants = resolved_schema_variants_or_self(schema, value);
-    let types = schema_type_set(schema, value).unwrap_or_default();
-    let enum_values = schema_enum_set(schema, value).unwrap_or_default();
-    json!({
-        "types": string_set_json(types),
-        "enum": string_set_json(enum_values),
-        "const": schema_shape_keyword_value(&variants, "const"),
-        "required": schema_shape_required_json(&variants),
-        "additional_properties": schema_shape_keyword_value(&variants, "additionalProperties"),
-        "min_properties": schema_shape_keyword_value(&variants, "minProperties"),
-        "properties": schema_shape_properties_json(schema, &variants, depth),
-        "items": schema_shape_items_json(schema, &variants, depth),
-    })
-}
-
-fn schema_property_signature(schema: &Value, property: &Value) -> Value {
-    schema_shape_signature(schema, property, TASK8_SCHEMA_SHAPE_DEPTH)
-}
-
-fn public_schema_signature(schema_name: &str, schema: &Value) -> Value {
-    let mut issues = Vec::new();
-    let required = schema_required_fields(schema, &mut issues);
-    assert!(
-        issues.is_empty(),
-        "public schema signature should read required fields cleanly: {issues:?}"
-    );
-    let properties = schema_properties(schema);
-    let semantic_fields = task8_required_public_schema_semantic_fields(schema_name)
-        .iter()
-        .map(|field| {
-            let property = properties.get(*field).unwrap_or_else(|| {
-                panic!(
-                    "Task 8 public schema `{schema_name}` is missing required semantic field `{field}`"
-                )
-            });
-            ((*field).to_owned(), schema_property_signature(schema, property))
-        })
-        .collect::<BTreeMap<_, _>>();
-    json!({
-        "$schema": schema.get("$schema").cloned().unwrap_or(Value::Null),
-        "title": schema.get("title").cloned().unwrap_or(Value::Null),
-        "required": string_set_json(required),
-        "properties": object_keys_json(Some(properties)),
-        "semantic_fields": semantic_fields,
-    })
-}
-
-fn task8_public_schema_signature_snapshot() -> Value {
-    let schemas_dir = unique_temp_dir("task8-public-schema-baselines");
-    write_contract_schemas(&schemas_dir).expect("contract schemas should write");
+#[test]
+fn public_route_schemas_pin_typed_command_authority_fields() {
+    let schemas_dir = unique_temp_dir("public-route-schema-contracts");
     write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
     write_plan_execution_schema(&schemas_dir).expect("plan execution schema should write");
 
-    let mut signatures = BTreeMap::new();
-    for file_name in TASK8_PUBLIC_SCHEMA_BASELINE_FILES {
-        let generated = fs::read_to_string(schemas_dir.join(file_name))
-            .unwrap_or_else(|error| panic!("generated schema `{file_name}` should read: {error}"));
-        let checked_in = fs::read_to_string(repo_fixture_path(&format!("schemas/{file_name}")))
-            .unwrap_or_else(|error| {
-                panic!("checked-in schema `schemas/{file_name}` should read: {error}")
-            });
-        let generated_json: Value = serde_json::from_str(&generated)
-            .unwrap_or_else(|error| panic!("generated schema `{file_name}` should parse: {error}"));
-        let checked_in_json: Value = serde_json::from_str(&checked_in).unwrap_or_else(|error| {
-            panic!("checked-in schema `schemas/{file_name}` should parse: {error}")
-        });
-        assert_eq!(
-            generated_json, checked_in_json,
-            "Task 8 public schema baseline `{file_name}` must match generated output before snapshot comparison"
-        );
-        let schema_name = file_name.trim_end_matches(".schema.json");
-        signatures.insert(
-            schema_name.to_owned(),
-            public_schema_signature(schema_name, &generated_json),
-        );
-    }
-
-    json!({
-        "schema_version": 1,
-        "schemas": signatures
-    })
-}
-
-fn write_pretty_json(path: &Path, value: &Value) {
-    let mut source = serde_json::to_string_pretty(value).expect("json fixture should serialize");
-    source.push('\n');
-    fs::write(path, source).expect("json fixture should write");
-}
-
-#[test]
-fn task8_public_schema_baseline_signatures_match_generated_schemas() {
-    let actual = task8_public_schema_signature_snapshot();
-    let fixture_path =
-        repo_fixture_path("tests/fixtures/runtime-goldens/public-schema-signatures.json");
-    if std::env::var_os("FEATUREFORGE_UPDATE_RUNTIME_GOLDENS").is_some() {
-        write_pretty_json(&fixture_path, &actual);
-        panic!(
-            "updated tests/fixtures/runtime-goldens/public-schema-signatures.json; review the fixture diff, then rerun without FEATUREFORGE_UPDATE_RUNTIME_GOLDENS"
-        );
-    }
-    let expected: Value = serde_json::from_str(
-        &fs::read_to_string(&fixture_path)
-            .expect("Task 8 public schema signature fixture should read"),
+    let plan_schema: Value = serde_json::from_str(
+        &fs::read_to_string(schemas_dir.join("plan-execution-status.schema.json"))
+            .expect("generated plan execution schema should read"),
     )
-    .expect("Task 8 public schema signature fixture should parse");
-    assert_eq!(actual, expected);
+    .expect("generated plan execution schema should parse");
+    let operator_schema: Value = serde_json::from_str(
+        &fs::read_to_string(schemas_dir.join("workflow-operator.schema.json"))
+            .expect("generated workflow operator schema should read"),
+    )
+    .expect("generated workflow operator schema should parse");
+    let handoff_schema: Value = serde_json::from_str(
+        &fs::read_to_string(schemas_dir.join("workflow-handoff.schema.json"))
+            .expect("generated workflow handoff schema should read"),
+    )
+    .expect("generated workflow handoff schema should parse");
+
+    let mut issues = Vec::new();
+    assert_public_route_schema_contract(
+        "plan-execution-status",
+        &plan_schema,
+        &["string", "null"],
+        &["string"],
+        true,
+        &mut issues,
+    );
+    assert_public_route_schema_contract(
+        "workflow-operator",
+        &operator_schema,
+        &["string"],
+        &["string"],
+        true,
+        &mut issues,
+    );
+    assert_public_route_schema_contract(
+        "workflow-handoff",
+        &handoff_schema,
+        &["string"],
+        &["string", "null"],
+        false,
+        &mut issues,
+    );
+    assert_schema_pointer_description_contains(
+        &plan_schema,
+        "/properties/recommended_public_command_argv",
+        &[
+            "Diagnostic mirror of operator-derived public command argv",
+            "workflow operator JSON remains the normal executable route authority",
+        ],
+        &mut issues,
+    );
+    assert_schema_pointer_value(
+        &plan_schema,
+        "/properties/recommended_public_command_argv/description",
+        Value::String(
+            PLAN_EXECUTION_STATUS_RECOMMENDED_PUBLIC_COMMAND_ARGV_SCHEMA_DESCRIPTION.to_owned(),
+        ),
+        &mut issues,
+    );
+    assert_schema_pointer_description_contains(
+        &handoff_schema,
+        "/$defs/PlanExecutionStatus/properties/next_action",
+        &[
+            "Embedded execution-status",
+            "display-only route diagnostic label",
+            "not executable",
+        ],
+        &mut issues,
+    );
+    assert_schema_pointer_description_contains(
+        &handoff_schema,
+        "/$defs/PlanExecutionStatus/properties/recommended_public_command_argv",
+        &[
+            "Embedded execution-status diagnostic mirror of operator-derived public command argv",
+            "workflow operator JSON remains the normal executable route authority",
+        ],
+        &mut issues,
+    );
+    for (schema_label, schema) in [
+        ("workflow-operator", &operator_schema),
+        ("workflow-handoff", &handoff_schema),
+    ] {
+        assert_schema_pointer_description_contains(
+            schema,
+            "/properties/next_public_action",
+            &[
+                "Optional display-only public route action summary",
+                "not executable",
+            ],
+            &mut issues,
+        );
+        if schema_label == "workflow-handoff" {
+            assert_schema_pointer_description_contains(
+                schema,
+                "/$defs/PlanExecutionStatus/properties/next_public_action",
+                &[
+                    "Embedded execution-status",
+                    "display-only compatibility object",
+                    "not executable",
+                ],
+                &mut issues,
+            );
+        }
+    }
+
+    assert!(
+        issues.is_empty(),
+        "public route schemas should preserve typed command authority fields and display-only recommended_command descriptions: {issues:?}"
+    );
 }
 
 #[test]
@@ -2035,7 +2256,7 @@ fn public_flow_tests_do_not_materialize_public_argv_templates() {
 }
 
 #[test]
-fn runtime_golden_diagnostic_routes_do_not_publish_reentry_next_action() {
+fn runtime_golden_diagnostic_routes_are_diagnostic_only() {
     let golden_routes: Value = serde_json::from_str(
         &fs::read_to_string(repo_fixture_path(
             "tests/fixtures/runtime-goldens/public-runtime-routes.json",
@@ -2075,17 +2296,6 @@ fn runtime_golden_diagnostic_routes_do_not_publish_reentry_next_action() {
             if !diagnostic {
                 continue;
             }
-            let has_executable_argv = route
-                .get("recommended_public_command_argv")
-                .and_then(Value::as_array)
-                .is_some_and(|argv| !argv.is_empty());
-            let has_required_inputs = route
-                .get("required_inputs")
-                .and_then(Value::as_array)
-                .is_some_and(|inputs| !inputs.is_empty());
-            if has_executable_argv || has_required_inputs {
-                continue;
-            }
             if route.get("next_action").and_then(Value::as_str)
                 != Some("runtime diagnostic required")
             {
@@ -2103,16 +2313,64 @@ fn runtime_golden_diagnostic_routes_do_not_publish_reentry_next_action() {
                     route.get("recommended_public_command_argv")
                 ));
             }
+            if !route
+                .get("recommended_public_command_template")
+                .is_none_or(Value::is_null)
+            {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed template={:?}",
+                    route.get("recommended_public_command_template")
+                ));
+            }
+            if route
+                .get("required_inputs")
+                .and_then(Value::as_array)
+                .is_some_and(|inputs| !inputs.is_empty())
+            {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed required_inputs={:?}",
+                    route.get("required_inputs")
+                ));
+            }
             if !route.get("required_follow_up").is_none_or(Value::is_null) {
                 violations.push(format!(
                     "{label}:{surface} diagnostic route exposed required_follow_up={:?}",
                     route.get("required_follow_up")
                 ));
             }
+            if !route
+                .get("execution_command_context")
+                .is_none_or(Value::is_null)
+            {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed execution_command_context={:?}",
+                    route.get("execution_command_context")
+                ));
+            }
+            if !route.get("recording_context").is_none_or(Value::is_null) {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed recording_context={:?}",
+                    route.get("recording_context")
+                ));
+            }
             if !route.get("next_public_action").is_none_or(Value::is_null) {
                 violations.push(format!(
                     "{label}:{surface} diagnostic route exposed next_public_action={:?}",
                     route.get("next_public_action")
+                ));
+            }
+            if route
+                .get("blockers")
+                .and_then(Value::as_array)
+                .is_some_and(|blockers| {
+                    blockers.iter().any(|blocker| {
+                        !blocker.get("next_public_action").is_none_or(Value::is_null)
+                            || !blocker.get("required_follow_up").is_none_or(Value::is_null)
+                    })
+                })
+            {
+                violations.push(format!(
+                    "{label}:{surface} diagnostic route exposed blocker action/follow-up"
                 ));
             }
             if route
@@ -2136,16 +2394,17 @@ fn runtime_golden_diagnostic_routes_do_not_publish_reentry_next_action() {
                 ));
             }
             if route
-                .get("blockers")
+                .get("blocking_records")
                 .and_then(Value::as_array)
-                .is_some_and(|blockers| {
-                    blockers.iter().any(|blocker| {
-                        !blocker.get("next_public_action").is_none_or(Value::is_null)
-                    })
+                .is_some_and(|records| {
+                    records
+                        .iter()
+                        .any(|record| !record.get("required_follow_up").is_none_or(Value::is_null))
                 })
             {
                 violations.push(format!(
-                    "{label}:{surface} diagnostic route exposed blocker next_public_action"
+                    "{label}:{surface} diagnostic route exposed blocking_record required_follow_up={:?}",
+                    route.get("blocking_records")
                 ));
             }
         }
@@ -2243,23 +2502,7 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
     assert_schema_pointer_enum(
         &generated_operator_json,
         "/$defs/WorkflowOperatorNextActionSchema",
-        &[
-            "advance late stage",
-            "finish branch",
-            "close current task",
-            "continue execution",
-            "runtime diagnostic required",
-            "request final review",
-            "execution reentry required",
-            "hand off",
-            "pivot / return to planning",
-            "refresh test plan",
-            "repair review state / reenter execution",
-            "resolve release blocker",
-            "run QA",
-            "run verification",
-            "wait for external review result",
-        ],
+        PUBLIC_NEXT_ACTION_VALUES,
         &mut issues,
     );
     assert_schema_pointer_required(
@@ -2426,6 +2669,15 @@ fn workflow_handoff_schema_pins_public_routing_fields() {
         required.contains("semantic_workspace_tree_id"),
         "workflow-handoff schema should require semantic_workspace_tree_id"
     );
+    assert_schema_pointer_description_contains(
+        &generated_handoff_json,
+        "/properties/recommended_skill",
+        &[
+            "authoritative route skill",
+            "not a separate routing authority",
+        ],
+        &mut issues,
+    );
     let next_public_action_types =
         schema_type_set(&generated_handoff_json, &properties["next_public_action"])
             .expect("workflow-handoff next_public_action should expose a resolvable type");
@@ -2447,6 +2699,10 @@ fn workflow_handoff_schema_pins_public_routing_fields() {
     assert!(
         raw_workspace_tree_id_types.contains("string"),
         "workflow-handoff raw_workspace_tree_id should admit string payloads, got {raw_workspace_tree_id_types:?}"
+    );
+    assert!(
+        issues.is_empty(),
+        "workflow-handoff schema should expose required routing descriptions and enums cleanly: {issues:?}"
     );
 }
 

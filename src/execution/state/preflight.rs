@@ -1,4 +1,18 @@
-use super::*;
+use super::{
+    ExecutionContext, FailureClass, GateResult, GateState, JsonFailure, NoteState,
+    PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT, Path, PreflightWriteAuthorityState, RepoSafetyCheckArgs,
+    RepoSafetyIntentArg, RepoSafetyRuntime, RepoSafetyWriteTargetArg, RunIdentitySnapshot,
+    WORKFLOW_OPERATOR_JSON_DISPLAY_COMMAND, active_step, authoritative_run_identity_present,
+    ensure_preflight_authoritative_bootstrap,
+    ensure_preflight_authoritative_bootstrap_with_existing_authority,
+    load_execution_read_scope_for_mutation, persist_preflight_acceptance,
+    preflight_acceptance_for_context, preflight_requires_authoritative_handoff,
+    preflight_requires_authoritative_mutation_recovery, preflight_write_authority_state,
+    repo_has_non_runtime_projection_tracked_changes, repo_has_unresolved_index_entries,
+    repo_head_detached, repo_safety_preflight_message, repo_safety_preflight_remediation,
+    repo_safety_stage,
+};
+use crate::execution::command_eligibility::PublicCommandKind;
 
 pub fn validate_expected_fingerprint(
     context: &ExecutionContext,
@@ -24,12 +38,20 @@ enum PublicIntentPreflightReadiness {
 
 fn public_intent_preflight_readiness(
     context: &ExecutionContext,
-    command_name: &str,
+    command_kind: PublicCommandKind,
 ) -> Result<PublicIntentPreflightReadiness, JsonFailure> {
-    if authoritative_run_identity_present(context)?
-        || preflight_acceptance_for_context(context)?.is_some()
-    {
+    let command_name = command_kind.public_mutation_token();
+    if authoritative_run_identity_present(context)? {
         return Ok(PublicIntentPreflightReadiness::AlreadyReady);
+    }
+    if preflight_acceptance_for_context(context)?.is_some() {
+        if command_kind == PublicCommandKind::Begin {
+            return Ok(PublicIntentPreflightReadiness::AllowedNeedsPersistence);
+        }
+        return Err(public_intent_preflight_requires_begin_error(
+            context,
+            command_kind,
+        ));
     }
 
     let read_scope = load_execution_read_scope_for_mutation(
@@ -46,8 +68,8 @@ fn public_intent_preflight_readiness(
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
             format!(
-                "{command_name} is blocked because the reduced runtime state did not expose an execution preflight gate. Run {} to recover a public route.",
-                repair_review_state_preflight_recovery_command(context)
+                "{command_name} is blocked because the reduced runtime state did not expose an execution preflight gate. Re-query {}; {PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT}.",
+                workflow_operator_preflight_recovery_route(context)
             ),
         ));
     };
@@ -63,28 +85,29 @@ fn public_intent_preflight_readiness(
 
 pub fn validate_public_intent_preflight_allowed(
     context: &ExecutionContext,
-    command_name: &str,
+    command_kind: PublicCommandKind,
 ) -> Result<(), JsonFailure> {
-    public_intent_preflight_readiness(context, command_name).map(|_| ())
+    public_intent_preflight_readiness(context, command_kind).map(|_| ())
 }
 
 pub fn public_intent_preflight_persistence_required(
     context: &ExecutionContext,
-    command_name: &str,
+    command_kind: PublicCommandKind,
 ) -> Result<bool, JsonFailure> {
     Ok(matches!(
-        public_intent_preflight_readiness(context, command_name)?,
+        public_intent_preflight_readiness(context, command_kind)?,
         PublicIntentPreflightReadiness::AllowedNeedsPersistence
     ))
 }
 
 fn ensure_public_intent_preflight_bootstrap_is_safe(
     context: &ExecutionContext,
-    command_name: &str,
+    command_kind: PublicCommandKind,
 ) -> Result<(), JsonFailure> {
-    if command_name == "begin" {
+    if command_kind == PublicCommandKind::Begin {
         return Ok(());
     }
+    let command_name = command_kind.public_mutation_token();
     if let Some(step) = context.steps.iter().find(|step| {
         matches!(
             step.note_state,
@@ -95,34 +118,73 @@ fn ensure_public_intent_preflight_bootstrap_is_safe(
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
             format!(
-                "{command_name} cannot bootstrap execution preflight while Task {} Step {} is {note_state}. Run {} to recover a public route.",
+                "{command_name} cannot bootstrap execution preflight while Task {} Step {} is {note_state}. Re-query {}; {PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT}.",
                 step.task_number,
                 step.step_number,
-                repair_review_state_preflight_recovery_command(context)
+                workflow_operator_preflight_recovery_route(context)
             ),
         ));
     }
     Ok(())
 }
 
-fn repair_review_state_preflight_recovery_command(context: &ExecutionContext) -> String {
+fn workflow_operator_preflight_recovery_route(context: &ExecutionContext) -> String {
     format!(
-        "featureforge plan execution repair-review-state --plan {}",
+        "`{WORKFLOW_OPERATOR_JSON_DISPLAY_COMMAND}` for `{}`",
         context.plan_rel
+    )
+}
+
+fn public_intent_preflight_requires_begin_error(
+    context: &ExecutionContext,
+    command_kind: PublicCommandKind,
+) -> JsonFailure {
+    let command_name = command_kind.public_mutation_token();
+    JsonFailure::new(
+        FailureClass::ExecutionStateNotReady,
+        format!(
+            "{command_name} requires execution preflight and run identity established by begin before it can mutate runtime state. Re-query {}; {PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT}.",
+            workflow_operator_preflight_recovery_route(context)
+        ),
     )
 }
 
 fn persist_allowed_public_intent_preflight(
     context: &ExecutionContext,
-    command_name: &str,
+    command_kind: PublicCommandKind,
     use_existing_authority: bool,
 ) -> Result<(), JsonFailure> {
-    if authoritative_run_identity_present(context)?
-        || preflight_acceptance_for_context(context)?.is_some()
-    {
+    if authoritative_run_identity_present(context)? {
         return Ok(());
     }
-    ensure_public_intent_preflight_bootstrap_is_safe(context, command_name)?;
+    if command_kind != PublicCommandKind::Begin {
+        return Err(public_intent_preflight_requires_begin_error(
+            context,
+            command_kind,
+        ));
+    }
+    if let Some(acceptance) = preflight_acceptance_for_context(context)? {
+        ensure_public_intent_preflight_bootstrap_is_safe(context, command_kind)?;
+        let run_identity = RunIdentitySnapshot {
+            execution_run_id: acceptance.execution_run_id.clone(),
+            source_plan_path: context.plan_rel.clone(),
+            source_plan_revision: context.plan_document.plan_revision,
+        };
+        return if use_existing_authority {
+            ensure_preflight_authoritative_bootstrap_with_existing_authority(
+                &context.runtime,
+                run_identity,
+                acceptance.chunk_id,
+            )
+        } else {
+            ensure_preflight_authoritative_bootstrap(
+                &context.runtime,
+                run_identity,
+                acceptance.chunk_id,
+            )
+        };
+    }
+    ensure_public_intent_preflight_bootstrap_is_safe(context, command_kind)?;
     let acceptance = persist_preflight_acceptance(context)?;
     let run_identity = RunIdentitySnapshot {
         execution_run_id: acceptance.execution_run_id.clone(),
@@ -146,47 +208,46 @@ fn persist_allowed_public_intent_preflight(
 
 pub fn ensure_public_intent_preflight_ready(
     context: &ExecutionContext,
-    command_name: &str,
+    command_kind: PublicCommandKind,
 ) -> Result<(), JsonFailure> {
-    validate_public_intent_preflight_allowed(context, command_name)?;
-    persist_allowed_public_intent_preflight(context, command_name, false)
+    match public_intent_preflight_readiness(context, command_kind)? {
+        PublicIntentPreflightReadiness::AlreadyReady => Ok(()),
+        PublicIntentPreflightReadiness::AllowedNeedsPersistence => {
+            if command_kind == PublicCommandKind::Begin {
+                return persist_allowed_public_intent_preflight(context, command_kind, false);
+            }
+            Err(public_intent_preflight_requires_begin_error(
+                context,
+                command_kind,
+            ))
+        }
+    }
 }
 
 pub fn validate_public_begin_preflight_allowed(
     context: &ExecutionContext,
 ) -> Result<(), JsonFailure> {
-    validate_public_intent_preflight_allowed(context, "begin")
+    validate_public_intent_preflight_allowed(context, PublicCommandKind::Begin)
 }
 
 pub fn public_begin_preflight_persistence_required(
     context: &ExecutionContext,
 ) -> Result<bool, JsonFailure> {
-    public_intent_preflight_persistence_required(context, "begin")
+    public_intent_preflight_persistence_required(context, PublicCommandKind::Begin)
 }
 
 pub fn persist_allowed_public_begin_preflight(
     context: &ExecutionContext,
 ) -> Result<(), JsonFailure> {
-    persist_allowed_public_intent_preflight(context, "begin", true)
+    persist_allowed_public_intent_preflight(context, PublicCommandKind::Begin, true)
 }
 
 pub fn ensure_public_begin_preflight_ready(context: &ExecutionContext) -> Result<(), JsonFailure> {
-    validate_public_intent_preflight_allowed(context, "begin")?;
-    if authoritative_run_identity_present(context)?
-        || preflight_acceptance_for_context(context)?.is_some()
-    {
+    validate_public_intent_preflight_allowed(context, PublicCommandKind::Begin)?;
+    if authoritative_run_identity_present(context)? {
         return Ok(());
     }
-    let acceptance = persist_preflight_acceptance(context)?;
-    ensure_preflight_authoritative_bootstrap(
-        &context.runtime,
-        RunIdentitySnapshot {
-            execution_run_id: acceptance.execution_run_id.clone(),
-            source_plan_path: context.plan_rel.clone(),
-            source_plan_revision: context.plan_document.plan_revision,
-        },
-        acceptance.chunk_id,
-    )
+    persist_allowed_public_intent_preflight(context, PublicCommandKind::Begin, false)
 }
 
 fn failure_class_for_gate_result(gate: &GateResult) -> FailureClass {
@@ -228,12 +289,12 @@ pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
     }
 
     match preflight_requires_authoritative_handoff(context) {
-        Ok(true) => gate.fail(
-            FailureClass::ExecutionStateNotReady,
-            "authoritative_handoff_required",
-            "Execution preflight cannot continue while authoritative harness state requires handoff.",
-            "Publish a valid handoff (or clear handoff_required in authoritative state) before retrying preflight.",
-        ),
+	        Ok(true) => gate.fail(
+	            FailureClass::ExecutionStateNotReady,
+	            "authoritative_handoff_required",
+	            "Execution preflight cannot continue while authoritative harness state requires handoff.",
+	            "Follow workflow operator guidance to publish the required handoff through the public workflow route, then retry preflight.",
+	        ),
         Ok(false) => {}
         Err(error) => gate.fail(
             FailureClass::ExecutionStateNotReady,
@@ -247,7 +308,10 @@ pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
             FailureClass::ExecutionStateNotReady,
             "authoritative_mutation_recovery_required",
             "Execution preflight cannot continue while authoritative artifact history is ahead of persisted harness state.",
-            "Recover interrupted authoritative mutation state before retrying preflight.",
+            format!(
+                "Stop and report this runtime diagnostic unless workflow operator JSON already exposes a typed public route. Run `{WORKFLOW_OPERATOR_JSON_DISPLAY_COMMAND}` for `{}` only to confirm that route; {PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT}; do not manually repair authoritative artifacts.",
+                context.plan_rel
+            ),
         ),
         Ok(false) => {}
         Err(error) => gate.fail(

@@ -2,7 +2,7 @@
 
 - 2026-03-29: Review remediation can strand execution when a later parked step blocks reopening earlier completed work.
   Root cause: `reopen` refuses a second interrupted step while `begin` refuses to bypass a different interrupted step.
-  Fix: clear or avoid the downstream parked note before reopening the earlier completed step.
+  Fix: follow workflow/operator's routed recovery for the downstream interruption; reopen earlier work only when the returned public argv/template names that path.
   Prevention / verification: keep task-boundary review/verification contract coverage and runtime cycle-break checks in place so review-before-advance execution stays enforced.
   Source: `docs/archive/featureforge/execution-evidence/2026-03-30-featureforge-session-entry-removal-r1-evidence.md`, `docs/archive/featureforge/plans/2026-03-30-featureforge-session-entry-removal.md`
 

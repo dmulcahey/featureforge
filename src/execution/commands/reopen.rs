@@ -27,15 +27,11 @@ pub fn reopen(
     let reopen_status = public_status_from_context_with_shared_routing(runtime, &context, false)?;
     require_public_mutation(
         &reopen_status,
-        PublicMutationRequest {
-            kind: PublicMutationKind::Reopen,
-            task: Some(request.task),
-            step: Some(request.step),
-            expect_execution_fingerprint: Some(request.expect_execution_fingerprint.clone()),
-            transfer_mode: None,
-            transfer_scope: None,
-            command_name: "reopen",
-        },
+        PublicMutationRequest::reopen(
+            request.task,
+            request.step,
+            Some(request.expect_execution_fingerprint.clone()),
+        ),
         FailureClass::ExecutionStateNotReady,
     )?;
     if let Some(existing_interrupted_index) = context
@@ -108,7 +104,7 @@ pub fn reopen(
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         persist_authoritative_state_with_rollback(
             authoritative_state,
-            "reopen",
+            PublicCommandKind::Reopen.public_mutation_token(),
             &context.plan_abs,
             &context.plan_source,
             &context.evidence_abs,

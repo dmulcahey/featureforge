@@ -38,18 +38,13 @@ _featureforge_exec_public_argv() {
     "$_FEATUREFORGE_BIN" "$@"
     return $?
   fi
-  "$@"
+  echo "featureforge: refusing non-featureforge public argv: $1" >&2
+  return 2
 }
 ```
-## Installed Control Plane
+## Runtime Route Reference
 
-Live FeatureForge workflow routing is install-owned:
-- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
-- do not route live workflow commands through `./bin/featureforge`
-- do not route live workflow commands through `target/debug/featureforge`
-- do not route live workflow commands through `cargo run`
-
-When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
+This skill does not own live workflow routing. If another workflow surface gives you workflow/operator JSON, follow `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` instead of reconstructing route law here.
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -199,7 +194,7 @@ digraph brainstorming {
 
 - Write the validated design (spec) to `docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
-- Use that repo-relative spec path consistently in later review and workflow/operator commands; do not route through compatibility-only `workflow expect` or `workflow sync` helpers.
+- Use that repo-relative spec path consistently in later review and workflow/operator commands; do not route through retired workflow command surfaces.
 
 - Every spec MUST include these header lines immediately below the title:
 
@@ -236,7 +231,7 @@ Before writing or updating the spec file on disk, run the shared repo-safety pre
 $_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:brainstorming --task-id <current-spec-write> --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md --write-target spec-artifact-write
 ```
 
-- If the helper returns `allowed`, continue with the spec write.
+- If the repo-safety check returns `allowed`, continue with the spec write.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact spec-writing scope.
 - If the user explicitly approves writing this spec on the current protected branch, approve the full protected-branch task scope you intend to use, including the spec path and any follow-on git targets that are part of the same task slice:
 
@@ -287,4 +282,4 @@ A browser-based companion for showing mockups, diagrams, and visual options duri
 A question about a UI topic is not automatically a visual question. "What does personality mean in this context?" is a conceptual question — use the terminal. "Which wizard layout works better?" is a visual question — use the browser.
 
 If they agree to the companion, read the detailed guide before proceeding:
-`visual-companion.md`
+skill-local `visual-companion.md`

@@ -15,7 +15,9 @@ mod repo_template_support;
 mod runtime_support;
 
 use bin_support::compiled_featureforge_path;
-use featureforge::cli::plan_execution::{ReviewOutcomeArg, StatusArgs};
+use featureforge::cli::plan_execution::{
+    ExecutionModeArg, ReopenArgs, ReviewOutcomeArg, StatusArgs,
+};
 use featureforge::contracts::harness::{WorktreeLease, WorktreeLeaseState};
 use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
 use featureforge::contracts::spec::parse_spec_file;
@@ -24,7 +26,7 @@ use featureforge::execution::authority::{
     write_authoritative_worktree_lease_artifact,
 };
 use featureforge::execution::command_eligibility::{
-    MutationEligibilitySource, PublicCommand, PublicCommandKind, PublicMutationKind,
+    MutationEligibilitySource, PublicAdvanceLateStageMode, PublicCommand, PublicCommandKind,
     PublicMutationRequest, PublicTransferMode, decide_public_mutation,
 };
 use featureforge::execution::final_review::resolve_release_base_branch;
@@ -38,6 +40,9 @@ use featureforge::execution::internal_args::{
     RecordHandoffArgs, RecordQaArgs, RecordReleaseReadinessArgs, RecordReviewDispatchArgs,
     ReviewDispatchScopeArg,
 };
+use featureforge::execution::mutate;
+use featureforge::execution::phase;
+use featureforge::execution::public_repair_target_reasons::PublicRepairTargetReason;
 use featureforge::execution::semantic_identity::{
     branch_definition_identity_for_context, task_definition_identity_for_task,
 };
@@ -54,11 +59,12 @@ use internal_only_direct_helpers::internal_runtime_direct as plan_execution_dire
 use runtime_support::execution_runtime;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use tempfile::TempDir;
 
 type HarnessStateFixtureInput<'a> = (
@@ -118,6 +124,34 @@ fn assert_task_closure_required_inputs(surface: &Value, task: u32) {
             }
         ]),
         "task-closure route should expose typed missing inputs: {surface}"
+    );
+}
+
+fn remediation_mentions_full_typed_operator_contract(remediation: &str) -> bool {
+    remediation.contains("workflow operator")
+        && remediation.contains("recommended_public_command_argv")
+        && remediation.contains("required_inputs")
+        && remediation.contains("recommended_public_command_template.input_bindings")
+        && remediation.contains("stop and report the route diagnostic")
+}
+
+fn assert_authoritative_mutation_recovery_remediation_is_diagnostic_stop(
+    preflight: &Value,
+    context: &str,
+) {
+    let remediation = preflight["diagnostics"][0]["remediation"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{context} should expose diagnostic remediation: {preflight}"));
+    assert!(
+        remediation.contains("Stop and report this runtime diagnostic")
+            && remediation.contains("workflow operator JSON")
+            && remediation.contains("recommended_public_command_argv")
+            && remediation.contains("required_inputs")
+            && remediation.contains("recommended_public_command_template.input_bindings")
+            && remediation.contains("stop and report the route diagnostic")
+            && remediation.contains("do not manually repair authoritative artifacts")
+            && !remediation.contains("Recover interrupted authoritative mutation state"),
+        "{context} should stop on the diagnostic and only permit typed public route re-query, got {remediation:?}"
     );
 }
 
@@ -379,13 +413,17 @@ fn parse_failure_json(output: &Output, context: &str) -> Value {
 }
 
 fn write_file(path: &Path, contents: &str) {
+    write_file_raw(path, contents);
+    if is_execution_harness_state_path(path) {
+        sync_or_clear_execution_harness_event_log(path, contents);
+    }
+}
+
+fn write_file_raw(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("parent directory should be creatable");
     }
     fs::write(path, contents).expect("file should be writable");
-    if is_execution_harness_state_path(path) {
-        sync_or_clear_execution_harness_event_log(path, contents);
-    }
 }
 
 fn sync_or_clear_execution_harness_event_log(path: &Path, contents: &str) {
@@ -1157,16 +1195,46 @@ fn replace_manual_verification_with_command(repo: &Path, command: &str, summary:
 }
 
 fn current_head_sha(repo: &Path) -> String {
-    runtime_current_head_sha(repo).expect("head sha should resolve")
+    read_loose_head_sha(repo)
+        .or_else(|| runtime_current_head_sha(repo).ok())
+        .expect("head sha should resolve")
 }
 
 fn current_head_tree_sha(repo: &Path) -> String {
-    discover_repository(repo)
+    static HEAD_TREE_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let head_sha = current_head_sha(repo);
+    let cache = HEAD_TREE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(tree_sha) = cache
+        .lock()
+        .expect("head tree cache should not be poisoned")
+        .get(&head_sha)
+        .cloned()
+    {
+        return tree_sha;
+    }
+    let tree_sha = discover_repository(repo)
         .expect("head tree helper should discover repository")
         .head_tree_id_or_empty()
         .expect("head tree helper should resolve HEAD tree")
         .detach()
-        .to_string()
+        .to_string();
+    cache
+        .lock()
+        .expect("head tree cache should not be poisoned")
+        .insert(head_sha, tree_sha.clone());
+    tree_sha
+}
+
+fn read_loose_head_sha(repo: &Path) -> Option<String> {
+    let head = fs::read_to_string(repo.join(".git").join("HEAD")).ok()?;
+    let trimmed = head.trim();
+    if let Some(reference) = trimmed.strip_prefix("ref: ") {
+        return fs::read_to_string(repo.join(".git").join(reference))
+            .ok()
+            .map(|sha| sha.trim().to_owned())
+            .filter(|sha| !sha.is_empty());
+    }
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
@@ -1181,7 +1249,7 @@ fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
 }
 
 fn branch_contract_identity(repo: &Path, state_dir: &Path, plan_rel: &str) -> String {
-    let runtime = execution_runtime(repo, state_dir);
+    let runtime = fixture_execution_runtime(repo, state_dir);
     let context = load_execution_context(&runtime, Path::new(plan_rel))
         .expect("plan_execution semantic branch identity fixture should load execution context");
     branch_definition_identity_for_context(&context)
@@ -1193,7 +1261,7 @@ fn task_contract_identity(
     plan_rel: &str,
     task_number: u32,
 ) -> String {
-    let runtime = execution_runtime(repo, state_dir);
+    let runtime = fixture_execution_runtime(repo, state_dir);
     let context = load_execution_context(&runtime, Path::new(plan_rel))
         .expect("plan_execution semantic task identity fixture should load execution context");
     task_definition_identity_for_task(&context, task_number)
@@ -1201,7 +1269,53 @@ fn task_contract_identity(
         .expect("plan_execution semantic task identity fixture should exist")
 }
 
+fn fixture_execution_runtime(repo: &Path, state: &Path) -> ExecutionRuntime {
+    let branch_name = branch_name(repo);
+    ExecutionRuntime {
+        repo_root: repo.to_path_buf(),
+        git_dir: repo.join(".git"),
+        safe_branch: normalize_identifier(&branch_name),
+        branch_name,
+        repo_slug: repo_slug(repo),
+        state_dir: state.to_path_buf(),
+    }
+}
+
+#[derive(Clone)]
+struct CachedRepoSlug {
+    repo_slug: String,
+}
+
+static REPO_SLUG_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedRepoSlug>>> = OnceLock::new();
+
+fn cached_repo_slug(repo: &Path) -> CachedRepoSlug {
+    let key = repo.to_path_buf();
+    let cache = REPO_SLUG_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(slug) = cache
+        .lock()
+        .expect("repo slug cache should not be poisoned")
+        .get(&key)
+        .cloned()
+    {
+        return slug;
+    }
+    let discovered = discover_slug_identity(repo);
+    let slug = CachedRepoSlug {
+        repo_slug: discovered.repo_slug,
+    };
+    cache
+        .lock()
+        .expect("repo slug cache should not be poisoned")
+        .insert(key, slug.clone());
+    slug
+}
+
 fn branch_name(repo: &Path) -> String {
+    if let Ok(head) = fs::read_to_string(repo.join(".git").join("HEAD"))
+        && let Some(branch) = head.trim().strip_prefix("ref: refs/heads/")
+    {
+        return branch.to_owned();
+    }
     discover_slug_identity(repo).branch_name
 }
 
@@ -1210,7 +1324,7 @@ fn normalize_identifier(value: &str) -> String {
 }
 
 fn repo_slug(repo: &Path) -> String {
-    discover_slug_identity(repo).repo_slug
+    cached_repo_slug(repo).repo_slug
 }
 
 fn write_unresolved_index_entries(repo: &Path) {
@@ -1296,7 +1410,7 @@ fn write_event_synced_authoritative_harness_state(
     purpose: &str,
 ) {
     let state_path = harness_state_file_path(repo, state);
-    write_file(
+    write_file_raw(
         &state_path,
         &serde_json::to_string_pretty(payload).unwrap_or_else(|error| {
             panic!("harness state should serialize for {purpose}: {error}")
@@ -1341,7 +1455,7 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
             .entry("strategy_reset_required".to_string())
             .or_insert_with(|| Value::Bool(false));
     }
-    write_file(
+    write_file_raw(
         &state_path,
         &serde_json::to_string_pretty(&merged).expect("harness state payload should serialize"),
     );
@@ -3466,13 +3580,13 @@ fn internal_only_compatibility_mutation_oracle_uses_typed_public_command_and_rej
     let wrong_task_decision = decide_public_mutation(
         &status,
         &PublicMutationRequest {
-            kind: PublicMutationKind::Begin,
+            kind: PublicCommandKind::Begin,
             task: Some(99),
             step: legal_request.step,
             expect_execution_fingerprint: legal_request.expect_execution_fingerprint.clone(),
             transfer_mode: None,
             transfer_scope: None,
-            command_name: "begin",
+            advance_late_stage_mode: None,
         },
     );
     assert!(!wrong_task_decision.allowed, "got {wrong_task_decision:?}");
@@ -3480,13 +3594,13 @@ fn internal_only_compatibility_mutation_oracle_uses_typed_public_command_and_rej
     let wrong_step_decision = decide_public_mutation(
         &status,
         &PublicMutationRequest {
-            kind: PublicMutationKind::Begin,
+            kind: PublicCommandKind::Begin,
             task: legal_request.task,
             step: Some(99),
             expect_execution_fingerprint: legal_request.expect_execution_fingerprint.clone(),
             transfer_mode: None,
             transfer_scope: None,
-            command_name: "begin",
+            advance_late_stage_mode: None,
         },
     );
     assert!(!wrong_step_decision.allowed, "got {wrong_step_decision:?}");
@@ -3494,13 +3608,13 @@ fn internal_only_compatibility_mutation_oracle_uses_typed_public_command_and_rej
     let wrong_fingerprint_decision = decide_public_mutation(
         &status,
         &PublicMutationRequest {
-            kind: PublicMutationKind::Begin,
+            kind: PublicCommandKind::Begin,
             task: legal_request.task,
             step: legal_request.step,
             expect_execution_fingerprint: Some(String::from("wrong-fingerprint")),
             transfer_mode: None,
             transfer_scope: None,
-            command_name: "begin",
+            advance_late_stage_mode: None,
         },
     );
     assert!(
@@ -3562,13 +3676,13 @@ fn internal_only_compatibility_mutation_oracle_allows_explicit_repair_reopen_tar
     let decision = decide_public_mutation(
         &status,
         &PublicMutationRequest {
-            kind: PublicMutationKind::Reopen,
+            kind: PublicCommandKind::Reopen,
             task: Some(1),
             step: Some(1),
             expect_execution_fingerprint: None,
             transfer_mode: None,
             transfer_scope: None,
-            command_name: "reopen",
+            advance_late_stage_mode: None,
         },
     );
 
@@ -3590,7 +3704,7 @@ fn internal_only_compatibility_mutation_oracle_rejects_external_wait_before_repa
         .status(&plan_status_args(PLAN_REL))
         .expect("status should load for external wait oracle coverage");
     status.execution_command_context = None;
-    status.phase_detail = String::from("final_review_outcome_pending");
+    status.phase_detail = String::from(phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING);
     status.state_kind = String::from("waiting_external_input");
     status.external_wait_state = Some(String::from("waiting_for_external_review_result"));
     let stale_repair_command = PublicCommand::RepairReviewState {
@@ -3602,13 +3716,13 @@ fn internal_only_compatibility_mutation_oracle_rejects_external_wait_before_repa
     let repair_decision = decide_public_mutation(
         &status,
         &PublicMutationRequest {
-            kind: PublicMutationKind::RepairReviewState,
+            kind: PublicCommandKind::RepairReviewState,
             task: None,
             step: None,
             expect_execution_fingerprint: None,
             transfer_mode: None,
             transfer_scope: None,
-            command_name: "repair-review-state",
+            advance_late_stage_mode: None,
         },
     );
     assert!(!repair_decision.allowed, "got {repair_decision:?}");
@@ -3620,13 +3734,13 @@ fn internal_only_compatibility_mutation_oracle_rejects_external_wait_before_repa
     let advance_decision = decide_public_mutation(
         &status,
         &PublicMutationRequest {
-            kind: PublicMutationKind::AdvanceLateStage,
+            kind: PublicCommandKind::AdvanceLateStage,
             task: None,
             step: None,
             expect_execution_fingerprint: None,
             transfer_mode: None,
             transfer_scope: None,
-            command_name: "advance-late-stage",
+            advance_late_stage_mode: Some(PublicAdvanceLateStageMode::FinalReview),
         },
     );
     assert!(!advance_decision.allowed, "got {advance_decision:?}");
@@ -3657,13 +3771,13 @@ fn internal_only_compatibility_mutation_oracle_rejects_external_wait_before_repa
     let targeted_repair_decision = decide_public_mutation(
         &status,
         &PublicMutationRequest {
-            kind: PublicMutationKind::RepairReviewState,
+            kind: PublicCommandKind::RepairReviewState,
             task: None,
             step: None,
             expect_execution_fingerprint: None,
             transfer_mode: None,
             transfer_scope: None,
-            command_name: "repair-review-state",
+            advance_late_stage_mode: None,
         },
     );
     assert!(
@@ -3678,13 +3792,13 @@ fn internal_only_compatibility_mutation_oracle_rejects_external_wait_before_repa
     let targeted_advance_decision = decide_public_mutation(
         &status,
         &PublicMutationRequest {
-            kind: PublicMutationKind::AdvanceLateStage,
+            kind: PublicCommandKind::AdvanceLateStage,
             task: None,
             step: None,
             expect_execution_fingerprint: None,
             transfer_mode: None,
             transfer_scope: None,
-            command_name: "advance-late-stage",
+            advance_late_stage_mode: Some(PublicAdvanceLateStageMode::FinalReview),
         },
     );
     assert!(
@@ -3716,13 +3830,13 @@ fn internal_only_compatibility_mutation_oracle_accepts_concrete_handoff_required
     let allowed = decide_public_mutation(
         &status,
         &PublicMutationRequest {
-            kind: PublicMutationKind::Transfer,
+            kind: PublicCommandKind::Transfer,
             task: None,
             step: None,
             expect_execution_fingerprint: None,
             transfer_mode: Some(PublicTransferMode::WorkflowHandoff),
             transfer_scope: Some(String::from("task")),
-            command_name: "transfer",
+            advance_late_stage_mode: None,
         },
     );
     assert!(allowed.allowed, "got {allowed:?}");
@@ -3730,16 +3844,75 @@ fn internal_only_compatibility_mutation_oracle_accepts_concrete_handoff_required
     let rejected = decide_public_mutation(
         &status,
         &PublicMutationRequest {
-            kind: PublicMutationKind::Transfer,
+            kind: PublicCommandKind::Transfer,
             task: None,
             step: None,
             expect_execution_fingerprint: None,
             transfer_mode: Some(PublicTransferMode::WorkflowHandoff),
             transfer_scope: Some(String::from("team")),
-            command_name: "transfer",
+            advance_late_stage_mode: None,
         },
     );
     assert!(!rejected.allowed, "got {rejected:?}");
+}
+
+#[test]
+fn internal_only_compatibility_mutation_oracle_rejects_late_stage_repair_target_mode_bypass() {
+    let (repo_dir, state_dir) = init_repo("mutation-oracle-late-stage-mode-bypass");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    complete_task_1_step_1_for_mutation_oracle_fixture(repo, state);
+    let runtime = execution_runtime(repo, state);
+    let mut status = runtime
+        .status(&plan_status_args(PLAN_REL))
+        .expect("status should load for late-stage mode oracle coverage");
+    status.execution_command_context = None;
+    status.external_wait_state = None;
+    status.phase_detail = String::from(phase::DETAIL_QA_RECORDING_REQUIRED);
+    status.state_kind = String::from("actionable_public_command");
+    let routed_command = PublicCommand::AdvanceLateStage {
+        plan: String::from(PLAN_REL),
+        mode: PublicAdvanceLateStageMode::Qa,
+    };
+    status.recommended_command = Some(routed_command.to_display_command());
+    status.recommended_public_command = Some(routed_command.clone());
+    status.public_repair_targets = vec![PublicRepairTarget {
+        command_kind: String::from("advance-late-stage"),
+        task: None,
+        step: None,
+        reason_code: String::from("test_late_stage_repair_target"),
+        source_record_id: Some(String::from("test-source")),
+        expires_when_fingerprint_changes: true,
+    }];
+
+    let allowed = decide_public_mutation(
+        &status,
+        &routed_command
+            .to_mutation_request()
+            .expect("routed late-stage command should convert to a mutation request"),
+    );
+    assert!(allowed.allowed, "got {allowed:?}");
+
+    let wrong_mode = decide_public_mutation(
+        &status,
+        &PublicMutationRequest {
+            kind: PublicCommandKind::AdvanceLateStage,
+            task: None,
+            step: None,
+            expect_execution_fingerprint: None,
+            transfer_mode: None,
+            transfer_scope: None,
+            advance_late_stage_mode: Some(PublicAdvanceLateStageMode::ReleaseReadiness),
+        },
+    );
+    assert!(
+        !wrong_mode.allowed,
+        "mode-mismatched advance-late-stage must not be authorized by a broad public repair target: {wrong_mode:?}"
+    );
+    assert_ne!(
+        wrong_mode.source,
+        Some(MutationEligibilitySource::ExplicitRepairTarget)
+    );
 }
 
 #[test]
@@ -4997,7 +5170,7 @@ fn internal_only_unit_rebuild_evidence_output(
     match args {
         Ok(args) => {
             let runtime = execution_runtime(repo, state);
-            match featureforge::execution::mutate::rebuild_evidence(&runtime, &args) {
+            match mutate::rebuild_evidence(&runtime, &args) {
                 Ok(output) => Output {
                     status: exit_status_from_code(output.exit_code()),
                     stdout: if args.json {
@@ -5381,120 +5554,136 @@ fn internal_only_unit_reconcile_review_state_json(
     }
 }
 
-fn run_recommended_command_json(
-    repo: &Path,
-    state: &Path,
-    recommended_command: &str,
-    context: &str,
-) -> Value {
-    let command_parts = recommended_command.split_whitespace().collect::<Vec<_>>();
+fn assert_non_authoritative_display_summary_if_present(surface: &Value, context: &str) {
+    let Some(summary) = surface["recommended_command"].as_str() else {
+        return;
+    };
+    let is_workflow_operator_requery =
+        summary.starts_with("featureforge workflow operator --plan ");
     assert!(
-        command_parts.len() >= 3,
-        "{context}: recommended command should include a featureforge command group, got {recommended_command:?}"
+        !summary.trim().is_empty()
+            && !summary.contains("pass|fail")
+            && !summary.contains("<path>")
+            && (is_workflow_operator_requery || !summary.contains('<'))
+            && (!is_workflow_operator_requery || summary.contains("<approved-plan-path>")),
+        "{context}: display summary should be non-empty and either placeholder-free or the safe workflow/operator placeholder, got {summary:?}"
     );
-    assert_eq!(
-        command_parts[0], "featureforge",
-        "{context}: recommended command should start with featureforge, got {recommended_command:?}"
-    );
+}
 
-    match (command_parts[1], command_parts[2]) {
-        ("plan", "execution") => {
+fn assert_operator_requery_route(surface: &Value, context: &str) {
+    assert_eq!(
+        surface["rederive_via_workflow_operator"],
+        Value::Bool(true),
+        "{context}: should route through structured workflow-operator requery metadata: {surface}"
+    );
+    assert_non_authoritative_display_summary_if_present(surface, context);
+    if let Some(argv) = surface["recommended_public_command_argv"].as_array() {
+        assert_eq!(
+            argv.iter()
+                .take(4)
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>(),
+            vec!["featureforge", "workflow", "operator", "--plan"],
+            "{context}: operator requery argv should keep command tokens stable: {surface}"
+        );
+        assert_ne!(
+            argv.get(4).and_then(Value::as_str),
+            Some("<approved-plan-path>"),
+            "{context}: typed argv must keep the concrete plan path while display summary uses the placeholder"
+        );
+        assert!(
+            argv.iter().any(|part| part.as_str() == Some("--json")),
+            "{context}: operator requery argv should request JSON: {surface}"
+        );
+        if surface["recommended_command"]
+            .as_str()
+            .is_some_and(|summary| summary.contains("--external-review-result-ready"))
+        {
             assert!(
-                command_parts.len() >= 4,
-                "{context}: plan-execution recommendation should include a subcommand, got {recommended_command:?}"
+                argv.iter()
+                    .any(|part| part.as_str() == Some("--external-review-result-ready")),
+                "{context}: external-ready display summary and typed argv should agree: {surface}"
             );
-            if command_parts[3] == "close-current-task"
-                && (recommended_command.contains("pass|fail")
-                    || recommended_command.contains("<path>"))
-            {
-                let plan = command_parts
-                    .windows(2)
-                    .find(|window| window[0] == "--plan")
-                    .map(|window| window[1])
-                    .expect("close-current-task recommendation should include --plan");
-                let task = command_parts
-                    .windows(2)
-                    .find(|window| window[0] == "--task")
-                    .map(|window| window[1])
-                    .unwrap_or("1");
-                let dispatch_id = command_parts
-                    .windows(2)
-                    .find(|window| command_arg_matches_parts(window[0], &["--dispatch", "-id"]))
-                    .map(|window| window[1]);
-                assert!(
-                    dispatch_id.is_none(),
-                    "{context}: public recommended command must not include hidden dispatch lineage flags"
-                );
-                let review_summary = write_summary_fixture_file(
-                    repo,
-                    "docs/featureforge/execution-evidence/recommended-close-current-task-review-summary.md",
-                    &format!("close-current-task summary generated for {context}\n"),
-                );
-                let verification_summary = write_summary_fixture_file(
-                    repo,
-                    "docs/featureforge/execution-evidence/recommended-close-current-task-verification-summary.md",
-                    &format!("close-current-task verification generated for {context}\n"),
-                );
-                let mut args = vec![
-                    String::from("close-current-task"),
-                    String::from("--plan"),
-                    plan.to_owned(),
-                    String::from("--task"),
-                    task.to_owned(),
-                ];
-                args.extend([
-                    String::from("--review-result"),
-                    String::from("pass"),
-                    String::from("--review-summary-file"),
-                    review_summary,
-                    String::from("--verification-result"),
-                    String::from("pass"),
-                    String::from("--verification-summary-file"),
-                    verification_summary,
-                ]);
-                let args_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-                run_rust_json(repo, state, &args_refs, context)
-            } else {
-                run_rust_json(repo, state, &command_parts[3..], context)
-            }
         }
-        ("workflow", "record-pivot") => {
-            let mut args = command_parts[1..]
-                .iter()
-                .map(|part| (*part).to_owned())
-                .collect::<Vec<_>>();
-            if let Some(reason_flag_index) = args.iter().position(|part| part == "--reason")
-                && let Some(reason) = args.get_mut(reason_flag_index + 1)
-                && *reason == "<reason>"
-            {
-                *reason = String::from("repair replay after rebase drift");
-            }
-            if !args.iter().any(|part| part == "--json") {
-                args.push(String::from("--json"));
-            }
-            let args_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-            run_featureforge_json(repo, state, &args_refs, context)
-        }
-        _ => panic!(
-            "{context}: unsupported recommended command namespace, got {recommended_command:?}"
-        ),
     }
 }
 
-fn command_arg_matches_parts(arg: &str, parts: &[&str]) -> bool {
-    let Some((first, rest)) = parts.split_first() else {
-        return arg.is_empty();
-    };
-    let Some(mut remaining) = arg.strip_prefix(first) else {
-        return false;
-    };
-    for part in rest {
-        let Some(next_remaining) = remaining.strip_prefix(part) else {
-            return false;
-        };
-        remaining = next_remaining;
-    }
-    remaining.is_empty()
+fn recommended_public_plan_execution_args(surface: &Value, context: &str) -> Vec<String> {
+    let parts = surface["recommended_public_command_argv"]
+        .as_array()
+        .unwrap_or_else(|| {
+            panic!("{context}: should expose typed recommended_public_command_argv: {surface}")
+        })
+        .iter()
+        .map(|part| {
+            part.as_str()
+                .unwrap_or_else(|| {
+                    panic!("{context}: typed recommended_public_command_argv entries should be strings: {surface}")
+                })
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        parts.len() >= 4,
+        "{context}: should expose a full typed public plan-execution argv, got {parts:?}"
+    );
+    assert_eq!(
+        &parts[..3],
+        ["featureforge", "plan", "execution"],
+        "{context}: should expose typed public plan-execution argv, got {parts:?}"
+    );
+    parts[3..].to_vec()
+}
+
+fn assert_typed_plan_execution_public_command(surface: &Value, command: &str, context: &str) {
+    let args = recommended_public_plan_execution_args(surface, context);
+    assert_eq!(
+        args.first().map(String::as_str),
+        Some(command),
+        "{context}: should expose typed public {command} argv, got {args:?}"
+    );
+    assert!(
+        args.windows(2)
+            .any(|window| window[0] == "--plan" && window[1] == PLAN_REL),
+        "{context}: typed public {command} argv should carry the plan path, got {args:?}"
+    );
+}
+
+fn assert_typed_begin_task_step_argv(surface: &Value, task: u32, step: u32, context: &str) {
+    let args = recommended_public_plan_execution_args(surface, context);
+    assert_eq!(
+        args.first().map(String::as_str),
+        Some("begin"),
+        "{context}: should expose typed public begin argv, got {args:?}"
+    );
+    assert!(
+        args.windows(2)
+            .any(|window| window[0] == "--plan" && window[1] == PLAN_REL),
+        "{context}: typed public begin argv should carry the plan path, got {args:?}"
+    );
+    let task = task.to_string();
+    let step = step.to_string();
+    assert!(
+        args.windows(2)
+            .any(|window| window[0] == "--task" && window[1] == task),
+        "{context}: typed public begin argv should target Task {task}, got {args:?}"
+    );
+    assert!(
+        args.windows(2)
+            .any(|window| window[0] == "--step" && window[1] == step),
+        "{context}: typed public begin argv should target Step {step}, got {args:?}"
+    );
+}
+
+fn run_recommended_public_plan_execution_argv_json(
+    repo: &Path,
+    state: &Path,
+    surface: &Value,
+    context: &str,
+) -> Value {
+    let args = recommended_public_plan_execution_args(surface, context);
+    let args_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_rust_json(repo, state, &args_refs, context)
 }
 
 fn is_structured_runtime_result(value: &Value) -> bool {
@@ -5596,8 +5785,21 @@ fn internal_only_compatibility_direct_helper_attempts_explicit_internal_and_publ
         concat!("internal reconcile", "-review-state path"),
     );
     assert!(
-        reconcile["recommended_command"].is_null() || reconcile["recommended_command"].is_string()
+        reconcile.get("recommended_command").is_none(),
+        "reconcile-review-state prose must not use the display-command compatibility field: {reconcile}"
     );
+    if let Some(instruction) = reconcile["operator_requery_instruction"].as_str() {
+        assert!(
+            instruction.contains("recommended_public_command_argv")
+                && instruction.contains("recommended_public_command_template"),
+            "reconcile-review-state should expose typed-route follow-up through operator_requery_instruction: {reconcile}"
+        );
+    } else {
+        assert!(
+            reconcile.get("error_class").is_some(),
+            "reconcile-review-state should emit either reconciliation output or a structured error: {reconcile}"
+        );
+    }
 
     let record_review_dispatch = internal_only_runtime_review_dispatch_authority_json(
         repo,
@@ -5786,11 +5988,9 @@ fn internal_only_compatibility_canonical_gate_review_continues_past_newer_siblin
         gate_review,
         concat!("gate", "-review")
     );
-    assert_eq!(
-        gate_review["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution advance-late-stage --plan {PLAN_REL}"
-        ))
+    assert_non_authoritative_display_summary_if_present(
+        &gate_review,
+        "gate review with newer sibling approved spec",
     );
 }
 
@@ -5837,9 +6037,9 @@ fn internal_only_compatibility_canonical_gate_review_dispatch_routes_final_revie
             .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| {
                 diagnostic["remediation"]
                     .as_str()
-                    .is_some_and(|remediation| remediation.contains("advance-late-stage"))
+                    .is_some_and(remediation_mentions_full_typed_operator_contract)
             })),
-        "{} should surface branch-closure refresh remediation text when final-review scope lacks a current branch closure: {}",
+        "{} should route branch-closure refresh remediation through workflow-operator typed public argv when final-review scope lacks a current branch closure: {}",
         gate_review_dispatch,
         concat!("record", "-review-dispatch")
     );
@@ -6574,6 +6774,16 @@ fn internal_only_compatibility_task_boundary_status_reports_prior_task_current_c
     assert_eq!(status_before_task2["active_step"], Value::Null);
     assert_eq!(status_before_task2["blocking_task"], Value::from(1));
     assert_eq!(status_before_task2["blocking_step"], Value::Null);
+    assert_eq!(
+        status_before_task2["phase_detail"],
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
+        "missing unit-review artifacts before current closure should keep the public close-current-task route, got {status_before_task2}"
+    );
+    assert_eq!(
+        status_before_task2["next_action"],
+        Value::from("close current task"),
+        "missing unit-review artifacts before current closure must not force execution reentry, got {status_before_task2}"
+    );
     assert!(
         status_before_task2["reason_codes"]
             .as_array()
@@ -6583,6 +6793,23 @@ fn internal_only_compatibility_task_boundary_status_reports_prior_task_current_c
                     .any(|code| code.as_str() == Some("prior_task_current_closure_missing"))
             }),
         "status should surface prior_task_current_closure_missing for task-boundary block, got {status_before_task2}"
+    );
+    assert!(
+        status_before_task2["reason_codes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(
+                status_before_task2["projection_diagnostics"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+            )
+            .all(|code| !matches!(
+                code.as_str(),
+                Some("task_review_artifact_malformed" | "task_review_not_independent")
+            )),
+        "missing unit-review artifacts are not route authority and should not create artifact repair diagnostics, got {status_before_task2}"
     );
 }
 
@@ -7244,7 +7471,7 @@ fn internal_only_compatibility_complete_allows_cross_task_legacy_backfill_after_
 }
 
 #[test]
-fn internal_only_compatibility_task_boundary_status_reports_prior_task_verification_missing_after_review_closure()
+fn internal_only_compatibility_task_boundary_status_projects_prior_task_verification_missing_after_review_closure()
  {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-task-boundary-status-verification-receipt-missing");
@@ -7405,16 +7632,26 @@ fn internal_only_compatibility_task_boundary_status_reports_prior_task_verificat
     assert!(
         status_before_task2["reason_codes"]
             .as_array()
+            .is_none_or(|codes| {
+                !codes
+                    .iter()
+                    .any(|code| code.as_str() == Some("prior_task_verification_missing"))
+            }),
+        "status reason_codes must not expose prior_task_verification_missing as route authority, got {status_before_task2}"
+    );
+    assert!(
+        status_before_task2["projection_diagnostics"]
+            .as_array()
             .is_some_and(|codes| {
                 codes
                     .iter()
                     .any(|code| code.as_str() == Some("prior_task_verification_missing"))
             }),
-        "status should surface prior_task_verification_missing when current-task closure recording still lacks verification, got {status_before_task2}"
+        "status should preserve prior_task_verification_missing as projection diagnostics when current-task closure recording still lacks verification, got {status_before_task2}"
     );
     assert_eq!(
         status_before_task2["phase_detail"],
-        Value::from("task_closure_recording_ready")
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY)
     );
     assert_eq!(
         status_before_task2["next_action"],
@@ -7468,8 +7705,8 @@ fn internal_only_compatibility_task_boundary_begin_allows_missing_prior_task_rev
 }
 
 #[test]
-fn internal_only_compatibility_task_boundary_begin_blocks_when_current_closure_overlay_requires_repair()
- {
+fn internal_only_compatibility_task_boundary_begin_allows_recoverable_current_closure_overlay_loss()
+{
     let (repo_dir, state_dir) =
         init_repo("plan-execution-task-boundary-current-closure-overlay-restore-required");
     let repo = repo_dir.path();
@@ -7507,7 +7744,7 @@ fn internal_only_compatibility_task_boundary_begin_blocks_when_current_closure_o
         ),
     );
 
-    let begin_task2_step1 = internal_only_run_rust_direct_or_cli(
+    let begin_task2_step1 = internal_only_run_rust_json_direct_or_cli(
         repo,
         state,
         &[
@@ -7523,21 +7760,10 @@ fn internal_only_compatibility_task_boundary_begin_blocks_when_current_closure_o
             "--expect-execution-fingerprint",
             &execution_fingerprint,
         ],
-        "begin task 2 step 1 should fail closed when current task-closure overlays must be repaired first",
+        "begin task 2 step 1 should accept recoverable current task-closure overlay loss",
     );
-    let failure = parse_failure_json(
-        &begin_task2_step1,
-        "task-boundary begin current closure overlay repair gate",
-    );
-    assert_eq!(failure["error_class"], "ExecutionStateNotReady");
-    assert!(
-        failure["message"].as_str().is_some_and(|message| {
-            message.contains("current_task_closure_overlay_restore_required")
-                && (message.contains("repair_review_state")
-                    || message.contains("repair-review-state"))
-        }),
-        "begin should route missing current task-closure overlays through repair-review-state before cross-task advancement, got {failure}"
-    );
+    assert_eq!(begin_task2_step1["active_task"], Value::from(2));
+    assert_eq!(begin_task2_step1["active_step"], Value::from(1));
 }
 
 fn assert_task_boundary_current_closure_repair_status(
@@ -7553,7 +7779,7 @@ fn assert_task_boundary_current_closure_repair_status(
     );
     assert_eq!(
         status["phase_detail"],
-        Value::from("execution_reentry_required")
+        Value::from(phase::DETAIL_EXECUTION_REENTRY_REQUIRED)
     );
     assert!(
         status["reason_codes"].as_array().is_some_and(|codes| {
@@ -7563,11 +7789,14 @@ fn assert_task_boundary_current_closure_repair_status(
         }),
         "status should surface {expected_reason_code}, got {status}"
     );
-    assert_eq!(
-        status["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution repair-review-state --plan {PLAN_REL}"
-        ))
+    assert_typed_plan_execution_public_command(
+        status,
+        "repair-review-state",
+        "task-boundary current-closure repair status",
+    );
+    assert_non_authoritative_display_summary_if_present(
+        status,
+        "task-boundary current-closure repair status",
     );
 }
 
@@ -7823,7 +8052,7 @@ fn internal_only_compatibility_task_boundary_repair_review_state_routes_malforme
     );
     assert_eq!(
         repair_json["phase_detail"],
-        Value::from("task_closure_recording_ready"),
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         "repair-review-state should surface close-current-task as the next action after clearing malformed current-closure state"
     );
     assert_task_closure_required_inputs(&repair_json, 1);
@@ -8054,7 +8283,7 @@ fn internal_only_compatibility_task_boundary_status_requires_execution_reentry_w
     );
     assert_eq!(
         repair_json["phase_detail"],
-        Value::from("task_closure_recording_ready"),
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         "repair-review-state should hand off to close-current-task after repairing invalid reviewed-surface provenance"
     );
     assert_task_closure_required_inputs(&repair_json, 1);
@@ -8069,7 +8298,7 @@ fn internal_only_compatibility_task_boundary_status_requires_execution_reentry_w
 }
 
 #[test]
-fn internal_only_compatibility_task_boundary_repair_review_state_restores_recoverable_current_closure_overlay_from_history()
+fn internal_only_compatibility_task_boundary_repair_review_state_leaves_recoverable_current_closure_overlay_diagnostic_only()
  {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-task-boundary-repair-current-closure-plan-revision-mismatch");
@@ -8115,25 +8344,29 @@ fn internal_only_compatibility_task_boundary_repair_review_state_restores_recove
         repo,
         state,
         &["repair-review-state", "--plan", PLAN_REL],
-        "repair-review-state should restore recoverable current task-closure overlay corruption from history",
+        "repair-review-state should leave recoverable current task-closure overlay corruption diagnostic-only",
     );
     assert_eq!(repair_json["action"], "blocked", "json: {repair_json}");
     assert_eq!(
         repair_json["required_follow_up"],
-        Value::Null,
+        Value::from("execution_reentry"),
         "json: {repair_json}"
     );
-    assert_task_closure_required_inputs(&repair_json, 1);
+    assert!(
+        repair_json["recommended_public_command_argv"]
+            .as_array()
+            .is_some_and(|argv| argv.iter().any(|part| part == "begin")
+                && argv
+                    .iter()
+                    .zip(argv.iter().skip(1))
+                    .any(|(flag, value)| flag == "--task" && value == "2")),
+        "repair-review-state should reproject the public begin route without requiring overlay repair, got {repair_json}"
+    );
     assert!(
         repair_json["actions_performed"]
             .as_array()
-            .is_some_and(|actions| actions
-                .iter()
-                .any(|action| action == "restored_current_task_closure_records")
-                && actions
-                    .iter()
-                    .any(|action| action == "cleared_current_task_closure_task_1")),
-        "repair-review-state should restore recoverable overlays and then clear stale current-closure truth before execution reentry, got {repair_json}"
+            .is_some_and(Vec::is_empty),
+        "recoverable overlay drift should not mutate runtime truth through repair-review-state, got {repair_json}"
     );
 
     let harness_state_json = read_authoritative_harness_state(
@@ -8141,11 +8374,10 @@ fn internal_only_compatibility_task_boundary_repair_review_state_restores_recove
         state,
         "repair-review-state invalid current closure result",
     );
-    assert!(
-        harness_state_json["current_task_closure_records"]
-            .as_object()
-            .is_some_and(|records| !records.contains_key("task-1")),
-        "repair-review-state should clear stale current task-closure truth after restoring history overlays, got {harness_state_json}"
+    assert_eq!(
+        harness_state_json["current_task_closure_records"]["task-1"]["source_plan_revision"],
+        Value::from(999),
+        "repair-review-state should not rewrite recoverable derived current task-closure overlays, got {harness_state_json}"
     );
     let task_closure_history = harness_state_json["task_closure_record_history"]
         .as_object()
@@ -8154,13 +8386,10 @@ fn internal_only_compatibility_task_boundary_repair_review_state_restores_recove
         .values()
         .find(|record| record["record_id"].as_str() == Some(closure_record_id.as_str()))
         .expect("repair should keep the prior task closure in history");
-    assert_eq!(
-        task_history_record["record_status"],
-        Value::from("stale_unreviewed")
-    );
+    assert_eq!(task_history_record["record_status"], Value::from("current"));
     assert_eq!(
         task_history_record["closure_status"],
-        Value::from("stale_unreviewed")
+        Value::from("current")
     );
     assert_eq!(
         harness_state_json["strategy_review_dispatch_lineage"]["task-1"]["dispatch_id"],
@@ -8221,7 +8450,7 @@ fn internal_only_compatibility_task_boundary_status_requires_repair_when_current
     );
     assert_eq!(
         repair_json["phase_detail"],
-        Value::from("task_closure_recording_ready"),
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         "repair-review-state should route to close-current-task after clearing invalid execution-run provenance"
     );
     assert_task_closure_required_inputs(&repair_json, 1);
@@ -8264,7 +8493,7 @@ fn internal_only_compatibility_task_boundary_repair_review_state_clears_stale_cu
     );
     assert_eq!(
         repair_json["phase_detail"],
-        Value::from("task_closure_recording_ready"),
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         "repair-review-state should expose close-current-task routing once stale current-closure truth is cleared, got {repair_json}"
     );
     assert!(
@@ -8367,7 +8596,7 @@ fn internal_only_compatibility_task_boundary_status_requires_execution_reentry_w
     );
     assert_eq!(
         status_before_task2["phase_detail"],
-        Value::from("execution_reentry_required")
+        Value::from(phase::DETAIL_EXECUTION_REENTRY_REQUIRED)
     );
     assert!(
         status_before_task2["reason_codes"]
@@ -8377,11 +8606,14 @@ fn internal_only_compatibility_task_boundary_status_requires_execution_reentry_w
                 .any(|code| { code.as_str() == Some("prior_task_current_closure_stale") })),
         "status should surface prior_task_current_closure_stale once a covered path drifts, got {status_before_task2}"
     );
-    assert_eq!(
-        status_before_task2["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution repair-review-state --plan {PLAN_REL}"
-        ))
+    assert_typed_plan_execution_public_command(
+        &status_before_task2,
+        "repair-review-state",
+        "status before task 2 begin with drifted prior-task closure",
+    );
+    assert_non_authoritative_display_summary_if_present(
+        &status_before_task2,
+        "status before task 2 begin with drifted prior-task closure",
     );
 }
 
@@ -8442,9 +8674,9 @@ fn internal_only_compatibility_record_review_dispatch_task_scope_blocks_when_req
             .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| {
                 diagnostic["remediation"]
                     .as_str()
-                    .is_some_and(|remediation| remediation.contains("repair-review-state"))
+                    .is_some_and(remediation_mentions_full_typed_operator_contract)
             })),
-        "blocked dispatch should route through repair-review-state before recording fresh lineage, got {blocked}"
+        "blocked dispatch should route through workflow-operator typed public argv before recording fresh lineage, got {blocked}"
     );
 
     let harness_state_after: Value = serde_json::from_str(
@@ -8460,7 +8692,7 @@ fn internal_only_compatibility_record_review_dispatch_task_scope_blocks_when_req
 }
 
 #[test]
-fn internal_only_compatibility_record_review_dispatch_task_scope_blocks_when_current_closure_overlay_requires_repair()
+fn internal_only_compatibility_record_review_dispatch_task_scope_blocks_when_history_backed_current_closure_exists()
  {
     let (repo_dir, state_dir) = init_repo(concat!(
         "plan-execution-record",
@@ -8506,7 +8738,7 @@ fn internal_only_compatibility_record_review_dispatch_task_scope_blocks_when_cur
         record_review_dispatch_task_args(PLAN_REL, 1),
         concat!(
             "record",
-            "-review-dispatch should fail closed when current task-closure overlays must be repaired first"
+            "-review-dispatch should fail closed when history-backed current task closure already exists"
         ),
     );
     assert_eq!(blocked["allowed"], Value::Bool(false));
@@ -8519,18 +8751,18 @@ fn internal_only_compatibility_record_review_dispatch_task_scope_blocks_when_cur
         blocked["reason_codes"].as_array().is_some_and(|codes| {
             codes
                 .iter()
-                .any(|code| code.as_str() == Some("current_task_closure_overlay_restore_required"))
+                .any(|code| code.as_str() == Some("task_current_closure_already_current"))
         }),
-        "blocked dispatch should surface the current task-closure overlay restore requirement, got {blocked}"
+        "blocked dispatch should treat history-backed current closure truth as already current, got {blocked}"
     );
     assert_eq!(
-        blocked["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution repair-review-state --plan {PLAN_REL}"
-        ))
+        blocked["code"],
+        Value::from("out_of_phase_requery_required")
     );
-    assert_eq!(blocked["code"], Value::Null);
-    assert_eq!(blocked["rederive_via_workflow_operator"], Value::Null);
+    assert_operator_requery_route(
+        &blocked,
+        "history-backed current task closure dispatch blocker",
+    );
 }
 
 #[test]
@@ -8570,10 +8802,7 @@ fn internal_only_compatibility_record_review_dispatch_task_scope_blocks_when_req
         blocked["code"],
         Value::from("out_of_phase_requery_required")
     );
-    assert_eq!(
-        blocked["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
-    );
+    assert_operator_requery_route(&blocked, "already-current task closure dispatch blocker");
     assert!(
         blocked["reason_codes"].as_array().is_some_and(|codes| {
             codes
@@ -8736,7 +8965,7 @@ fn internal_only_compatibility_task_boundary_status_reports_stale_prior_task_rev
     assert_eq!(status_before_task2["blocking_step"], Value::Null);
     assert_eq!(
         status_before_task2["phase_detail"],
-        Value::from("task_closure_recording_ready"),
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         "status should route stale dispatch through task_closure_recording_ready when close-current-task can derive the dispatch lineage"
     );
     assert_eq!(
@@ -8788,7 +9017,7 @@ fn internal_only_compatibility_task_boundary_status_reports_stale_prior_task_rev
     );
     assert_eq!(
         operator_before_task2["phase_detail"],
-        Value::from("task_closure_recording_ready"),
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         "workflow operator should route stale dispatch through task_closure_recording_ready when close-current-task can derive dispatch lineage"
     );
     assert_eq!(
@@ -8834,7 +9063,7 @@ fn internal_only_compatibility_task_boundary_status_ignores_prior_task_review_di
     assert_eq!(status_before_task2["blocking_task"], Value::from(2));
     assert_eq!(
         status_before_task2["phase_detail"],
-        Value::from("execution_reentry_required")
+        Value::from(phase::DETAIL_EXECUTION_REENTRY_REQUIRED)
     );
     assert_eq!(
         status_before_task2["next_action"],
@@ -8858,14 +9087,83 @@ fn internal_only_compatibility_task_boundary_status_ignores_prior_task_review_di
             .is_some_and(|codes| codes.is_empty()),
         "status should not retain prior_task_review_dispatch_missing once a current closure exists, got {status_before_task2}"
     );
-    assert!(
-        status_before_task2["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.starts_with(&format!(
-                "featureforge plan execution begin --plan {PLAN_REL} --task 2 --step 1"
-            ))),
-        "status should expose the exact begin reentry command once task-boundary blockers are cleared, got {status_before_task2}"
+    assert_typed_begin_task_step_argv(
+        &status_before_task2,
+        2,
+        1,
+        "status after current closure clears missing review dispatch evidence",
     );
+    assert_non_authoritative_display_summary_if_present(
+        &status_before_task2,
+        "status after current closure clears missing review dispatch evidence",
+    );
+}
+
+#[test]
+fn internal_only_compatibility_task_boundary_status_projects_malformed_review_artifact_before_current_closure()
+ {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-task-boundary-malformed-review-before-closure");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let (_execution_run_id, _execution_fingerprint, task1_step1_receipt, _task1_step2_receipt) =
+        internal_only_setup_task_boundary_prior_task_fixture(repo, state);
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "current_task_closure_records": {}
+        }),
+    );
+    replace_in_file(
+        &task1_step1_receipt,
+        "**Review Stage:** featureforge:unit-review\n",
+        "",
+    );
+
+    let status_before_task2 = internal_only_run_rust_json_direct_or_cli(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before task 2 begin should keep malformed review artifact diagnostic-only",
+    );
+    assert_eq!(status_before_task2["blocking_task"], Value::from(1_u64));
+    assert_eq!(status_before_task2["blocking_step"], Value::Null);
+    assert_eq!(
+        status_before_task2["phase_detail"],
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
+        "malformed unit-review artifact before current closure should keep the public close-current-task route, got {status_before_task2}"
+    );
+    assert_eq!(
+        status_before_task2["next_action"],
+        Value::from("close current task"),
+        "malformed unit-review artifact before current closure must not force execution reentry, got {status_before_task2}"
+    );
+    assert!(
+        status_before_task2["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| {
+                codes
+                    .iter()
+                    .any(|code| code.as_str() == Some("prior_task_current_closure_missing"))
+                    && !codes
+                        .iter()
+                        .any(|code| code.as_str() == Some("task_review_artifact_malformed"))
+            }),
+        "malformed unit-review artifact must not be published as a route reason, got {status_before_task2}"
+    );
+    assert!(
+        status_before_task2["projection_diagnostics"]
+            .as_array()
+            .is_some_and(|codes| {
+                codes
+                    .iter()
+                    .any(|code| code.as_str() == Some("task_review_artifact_malformed"))
+            }),
+        "malformed unit-review artifact should remain visible as projection diagnostics, got {status_before_task2}"
+    );
+    assert_task_closure_required_inputs(&status_before_task2, 1);
 }
 
 #[test]
@@ -9237,7 +9535,7 @@ fn internal_only_compatibility_task_boundary_status_ignores_non_independent_revi
     );
     assert_eq!(
         status_before_task2["phase_detail"],
-        Value::from("execution_reentry_required")
+        Value::from(phase::DETAIL_EXECUTION_REENTRY_REQUIRED)
     );
     assert_eq!(
         status_before_task2["next_action"],
@@ -9260,13 +9558,15 @@ fn internal_only_compatibility_task_boundary_status_ignores_non_independent_revi
         status_before_task2["execution_command_context"]["step_id"],
         Value::from(1)
     );
-    assert!(
-        status_before_task2["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.starts_with(&format!(
-                "featureforge plan execution begin --plan {PLAN_REL} --task 2 --step 1"
-            ))),
-        "status should expose the exact begin reentry command once task-boundary blockers are cleared, got {status_before_task2}"
+    assert_typed_begin_task_step_argv(
+        &status_before_task2,
+        2,
+        1,
+        "status after current closure clears stale review receipt diagnostics",
+    );
+    assert_non_authoritative_display_summary_if_present(
+        &status_before_task2,
+        "status after current closure clears stale review receipt diagnostics",
     );
 }
 
@@ -9970,6 +10270,10 @@ fn internal_only_compatibility_preflight_blocks_unresolved_authoritative_mutatio
         preflight,
         concat!("pre", "flight")
     );
+    assert_authoritative_mutation_recovery_remediation_is_diagnostic_stop(
+        &preflight,
+        "authoritative mutation recovery preflight",
+    );
     assert!(
         !acceptance_path.exists(),
         "{} must not persist acceptance state while authoritative mutation recovery is unresolved",
@@ -10080,6 +10384,10 @@ fn internal_only_compatibility_preflight_blocks_authoritative_mutation_recovery_
         "{} should detect mutation recovery from higher-sequence JSON worktree lease artifacts, got {}",
         preflight,
         concat!("pre", "flight")
+    );
+    assert_authoritative_mutation_recovery_remediation_is_diagnostic_stop(
+        &preflight,
+        "JSON worktree lease authoritative mutation recovery preflight",
     );
     assert!(
         !acceptance_path.exists(),
@@ -10793,7 +11101,7 @@ fn internal_only_compatibility_status_and_finish_gates_expose_april_contract_sha
     );
     assert_eq!(
         status_after_gate_review["phase_detail"],
-        Value::from("finish_completion_gate_ready")
+        Value::from(phase::DETAIL_FINISH_COMPLETION_GATE_READY)
     );
     assert_eq!(
         status_after_gate_review["review_state_status"],
@@ -10815,11 +11123,9 @@ fn internal_only_compatibility_status_and_finish_gates_expose_april_contract_sha
         ]),
         "finish-completion route should expose executable public argv: {status_after_gate_review}"
     );
-    assert_eq!(
-        status_after_gate_review["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution advance-late-stage --plan {PLAN_REL}; validates finish completion"
-        ))
+    assert_non_authoritative_display_summary_if_present(
+        &status_after_gate_review,
+        "finish-completion route display summary",
     );
     assert_eq!(
         status_after_gate_review["finish_review_gate_pass_branch_closure_id"],
@@ -11015,21 +11321,92 @@ fn internal_only_compatibility_gate_review_rejects_checked_step_without_executio
         "gate review with checked step missing evidence",
     );
 
-    assert_eq!(gate_review["allowed"], false);
+    assert_eq!(gate_review["allowed"], false, "json: {gate_review}");
     assert_eq!(
         gate_review["failure_class"], "StaleExecutionEvidence",
         "json: {gate_review}"
     );
-    assert_eq!(
-        gate_review["reason_codes"][0],
-        "checked_step_missing_evidence"
+    assert!(
+        gate_review["reason_codes"]
+            .as_array()
+            .expect("reason codes should be an array")
+            .iter()
+            .any(|code| code.as_str() == Some("checked_step_missing_evidence")),
+        "missing completed execution evidence must fail closed even when authoritative completion exists, got {gate_review}"
+    );
+    let diagnostics = gate_review["diagnostics"]
+        .as_array()
+        .expect("diagnostics should be an array");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("checked but missing execution evidence"))
+                && diagnostic["remediation"]
+                    .as_str()
+                    .is_some_and(remediation_mentions_full_typed_operator_contract)
+        }),
+        "missing evidence failure should keep public-route remediation without manual artifact repair, got {gate_review}"
+    );
+}
+
+#[test]
+fn internal_only_compatibility_gate_review_keeps_active_contract_serial_unit_review_enforced_without_evidence()
+ {
+    let (repo_dir, state_dir) = init_repo(concat!(
+        "plan-execution-gate",
+        "-review-active-contract-no-evidence"
+    ));
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    write_harness_state_payload(repo, state, &json!({ "execution_evidence_attempts": [] }));
+
+    let gate_review = internal_only_compatibility_workflow_gate_review_json(
+        repo,
+        state,
+        PLAN_REL,
+        "gate review with active contract and missing serial evidence provenance",
+    );
+
+    assert_eq!(gate_review["allowed"], false, "json: {gate_review}");
+    assert!(
+        gate_review["reason_codes"]
+            .as_array()
+            .expect("reason codes should be an array")
+            .iter()
+            .any(|code| code.as_str() == Some("serial_unit_review_evidence_missing")),
+        "active-contract serial unit-review must fail closed when completed-attempt provenance is missing, got {gate_review}"
     );
     assert!(
-        gate_review["diagnostics"][0]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("checked but missing execution evidence")
+        gate_review["reason_codes"]
+            .as_array()
+            .expect("reason codes should be an array")
+            .iter()
+            .any(|code| code.as_str() == Some("checked_step_missing_evidence")),
+        "missing completed execution evidence should remain a fail-closed gate alongside active-contract serial proof, got {gate_review}"
     );
+    let gate_review_text = serde_json::to_string(&gate_review)
+        .expect("gate review output should serialize for guidance scan")
+        .to_ascii_lowercase();
+    for forbidden in [
+        "repair unit-review proof",
+        "repair the unit-review proof",
+        "restore unit-review proof",
+        "restore the unit-review proof",
+        "record unit-review proof",
+        "record the unit-review proof",
+        "repair unit-review receipt",
+        "restore authoritative unit-review receipt",
+        "record the authoritative unit-review receipt",
+    ] {
+        assert!(
+            !gate_review_text.contains(forbidden),
+            "active-contract serial unit-review failure output must route through public runtime remediation, not manual proof repair `{forbidden}`: {gate_review}"
+        );
+    }
 }
 
 #[test]
@@ -11103,11 +11480,13 @@ fn internal_only_compatibility_gate_finish_requires_qa_result_when_browser_qa_is
     assert_eq!(gate_finish["allowed"], false);
     assert_eq!(gate_finish["failure_class"], "QaArtifactNotFresh");
     assert_eq!(gate_finish["reason_codes"][0], "qa_artifact_missing");
+    let remediation = gate_finish["diagnostics"][0]["remediation"]
+        .as_str()
+        .unwrap_or_default();
     assert!(
-        gate_finish["diagnostics"][0]["remediation"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("Run qa-only")
+        remediation_mentions_full_typed_operator_contract(remediation)
+            && remediation.contains("QA milestone"),
+        "gate-finish QA remediation should route through typed workflow/operator authority, got {remediation:?}"
     );
 }
 
@@ -11221,11 +11600,13 @@ fn internal_only_compatibility_gate_finish_requires_fresh_code_review_result_bef
     assert_eq!(gate_finish["allowed"], false);
     assert_eq!(gate_finish["failure_class"], "ReviewArtifactNotFresh");
     assert_eq!(gate_finish["reason_codes"][0], "review_artifact_missing");
+    let remediation = gate_finish["diagnostics"][0]["remediation"]
+        .as_str()
+        .unwrap_or_default();
     assert!(
-        gate_finish["diagnostics"][0]["remediation"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("requesting-code-review")
+        remediation_mentions_full_typed_operator_contract(remediation)
+            && remediation.contains("final-review milestone"),
+        "gate-finish review remediation should route through typed workflow/operator authority, got {remediation:?}"
     );
 }
 
@@ -12391,7 +12772,7 @@ fn internal_only_compatibility_status_and_gate_finish_do_not_infer_missing_curre
     assert_eq!(status["phase"], Value::from("qa_pending"), "json: {status}");
     assert_eq!(
         status["phase_detail"],
-        Value::from("qa_recording_required"),
+        Value::from(phase::DETAIL_QA_RECORDING_REQUIRED),
         "json: {status}"
     );
     assert_eq!(
@@ -12501,10 +12882,11 @@ fn internal_only_compatibility_gate_finish_blocks_worktree_lease_before_barrier_
 }
 
 #[test]
-fn internal_only_compatibility_gate_review_blocks_cleaned_worktree_lease_without_receipt_truth() {
+fn internal_only_compatibility_gate_review_blocks_cleaned_worktree_lease_without_structured_review_binding()
+ {
     let (repo_dir, state_dir) = init_repo(concat!(
         "plan-execution-gate",
-        "-review-cleaned-lease-without-receipt"
+        "-review-cleaned-lease-without-binding"
     ));
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -12542,14 +12924,14 @@ fn internal_only_compatibility_gate_review_blocks_cleaned_worktree_lease_without
         repo,
         state,
         PLAN_REL,
-        "gate review with cleaned worktree lease but no authoritative receipt truth",
+        "gate review with cleaned worktree lease but no structured review binding",
     );
 
     assert_eq!(gate_review["allowed"], false);
     assert_eq!(gate_review["failure_class"], "ExecutionStateNotReady");
     assert_eq!(
         gate_review["reason_codes"][0],
-        "worktree_lease_review_receipt_missing"
+        "worktree_lease_review_binding_task_packet_missing"
     );
 }
 
@@ -12818,7 +13200,8 @@ fn internal_only_compatibility_gate_finish_allows_dependency_release_after_clean
 }
 
 #[test]
-fn internal_only_compatibility_gate_finish_requires_receipts_for_every_active_worktree_lease() {
+fn internal_only_compatibility_gate_finish_requires_structured_review_binding_for_every_active_worktree_lease()
+ {
     let (repo_dir, state_dir) = init_repo(concat!(
         "plan-execution-gate",
         "-finish-multi-lease-receipts"
@@ -12914,14 +13297,14 @@ fn internal_only_compatibility_gate_finish_requires_receipts_for_every_active_wo
         repo,
         state,
         PLAN_REL,
-        "gate finish with two active leases where only one has a matching receipt",
+        "gate finish with two active leases where only one has a complete structured review binding",
     );
 
     assert_eq!(gate_finish["allowed"], false);
     assert_eq!(gate_finish["failure_class"], "ExecutionStateNotReady");
     assert_eq!(
         gate_finish["reason_codes"][0],
-        "worktree_lease_review_receipt_missing"
+        "worktree_lease_review_binding_unit_contract_missing"
     );
 }
 
@@ -12994,7 +13377,7 @@ fn internal_only_compatibility_gate_finish_fails_closed_when_bound_worktree_leas
 }
 
 #[test]
-fn internal_only_compatibility_gate_finish_rejects_stale_unit_review_receipt() {
+fn internal_only_compatibility_gate_finish_treats_stale_unit_review_receipt_as_diagnostic_only() {
     let (repo_dir, state_dir) = init_repo(concat!(
         "plan-execution-gate",
         "-finish-stale-unit-review-receipt"
@@ -13067,6 +13450,23 @@ fn internal_only_compatibility_gate_finish_rejects_stale_unit_review_receipt() {
             "lease_fingerprint": lease_fingerprint,
             "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
             "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "approved_unit_contract_fingerprint": approved_unit_contract_fingerprint_for_review(
+                &current_active_contract_fingerprint(repo, state),
+                &approved_task_packet_fingerprint,
+                "unit-stale-unit-review",
+            ),
+            "execution_context_key": current_worktree_lease_execution_context_key(
+                &execution_run_id,
+                "unit-stale-unit-review",
+                PLAN_REL,
+                1,
+                &branch_name(repo),
+                &current_head,
+            ),
+            "reviewed_checkpoint_commit_sha": current_head,
+            "reconcile_result_commit_sha": current_head,
+            "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &current_head),
+            "reconcile_mode": "identity_preserving",
             "review_receipt_fingerprint": stale_receipt_fingerprint,
             "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
         }),
@@ -13076,14 +13476,23 @@ fn internal_only_compatibility_gate_finish_rejects_stale_unit_review_receipt() {
         repo,
         state,
         PLAN_REL,
-        "gate finish with a stale unit-review receipt",
+        "gate finish with a stale diagnostic-only unit-review receipt",
     );
 
-    assert_eq!(gate_finish["allowed"], false);
-    assert_eq!(gate_finish["failure_class"], "StaleProvenance");
-    assert_eq!(
-        gate_finish["reason_codes"][0],
-        "worktree_lease_review_receipt_checkpoint_mismatch"
+    assert_eq!(gate_finish["allowed"], true, "json: {gate_finish}");
+    assert_eq!(gate_finish["failure_class"], "", "json: {gate_finish}");
+    assert!(
+        gate_finish["reason_codes"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "stale diagnostic-only receipt must not become gate authority: {gate_finish}"
+    );
+    assert!(
+        gate_finish["warning_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code.as_str()
+                == Some("worktree_lease_review_projection_checkpoint_mismatch_diagnostic_only"))),
+        "stale unit-review receipt should surface as projection warning only: {gate_finish}"
     );
 }
 
@@ -13172,7 +13581,8 @@ fn internal_only_compatibility_gate_finish_rejects_absolute_worktree_lease_bindi
 }
 
 #[test]
-fn internal_only_compatibility_gate_finish_rejects_escaped_unit_review_receipt_binding_path() {
+fn internal_only_compatibility_gate_finish_treats_escaped_unit_review_receipt_binding_path_as_diagnostic_only()
+ {
     let (repo_dir, state_dir) = init_repo(concat!(
         "plan-execution-gate",
         "-finish-escaped-receipt-path"
@@ -13262,14 +13672,23 @@ fn internal_only_compatibility_gate_finish_rejects_escaped_unit_review_receipt_b
         repo,
         state,
         PLAN_REL,
-        "gate finish should reject an escaped unit-review receipt binding path",
+        "gate finish should treat an escaped unit-review receipt binding path as diagnostic-only projection drift",
     );
 
-    assert_eq!(gate_finish["allowed"], false);
-    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
-    assert_eq!(
-        gate_finish["reason_codes"][0],
-        "worktree_lease_binding_path_invalid"
+    assert_eq!(gate_finish["allowed"], true, "json: {gate_finish}");
+    assert_eq!(gate_finish["failure_class"], "", "json: {gate_finish}");
+    assert!(
+        gate_finish["reason_codes"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "unit-review receipt projection path drift must not become gate authority: {gate_finish}"
+    );
+    assert!(
+        gate_finish["warning_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code.as_str()
+                == Some("worktree_lease_review_projection_path_invalid_diagnostic_only"))),
+        "escaped unit-review receipt path should surface as diagnostic projection warning: {gate_finish}"
     );
 }
 
@@ -14330,7 +14749,7 @@ fn internal_only_compatibility_gate_finish_fails_closed_when_cleared_index_curre
 }
 
 #[test]
-fn internal_only_compatibility_gate_finish_rejects_rewritten_reconcile_proof_without_matching_runtime_binding()
+fn internal_only_compatibility_gate_finish_treats_rewritten_receipt_reconcile_result_as_diagnostic_only()
  {
     let (repo_dir, state_dir) = init_repo(concat!(
         "plan-execution-gate",
@@ -14352,8 +14771,9 @@ fn internal_only_compatibility_gate_finish_rejects_rewritten_reconcile_proof_wit
     );
     let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
     let reviewed_checkpoint = current_head_sha(repo);
+    let active_contract_fingerprint = current_active_contract_fingerprint(repo, state);
     let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
-    let _execution_context_key = current_worktree_lease_execution_context_key(
+    let execution_context_key = current_worktree_lease_execution_context_key(
         &execution_run_id,
         "unit-rewritten-reconcile-proof",
         PLAN_REL,
@@ -14413,8 +14833,17 @@ fn internal_only_compatibility_gate_finish_rejects_rewritten_reconcile_proof_wit
             "execution_run_id": execution_run_id,
             "lease_fingerprint": lease_fingerprint,
             "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "execution_context_key": execution_context_key,
             "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "approved_unit_contract_fingerprint": approved_unit_contract_fingerprint_for_review(
+                &active_contract_fingerprint,
+                &approved_task_packet_fingerprint,
+                "unit-rewritten-reconcile-proof",
+            ),
             "reviewed_checkpoint_commit_sha": reviewed_checkpoint,
+            "reconcile_result_commit_sha": reviewed_checkpoint,
+            "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &reviewed_checkpoint),
+            "reconcile_mode": "identity_preserving",
             "review_receipt_fingerprint": rewritten_receipt_fingerprint,
             "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
         }),
@@ -14424,14 +14853,23 @@ fn internal_only_compatibility_gate_finish_rejects_rewritten_reconcile_proof_wit
         repo,
         state,
         PLAN_REL,
-        "gate finish should reject a rewritten reconcile proof that does not match the runtime binding",
+        "gate finish should treat rewritten receipt reconcile result as diagnostic-only projection drift",
     );
 
-    assert_eq!(gate_finish["allowed"], false);
-    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
-    assert_eq!(
-        gate_finish["reason_codes"][0],
-        "worktree_lease_identity_preserving_proof_mismatch"
+    assert_eq!(gate_finish["allowed"], true, "json: {gate_finish}");
+    assert_eq!(gate_finish["failure_class"], "", "json: {gate_finish}");
+    assert!(
+        gate_finish["reason_codes"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "rewritten receipt reconcile result must not become gate authority: {gate_finish}"
+    );
+    assert!(
+        gate_finish["warning_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code.as_str()
+                == Some("worktree_lease_identity_preserving_proof_mismatch_diagnostic_only"))),
+        "rewritten receipt reconcile result should surface as diagnostic-only warning: {gate_finish}"
     );
 }
 
@@ -14649,7 +15087,7 @@ fn internal_only_compatibility_gate_finish_accepts_isolated_branch_backed_worktr
 }
 
 #[test]
-fn internal_only_compatibility_gate_finish_rejects_unit_review_receipt_missing_unit_contract_binding()
+fn internal_only_compatibility_gate_finish_rejects_worktree_lease_missing_structured_unit_contract_binding()
  {
     let (repo_dir, state_dir) = init_repo(concat!(
         "plan-execution-gate",
@@ -14741,19 +15179,19 @@ fn internal_only_compatibility_gate_finish_rejects_unit_review_receipt_missing_u
         repo,
         state,
         PLAN_REL,
-        "gate finish should reject a unit-review receipt missing the approved unit contract binding",
+        "gate finish should reject a worktree lease missing the structured approved unit contract binding",
     );
 
     assert_eq!(gate_finish["allowed"], false);
     assert_eq!(gate_finish["failure_class"], "ExecutionStateNotReady");
     assert_eq!(
         gate_finish["reason_codes"][0],
-        "worktree_lease_review_receipt_unit_contract_missing"
+        "worktree_lease_review_binding_unit_contract_missing"
     );
 }
 
 #[test]
-fn internal_only_compatibility_gate_finish_rejects_forged_task_packet_binding_without_authoritative_contract_truth()
+fn internal_only_compatibility_gate_finish_rejects_forged_structured_task_packet_binding_without_authoritative_contract_truth()
  {
     let (repo_dir, state_dir) = init_repo(concat!(
         "plan-execution-gate",
@@ -14833,7 +15271,7 @@ fn internal_only_compatibility_gate_finish_rejects_forged_task_packet_binding_wi
     assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
     assert_eq!(
         gate_finish["reason_codes"][0],
-        "worktree_lease_review_receipt_task_packet_not_authoritative"
+        "worktree_lease_review_binding_task_packet_not_authoritative"
     );
 }
 
@@ -16194,14 +16632,169 @@ fn internal_only_compatibility_gate_review_rejects_legacy_packet_provenance_in_v
         "gate review with legacy packet provenance",
     );
 
-    assert_eq!(gate_review["allowed"], false);
+    assert_eq!(gate_review["allowed"], false, "json: {gate_review}");
     assert_eq!(
         gate_review["failure_class"], "StaleExecutionEvidence",
         "json: {gate_review}"
     );
+    assert!(
+        gate_review["reason_codes"]
+            .as_array()
+            .expect("reason codes should be an array")
+            .iter()
+            .any(|code| code.as_str() == Some("packet_fingerprint_mismatch")),
+        "evidence packet provenance drift must fail closed even when authoritative completion exists, got {gate_review}"
+    );
+    let diagnostics = gate_review["diagnostics"]
+        .as_array()
+        .expect("diagnostics should be an array");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("packet provenance"))
+                && diagnostic["remediation"]
+                    .as_str()
+                    .is_some_and(remediation_mentions_full_typed_operator_contract)
+        }),
+        "packet provenance failure should keep public-route remediation without manual artifact repair, got {gate_review}"
+    );
+}
+
+#[test]
+fn internal_only_compatibility_gate_review_rejects_authoritative_completion_stale_packet_when_plan_projection_unchecked()
+ {
+    let (repo_dir, state_dir) = init_repo("plan-execution-authoritative-completion-stale-packet");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    assert!(
+        fs::read_to_string(repo.join(PLAN_REL))
+            .expect("plan should be readable")
+            .contains("- [ ] **Step 1: Complete the single-step fixture**"),
+        "fixture should keep the plan-checklist projection unchecked so authoritative completion owns the completed-step truth"
+    );
+    let legacy_packet = legacy_packet_fingerprint(repo, 1, 1);
+    write_single_step_v2_completed_attempt(repo, &legacy_packet);
+    write_completed_single_step_authority(repo, state);
+    write_authoritative_single_step_evidence_attempt(repo, state, &legacy_packet);
+
+    let gate_review = internal_only_compatibility_workflow_gate_review_json(
+        repo,
+        state,
+        PLAN_REL,
+        "gate review with authoritative completion and stale packet provenance",
+    );
+
+    assert_eq!(gate_review["allowed"], false, "json: {gate_review}");
     assert_eq!(
-        gate_review["reason_codes"][0],
-        "packet_fingerprint_mismatch"
+        gate_review["failure_class"], "StaleExecutionEvidence",
+        "json: {gate_review}"
+    );
+    assert!(
+        gate_review["reason_codes"]
+            .as_array()
+            .expect("reason codes should be an array")
+            .iter()
+            .any(|code| code.as_str() == Some("packet_fingerprint_mismatch")),
+        "authoritative completed-step truth must still validate V2 packet provenance when the plan projection is unchecked, got {gate_review}"
+    );
+    assert!(
+        !gate_review["reason_codes"]
+            .as_array()
+            .expect("reason codes should be an array")
+            .iter()
+            .any(|code| code.as_str() == Some("unfinished_steps_remaining")),
+        "authoritative completion should own completed-step truth instead of stale unchecked projection, got {gate_review}"
+    );
+    let diagnostics = gate_review["diagnostics"]
+        .as_array()
+        .expect("diagnostics should be an array");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("packet provenance"))
+                && diagnostic["remediation"]
+                    .as_str()
+                    .is_some_and(remediation_mentions_full_typed_operator_contract)
+        }),
+        "authoritative completion stale-packet failure should keep public-route remediation without manual artifact repair, got {gate_review}"
+    );
+}
+
+#[test]
+fn internal_only_compatibility_task_review_dispatch_uses_authoritative_completion_when_plan_projection_unchecked()
+ {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-task-review-authoritative-completion-unchecked");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "featureforge:executing-plans");
+    let plan_source = fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable");
+    assert!(
+        plan_source.contains("- [ ] **Step 1: Prepare workspace for execution**")
+            && plan_source.contains("- [ ] **Step 2: Validate the generated output**"),
+        "fixture should keep the task plan-checklist projection unchecked so authoritative completion owns the completed-step truth"
+    );
+    internal_only_accept_execution_preflight(repo, state, PLAN_REL);
+    let mut completed_steps = serde_json::Map::new();
+    for step in [1, 2] {
+        completed_steps.insert(
+            format!("task-1-step-{step}"),
+            json!({
+                "task": 1,
+                "step": step,
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1,
+            }),
+        );
+    }
+    write_authoritative_harness_fixture_payload(
+        repo,
+        state,
+        &json!({
+            "event_completed_steps": Value::Object(completed_steps),
+            "execution_evidence_attempts": [],
+        }),
+    );
+
+    let dispatch = internal_only_runtime_review_dispatch_authority_json(
+        repo,
+        state,
+        record_review_dispatch_task_args(PLAN_REL, 1),
+        "task review dispatch with authoritative completion and missing evidence",
+    );
+
+    assert_eq!(dispatch["allowed"], Value::Bool(false), "json: {dispatch}");
+    assert!(
+        dispatch["reason_codes"]
+            .as_array()
+            .expect("reason codes should be an array")
+            .iter()
+            .any(|code| code.as_str() == Some("checked_step_missing_evidence")),
+        "task review dispatch must still fail closed for missing completed-step evidence, got {dispatch}"
+    );
+    assert!(
+        !dispatch["reason_codes"]
+            .as_array()
+            .expect("reason codes should be an array")
+            .iter()
+            .any(|code| code.as_str() == Some("unfinished_task_steps_remaining")),
+        "task review dispatch must use authoritative completed-step truth instead of stale unchecked plan projection, got {dispatch}"
+    );
+    let diagnostics = dispatch["diagnostics"]
+        .as_array()
+        .expect("diagnostics should be an array");
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["remediation"]
+                .as_str()
+                .is_some_and(remediation_mentions_full_typed_operator_contract)
+        }),
+        "missing-evidence task-review dispatch failure should keep public-route remediation without manual artifact repair, got {dispatch}"
     );
 }
 
@@ -16770,10 +17363,10 @@ fn internal_only_compatibility_canonical_note_command_rejects_blank_summary_via_
     );
 }
 
-#[test]
-fn internal_only_compatibility_reopen_auto_records_review_remediation_and_cycle_break_strategy_checkpoints()
- {
-    let (repo_dir, state_dir) = init_repo("plan-execution-reopen-strategy-checkpoint-cycles");
+fn setup_reopen_strategy_checkpoint_fixture(
+    test_name: &str,
+) -> (TempDir, TempDir, ExecutionRuntime, PathBuf) {
+    let (repo_dir, state_dir) = init_repo(test_name);
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
@@ -16795,106 +17388,173 @@ fn internal_only_compatibility_reopen_auto_records_review_remediation_and_cycle_
         false,
     );
     write_event_completed_steps_authority(repo, state, &[(1, 1)]);
+    let runtime = execution_runtime(repo, state);
+    let plan = PathBuf::from(PLAN_REL);
+    (repo_dir, state_dir, runtime, plan)
+}
 
-    for cycle in 1..=3 {
-        bind_explicit_reopen_repair_target(repo, state, 1, 1);
-        let before = internal_only_run_rust_json_direct_or_cli(
-            repo,
-            state,
-            &["status", "--plan", PLAN_REL],
-            "status before reopen cycle",
-        );
-        let reason = format!("Review reopened cycle {cycle}");
-        let reopened = internal_only_run_rust_json_direct_or_cli(
-            repo,
-            state,
-            &[
-                "reopen",
-                "--plan",
-                PLAN_REL,
-                "--task",
-                "1",
-                "--step",
-                "1",
-                "--source",
-                "featureforge:executing-plans",
-                "--reason",
-                &reason,
-                "--expect-execution-fingerprint",
-                before["execution_fingerprint"]
-                    .as_str()
-                    .expect("execution fingerprint should be present"),
-            ],
-            "reopen for strategy checkpoint cycle tracking",
-        );
+#[test]
+fn internal_only_compatibility_reopen_explicit_target_cannot_bypass_planning_reentry() {
+    let (repo_dir, state_dir, runtime, plan) =
+        setup_reopen_strategy_checkpoint_fixture("plan-execution-reopen-strategy-checkpoint-ready");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
 
-        assert!(
-            reopened["last_strategy_checkpoint_fingerprint"]
-                .as_str()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()),
-            "reopen cycle {cycle} should produce a strategy checkpoint fingerprint"
-        );
-        if cycle < 3 {
-            assert_eq!(reopened["strategy_checkpoint_kind"], "review_remediation");
-            assert_eq!(reopened["strategy_state"], "ready");
-        } else {
-            assert_eq!(reopened["strategy_checkpoint_kind"], "cycle_break");
-            assert_eq!(reopened["strategy_state"], "cycle_breaking");
-        }
-        assert_eq!(
-            reopened["strategy_reset_required"],
-            Value::Bool(false),
-            "runtime should auto-record cycle-break strategy without human loopback"
-        );
+    bind_explicit_reopen_repair_target(repo, state, 1, 1);
+    let before = internal_only_runtime_status_json(&runtime, &plan, "status before reopen cycle");
+    assert_eq!(
+        before["state_kind"],
+        phase::DETAIL_PLANNING_REENTRY_REQUIRED,
+        "fixture should exercise planning-reentry mutation blocking: {before}"
+    );
+    let harness_before =
+        read_authoritative_harness_state(repo, state, "planning reentry explicit reopen before");
+    let failure = internal_only_runtime_reopen_failure(
+        &runtime,
+        plan,
+        String::from("Review reopened cycle 1"),
+        before["execution_fingerprint"]
+            .as_str()
+            .expect("execution fingerprint should be present")
+            .to_owned(),
+        "planning reentry should block explicit reopen target",
+    );
 
-        if cycle < 3 {
-            let resumed = internal_only_run_rust_json_direct_or_cli(
-                repo,
-                state,
-                &[
-                    "begin",
-                    "--plan",
-                    PLAN_REL,
-                    "--task",
-                    "1",
-                    "--step",
-                    "1",
-                    "--execution-mode",
-                    "featureforge:executing-plans",
-                    "--expect-execution-fingerprint",
-                    reopened["execution_fingerprint"]
-                        .as_str()
-                        .expect("execution fingerprint should be present after reopen"),
-                ],
-                "resume work after reopen cycle",
-            );
-            internal_only_run_rust_json_direct_or_cli(
-                repo,
-                state,
-                &[
-                    "complete",
-                    "--plan",
-                    PLAN_REL,
-                    "--task",
-                    "1",
-                    "--step",
-                    "1",
-                    "--source",
-                    "featureforge:executing-plans",
-                    "--claim",
-                    "Repaired after review.",
-                    "--manual-verify-summary",
-                    "Verified by cycle test.",
-                    "--expect-execution-fingerprint",
-                    resumed["execution_fingerprint"]
-                        .as_str()
-                        .expect("execution fingerprint should be present after begin"),
-                ],
-                "re-complete work before next reopen cycle",
-            );
-        }
-    }
+    assert_eq!(failure.error_class, "ExecutionStateNotReady");
+    assert!(
+        failure.message.contains(&format!(
+            "state_kind={}",
+            phase::DETAIL_PLANNING_REENTRY_REQUIRED
+        )),
+        "planning-reentry failure should explain the blocking state kind: {failure:?}"
+    );
+    assert!(
+        failure
+            .message
+            .contains(PublicRepairTargetReason::ExplicitReopenRepairTarget.as_str()),
+        "planning-reentry failure should show the stale explicit target was diagnostic only: {failure:?}"
+    );
+    assert_eq!(
+        read_authoritative_harness_state(repo, state, "planning reentry explicit reopen after"),
+        harness_before,
+        "blocked planning-reentry reopen must not write strategy checkpoint state"
+    );
+}
+
+#[test]
+fn internal_only_compatibility_cycle_break_reopen_explicit_target_cannot_bypass_planning_reentry() {
+    let (repo_dir, state_dir, runtime, plan) =
+        setup_reopen_strategy_checkpoint_fixture("plan-execution-reopen-strategy-checkpoint-break");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    seed_task_strategy_cycle_count(repo, state, 1, 2);
+
+    bind_explicit_reopen_repair_target(repo, state, 1, 1);
+    let before = internal_only_runtime_status_json(&runtime, &plan, "status before cycle break");
+    assert_eq!(
+        before["state_kind"],
+        phase::DETAIL_PLANNING_REENTRY_REQUIRED,
+        "fixture should exercise planning-reentry mutation blocking: {before}"
+    );
+    let harness_before =
+        read_authoritative_harness_state(repo, state, "planning reentry cycle-break reopen before");
+    let failure = internal_only_runtime_reopen_failure(
+        &runtime,
+        plan,
+        String::from("Review reopened cycle 3"),
+        before["execution_fingerprint"]
+            .as_str()
+            .expect("execution fingerprint should be present")
+            .to_owned(),
+        "planning reentry should block cycle-break explicit reopen target",
+    );
+
+    assert_eq!(failure.error_class, "ExecutionStateNotReady");
+    assert!(
+        failure.message.contains(&format!(
+            "state_kind={}",
+            phase::DETAIL_PLANNING_REENTRY_REQUIRED
+        )),
+        "planning-reentry failure should explain the blocking state kind: {failure:?}"
+    );
+    assert!(
+        failure
+            .message
+            .contains(PublicRepairTargetReason::ExplicitReopenRepairTarget.as_str()),
+        "planning-reentry failure should show the stale explicit target was diagnostic only: {failure:?}"
+    );
+    assert_eq!(
+        read_authoritative_harness_state(repo, state, "planning reentry cycle-break reopen after"),
+        harness_before,
+        "blocked planning-reentry reopen must not write cycle-break strategy state"
+    );
+}
+
+fn internal_only_runtime_status_json(
+    runtime: &ExecutionRuntime,
+    plan: &Path,
+    context: &str,
+) -> Value {
+    internal_only_serialize_runtime_value(
+        runtime.status(&StatusArgs {
+            plan: plan.to_path_buf(),
+            external_review_result_ready: false,
+        }),
+        context,
+    )
+}
+
+fn internal_only_runtime_reopen_failure(
+    runtime: &ExecutionRuntime,
+    plan: PathBuf,
+    reason: String,
+    expect_execution_fingerprint: String,
+    context: &str,
+) -> featureforge::diagnostics::JsonFailure {
+    mutate::reopen(
+        runtime,
+        &ReopenArgs {
+            plan,
+            task: 1,
+            step: 1,
+            source: ExecutionModeArg::ExecutingPlans,
+            reason,
+            expect_execution_fingerprint,
+        },
+    )
+    .expect_err(context)
+}
+
+fn internal_only_serialize_runtime_value<T>(
+    result: Result<T, featureforge::diagnostics::JsonFailure>,
+    context: &str,
+) -> Value
+where
+    T: serde::Serialize,
+{
+    let value = result.unwrap_or_else(|error| panic!("{context} should succeed: {error:?}"));
+    serde_json::to_value(value)
+        .unwrap_or_else(|error| panic!("{context} should serialize: {error}"))
+}
+
+fn seed_task_strategy_cycle_count(repo: &Path, state: &Path, task: u32, count: u64) {
+    let mut harness_state =
+        read_authoritative_harness_state(repo, state, "seed task strategy cycle count");
+    let root = harness_state
+        .as_object_mut()
+        .expect("harness state should be an object for strategy cycle seeding");
+    let cycle_counts = root
+        .entry(String::from("strategy_cycle_counts"))
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .expect("strategy cycle counts should be an object");
+    cycle_counts.insert(format!("task-{task}"), Value::from(count));
+    write_event_synced_authoritative_harness_state(
+        repo,
+        state,
+        &harness_state,
+        "seed task strategy cycle count",
+    );
 }
 
 #[test]
@@ -17383,7 +18043,7 @@ fn internal_only_compatibility_runtime_remediation_fs03_compiled_cli_dispatch_ta
     );
     assert_eq!(
         status_blocked["phase_detail"],
-        Value::from("task_closure_recording_ready"),
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         "FS-03 route should expose task_closure_recording_ready while Task 1 closure recording is the next legal action, got {status_blocked}"
     );
     assert_eq!(
@@ -17669,7 +18329,7 @@ fn internal_only_compatibility_close_current_task_repair_status_and_operator_nor
 }
 
 #[test]
-fn internal_only_compatibility_advance_late_stage_bootstraps_allowed_preflight_for_imported_finished_state()
+fn internal_only_compatibility_advance_late_stage_rejects_missing_preflight_for_imported_finished_state()
  {
     let (repo_dir, state_dir) = init_repo(concat!(
         "plan-execution-advance-late-stage-imported-pre",
@@ -17723,7 +18383,7 @@ fn internal_only_compatibility_advance_late_stage_bootstraps_allowed_preflight_f
         &release_summary_path,
         "Imported finished-state release-readiness summary.\n",
     );
-    let output = internal_only_run_rust_json_direct_or_cli(
+    let output = run_rust(
         repo,
         state,
         &[
@@ -17738,44 +18398,47 @@ fn internal_only_compatibility_advance_late_stage_bootstraps_allowed_preflight_f
                 .expect("release summary path should be utf-8"),
         ],
         concat!(
-            "advance-late-stage should bootstrap allowed pre",
+            "advance-late-stage should reject missing public pre",
             "flight for imported finished state"
         ),
     );
-    assert!(
-        matches!(
-            output["action"].as_str(),
-            Some("recorded" | "already_current" | "blocked")
+    let failure = parse_failure_json(
+        &output,
+        concat!(
+            "advance-late-stage missing public pre",
+            "flight should fail closed"
         ),
-        "advance-late-stage should either progress late-stage state or return a public route after bootstrapping {}, got {}",
-        output,
+    );
+    assert_eq!(failure["error_class"], "ExecutionStateNotReady");
+    assert!(
+        failure["message"].as_str().is_some_and(|message| message
+            .contains("requires execution preflight and run identity established by begin")),
+        "advance-late-stage should point missing preflight/run identity back to begin-owned setup, got {failure}"
+    );
+    let serialized_failure =
+        serde_json::to_string(&failure).expect("advance-late-stage failure should serialize");
+    assert!(
+        !serialized_failure.contains(&format!("plan execution {}", concat!("pre", "flight")))
+            && !serialized_failure.contains(&format!("workflow {}", concat!("pre", "flight"))),
+        "advance-late-stage missing-preflight failure must not mention hidden {} commands, got {}",
+        concat!("pre", "flight"),
+        failure
+    );
+    assert!(
+        !preflight_path.exists(),
+        "advance-late-stage must not persist {} acceptance before begin owns setup",
         concat!("pre", "flight")
     );
-    let serialized_output =
-        serde_json::to_string(&output).expect("advance-late-stage output should serialize");
-    assert!(
-        !serialized_output.contains(&format!("plan execution {}", concat!("pre", "flight")))
-            && !serialized_output.contains(&format!("workflow {}", concat!("pre", "flight"))),
-        "advance-late-stage imported-state bridge must not mention hidden {} commands, got {}",
-        concat!("pre", "flight"),
-        output
-    );
-    assert!(
-        preflight_path.is_file(),
-        "advance-late-stage should persist {} acceptance when the reduced {} gate is allowed",
-        concat!("pre", "flight"),
-        concat!("pre", "flight")
-    );
-    let bootstrapped_state: Value = serde_json::from_str(
+    let unbootstrapped_state: Value = serde_json::from_str(
         &fs::read_to_string(&harness_state_path)
-            .expect("imported-state fixture should read bootstrapped authoritative state"),
+            .expect("imported-state fixture should read unbootstrapped authoritative state"),
     )
-    .expect("imported-state fixture should parse bootstrapped authoritative state");
+    .expect("imported-state fixture should parse unbootstrapped authoritative state");
     assert!(
-        bootstrapped_state["run_identity"]["execution_run_id"]
-            .as_str()
-            .is_some_and(|run_id| !run_id.trim().is_empty()),
-        "advance-late-stage should bootstrap authoritative run identity when imported state lacks one, got {bootstrapped_state}"
+        unbootstrapped_state.get("run_identity").is_none()
+            && unbootstrapped_state.get("execution_run_id").is_none()
+            && unbootstrapped_state.get("chunk_id").is_none(),
+        "advance-late-stage must not bootstrap authoritative run identity when begin has not established it, got {unbootstrapped_state}"
     );
 }
 
@@ -18291,7 +18954,7 @@ fn internal_only_compatibility_fs17_close_current_task_converges_after_truthful_
     );
     assert_eq!(
         repair_json["phase_detail"],
-        Value::from("task_closure_recording_ready"),
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         "FS-17 truthful replay convergence should route through task_closure_recording_ready: {repair_json:?}"
     );
     assert_task_closure_required_inputs(&repair_json, 1);
@@ -18320,13 +18983,26 @@ fn internal_only_compatibility_fs17_close_current_task_converges_after_truthful_
         &["workflow", "operator", "--plan", PLAN_REL, "--json"],
         "FS-17 operator after close-current-task convergence check",
     );
-    if let Some(recommended_command) = operator_after_close["recommended_command"].as_str() {
+    if let Some(recommended_argv) =
+        operator_after_close["recommended_public_command_argv"].as_array()
+    {
         assert!(
-            !recommended_command.contains("reopen --task 1 --step 2")
-                && !recommended_command.contains("--task 1 --step 2"),
-            "FS-17 convergence must not require a second reopen of Task 1 Step 2 after close-current-task, got {recommended_command}"
+            !(recommended_argv
+                .iter()
+                .any(|part| part.as_str() == Some("reopen"))
+                && recommended_argv
+                    .windows(2)
+                    .any(|window| { window[0] == "--task" && window[1].as_str() == Some("1") })
+                && recommended_argv
+                    .windows(2)
+                    .any(|window| { window[0] == "--step" && window[1].as_str() == Some("2") })),
+            "FS-17 convergence must not require a second typed reopen of Task 1 Step 2 after close-current-task, got {recommended_argv:?}"
         );
     }
+    assert_non_authoritative_display_summary_if_present(
+        &operator_after_close,
+        "FS-17 operator after close-current-task display summary",
+    );
 }
 
 #[test]
@@ -18379,91 +19055,101 @@ fn internal_only_compatibility_fs18_begin_unblocks_next_task_after_cycle_break_t
         ],
         "FS-18 repair-review-state should route cycle-break fixture to close-current-task",
     );
-    let close_json = if let Some(close_command) = repair_json["recommended_command"].as_str() {
-        let close_command = close_command.to_owned();
-        if close_command.contains("reopen") && close_command.contains("--task 1 --step 2") {
-            let reopened = run_recommended_command_json(
-                repo,
-                state,
-                &close_command,
-                "FS-18 run repair-recommended reopen before truthful replay reclose",
-            );
-            let resumed = run_rust_json(
-                repo,
-                state,
-                &[
-                    "begin",
-                    "--plan",
-                    PLAN_REL,
-                    "--task",
-                    "1",
-                    "--step",
-                    "2",
-                    "--execution-mode",
-                    "featureforge:executing-plans",
-                    "--expect-execution-fingerprint",
-                    reopened["execution_fingerprint"]
-                        .as_str()
-                        .expect("FS-18 reopen should expose execution fingerprint before begin"),
-                ],
-                "FS-18 begin reopened Task 1 Step 2 for truthful replay completion",
-            );
-            run_rust_json(
-                repo,
-                state,
-                &[
-                    "complete",
-                    "--plan",
-                    PLAN_REL,
-                    "--task",
-                    "1",
-                    "--step",
-                    "2",
-                    "--source",
-                    "featureforge:executing-plans",
-                    "--claim",
-                    "FS-18 truthful replay completion for cycle-break bound task.",
-                    "--file",
-                    "README.md",
-                    "--manual-verify-summary",
-                    "FS-18 truthful replay completion for cycle-break bound task.",
-                    "--expect-execution-fingerprint",
-                    resumed["execution_fingerprint"]
-                        .as_str()
-                        .expect("FS-18 resumed begin should expose execution fingerprint"),
-                ],
-                "FS-18 complete reopened Task 1 Step 2 before cycle-break closure refresh",
-            );
-            let post_replay_repair = run_rust_json(
-                repo,
-                state,
-                &[
-                    "repair-review-state",
-                    "--plan",
-                    PLAN_REL,
-                    "--external-review-result-ready",
-                ],
-                "FS-18 repair-review-state after truthful replay completion",
-            );
-            assert_task_closure_required_inputs(&post_replay_repair, 1);
-            record_task_closure_with_fixture_inputs(
-                repo,
-                state,
-                1,
-                "FS-18 run close-current-task after cycle-break task replay",
-            )
-        } else {
-            assert!(
-                close_command.contains("close-current-task") && close_command.contains("--task 1"),
-                "FS-18 repair should route Task 1 reclosure through close-current-task, got {close_command}"
-            );
-            run_recommended_command_json(
-                repo,
-                state,
-                &close_command,
-                "FS-18 run close-current-task after cycle-break task replay",
-            )
-        }
+    assert_non_authoritative_display_summary_if_present(
+        &repair_json,
+        "FS-18 repair-review-state display summary after cycle-break injection",
+    );
+    let public_args = repair_json["recommended_public_command_argv"]
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .map(|part| {
+                    part.as_str()
+                        .expect("FS-18 typed public argv entries should be strings")
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+        });
+    let close_json = if public_args.as_ref().is_some_and(|args| {
+        args.iter().any(|arg| arg == "reopen")
+            && args
+                .windows(2)
+                .any(|window| window[0] == "--task" && window[1] == "1")
+            && args
+                .windows(2)
+                .any(|window| window[0] == "--step" && window[1] == "2")
+    }) {
+        let reopened = run_recommended_public_plan_execution_argv_json(
+            repo,
+            state,
+            &repair_json,
+            "FS-18 run typed repair-recommended reopen before truthful replay reclose",
+        );
+        let resumed = run_rust_json(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "2",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                reopened["execution_fingerprint"]
+                    .as_str()
+                    .expect("FS-18 reopen should expose execution fingerprint before begin"),
+            ],
+            "FS-18 begin reopened Task 1 Step 2 for truthful replay completion",
+        );
+        run_rust_json(
+            repo,
+            state,
+            &[
+                "complete",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "2",
+                "--source",
+                "featureforge:executing-plans",
+                "--claim",
+                "FS-18 truthful replay completion for cycle-break bound task.",
+                "--file",
+                "README.md",
+                "--manual-verify-summary",
+                "FS-18 truthful replay completion for cycle-break bound task.",
+                "--expect-execution-fingerprint",
+                resumed["execution_fingerprint"]
+                    .as_str()
+                    .expect("FS-18 resumed begin should expose execution fingerprint"),
+            ],
+            "FS-18 complete reopened Task 1 Step 2 before cycle-break closure refresh",
+        );
+        let post_replay_repair = run_rust_json(
+            repo,
+            state,
+            &[
+                "repair-review-state",
+                "--plan",
+                PLAN_REL,
+                "--external-review-result-ready",
+            ],
+            "FS-18 repair-review-state after truthful replay completion",
+        );
+        assert_task_closure_required_inputs(&post_replay_repair, 1);
+        record_task_closure_with_fixture_inputs(
+            repo,
+            state,
+            1,
+            "FS-18 run close-current-task after cycle-break task replay",
+        )
     } else {
         assert_task_closure_required_inputs(&repair_json, 1);
         record_task_closure_with_fixture_inputs(
@@ -18561,7 +19247,7 @@ fn internal_only_compatibility_fs22_repair_review_state_does_not_clear_dispatch_
     assert_eq!(repair_json["action"], Value::from("blocked"));
     assert_eq!(
         repair_json["phase_detail"],
-        Value::from("task_closure_recording_ready"),
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         "FS-22 repair should expose closure bridge readiness instead of generic execution reentry: {repair_json:?}"
     );
     assert_eq!(
@@ -18639,7 +19325,7 @@ fn internal_only_compatibility_runtime_remediation_fs14_close_current_task_does_
     );
     assert_eq!(
         status_after_projection_loss["phase_detail"],
-        Value::from("execution_reentry_required")
+        Value::from(phase::DETAIL_EXECUTION_REENTRY_REQUIRED)
     );
     assert!(
         status_after_projection_loss["reason_codes"]
@@ -18651,11 +19337,15 @@ fn internal_only_compatibility_runtime_remediation_fs14_close_current_task_does_
             }),
         "FS-14 projection loss must not publish task-verification projection loss as a blocker, got {status_after_projection_loss}"
     );
-    assert!(
-        status_after_projection_loss["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("featureforge plan execution begin")),
-        "FS-14 projection loss should keep the next executable public route, got {status_after_projection_loss}"
+    assert_typed_begin_task_step_argv(
+        &status_after_projection_loss,
+        2,
+        1,
+        "FS-14 projection loss should keep the next typed public begin route",
+    );
+    assert_non_authoritative_display_summary_if_present(
+        &status_after_projection_loss,
+        "FS-14 projection loss display summary",
     );
 
     let review_summary_path = write_summary_fixture_file(
@@ -18699,7 +19389,9 @@ fn internal_only_compatibility_runtime_remediation_fs14_close_current_task_does_
     assert!(
         close_failure["message"].as_str().is_some_and(|message| {
             message.contains("close-current-task is not the exact public route")
-                && message.contains("featureforge plan execution begin")
+                && message.contains("typed_public_route=command_kind=begin,task=2,step=1")
+                && message.contains("route_field=recommended_public_command_argv")
+                && !message.contains("Next public action:")
                 && !message.contains("receipt")
         }),
         "FS-14 projection-loss failure should direct agents to the exact public route without artifact repair language, got {close_failure}"
@@ -18925,10 +19617,7 @@ fn internal_only_compatibility_record_review_dispatch_task_scope_requires_curren
     assert_eq!(blocked["action"], "blocked");
     assert_eq!(blocked["failure_class"], "ExecutionStateNotReady");
     assert_eq!(blocked["code"], "out_of_phase_requery_required");
-    assert_eq!(
-        blocked["recommended_command"],
-        format!("featureforge workflow operator --plan {PLAN_REL}")
-    );
+    assert_operator_requery_route(&blocked, "task-scoped dispatch without current target");
     assert!(
         blocked["diagnostics"]
             .as_array()
@@ -19036,9 +19725,9 @@ fn internal_only_compatibility_record_review_dispatch_final_review_scope_require
     assert_eq!(blocked["action"], "blocked");
     assert_eq!(blocked["failure_class"], "ExecutionStateNotReady");
     assert_eq!(blocked["code"], "out_of_phase_requery_required");
-    assert_eq!(
-        blocked["recommended_command"],
-        format!("featureforge workflow operator --plan {PLAN_REL}")
+    assert_operator_requery_route(
+        &blocked,
+        "final-review dispatch while task target is still bound",
     );
     assert!(
         blocked["diagnostics"]
@@ -21127,7 +21816,7 @@ fn internal_only_compatibility_gate_review_rejects_contractless_current_run_unit
     );
     assert_eq!(
         rebuilt["targets"][0]["status"],
-        Value::from("manual_required"),
+        Value::from("projection_only"),
         "json: {rebuilt}"
     );
 
@@ -21191,12 +21880,20 @@ fn internal_only_compatibility_gate_review_rejects_contractless_current_run_unit
         .as_array()
         .expect(concat!("gate", "-review should expose reason codes"));
     assert!(
-        reason_codes
-            .iter()
-            .any(|code| code.as_str() == Some("plain_unit_review_receipt_provenance_mismatch")),
-        "{} should surface stale provenance for contractless current-run unit-review receipts instead of ignoring them, got {}",
-        gate_review,
-        concat!("gate", "-review")
+        !reason_codes.iter().any(|code| code
+            .as_str()
+            .is_some_and(|code| code.starts_with("plain_unit_review_receipt_"))),
+        "contractless current-run unit-review receipts must not control gate routing, got {}",
+        gate_review
+    );
+    assert!(
+        gate_review["warning_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| {
+                code.as_str() == Some("plain_unit_review_receipts_diagnostic_only")
+            })),
+        "contractless current-run unit-review receipts should remain diagnostic, got {}",
+        gate_review
     );
 }
 
@@ -21232,32 +21929,49 @@ fn internal_only_compatibility_repair_review_state_reports_execution_reentry_whe
         Value::from("execution_reentry"),
         "json: {repair}"
     );
-    let recommended_command = repair["recommended_command"]
-        .as_str()
-        .expect("repair-review-state should return a concrete execution-reentry command");
-    assert!(
-        recommended_command.starts_with("featureforge plan execution begin --plan"),
-        "repair-review-state should return a concrete begin command for execution reentry, got {recommended_command:?}",
+    assert_non_authoritative_display_summary_if_present(
+        &repair,
+        "repair-review-state execution-reentry display summary after stale follow-up clear",
     );
-    assert!(
-        recommended_command.contains("--task 2 --step 1"),
-        "repair-review-state should reenter at Task 2 Step 1 for this fixture, got {recommended_command:?}",
-    );
-    let recommended_parts = recommended_command.split_whitespace().collect::<Vec<_>>();
+    let recommended_parts = repair["recommended_public_command_argv"]
+        .as_array()
+        .expect("repair-review-state should expose typed recommended argv")
+        .iter()
+        .map(|part| {
+            part.as_str()
+                .expect("repair-review-state typed recommended argv entries should be strings")
+        })
+        .collect::<Vec<_>>();
     assert!(
         recommended_parts.len() >= 4,
-        "repair-review-state should return a full plan-execution command, got {recommended_command:?}"
+        "repair-review-state should return a full plan-execution argv, got {recommended_parts:?}"
+    );
+    assert!(
+        recommended_parts.contains(&"begin"),
+        "repair-review-state should route execution reentry through typed public begin argv, got {recommended_parts:?}"
+    );
+    assert!(
+        recommended_parts
+            .windows(2)
+            .any(|window| window[0] == "--task" && window[1] == "2"),
+        "repair-review-state typed public argv should target Task 2 for this fixture, got {recommended_parts:?}"
+    );
+    assert!(
+        recommended_parts
+            .windows(2)
+            .any(|window| window[0] == "--step" && window[1] == "1"),
+        "repair-review-state typed public argv should target Step 1 for this fixture, got {recommended_parts:?}"
     );
     let reentry = internal_only_run_rust_json_direct_or_cli(
         repo,
         state,
         &recommended_parts[3..],
-        "repair-review-state recommended execution-reentry command should execute immediately after stale follow-up clear",
+        "repair-review-state typed execution-reentry argv should execute immediately after stale follow-up clear",
     );
     assert_ne!(
         reentry["action"],
         Value::from("blocked"),
-        "repair-review-state should return an immediately executable execution-reentry command after stale follow-up clear, got {reentry}"
+        "repair-review-state should return immediately executable typed public execution-reentry argv after stale follow-up clear, got {reentry}"
     );
 }
 
@@ -21377,18 +22091,20 @@ fn internal_only_compatibility_record_branch_closure_ignores_stale_execution_ree
         after_stale_follow_up["code"], baseline["code"],
         "json: {after_stale_follow_up}"
     );
-    assert_eq!(
-        after_stale_follow_up["recommended_command"], baseline["recommended_command"],
-        "json: {after_stale_follow_up}"
-    );
     assert_ne!(
-        after_stale_follow_up["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution repair-review-state --plan {PLAN_REL}"
-        )),
+        after_stale_follow_up["required_follow_up"],
+        Value::from("repair_review_state"),
         "{} should not be forced back through stale repair-review-state reroutes: {}",
         after_stale_follow_up,
         concat!("record", "-branch-closure"),
+    );
+    assert_non_authoritative_display_summary_if_present(
+        &baseline,
+        "baseline branch closure record display summary",
+    );
+    assert_non_authoritative_display_summary_if_present(
+        &after_stale_follow_up,
+        "branch closure record after stale follow-up display summary",
     );
 }
 
@@ -21462,12 +22178,12 @@ fn internal_only_compatibility_rebuild_evidence_json_output_fields() {
 
     assert_eq!(
         target["status"],
-        Value::from("manual_required"),
+        Value::from("projection_only"),
         "json: {json}"
     );
     assert_eq!(
         target["failure_class"],
-        Value::from("manual_required"),
+        Value::from("projection_export_not_progress_route"),
         "json: {json}"
     );
     assert!(
@@ -21515,7 +22231,7 @@ fn internal_only_compatibility_rebuild_evidence_json_schema() {
 
     let expected = format!(
         concat!(
-            "{{\"session_root\":{},\"dry_run\":false,\"filter\":{{\"all\":true,\"tasks\":[],\"steps\":[],\"include_open\":false,\"skip_manual_fallback\":false,\"continue_on_error\":false,\"max_jobs\":1,\"no_output\":false,\"json\":true}},\"scope\":\"all\",\"counts\":{{\"planned\":1,\"rebuilt\":0,\"manual\":1,\"failed\":0,\"noop\":0}},\"duration_ms\":{},\"targets\":[{{\"task_id\":1,\"step_id\":1,\"target_kind\":\"stale_completed_attempt\",\"pre_invalidation_reason\":\"files_proven_drifted\",\"status\":\"manual_required\",\"verify_mode\":\"command\",\"verify_command\":\"printf rebuilt\",\"attempt_id_before\":\"1:1:1\",\"attempt_id_after\":null,\"verification_hash\":null,\"error\":\"projection_only: projection rebuild reports stale projection candidates without mutating runtime projections; run materialize-projections for explicit projection materialization or replay stale execution with reopen/begin/complete when execution work must be rerun.\",\"failure_class\":\"manual_required\"}}]}}\n"
+            "{{\"session_root\":{},\"dry_run\":false,\"filter\":{{\"all\":true,\"tasks\":[],\"steps\":[],\"include_open\":false,\"skip_manual_fallback\":false,\"continue_on_error\":false,\"max_jobs\":1,\"no_output\":false,\"json\":true}},\"scope\":\"all\",\"counts\":{{\"planned\":1,\"rebuilt\":0,\"manual\":1,\"failed\":0,\"noop\":0}},\"duration_ms\":{},\"targets\":[{{\"task_id\":1,\"step_id\":1,\"target_kind\":\"stale_completed_attempt\",\"pre_invalidation_reason\":\"files_proven_drifted\",\"status\":\"projection_only\",\"verify_mode\":\"command\",\"verify_command\":\"printf rebuilt\",\"attempt_id_before\":\"1:1:1\",\"attempt_id_after\":null,\"verification_hash\":null,\"error\":\"projection_only: projection rebuild reports stale projection candidates without mutating runtime truth; materialize-projections is only for explicit projection export. For progress, follow the shared route law in references/operator-route-authority.md.\",\"failure_class\":\"projection_export_not_progress_route\"}}]}}\n"
         ),
         serde_json::to_string(
             json["session_root"]
@@ -21609,7 +22325,7 @@ fn internal_only_compatibility_rebuild_evidence_text_failure_output() {
             "stdout:\n{stdout}"
         );
         assert!(
-            stdout.contains("failure_class=\"manual_required\""),
+            stdout.contains("failure_class=\"projection_export_not_progress_route\""),
             "stdout:\n{stdout}"
         );
     }
@@ -21681,7 +22397,7 @@ fn internal_only_compatibility_rebuild_evidence_noop_and_partial_failures() {
         assert_eq!(json["counts"]["manual"], Value::from(1), "json: {json}");
         assert_eq!(
             json["targets"][0]["failure_class"],
-            Value::from("manual_required"),
+            Value::from("projection_export_not_progress_route"),
             "json: {json}"
         );
     }
@@ -21724,7 +22440,7 @@ fn internal_only_compatibility_rebuild_evidence_noop_and_partial_failures() {
         assert_eq!(json["counts"]["manual"], Value::from(1), "json: {json}");
         assert_eq!(
             json["targets"][0]["failure_class"],
-            Value::from("manual_required"),
+            Value::from("projection_export_not_progress_route"),
             "json: {json}"
         );
     }
@@ -21857,7 +22573,7 @@ fn internal_only_compatibility_rebuild_evidence_noop_and_partial_failures() {
         );
         assert_eq!(
             json["targets"][0]["status"],
-            Value::from("manual_required"),
+            Value::from("projection_only"),
             "json: {json}"
         );
         assert_eq!(
@@ -21867,7 +22583,7 @@ fn internal_only_compatibility_rebuild_evidence_noop_and_partial_failures() {
         );
         assert_eq!(
             json["targets"][1]["failure_class"],
-            Value::from("manual_required"),
+            Value::from("projection_export_not_progress_route"),
             "json: {json}"
         );
     }
@@ -21904,7 +22620,7 @@ fn internal_only_compatibility_rebuild_evidence_noop_and_partial_failures() {
         assert_eq!(output.status.code(), Some(3), "json: {json}");
         assert_eq!(
             json["targets"][0]["failure_class"],
-            Value::from("manual_required"),
+            Value::from("projection_export_not_progress_route"),
             "json: {json}"
         );
     }
@@ -22004,17 +22720,22 @@ fn internal_only_compatibility_rebuild_evidence_noop_preserves_receipt_only_stra
         gate_before_rebuild["reason_codes"]
             .as_array()
             .is_some_and(|codes| {
-                codes.iter().any(|code| {
-                    matches!(
-                        code.as_str(),
-                        Some(
-                            "plain_unit_review_receipt_provenance_mismatch"
-                                | "plain_unit_review_receipt_fingerprint_mismatch"
-                        )
-                    )
+                !codes.iter().any(|code| {
+                    code.as_str()
+                        .is_some_and(|code| code.starts_with("plain_unit_review_receipt_"))
                 })
             }),
-        "{} should expose receipt-only strategy drift before rebuild refresh, got {}",
+        "{} should not route on receipt-only strategy drift before rebuild refresh, got {}",
+        gate_before_rebuild,
+        concat!("gate", "-review")
+    );
+    assert!(
+        gate_before_rebuild["warning_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| {
+                code.as_str() == Some("plain_unit_review_receipts_diagnostic_only")
+            })),
+        "{} should keep receipt-only drift diagnostic before rebuild refresh, got {}",
         gate_before_rebuild,
         concat!("gate", "-review")
     );
@@ -22045,17 +22766,20 @@ fn internal_only_compatibility_rebuild_evidence_noop_preserves_receipt_only_stra
         gate_after_rebuild["reason_codes"]
             .as_array()
             .is_some_and(|codes| {
-                codes.iter().any(|code| {
-                    matches!(
-                        code.as_str(),
-                        Some(
-                            "plain_unit_review_receipt_provenance_mismatch"
-                                | "plain_unit_review_receipt_fingerprint_mismatch"
-                        )
-                    )
+                !codes.iter().any(|code| {
+                    code.as_str()
+                        .is_some_and(|code| code.starts_with("plain_unit_review_receipt_"))
                 })
             }),
-        "projection-only noop rebuild should not repair receipt-only drift, got {gate_after_rebuild}"
+        "projection-only noop rebuild should not route on receipt-only drift, got {gate_after_rebuild}"
+    );
+    assert!(
+        gate_after_rebuild["warning_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| {
+                code.as_str() == Some("plain_unit_review_receipts_diagnostic_only")
+            })),
+        "projection-only noop rebuild should keep receipt-only drift diagnostic, got {gate_after_rebuild}"
     );
 }
 
@@ -22140,13 +22864,9 @@ fn internal_only_compatibility_gate_review_fails_closed_when_ready_finish_fixtur
         gate_review["code"],
         Value::from("out_of_phase_requery_required")
     );
-    assert_eq!(
-        gate_review["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
-    );
-    assert_eq!(
-        gate_review["rederive_via_workflow_operator"],
-        Value::Bool(true)
+    assert_operator_requery_route(
+        &gate_review,
+        "malformed authoritative active-contract gate review",
     );
     assert!(gate_review["finish_review_gate_pass_branch_closure_id"].is_null());
 
@@ -24357,6 +25077,16 @@ fn internal_only_compatibility_task3_gate_commands_reject_forged_artifact_finger
                 .any(|code| code.as_str() == Some("contract_fingerprint_mismatch"))),
         "gate-contract should emit contract_fingerprint_mismatch for forged headers, got {contract_json}"
     );
+    assert!(
+        contract_json["diagnostics"]
+            .as_array()
+            .expect("gate-contract diagnostics should be an array")
+            .iter()
+            .any(|diagnostic| diagnostic["remediation"]
+                .as_str()
+                .is_some_and(remediation_mentions_full_typed_operator_contract)),
+        "gate-contract remediation should route artifact integrity failures through typed workflow/operator authority, got {contract_json}"
+    );
 
     let active_contract_rel = "docs/featureforge/execution-evidence/active-execution-contract.md";
     let active_contract_fingerprint =
@@ -24407,6 +25137,16 @@ fn internal_only_compatibility_task3_gate_commands_reject_forged_artifact_finger
                 .any(|code| code.as_str() == Some("evaluation_fingerprint_mismatch"))),
         "gate-evaluator should emit evaluation_fingerprint_mismatch for forged headers, got {evaluation_json}"
     );
+    assert!(
+        evaluation_json["diagnostics"]
+            .as_array()
+            .expect("gate-evaluator diagnostics should be an array")
+            .iter()
+            .any(|diagnostic| diagnostic["remediation"]
+                .as_str()
+                .is_some_and(remediation_mentions_full_typed_operator_contract)),
+        "gate-evaluator remediation should route report artifact integrity failures through typed workflow/operator authority, got {evaluation_json}"
+    );
 
     write_harness_state_fixture!(
         repo,
@@ -24447,6 +25187,16 @@ fn internal_only_compatibility_task3_gate_commands_reject_forged_artifact_finger
                 .iter()
                 .any(|code| code.as_str() == Some("handoff_fingerprint_mismatch"))),
         "gate-handoff should emit handoff_fingerprint_mismatch for forged headers, got {handoff_json}"
+    );
+    assert!(
+        handoff_json["diagnostics"]
+            .as_array()
+            .expect("gate-handoff diagnostics should be an array")
+            .iter()
+            .any(|diagnostic| diagnostic["remediation"]
+                .as_str()
+                .is_some_and(remediation_mentions_full_typed_operator_contract)),
+        "gate-handoff remediation should route handoff artifact integrity failures through typed workflow/operator authority, got {handoff_json}"
     );
 }
 
@@ -26144,6 +26894,18 @@ fn internal_only_compatibility_task3_gate_and_record_contract_reject_out_of_plan
                 .any(|code| code.as_str() == Some("contract_evidence_covered_step_out_of_scope"))),
             "{command_name} should reject evidence requirement covered_steps outside the approved plan slice, got {json}"
         );
+        if command_name == "gate-contract" {
+            assert!(
+                json["diagnostics"]
+                    .as_array()
+                    .expect("gate-contract diagnostics should be an array")
+                    .iter()
+                    .any(|diagnostic| diagnostic["remediation"]
+                        .as_str()
+                        .is_some_and(remediation_mentions_full_typed_operator_contract)),
+                "gate-contract remediation should route contract scope failures through typed workflow/operator authority, got {json}"
+            );
+        }
     }
 }
 
@@ -26251,6 +27013,18 @@ fn internal_only_compatibility_task3_gate_and_record_evaluator_require_authorita
                 .any(|code| code.as_str() == Some("evaluation_evidence_artifact_ref_unresolved"))),
             "{command_name} should reject artifact-backed evidence refs that do not resolve in authoritative artifacts, got {json}"
         );
+        if command_name == "gate-evaluator" {
+            assert!(
+                json["diagnostics"]
+                    .as_array()
+                    .expect("gate-evaluator diagnostics should be an array")
+                    .iter()
+                    .any(|diagnostic| diagnostic["remediation"]
+                        .as_str()
+                        .is_some_and(remediation_mentions_full_typed_operator_contract)),
+                "gate-evaluator remediation should route evidence-reference failures through typed workflow/operator authority, got {json}"
+            );
+        }
     }
 }
 
@@ -28758,13 +29532,7 @@ fn internal_only_compatibility_late_stage_recording_equivalent_reruns_keep_direc
     );
     assert_eq!(qa["action"], Value::from("blocked"));
     assert_eq!(qa["code"], Value::from("out_of_phase_requery_required"));
-    assert_eq!(
-        qa["recommended_command"],
-        Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --json"
-        ))
-    );
-    assert_eq!(qa["rederive_via_workflow_operator"], Value::Bool(true));
+    assert_operator_requery_route(&qa, "QA equivalent rerun after workflow reroute");
     assert_eq!(qa["required_follow_up"], Value::Null);
 }
 
@@ -28811,15 +29579,9 @@ fn internal_only_compatibility_late_stage_out_of_phase_requery_happens_before_su
         advance_release["code"],
         Value::from("out_of_phase_requery_required")
     );
-    assert_eq!(
-        advance_release["recommended_command"],
-        Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --json"
-        ))
-    );
-    assert_eq!(
-        advance_release["rederive_via_workflow_operator"],
-        Value::Bool(true)
+    assert_operator_requery_route(
+        &advance_release,
+        "advance-late-stage release-readiness out-of-phase summary ordering",
     );
     assert_eq!(advance_release["required_follow_up"], Value::Null);
 
@@ -28844,15 +29606,9 @@ fn internal_only_compatibility_late_stage_out_of_phase_requery_happens_before_su
         primitive_release["code"],
         Value::from("out_of_phase_requery_required")
     );
-    assert_eq!(
-        primitive_release["recommended_command"],
-        Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --json"
-        ))
-    );
-    assert_eq!(
-        primitive_release["rederive_via_workflow_operator"],
-        Value::Bool(true)
+    assert_operator_requery_route(
+        &primitive_release,
+        "record-release-readiness out-of-phase summary ordering",
     );
     assert_eq!(primitive_release["required_follow_up"], Value::Null);
 
@@ -28879,15 +29635,9 @@ fn internal_only_compatibility_late_stage_out_of_phase_requery_happens_before_su
         advance_final["code"],
         Value::from("out_of_phase_requery_required")
     );
-    assert_eq!(
-        advance_final["recommended_command"],
-        Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready --json"
-        ))
-    );
-    assert_eq!(
-        advance_final["rederive_via_workflow_operator"],
-        Value::Bool(true)
+    assert_operator_requery_route(
+        &advance_final,
+        "advance-late-stage final-review out-of-phase summary ordering",
     );
     assert_eq!(advance_final["required_follow_up"], Value::Null);
 
@@ -28918,15 +29668,9 @@ fn internal_only_compatibility_late_stage_out_of_phase_requery_happens_before_su
         primitive_final["code"],
         Value::from("out_of_phase_requery_required")
     );
-    assert_eq!(
-        primitive_final["recommended_command"],
-        Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready --json"
-        ))
-    );
-    assert_eq!(
-        primitive_final["rederive_via_workflow_operator"],
-        Value::Bool(true)
+    assert_operator_requery_route(
+        &primitive_final,
+        "record-final-review out-of-phase summary ordering",
     );
     assert_eq!(primitive_final["required_follow_up"], Value::Null);
 }
@@ -28983,7 +29727,7 @@ fn internal_only_compatibility_advance_late_stage_final_review_rejects_unapprove
     };
     assert_eq!(
         operator["phase_detail"],
-        Value::from("final_review_recording_ready"),
+        Value::from(phase::DETAIL_FINAL_REVIEW_RECORDING_READY),
         "fixture sanity check should expose a final-review recording-ready lane before invalid reviewer-source validation: {operator}"
     );
     let _dispatch_id = operator["recording_context"]["dispatch_id"]
@@ -29089,7 +29833,7 @@ fn internal_only_compatibility_record_final_review_rejects_unapproved_reviewer_s
     };
     assert_eq!(
         operator["phase_detail"],
-        Value::from("final_review_recording_ready"),
+        Value::from(phase::DETAIL_FINAL_REVIEW_RECORDING_READY),
         "fixture sanity check should expose a final-review recording-ready lane before compatibility invalid reviewer-source validation: {operator}"
     );
     let dispatch_id = operator["recording_context"]["dispatch_id"]
@@ -29213,15 +29957,9 @@ fn internal_only_compatibility_late_stage_primitive_rerun_equivalence_requires_m
         mismatched_release["code"],
         Value::from("out_of_phase_requery_required")
     );
-    assert_eq!(
-        mismatched_release["recommended_command"],
-        Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --json"
-        ))
-    );
-    assert_eq!(
-        mismatched_release["rederive_via_workflow_operator"],
-        Value::Bool(true)
+    assert_operator_requery_route(
+        &mismatched_release,
+        "release-readiness branch closure mismatch",
     );
     assert_eq!(
         authoritative_state_digest(repo, state),
@@ -29263,16 +30001,7 @@ fn internal_only_compatibility_late_stage_primitive_rerun_equivalence_requires_m
         mismatched_final["code"],
         Value::from("out_of_phase_requery_required")
     );
-    assert_eq!(
-        mismatched_final["recommended_command"],
-        Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready --json"
-        ))
-    );
-    assert_eq!(
-        mismatched_final["rederive_via_workflow_operator"],
-        Value::Bool(true)
-    );
+    assert_operator_requery_route(&mismatched_final, "final-review branch closure mismatch");
     assert_eq!(
         authoritative_state_digest(repo, state),
         final_digest_before,
@@ -29481,12 +30210,6 @@ fn internal_only_compatibility_record_qa_test_plan_refresh_reroute_returns_block
         qa_json["code"],
         Value::from("out_of_phase_requery_required")
     );
-    assert_eq!(
-        qa_json["recommended_command"],
-        Value::from(format!(
-            "featureforge workflow operator --plan {PLAN_REL} --json"
-        ))
-    );
-    assert_eq!(qa_json["rederive_via_workflow_operator"], Value::Bool(true));
+    assert_operator_requery_route(&qa_json, "QA test-plan refresh required reroute");
     assert_eq!(qa_json["required_follow_up"], Value::Null);
 }

@@ -88,6 +88,12 @@ pub(crate) struct ProjectionReadModelMetadata {
     pub(crate) tracked_projections_current: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProjectionReadModelDetail {
+    Full,
+    RuntimeDecision,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct RenderedProjectionArtifact {
     path: String,
@@ -178,9 +184,10 @@ pub(crate) fn render_canonical_evidence_projection_source_with_fingerprints(
     })
 }
 
-pub(crate) fn execution_projection_read_model_metadata(
+pub(crate) fn execution_projection_read_model_metadata_with_detail(
     context: &ExecutionContext,
     mode: ProjectionWriteMode,
+    detail: ProjectionReadModelDetail,
 ) -> Result<ProjectionReadModelMetadata, JsonFailure> {
     let mut state_dir_projection_paths = vec![
         state_dir_projection_path(&context.runtime, &context.plan_rel)?
@@ -193,6 +200,14 @@ pub(crate) fn execution_projection_read_model_metadata(
     let plan_export_path = execution_plan_projection_export_rel_path(&context.plan_rel)?;
     let evidence_export_path = execution_evidence_projection_export_rel_path(&context.plan_rel)?;
     let mut tracked_projection_paths = vec![plan_export_path.clone(), evidence_export_path.clone()];
+    if detail == ProjectionReadModelDetail::RuntimeDecision {
+        return Ok(ProjectionReadModelMetadata {
+            projection_mode: mode.as_str().to_owned(),
+            state_dir_projection_paths,
+            tracked_projection_paths,
+            tracked_projections_current: false,
+        });
+    }
     let rendered = render_execution_projections(context);
     let mut tracked_projections_current = tracked_projection_matches(
         &context.runtime.repo_root.join(&plan_export_path),

@@ -1029,7 +1029,6 @@ fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
     write_approved_spec(repo);
     write_plan(repo, "none");
 
-    let harness_state = harness_state_file_path(repo, state);
     let malformed_cases = vec![
         (
             "unknown harness_phase value",
@@ -1075,11 +1074,7 @@ fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
     ];
 
     for (case_name, payload, expected_error_class) in malformed_cases {
-        write_file(
-            &harness_state,
-            &serde_json::to_string_pretty(&payload)
-                .expect("malformed overlay fixture should serialize"),
-        );
+        write_harness_state_payload(repo, state, &payload);
         let output = run_plan_execution(
             repo,
             state,

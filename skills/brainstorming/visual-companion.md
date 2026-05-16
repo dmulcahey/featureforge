@@ -26,17 +26,19 @@ A question *about* a UI topic is not automatically a visual question. "What kind
 
 ## How It Works
 
-The server watches a directory for HTML files and serves the newest one to the browser. You write HTML content, the user sees it in their browser and can click to select options. Selections are recorded to a `.events` file that you read on your next turn.
+The server watches a directory for HTML files and serves the newest one to the browser. You write HTML content, the user sees it in their browser and can click to select options. Selections are recorded by skill-local `scripts/helper.js` into a `.events` file that you read on your next turn.
 
 **Content fragments vs full documents:** If your HTML file starts with `<!DOCTYPE` or `<html`, the server serves it as-is (just injects the helper script). Otherwise, the server automatically wraps your content in the frame template — adding the header, CSS theme, selection indicator, and all interactive infrastructure. **Write content fragments by default.** Only write full documents when you need complete control over the page.
 
 ## Starting a Session
 
+Set `BRAINSTORMING_SKILL_DIR` (or `$BrainstormingSkillDir` in PowerShell) to this skill's installed directory, then invoke its skill-local scripts through that directory.
+
 Unix-like shells:
 
 ```bash
 # Start server with persistence (mockups saved to project)
-scripts/start-server.sh --project-dir /path/to/project
+"$BRAINSTORMING_SKILL_DIR/scripts/start-server.sh" --project-dir /path/to/project
 
 # Returns: {"type":"server-started","port":52341,"url":"http://localhost:52341",
 #           "screen_dir":"/path/to/project/.featureforge/brainstorm/12345-1706000000"}
@@ -46,7 +48,7 @@ PowerShell:
 
 ```powershell
 # Start server with persistence (mockups saved to project)
-scripts/start-server.ps1 --project-dir C:\path\to\project
+& "$BrainstormingSkillDir\scripts\start-server.ps1" --project-dir C:\path\to\project
 ```
 
 Save `screen_dir` from the response. Tell user to open the URL.
@@ -61,29 +63,29 @@ Save `screen_dir` from the response. Tell user to open the URL.
 # Codex reaps background processes, and GitHub Copilot local installs can
 # run the same command normally. The script auto-detects CODEX_CI and
 # switches to foreground mode when needed.
-scripts/start-server.sh --project-dir /path/to/project
+"$BRAINSTORMING_SKILL_DIR/scripts/start-server.sh" --project-dir /path/to/project
 ```
 
 ```powershell
 # Use the PowerShell wrapper when running from Windows shells.
-scripts/start-server.ps1 --project-dir C:\path\to\project
+& "$BrainstormingSkillDir\scripts\start-server.ps1" --project-dir C:\path\to\project
 ```
 
-The PowerShell wrappers require a bash-compatible shell underneath. On Windows, install Git Bash or point `FEATUREFORGE_BASH_PATH` at a compatible `bash` before using `start-server.ps1` or `stop-server.ps1`.
+The PowerShell wrappers require a bash-compatible shell underneath. On Windows, install Git Bash or point `FEATUREFORGE_BASH_PATH` at a compatible `bash` before using skill-local `scripts/start-server.ps1` or skill-local `scripts/stop-server.ps1`.
 
 In Codex, that auto-foreground path prints the startup JSON but may stay attached to the terminal instead of returning immediately. Launch it in a separate PTY/session when you need the terminal back, capture the first `server-started` JSON line for `screen_dir`, and if stdout is no longer available read `$SCREEN_DIR/.server-info`.
 
 If the URL is unreachable from your browser (common in remote/containerized setups), bind a non-loopback host:
 
 ```bash
-scripts/start-server.sh \
+"$BRAINSTORMING_SKILL_DIR/scripts/start-server.sh" \
   --project-dir /path/to/project \
   --host 0.0.0.0 \
   --url-host localhost
 ```
 
 ```powershell
-scripts/start-server.ps1 `
+& "$BrainstormingSkillDir\scripts\start-server.ps1" `
   --project-dir C:\path\to\project `
   --host 0.0.0.0 `
   --url-host localhost
@@ -94,7 +96,7 @@ Use `--url-host` to control what hostname is printed in the returned URL JSON.
 ## The Loop
 
 1. **Check server is alive**, then **write HTML** to a new file in `screen_dir`:
-   - Before each write, check that `$SCREEN_DIR/.server-info` exists. If it doesn't (or `.server-stopped` exists), the server has shut down — restart it with `scripts/start-server.sh` on Unix-like shells or `scripts/start-server.ps1` from PowerShell before continuing. Reuse the same launch flags you started with originally (`--project-dir`, plus any `--host` / `--url-host` overrides), then save the new `screen_dir` from the restart response before writing more screens. The server auto-exits after 30 minutes of inactivity.
+   - Before each write, check that `$SCREEN_DIR/.server-info` exists. If it doesn't (or `.server-stopped` exists), the server has shut down — restart it with skill-local `scripts/start-server.sh` on Unix-like shells or skill-local `scripts/start-server.ps1` from PowerShell before continuing. Reuse the same launch flags you started with originally (`--project-dir`, plus any `--host` / `--url-host` overrides), then save the new `screen_dir` from the restart response before writing more screens. The server auto-exits after 30 minutes of inactivity.
    - Use semantic filenames: `platform.html`, `visual-style.html`, `layout.html`
    - **Never reuse filenames** — each screen gets a fresh file
    - Use your normal file-editing workflow — **never use cat/heredoc** (dumps noise into terminal)
@@ -278,18 +280,18 @@ If `.events` doesn't exist, the user didn't interact with the browser — use on
 Unix-like shells:
 
 ```bash
-scripts/stop-server.sh $SCREEN_DIR
+"$BRAINSTORMING_SKILL_DIR/scripts/stop-server.sh" $SCREEN_DIR
 ```
 
 PowerShell:
 
 ```powershell
-scripts/stop-server.ps1 $SCREEN_DIR
+& "$BrainstormingSkillDir\scripts\stop-server.ps1" $SCREEN_DIR
 ```
 
 If the session used `--project-dir`, mockup files persist in `.featureforge/brainstorm/` for later reference. Only `/tmp` sessions get deleted on stop.
 
 ## Reference
 
-- Frame template (CSS reference): `scripts/frame-template.html`
-- Helper script (client-side): `scripts/helper.js`
+- Frame template (CSS reference): skill-local `scripts/frame-template.html`
+- Helper script (client-side): skill-local `scripts/helper.js`

@@ -1,10 +1,10 @@
 # Execution, Review, QA, and Finish Examples
 
-This companion keeps examples and rationale out of top-level skill prompts. It is not routing authority. When it disagrees with a top-level skill or `featureforge workflow operator --plan <approved-plan-path>`, follow the top-level skill and workflow/operator.
+This companion keeps examples and rationale out of top-level skill prompts. It is not routing authority. When it disagrees with a top-level skill or `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`, follow the top-level skill and workflow/operator JSON.
 
 ## Subagent Orchestration Examples
 
-Use fresh isolated agents for implementation and review tasks when the runtime-selected topology supports that approach. Give each child the helper-built task packet verbatim, plus only transient logistics such as branch, working directory, and base commit.
+Use fresh isolated agents for implementation and review tasks when the runtime-selected topology supports that approach. Give each child the runtime-provided task packet verbatim, plus only transient logistics such as branch, working directory, and base commit.
 
 Typical role mapping:
 - Implementer: built-in `worker`
@@ -22,9 +22,9 @@ Mini workflow:
 
 ```text
 Task packet -> implementer -> spec review -> code quality review -> verification -> close-current-task
-Repeat until no tasks remain -> document-release -> requesting-code-review -> workflow operator
-If workflow operator routes QA, run qa-only -> advance-late-stage for qa_recording_required -> workflow operator
-When workflow operator reports branch completion ready -> finishing-a-development-branch
+Repeat until no tasks remain -> workflow/operator JSON selects the next release, final-review, QA, or finish lane
+If workflow/operator JSON routes QA, run qa-only, then follow references/operator-route-authority.md for the recording route
+When workflow/operator JSON reports branch completion ready -> finishing-a-development-branch
 ```
 
 ## Deterministic Finding Examples

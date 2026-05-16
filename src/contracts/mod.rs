@@ -6,6 +6,7 @@ pub mod plan;
 pub mod runtime;
 pub mod spec;
 pub mod task_contract;
+pub mod workflow;
 
 pub use harness::{
     BlockingEvidenceReference, DowngradeBlockingEvidence, DowngradeOperatorImpact,

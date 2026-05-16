@@ -214,21 +214,15 @@ simulate_one() {{
 fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
     let content = read_skill_doc();
     for pattern in [
-        "If helper calls fail:",
         "Do not re-derive `phase`, `phase_detail`, readiness, or late-stage precedence from markdown headers.",
-        "Do not invent or continue a parallel manual routing graph.",
-        "If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` first for orientation/diagnosis, then call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` for authoritative routing.",
-        "Use `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path>` when the user asks for diagnosis or orientation and show the compact dashboard directly.",
-        "Do not fall back from doctor to the legacy workflow-status route; if doctor fails, fail closed and repair the doctor/operator route path.",
-        "Do not introduce or route to `$_FEATUREFORGE_BIN plan execution recover`; recovery remains on existing operator-routed public commands.",
-        "If helper routing still cannot be recovered, fail closed to the earlier safe stage (`featureforge:brainstorming`) or remain in the current execution flow; do not route directly into implementation or late-stage recording from fallback logic.",
-        "Treat human-readable projection artifacts and companion markdown as derived output, not routing authority.",
-        "Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.",
-        "If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.",
-        "Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.",
-        "Do not add `featureforge:project-memory` to the default mandatory workflow stack.",
-        "When product-work artifact state already points at another active workflow stage, follow that workflow owner first and treat project memory as optional follow-up support unless the user is explicitly asking to work on project memory itself, in which case the explicit project-memory route above takes precedence over helper-derived workflow routes and execution handoff paths.",
-        "If helper routing still cannot be recovered, fail closed to the earlier safe stage (`featureforge:brainstorming`) or remain in the current execution flow; do not route directly into implementation or late-stage recording from fallback logic.",
+        "If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` only for orientation/diagnosis, then call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` as route authority.",
+        "The generated Installed Control Plane section and canonical route reference at `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` own typed argv/template binding, task-closure replay, repair, late-stage lanes, and stop rules; recovery remains on operator-routed public commands.",
+        "Treat `phase_detail=task_closure_recording_ready` as the routed task-closure replay lane, and treat projection artifacts as derived output, not routing authority.",
+        "If doctor/operator fails, fix only obvious binary, state-dir, or repo-root binding and rerun. If routing still cannot be recovered, stop and report unresolved route binding; do not reconstruct routing from artifacts manually.",
+        "if no typed executable surface exists, stop and report the route diagnostic.",
+        "Short-circuit runtime-derived workflow routes and execution handoff paths to `featureforge:project-memory` only when the user clearly asks to:",
+        "log a bug fix, record a decision, update key facts, or record durable issue breadcrumbs in repo-visible project memory",
+        "Do not add `featureforge:project-memory` to the default mandatory workflow stack; when the user is not explicitly asking to work on project memory itself, follow the active workflow owner first and treat project memory as optional follow-up support.",
         "_FEATUREFORGE_STATE_DIR=\"${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}\"",
     ] {
         assert!(
@@ -246,9 +240,15 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
         "FEATUREFORGE_SPAWNED_SUBAGENT_OPT_IN",
         "ask one interactive question before any normal FeatureForge work happens",
         "Only after the bypass gate resolves to `enabled` for the current session key",
+        "If helper calls fail:",
+        "If helper routing still cannot be recovered",
+        "Short-circuit helper-derived workflow routes",
+        "### Helper-first routing",
+        "Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.",
         "[ -n \"$_FEATUREFORGE_BIN\" ] && \"$_FEATUREFORGE_BIN\" update-check 2>/dev/null || :",
         "_SESSIONS=$(find \"$_FEATUREFORGE_STATE_DIR/sessions\" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')",
         "_CONTRIB=\"\"",
+        "$_FEATUREFORGE_BIN plan execution recover",
     ] {
         assert!(
             !content.contains(removed_pattern),
@@ -280,24 +280,25 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
         "using-featureforge skill should not route execution ownership through the deprecated recommend helper"
     );
     let explicit_memory_route_index = content
-        .find("If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.")
+        .find("Short-circuit runtime-derived workflow routes and execution handoff paths to `featureforge:project-memory` only when the user clearly asks to:")
         .expect("using-featureforge skill should document explicit-memory routing precedence");
-    let implementation_ready_index = content
-        .find("If the JSON result reports `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` using that exact approved plan path.")
-        .expect("using-featureforge skill should still document implementation-ready handoff routing");
+    let runtime_routing_index = content
+        .find("### Runtime-first routing")
+        .expect("using-featureforge skill should document runtime-first routing");
     assert!(
-        explicit_memory_route_index < implementation_ready_index,
-        "explicit project-memory routing should be documented before the implementation-ready handoff rule"
+        explicit_memory_route_index < runtime_routing_index,
+        "explicit project-memory routing should be documented before runtime-first routing"
     );
     let doctor_orientation_index = content
-        .find("call `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` first for orientation/diagnosis")
+        .find("call `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` only for orientation/diagnosis")
         .expect("using-featureforge skill should document doctor-first orientation");
     let operator_authority_index = content
-        .find("Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs` as the authoritative public routing contract.")
+        .find("Use only typed operator JSON route surfaces: execute `recommended_public_command_argv` when present; when `recommended_public_command_template` appears, treat `required_inputs` as validation metadata")
         .expect("using-featureforge skill should document operator route authority");
     assert!(
-        doctor_orientation_index < operator_authority_index,
-        "doctor-first orientation should be documented before the operator authority contract"
+        operator_authority_index < runtime_routing_index
+            && runtime_routing_index < doctor_orientation_index,
+        "operator authority should be top-level installed law before runtime-first routing details"
     );
 
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
@@ -515,20 +516,5 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         handoff_vague_entry["selected_route"],
         Value::String(String::from("featureforge:executing-plans")),
         "non-explicit requests should preserve the implementation-ready handoff route",
-    );
-}
-
-#[test]
-fn runtime_remediation_inventory_is_available_to_skill_route_contracts() {
-    let inventory =
-        fs::read_to_string(repo_root().join("tests/fixtures/runtime-remediation/README.md"))
-            .expect("runtime-remediation inventory should be readable");
-    assert!(
-        inventory.contains("FS-03"),
-        "runtime-remediation inventory should include FS-03 redispatch contradiction coverage",
-    );
-    assert!(
-        inventory.contains("FS-09"),
-        "runtime-remediation inventory should include FS-09 post-repair blocker coverage",
     );
 }

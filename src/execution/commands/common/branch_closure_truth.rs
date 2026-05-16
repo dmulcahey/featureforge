@@ -1,4 +1,27 @@
-use super::*;
+#[cfg(test)]
+use super::path_matches_late_stage_surface;
+use super::{
+    AuthoritativeTransitionState, BTreeSet, BranchClosureRecord, CurrentBranchClosureIdentity,
+    CurrentFinalReviewAuthorityCheck, CurrentTaskClosureRecord, EventCommandOwner,
+    ExecutionContext, ExecutionRoutingState, FailureClass, JsonFailure, NO_REPO_FILES_MARKER, Path,
+    RecordBranchClosureOutput, ResolvedFinalReviewEvidence,
+    authoritative_matching_execution_topology_downgrade_records_checked,
+    branch_closure_record_matches_plan_exemption, branch_definition_identity_for_context,
+    current_authoritative_branch_closure_id_optional, deterministic_record_id,
+    ensure_final_review_dispatch_id_matches, is_runtime_owned_execution_control_plane_path,
+    latest_attempt_for_step, load_authoritative_transition_state, normalize_repo_relative_path,
+    public_recovery_contract_for_follow_up, resolve_branch_closure_reviewed_tree_sha,
+    semantic_paths_changed_between_raw_trees, semantic_workspace_snapshot,
+    shared_branch_source_task_closure_ids, shared_final_review_dispatch_still_current,
+    shared_task_closure_contributes_to_branch_surface, still_current_task_closure_records,
+    structural_current_task_closure_failures, task_completion_lineage_fingerprint,
+    task_definition_identity_for_task,
+    usable_current_branch_closure_identity_from_authoritative_state,
+};
+use crate::execution::branch_closure_provenance::{
+    BRANCH_CLOSURE_PROVENANCE_TASK_CLOSURE_LINEAGE,
+    branch_closure_has_empty_lineage_late_stage_surface_exemption,
+};
 
 pub(in crate::execution::commands) struct BranchReviewedState {
     pub(in crate::execution::commands) base_branch: String,
@@ -49,7 +72,7 @@ pub(in crate::execution::commands) fn current_branch_reviewed_state(
         base_branch: base_branch.clone(),
         contract_identity: branch_definition_identity_for_context(context),
         effective_reviewed_branch_surface: String::from("repo_tracked_content"),
-        provenance_basis: String::from("task_closure_lineage"),
+        provenance_basis: String::from(BRANCH_CLOSURE_PROVENANCE_TASK_CLOSURE_LINEAGE),
         reviewed_state_id,
         semantic_reviewed_state_id,
         source_task_closure_ids,
@@ -110,8 +133,10 @@ pub(in crate::execution::commands) fn branch_closure_record_matches_empty_lineag
         && record.base_branch == reviewed_state.base_branch
         && semantic_matches
         && record.contract_identity == reviewed_state.contract_identity
-        && record.source_task_closure_ids.is_empty()
-        && record.provenance_basis == "task_closure_lineage_plus_late_stage_surface_exemption"
+        && branch_closure_has_empty_lineage_late_stage_surface_exemption(
+            &record.provenance_basis,
+            &record.source_task_closure_ids,
+        )
         && branch_closure_record_matches_plan_exemption(context, record))
 }
 
@@ -123,8 +148,10 @@ pub(in crate::execution::commands) fn branch_closure_record_is_empty_lineage_lat
         && record.source_plan_revision == context.plan_document.plan_revision
         && record.repo_slug == context.runtime.repo_slug
         && record.branch_name == context.runtime.branch_name
-        && record.source_task_closure_ids.is_empty()
-        && record.provenance_basis == "task_closure_lineage_plus_late_stage_surface_exemption"
+        && branch_closure_has_empty_lineage_late_stage_surface_exemption(
+            &record.provenance_basis,
+            &record.source_task_closure_ids,
+        )
         && branch_closure_record_matches_plan_exemption(context, record)
 }
 
@@ -164,6 +191,7 @@ pub(in crate::execution::commands) fn branch_closure_record_semantically_matches
 
 pub(in crate::execution::commands) fn blocked_branch_closure_output_for_invalid_current_task_closure(
     context: &ExecutionContext,
+    operator: &ExecutionRoutingState,
 ) -> Result<Option<RecordBranchClosureOutput>, JsonFailure> {
     if let Some(failure) = structural_current_task_closure_failures(context)?
         .into_iter()
@@ -171,9 +199,10 @@ pub(in crate::execution::commands) fn blocked_branch_closure_output_for_invalid_
     {
         let recovery = public_recovery_contract_for_follow_up(
             Path::new(&context.plan_rel),
-            None,
-            Some(String::from("repair_review_state")),
-            PublicFollowUpInputProfile::None,
+            Some(operator),
+            Some(String::from(
+                crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+            )),
         );
         return Ok(Some(RecordBranchClosureOutput {
             action: String::from("blocked"),
@@ -181,6 +210,7 @@ pub(in crate::execution::commands) fn blocked_branch_closure_output_for_invalid_
             code: None,
             recommended_command: recovery.recommended_command,
             recommended_public_command_argv: recovery.recommended_public_command_argv,
+            recommended_public_command_template: recovery.recommended_public_command_template,
             required_inputs: recovery.required_inputs,
             rederive_via_workflow_operator: recovery.rederive_via_workflow_operator,
             superseded_branch_closure_ids: Vec::new(),
@@ -224,8 +254,11 @@ pub(in crate::execution::commands) fn branch_closure_already_current_output(
     context: &ExecutionContext,
     authoritative_state: &mut AuthoritativeTransitionState,
     reviewed_state: &BranchReviewedState,
+    command_owner: EventCommandOwner,
 ) -> Result<Option<RecordBranchClosureOutput>, JsonFailure> {
-    let Some(current_identity) = usable_current_branch_closure_identity(context) else {
+    let Some(current_identity) =
+        branch_closure_identity_for_already_current_repair(context, authoritative_state)
+    else {
         return Ok(None);
     };
     let current_record_matches = authoritative_state
@@ -252,13 +285,14 @@ pub(in crate::execution::commands) fn branch_closure_already_current_output(
     )?;
     authoritative_state.set_review_state_repair_follow_up(None)?;
     authoritative_state
-        .persist_if_dirty_with_failpoint_and_command(None, "record_branch_closure")?;
+        .persist_if_dirty_with_failpoint_and_command(None, command_owner.as_str())?;
     Ok(Some(RecordBranchClosureOutput {
         action: String::from("already_current"),
         branch_closure_id: Some(current_identity.branch_closure_id),
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        recommended_public_command_template: None,
         required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         superseded_branch_closure_ids: Vec::new(),
@@ -273,8 +307,11 @@ pub(in crate::execution::commands) fn branch_closure_already_current_empty_linea
     context: &ExecutionContext,
     authoritative_state: &mut AuthoritativeTransitionState,
     reviewed_state: &BranchReviewedState,
+    command_owner: EventCommandOwner,
 ) -> Result<Option<RecordBranchClosureOutput>, JsonFailure> {
-    let Some(current_identity) = usable_current_branch_closure_identity(context) else {
+    let Some(current_identity) =
+        branch_closure_identity_for_already_current_repair(context, authoritative_state)
+    else {
         return Ok(None);
     };
     let current_record_matches = authoritative_state
@@ -298,13 +335,14 @@ pub(in crate::execution::commands) fn branch_closure_already_current_empty_linea
     )?;
     authoritative_state.set_review_state_repair_follow_up(None)?;
     authoritative_state
-        .persist_if_dirty_with_failpoint_and_command(None, "record_branch_closure")?;
+        .persist_if_dirty_with_failpoint_and_command(None, command_owner.as_str())?;
     Ok(Some(RecordBranchClosureOutput {
         action: String::from("already_current"),
         branch_closure_id: Some(current_identity.branch_closure_id),
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        recommended_public_command_template: None,
         required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         superseded_branch_closure_ids: Vec::new(),
@@ -313,6 +351,26 @@ pub(in crate::execution::commands) fn branch_closure_already_current_empty_linea
             "Current reviewed branch state already has an authoritative current branch closure.",
         ),
     }))
+}
+
+fn branch_closure_identity_for_already_current_repair(
+    context: &ExecutionContext,
+    authoritative_state: &AuthoritativeTransitionState,
+) -> Option<CurrentBranchClosureIdentity> {
+    usable_current_branch_closure_identity_from_authoritative_state(
+        context,
+        Some(authoritative_state),
+    )
+    .or_else(|| {
+        let identity = authoritative_state.recoverable_current_branch_closure_identity()?;
+        resolve_branch_closure_reviewed_tree_sha(
+            &context.runtime.repo_root,
+            &identity.branch_closure_id,
+            &identity.reviewed_state_id,
+        )
+        .ok()?;
+        Some(identity)
+    })
 }
 
 #[derive(Debug, Clone)]

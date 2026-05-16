@@ -21,15 +21,11 @@ pub fn complete(
     let complete_status = public_status_from_context_with_shared_routing(runtime, &context, false)?;
     require_public_mutation(
         &complete_status,
-        PublicMutationRequest {
-            kind: PublicMutationKind::Complete,
-            task: Some(request.task),
-            step: Some(request.step),
-            expect_execution_fingerprint: Some(request.expect_execution_fingerprint.clone()),
-            transfer_mode: None,
-            transfer_scope: None,
-            command_name: "complete",
-        },
+        PublicMutationRequest::complete(
+            request.task,
+            request.step,
+            Some(request.expect_execution_fingerprint.clone()),
+        ),
         FailureClass::ExecutionStateNotReady,
     )?;
     let provenance = authoritative_state
@@ -134,7 +130,7 @@ pub fn complete(
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         persist_authoritative_state_with_step_hint_and_rollback(
             authoritative_state,
-            "complete",
+            PublicCommandKind::Complete.public_mutation_token(),
             Some((request.task, request.step)),
             AuthoritativePersistRollback {
                 plan_path: &context.plan_abs,

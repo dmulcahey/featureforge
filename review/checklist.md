@@ -13,7 +13,7 @@ Use the FeatureForge severity taxonomy:
 ### Pass 1 — Critical
 
 #### Approved Task Contract & Reuse Law
-- For plan-routed work, apply `review/plan-task-contract.md` as the authoritative task-contract and reuse law.
+- For plan-routed work, apply `$_FEATUREFORGE_ROOT/review/plan-task-contract.md` as the authoritative task-contract and reuse law.
 - Treat avoidable duplicate implementation of substantive production behavior as a hard fail when a shared implementation is practical and architecturally correct.
 - Require any duplicate-implementation exception to name one approved exception category from the shared contract and the boundary rationale.
 - Require findings to name the duplicated behavior, the shared home that should own it, why duplication is harmful, and the smallest defensible consolidation path.

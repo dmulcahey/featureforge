@@ -29,7 +29,22 @@ pub const PUBLIC_STATUS_PHASE_VALUES: &[&str] = &[
     PHASE_TASK_CLOSURE_PENDING,
 ];
 
+pub const WORKFLOW_OPERATOR_PHASE_VALUES: &[&str] = &[
+    PHASE_BLOCKED,
+    PHASE_DOCUMENT_RELEASE_PENDING,
+    PHASE_EXECUTING,
+    PHASE_EXECUTION_PREFLIGHT,
+    PHASE_FINAL_REVIEW_PENDING,
+    PHASE_HANDOFF_REQUIRED,
+    PHASE_IMPLEMENTATION_HANDOFF,
+    PHASE_PIVOT_REQUIRED,
+    PHASE_QA_PENDING,
+    PHASE_READY_FOR_BRANCH_COMPLETION,
+    PHASE_TASK_CLOSURE_PENDING,
+];
+
 pub const DETAIL_BLOCKED_RUNTIME_BUG: &str = "blocked_runtime_bug";
+pub const BLOCKED_RUNTIME_BUG_STOP_REPORT_GUIDANCE: &str = "Stop and report this diagnostic; do not invent runtime mutations or reconstruct artifacts manually.";
 pub const DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS: &str =
     "branch_closure_recording_required_for_release_readiness";
 pub const DETAIL_EXECUTION_IN_PROGRESS: &str = "execution_in_progress";
@@ -47,6 +62,9 @@ pub const DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED: &str = "release_blocker_re
 pub const DETAIL_RELEASE_READINESS_RECORDING_READY: &str = "release_readiness_recording_ready";
 pub const DETAIL_RUNTIME_RECONCILE_REQUIRED: &str = "runtime_reconcile_required";
 pub const DETAIL_TASK_CLOSURE_RECORDING_READY: &str = "task_closure_recording_ready";
+/// Retired task-review dispatch lane. Kept as centralized diagnostic
+/// vocabulary so broken historical states fail closed without local literals.
+pub const DETAIL_TASK_REVIEW_DISPATCH_REQUIRED: &str = "task_review_dispatch_required";
 pub const DETAIL_TASK_REVIEW_RESULT_PENDING: &str = "task_review_result_pending";
 pub const DETAIL_TEST_PLAN_REFRESH_REQUIRED: &str = "test_plan_refresh_required";
 
@@ -83,6 +101,7 @@ pub const RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS: &[&str] = &[
     DETAIL_BLOCKED_RUNTIME_BUG,
     DETAIL_TASK_REVIEW_RESULT_PENDING,
     DETAIL_EXECUTION_IN_PROGRESS,
+    DETAIL_PLANNING_REENTRY_REQUIRED,
     DETAIL_RUNTIME_RECONCILE_REQUIRED,
     DETAIL_FINAL_REVIEW_OUTCOME_PENDING,
     DETAIL_TEST_PLAN_REFRESH_REQUIRED,

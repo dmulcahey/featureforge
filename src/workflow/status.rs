@@ -2,20 +2,42 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use schemars::JsonSchema;
 use schemars::schema_for;
-use serde::Serialize;
 
 use crate::contracts::plan::{
-    AnalyzePlanReport, PlanFidelityReviewReport, engineering_approval_fidelity_message,
-    engineering_approval_fidelity_primary_reason_code, engineering_approval_fidelity_reason_codes,
-    evaluate_plan_fidelity_review, parse_plan_file, plan_fidelity_allows_implementation,
-    plan_fidelity_verification_incomplete_report,
+    AnalyzePlanReport, PLAN_QA_REQUIREMENT_VALUES, PlanFidelityReviewReport,
+    engineering_approval_fidelity_message, engineering_approval_fidelity_primary_reason_code,
+    engineering_approval_fidelity_reason_codes, evaluate_plan_fidelity_review, parse_plan_file,
+    plan_fidelity_allows_implementation, plan_fidelity_verification_incomplete_report,
+    plan_last_reviewer_is_valid_for_state,
 };
 use crate::contracts::runtime::analyze_contract_report;
 use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
+pub use crate::contracts::workflow::{WorkflowDiagnostic, WorkflowPhase, WorkflowRoute};
 use crate::diagnostics::{DiagnosticError, FailureClass};
+use crate::execution::command_eligibility::{
+    PUBLIC_EXECUTION_COMMAND_KIND_VALUES, PUBLIC_REPAIR_TARGET_COMMAND_KIND_VALUES,
+};
+use crate::execution::next_action::PUBLIC_NEXT_ACTION_VALUES;
 use crate::execution::phase::PUBLIC_STATUS_PHASE_VALUES;
+use crate::execution::phase::{
+    PLAN_EXECUTION_STATUS_PHASE_DETAIL_VALUES, WORKFLOW_OPERATOR_PHASE_VALUES,
+};
+use crate::execution::review_route_tokens::{
+    PUBLIC_REVIEW_STATE_STATUS_VALUES, REQUIRED_FOLLOW_UP_SCHEMA_VALUES,
+};
+use crate::execution::route_plan::PUBLIC_STATE_KIND_VALUES;
+use crate::execution::status::{
+    BLOCKER_NEXT_PUBLIC_ACTION_SCHEMA_DESCRIPTION, NEXT_ACTION_SCHEMA_DESCRIPTION,
+    NEXT_PUBLIC_ACTION_ARGS_TEMPLATE_SCHEMA_DESCRIPTION,
+    NEXT_PUBLIC_ACTION_COMMAND_SCHEMA_DESCRIPTION,
+    NEXT_PUBLIC_ACTION_DISPLAY_ONLY_SCHEMA_DESCRIPTION,
+    PLAN_EXECUTION_STATUS_RECOMMENDED_PUBLIC_COMMAND_ARGV_SCHEMA_DESCRIPTION,
+    PUBLIC_COMMAND_TEMPLATE_KIND_SCHEMA_DESCRIPTION, RECOMMENDED_COMMAND_SCHEMA_DESCRIPTION,
+    RECOMMENDED_PUBLIC_COMMAND_ARGV_SCHEMA_DESCRIPTION,
+    RECOMMENDED_PUBLIC_COMMAND_TEMPLATE_SCHEMA_DESCRIPTION, REQUIRED_FOLLOW_UP_SCHEMA_DESCRIPTION,
+    REQUIRED_INPUTS_SCHEMA_DESCRIPTION, ROUTE_NEXT_PUBLIC_ACTION_SCHEMA_DESCRIPTION,
+};
 use crate::git::{RepositoryIdentity, discover_repo_identity, stored_repo_root_matches_current};
 use crate::paths::{RepoPath, featureforge_state_dir};
 use crate::workflow::manifest::{
@@ -24,6 +46,9 @@ use crate::workflow::manifest::{
 };
 use crate::workflow::markdown_scan::markdown_files_under;
 use crate::workflow::operator::{WorkflowHandoff, WorkflowOperator};
+use crate::workflow::recommendation::{
+    SKILL_PLAN_ENG_REVIEW, SKILL_PLAN_FIDELITY_REVIEW, SKILL_WRITING_PLANS,
+};
 
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
 const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
@@ -32,64 +57,12 @@ const ACTIVE_IMPLEMENTATION_TARGET_INDEX: &str =
 const WORKFLOW_ROUTE_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_HANDOFF_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 3;
+pub(crate) const MISSING_PLAN_OVERRIDE_MESSAGE: &str = "Workflow plan override file does not exist. Use an existing repo-relative approved plan path with --plan, or return to the normal planning/review handoff to produce one.";
 
 #[derive(Debug, Clone, Copy)]
 pub enum ArtifactKind {
     Spec,
     Plan,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct WorkflowRoute {
-    pub schema_version: u32,
-    pub status: String,
-    pub next_skill: String,
-    pub spec_path: String,
-    pub plan_path: String,
-    pub contract_state: String,
-    pub reason_codes: Vec<String>,
-    pub diagnostics: Vec<WorkflowDiagnostic>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub plan_fidelity_review: Option<PlanFidelityReviewReport>,
-    pub scan_truncated: bool,
-    pub spec_candidate_count: usize,
-    pub plan_candidate_count: usize,
-    pub manifest_path: String,
-    pub root: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub reason: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub note: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct WorkflowDiagnostic {
-    pub code: String,
-    pub severity: String,
-    pub artifact: String,
-    pub message: String,
-    pub remediation: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct WorkflowPhase {
-    pub schema_version: u32,
-    pub phase: String,
-    pub route_status: String,
-    pub phase_detail: String,
-    pub review_state_status: String,
-    pub next_skill: String,
-    pub next_step: String,
-    pub next_action: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recommended_command: Option<String>,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub reason_family: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub diagnostic_reason_codes: Vec<String>,
-    pub spec_path: String,
-    pub plan_path: String,
-    pub route: WorkflowRoute,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +91,36 @@ struct WorkflowPlanCandidate {
     source_spec_path: String,
     source_spec_revision: Option<u32>,
     malformed_headers: bool,
+}
+
+#[derive(Debug, Clone)]
+struct WorkflowRouteCandidateContext {
+    scan_truncated: bool,
+    spec_candidate_count: usize,
+    plan_candidate_count: usize,
+    manifest_path: String,
+    root: String,
+}
+
+struct RouteForPlanCandidateInput<'a> {
+    runtime: &'a WorkflowRuntime,
+    approved_spec: &'a WorkflowSpecCandidate,
+    plan: &'a WorkflowPlanCandidate,
+    approved_spec_exists: bool,
+    context: WorkflowRouteCandidateContext,
+}
+
+struct DraftPlanCandidateRouteInput<'a> {
+    runtime: &'a WorkflowRuntime,
+    approved_spec: &'a WorkflowSpecCandidate,
+    plan: &'a WorkflowPlanCandidate,
+    base_route: WorkflowRoute,
+    report: Option<&'a AnalyzePlanReport>,
+    stale_source_spec_linkage: bool,
+    packet_buildability_failure: bool,
+    reason_codes: Vec<String>,
+    diagnostics: Vec<WorkflowDiagnostic>,
+    reason: String,
 }
 
 impl WorkflowRuntime {
@@ -545,7 +548,7 @@ fn resolve_route(
                     "Spec headers are missing required Workflow State, Spec Revision, or Last Reviewed By fields.",
                 ),
                 remediation: String::from(
-                    "Repair the spec headers before treating the document as an approved workflow artifact.",
+                    "Return to `featureforge:plan-ceo-review` for this spec route and correct the required headers before treating the document as approved.",
                 ),
             }],
             plan_fidelity_review: None,
@@ -617,7 +620,9 @@ fn resolve_route(
                 message: String::from(
                     "More than one current spec candidate matches the fallback scan window.",
                 ),
-                remediation: String::from("Reduce spec ambiguity before proceeding."),
+                remediation: String::from(
+                    "Return to `featureforge:plan-ceo-review` for the current spec route and select one current spec candidate before proceeding.",
+                ),
             }],
             plan_fidelity_review: None,
             scan_truncated,
@@ -690,7 +695,7 @@ fn resolve_route(
         return Ok(WorkflowRoute {
             schema_version: 2,
             status: String::from("spec_approved_needs_plan"),
-            next_skill: String::from("featureforge:writing-plans"),
+            next_skill: String::from(SKILL_WRITING_PLANS),
             spec_path: approved_spec.path.clone(),
             plan_path: String::new(),
             contract_state: String::from("unknown"),
@@ -703,7 +708,7 @@ fn resolve_route(
                     "More than one plan candidate matches the current approved spec.",
                 ),
                 remediation: String::from(
-                    "Reduce plan ambiguity before treating the approved spec as ready for execution.",
+                    "Return to `featureforge:writing-plans` for the current approved-spec route and select one plan candidate before treating it as ready for execution.",
                 ),
             }],
             plan_fidelity_review: None,
@@ -735,271 +740,31 @@ fn resolve_route(
         .is_some_and(|path| !runtime.identity.repo_root.join(path).is_file());
 
     if let Some(plan) = matching_plan {
-        let stale_source_spec_linkage = plan.source_spec_path != approved_spec.path
-            || plan
-                .source_spec_revision
-                .is_some_and(|revision| revision != approved_spec.spec_revision);
-        let report =
-            analyze_full_contract(runtime.identity.repo_root.as_path(), &approved_spec, &plan);
-        let packet_buildability_failure = report
-            .as_ref()
-            .is_some_and(needs_packet_buildability_failure);
-        let contract_state = workflow_contract_state(
-            report.as_ref(),
-            stale_source_spec_linkage,
-            packet_buildability_failure,
-        );
-        let reason_codes = workflow_reason_codes(
-            report.as_ref(),
-            stale_source_spec_linkage,
-            packet_buildability_failure,
-        );
-        let diagnostics = workflow_diagnostics(
-            &plan,
-            &approved_spec,
-            report.as_ref(),
-            stale_source_spec_linkage,
-            packet_buildability_failure,
-        );
-        let reason = compatibility_reason(&reason_codes);
-        if plan.workflow_state == "Draft" {
-            let plan_fidelity_gate =
-                evaluate_plan_fidelity_gate(runtime, &approved_spec.path, &plan.path);
-            let plan_needs_authoring = draft_plan_needs_authoring(
-                &plan,
-                report.as_ref(),
-                stale_source_spec_linkage,
-                packet_buildability_failure,
-                &reason_codes,
-            );
-            if plan_needs_authoring {
-                let next_skill = "featureforge:writing-plans";
-                return Ok(WorkflowRoute {
-                    schema_version: 2,
-                    status: String::from("plan_draft"),
-                    next_skill: String::from(next_skill),
-                    spec_path: approved_spec.path.clone(),
-                    plan_path: plan.path.clone(),
-                    contract_state,
-                    reason_codes,
-                    diagnostics,
-                    plan_fidelity_review: fidelity_review_for_route(
-                        &plan,
-                        next_skill,
-                        plan_fidelity_gate,
-                    ),
-                    scan_truncated,
-                    spec_candidate_count,
-                    plan_candidate_count: 1,
-                    manifest_path,
-                    root,
-                    reason: reason.clone(),
-                    note: reason,
-                });
-            }
-            if draft_ready_for_fidelity_review(&plan, &plan_fidelity_gate, plan_needs_authoring) {
-                let next_skill = "featureforge:plan-fidelity-review";
-                let combined_reason_codes =
-                    combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
-                let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
-                    &plan,
-                    &diagnostics,
-                    &plan_fidelity_gate,
-                    next_skill,
-                );
-                let reason = compatibility_reason(&combined_reason_codes);
-                return Ok(WorkflowRoute {
-                    schema_version: 2,
-                    status: String::from("plan_draft"),
-                    next_skill: String::from(next_skill),
-                    spec_path: approved_spec.path.clone(),
-                    plan_path: plan.path.clone(),
-                    contract_state,
-                    reason_codes: combined_reason_codes,
-                    diagnostics: combined_diagnostics,
-                    plan_fidelity_review: fidelity_review_for_route(
-                        &plan,
-                        next_skill,
-                        plan_fidelity_gate,
-                    ),
-                    scan_truncated,
-                    spec_candidate_count,
-                    plan_candidate_count: 1,
-                    manifest_path,
-                    root,
-                    reason: reason.clone(),
-                    note: reason,
-                });
-            }
-            debug_assert!(
-                draft_ready_for_engineering_review(&plan, plan_needs_authoring)
-                    || draft_ready_for_engineering_approval(
-                        &plan,
-                        &plan_fidelity_gate,
-                        plan_needs_authoring,
-                    )
-            );
-            let (reason_codes, diagnostics, reason) = if plan_fidelity_gate.state == "fail"
-                && draft_ready_for_engineering_approval(
-                    &plan,
-                    &plan_fidelity_gate,
-                    plan_needs_authoring,
-                ) {
-                let combined_reason_codes =
-                    combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
-                let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
-                    &plan,
-                    &diagnostics,
-                    &plan_fidelity_gate,
-                    "featureforge:plan-eng-review",
-                );
-                let reason = compatibility_reason(&combined_reason_codes);
-                (combined_reason_codes, combined_diagnostics, reason)
-            } else {
-                (reason_codes, diagnostics, reason)
-            };
-            let next_skill = "featureforge:plan-eng-review";
-            return Ok(WorkflowRoute {
-                schema_version: 2,
-                status: String::from("plan_draft"),
-                next_skill: String::from(next_skill),
-                spec_path: approved_spec.path.clone(),
-                plan_path: plan.path.clone(),
-                contract_state,
-                reason_codes,
-                diagnostics,
-                plan_fidelity_review: fidelity_review_for_route(
-                    &plan,
-                    next_skill,
-                    plan_fidelity_gate,
-                ),
+        let route = route_for_plan_candidate(RouteForPlanCandidateInput {
+            runtime,
+            approved_spec: &approved_spec,
+            plan: &plan,
+            approved_spec_exists: true,
+            context: WorkflowRouteCandidateContext {
                 scan_truncated,
                 spec_candidate_count,
                 plan_candidate_count: 1,
-                manifest_path,
-                root,
-                reason: reason.clone(),
-                note: reason,
-            });
-        }
-
-        if !stale_source_spec_linkage
-            && !packet_buildability_failure
-            && plan.workflow_state == "Engineering Approved"
-            && report
-                .as_ref()
-                .is_some_and(|report| report.contract_state == "valid")
-        {
-            let implementation_fidelity_gate =
-                evaluate_plan_fidelity_gate(runtime, &approved_spec.path, &plan.path);
-            if plan_fidelity_allows_implementation(&implementation_fidelity_gate) {
-                if read_only {
-                    return resolve_route(runtime, false, false);
-                }
-                return Ok(WorkflowRoute {
-                    schema_version: 2,
-                    status: String::from(
-                        crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
-                    ),
-                    next_skill: String::new(),
-                    spec_path: approved_spec.path.clone(),
-                    plan_path: plan.path.clone(),
-                    contract_state,
-                    reason_codes: vec![String::from(
-                        crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
-                    )],
-                    diagnostics: Vec::new(),
-                    plan_fidelity_review: Some(
-                        implementation_fidelity_gate.without_required_artifact_template(),
-                    ),
-                    scan_truncated,
-                    spec_candidate_count,
-                    plan_candidate_count: 1,
-                    manifest_path,
-                    root,
-                    reason: String::from(
-                        crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
-                    ),
-                    note: String::from(
-                        crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
-                    ),
-                });
-            }
-
-            let next_skill = "featureforge:plan-eng-review";
-            let reason_codes =
-                engineering_approval_fidelity_reason_codes(&implementation_fidelity_gate);
-            let diagnostics = engineering_approval_fidelity_diagnostics(
-                &plan,
-                &implementation_fidelity_gate,
-                next_skill,
-            );
-            let reason = compatibility_reason(&reason_codes);
-            return Ok(WorkflowRoute {
-                schema_version: 2,
-                status: String::from("plan_review_required"),
-                next_skill: String::from(next_skill),
-                spec_path: approved_spec.path.clone(),
-                plan_path: plan.path.clone(),
-                contract_state,
-                reason_codes,
-                diagnostics,
-                plan_fidelity_review: Some(implementation_fidelity_gate),
-                scan_truncated,
-                spec_candidate_count,
-                plan_candidate_count: 1,
-                manifest_path,
-                root,
-                reason: reason.clone(),
-                note: reason,
-            });
-        }
-
-        if plan.workflow_state == "Engineering Approved" && contract_state == "stale" {
-            return Ok(WorkflowRoute {
-                schema_version: 2,
-                status: String::from("stale_plan"),
-                next_skill: String::from("featureforge:writing-plans"),
-                spec_path: approved_spec.path.clone(),
-                plan_path: plan.path.clone(),
-                contract_state,
-                reason_codes,
-                diagnostics,
-                plan_fidelity_review: None,
-                scan_truncated,
-                spec_candidate_count,
-                plan_candidate_count: 1,
-                manifest_path,
-                root,
-                reason: reason.clone(),
-                note: reason,
-            });
-        }
-
-        return Ok(WorkflowRoute {
-            schema_version: 2,
-            status: String::from("plan_draft"),
-            next_skill: String::from("featureforge:plan-eng-review"),
-            spec_path: approved_spec.path.clone(),
-            plan_path: plan.path.clone(),
-            contract_state,
-            reason_codes,
-            diagnostics,
-            plan_fidelity_review: None,
-            scan_truncated,
-            spec_candidate_count,
-            plan_candidate_count: 1,
-            manifest_path,
-            root,
-            reason: reason.clone(),
-            note: reason,
+                manifest_path: manifest_path.clone(),
+                root: root.clone(),
+            },
         });
+        if read_only
+            && route.status == crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY
+        {
+            return resolve_route(runtime, false, false);
+        }
+        return Ok(route);
     }
 
     Ok(WorkflowRoute {
         schema_version: 2,
         status: String::from("spec_approved_needs_plan"),
-        next_skill: String::from("featureforge:writing-plans"),
+        next_skill: String::from(SKILL_WRITING_PLANS),
         spec_path: approved_spec.path.clone(),
         plan_path: preserved_plan_path.unwrap_or_default(),
         contract_state: String::from("unknown"),
@@ -1028,6 +793,248 @@ fn resolve_route(
     })
 }
 
+fn route_for_plan_candidate(input: RouteForPlanCandidateInput<'_>) -> WorkflowRoute {
+    let RouteForPlanCandidateInput {
+        runtime,
+        approved_spec,
+        plan,
+        approved_spec_exists,
+        context,
+    } = input;
+    let stale_source_spec_linkage = !approved_spec_exists
+        || plan.source_spec_path != approved_spec.path
+        || plan
+            .source_spec_revision
+            .is_some_and(|revision| revision != approved_spec.spec_revision);
+    let report = analyze_full_contract(runtime.identity.repo_root.as_path(), approved_spec, plan);
+    let packet_buildability_failure = report
+        .as_ref()
+        .is_some_and(needs_packet_buildability_failure);
+    let contract_state = workflow_contract_state(
+        report.as_ref(),
+        stale_source_spec_linkage,
+        packet_buildability_failure,
+    );
+    let reason_codes = workflow_reason_codes(
+        report.as_ref(),
+        stale_source_spec_linkage,
+        packet_buildability_failure,
+    );
+    let diagnostics = workflow_diagnostics(
+        plan,
+        approved_spec,
+        report.as_ref(),
+        stale_source_spec_linkage,
+        packet_buildability_failure,
+    );
+    let reason = compatibility_reason(&reason_codes);
+    let base_route = WorkflowRoute {
+        schema_version: WORKFLOW_ROUTE_SCHEMA_VERSION,
+        status: String::new(),
+        next_skill: String::new(),
+        spec_path: approved_spec.path.clone(),
+        plan_path: plan.path.clone(),
+        contract_state,
+        reason_codes: Vec::new(),
+        diagnostics: Vec::new(),
+        plan_fidelity_review: None,
+        scan_truncated: context.scan_truncated,
+        spec_candidate_count: context.spec_candidate_count,
+        plan_candidate_count: context.plan_candidate_count,
+        manifest_path: context.manifest_path,
+        root: context.root,
+        reason: String::new(),
+        note: String::new(),
+    };
+
+    if plan.workflow_state == "Draft" {
+        return route_for_draft_plan_candidate(DraftPlanCandidateRouteInput {
+            runtime,
+            approved_spec,
+            plan,
+            base_route,
+            report: report.as_ref(),
+            stale_source_spec_linkage,
+            packet_buildability_failure,
+            reason_codes,
+            diagnostics,
+            reason,
+        });
+    }
+
+    if !stale_source_spec_linkage
+        && !packet_buildability_failure
+        && plan.workflow_state == "Engineering Approved"
+        && report
+            .as_ref()
+            .is_some_and(|report| report.contract_state == "valid")
+    {
+        return route_for_engineering_approved_plan_candidate(
+            runtime,
+            approved_spec,
+            plan,
+            base_route,
+        );
+    }
+
+    if plan.workflow_state == "Engineering Approved" && base_route.contract_state == "stale" {
+        return WorkflowRoute {
+            status: String::from("stale_plan"),
+            next_skill: String::from(SKILL_WRITING_PLANS),
+            reason_codes,
+            diagnostics,
+            reason: reason.clone(),
+            note: reason,
+            ..base_route
+        };
+    }
+
+    WorkflowRoute {
+        status: String::from("plan_draft"),
+        next_skill: String::from(SKILL_PLAN_ENG_REVIEW),
+        reason_codes,
+        diagnostics,
+        reason: reason.clone(),
+        note: reason,
+        ..base_route
+    }
+}
+
+fn route_for_draft_plan_candidate(input: DraftPlanCandidateRouteInput<'_>) -> WorkflowRoute {
+    let DraftPlanCandidateRouteInput {
+        runtime,
+        approved_spec,
+        plan,
+        base_route,
+        report,
+        stale_source_spec_linkage,
+        packet_buildability_failure,
+        reason_codes,
+        diagnostics,
+        reason,
+    } = input;
+    let plan_fidelity_gate = evaluate_plan_fidelity_gate(runtime, &approved_spec.path, &plan.path);
+    let plan_needs_authoring = draft_plan_needs_authoring(
+        plan,
+        report,
+        stale_source_spec_linkage,
+        packet_buildability_failure,
+        &reason_codes,
+    );
+    if plan_needs_authoring {
+        let next_skill = SKILL_WRITING_PLANS;
+        return WorkflowRoute {
+            status: String::from("plan_draft"),
+            next_skill: String::from(next_skill),
+            reason_codes,
+            diagnostics,
+            plan_fidelity_review: fidelity_review_for_route(plan, next_skill, plan_fidelity_gate),
+            reason: reason.clone(),
+            note: reason,
+            ..base_route
+        };
+    }
+    if draft_ready_for_fidelity_review(plan, &plan_fidelity_gate, plan_needs_authoring) {
+        let next_skill = SKILL_PLAN_FIDELITY_REVIEW;
+        let combined_reason_codes =
+            combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
+        let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
+            plan,
+            &diagnostics,
+            &plan_fidelity_gate,
+            next_skill,
+        );
+        let reason = compatibility_reason(&combined_reason_codes);
+        return WorkflowRoute {
+            status: String::from("plan_draft"),
+            next_skill: String::from(next_skill),
+            reason_codes: combined_reason_codes,
+            diagnostics: combined_diagnostics,
+            plan_fidelity_review: fidelity_review_for_route(plan, next_skill, plan_fidelity_gate),
+            reason: reason.clone(),
+            note: reason,
+            ..base_route
+        };
+    }
+    debug_assert!(
+        draft_ready_for_engineering_review(plan, plan_needs_authoring)
+            || draft_ready_for_engineering_approval(
+                plan,
+                &plan_fidelity_gate,
+                plan_needs_authoring
+            )
+    );
+    let (reason_codes, diagnostics, reason) = if plan_fidelity_gate.state == "fail"
+        && draft_ready_for_engineering_approval(plan, &plan_fidelity_gate, plan_needs_authoring)
+    {
+        let combined_reason_codes =
+            combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
+        let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
+            plan,
+            &diagnostics,
+            &plan_fidelity_gate,
+            SKILL_PLAN_ENG_REVIEW,
+        );
+        let reason = compatibility_reason(&combined_reason_codes);
+        (combined_reason_codes, combined_diagnostics, reason)
+    } else {
+        (reason_codes, diagnostics, reason)
+    };
+    let next_skill = SKILL_PLAN_ENG_REVIEW;
+    WorkflowRoute {
+        status: String::from("plan_draft"),
+        next_skill: String::from(next_skill),
+        reason_codes,
+        diagnostics,
+        plan_fidelity_review: fidelity_review_for_route(plan, next_skill, plan_fidelity_gate),
+        reason: reason.clone(),
+        note: reason,
+        ..base_route
+    }
+}
+
+fn route_for_engineering_approved_plan_candidate(
+    runtime: &WorkflowRuntime,
+    approved_spec: &WorkflowSpecCandidate,
+    plan: &WorkflowPlanCandidate,
+    base_route: WorkflowRoute,
+) -> WorkflowRoute {
+    let implementation_fidelity_gate =
+        evaluate_plan_fidelity_gate(runtime, &approved_spec.path, &plan.path);
+    if plan_fidelity_allows_implementation(&implementation_fidelity_gate) {
+        return WorkflowRoute {
+            status: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
+            next_skill: String::new(),
+            reason_codes: vec![String::from(
+                crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
+            )],
+            diagnostics: Vec::new(),
+            plan_fidelity_review: Some(
+                implementation_fidelity_gate.without_required_artifact_template(),
+            ),
+            reason: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
+            note: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
+            ..base_route
+        };
+    }
+
+    let next_skill = SKILL_PLAN_ENG_REVIEW;
+    let reason_codes = engineering_approval_fidelity_reason_codes(&implementation_fidelity_gate);
+    let diagnostics =
+        engineering_approval_fidelity_diagnostics(plan, &implementation_fidelity_gate, next_skill);
+    let reason = compatibility_reason(&reason_codes);
+    WorkflowRoute {
+        status: String::from("plan_review_required"),
+        next_skill: String::from(next_skill),
+        reason_codes,
+        diagnostics,
+        plan_fidelity_review: Some(implementation_fidelity_gate),
+        reason: reason.clone(),
+        note: reason,
+        ..base_route
+    }
+}
+
 fn normalize_repo_path(path: &Path) -> Result<String, DiagnosticError> {
     let raw = path.to_str().ok_or_else(|| {
         DiagnosticError::new(
@@ -1049,7 +1056,7 @@ pub(crate) fn explicit_plan_override_route(
     if !plan_abs.is_file() {
         return Err(DiagnosticError::new(
             FailureClass::InvalidCommandInput,
-            "Workflow plan override file does not exist.",
+            MISSING_PLAN_OVERRIDE_MESSAGE,
         ));
     }
 
@@ -1066,214 +1073,21 @@ pub(crate) fn explicit_plan_override_route(
             malformed_headers: true,
         }
     };
-    let stale_source_spec_linkage = !approved_spec_exists
-        || plan.source_spec_path != approved_spec.path
-        || plan
-            .source_spec_revision
-            .is_some_and(|revision| revision != approved_spec.spec_revision);
-    let report =
-        analyze_full_contract(workflow.identity.repo_root.as_path(), &approved_spec, &plan);
-    let packet_buildability_failure = report
-        .as_ref()
-        .is_some_and(needs_packet_buildability_failure);
-    let contract_state = workflow_contract_state(
-        report.as_ref(),
-        stale_source_spec_linkage,
-        packet_buildability_failure,
-    );
-    let reason_codes = workflow_reason_codes(
-        report.as_ref(),
-        stale_source_spec_linkage,
-        packet_buildability_failure,
-    );
-    let diagnostics = workflow_diagnostics(
-        &plan,
-        &approved_spec,
-        report.as_ref(),
-        stale_source_spec_linkage,
-        packet_buildability_failure,
-    );
-    let reason = compatibility_reason(&reason_codes);
-    let base_route = WorkflowRoute {
-        schema_version: WORKFLOW_ROUTE_SCHEMA_VERSION,
-        status: String::new(),
-        next_skill: String::new(),
-        spec_path: approved_spec.path.clone(),
-        plan_path: plan.path.clone(),
-        contract_state,
-        reason_codes: Vec::new(),
-        diagnostics: Vec::new(),
-        plan_fidelity_review: None,
-        scan_truncated: resolved_route.scan_truncated,
-        spec_candidate_count: resolved_route.spec_candidate_count,
-        plan_candidate_count: 1,
-        manifest_path: resolved_route.manifest_path.clone(),
-        root: resolved_route.root.clone(),
-        reason: String::new(),
-        note: String::new(),
-    };
-
-    if plan.workflow_state == "Draft" {
-        let plan_fidelity_gate =
-            evaluate_plan_fidelity_gate(workflow, &approved_spec.path, &plan.path);
-        let plan_needs_authoring = draft_plan_needs_authoring(
-            &plan,
-            report.as_ref(),
-            stale_source_spec_linkage,
-            packet_buildability_failure,
-            &reason_codes,
-        );
-        if plan_needs_authoring {
-            let next_skill = "featureforge:writing-plans";
-            return Ok(decorate(WorkflowRoute {
-                status: String::from("plan_draft"),
-                next_skill: String::from(next_skill),
-                reason_codes,
-                diagnostics,
-                plan_fidelity_review: fidelity_review_for_route(
-                    &plan,
-                    next_skill,
-                    plan_fidelity_gate,
-                ),
-                reason: reason.clone(),
-                note: reason,
-                ..base_route
-            }));
-        }
-        if draft_ready_for_fidelity_review(&plan, &plan_fidelity_gate, plan_needs_authoring) {
-            let next_skill = "featureforge:plan-fidelity-review";
-            let combined_reason_codes =
-                combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
-            let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
-                &plan,
-                &diagnostics,
-                &plan_fidelity_gate,
-                next_skill,
-            );
-            let reason = compatibility_reason(&combined_reason_codes);
-            return Ok(decorate(WorkflowRoute {
-                status: String::from("plan_draft"),
-                next_skill: String::from(next_skill),
-                reason_codes: combined_reason_codes,
-                diagnostics: combined_diagnostics,
-                plan_fidelity_review: fidelity_review_for_route(
-                    &plan,
-                    next_skill,
-                    plan_fidelity_gate,
-                ),
-                reason: reason.clone(),
-                note: reason,
-                ..base_route
-            }));
-        }
-        debug_assert!(
-            draft_ready_for_engineering_review(&plan, plan_needs_authoring)
-                || draft_ready_for_engineering_approval(
-                    &plan,
-                    &plan_fidelity_gate,
-                    plan_needs_authoring,
-                )
-        );
-        let (reason_codes, diagnostics, reason) = if plan_fidelity_gate.state == "fail"
-            && draft_ready_for_engineering_approval(
-                &plan,
-                &plan_fidelity_gate,
-                plan_needs_authoring,
-            ) {
-            let combined_reason_codes =
-                combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
-            let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
-                &plan,
-                &diagnostics,
-                &plan_fidelity_gate,
-                "featureforge:plan-eng-review",
-            );
-            let reason = compatibility_reason(&combined_reason_codes);
-            (combined_reason_codes, combined_diagnostics, reason)
-        } else {
-            (reason_codes, diagnostics, reason)
-        };
-        let next_skill = "featureforge:plan-eng-review";
-        return Ok(decorate(WorkflowRoute {
-            status: String::from("plan_draft"),
-            next_skill: String::from(next_skill),
-            reason_codes,
-            diagnostics,
-            plan_fidelity_review: fidelity_review_for_route(&plan, next_skill, plan_fidelity_gate),
-            reason: reason.clone(),
-            note: reason,
-            ..base_route
-        }));
-    }
-
-    if !stale_source_spec_linkage
-        && !packet_buildability_failure
-        && plan.workflow_state == "Engineering Approved"
-        && report
-            .as_ref()
-            .is_some_and(|report| report.contract_state == "valid")
-    {
-        let implementation_fidelity_gate =
-            evaluate_plan_fidelity_gate(workflow, &approved_spec.path, &plan.path);
-        if plan_fidelity_allows_implementation(&implementation_fidelity_gate) {
-            return Ok(decorate(WorkflowRoute {
-                status: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
-                next_skill: String::new(),
-                reason_codes: vec![String::from(
-                    crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY,
-                )],
-                diagnostics: Vec::new(),
-                plan_fidelity_review: Some(
-                    implementation_fidelity_gate.without_required_artifact_template(),
-                ),
-                reason: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
-                note: String::from(crate::execution::phase::WORKFLOW_STATUS_IMPLEMENTATION_READY),
-                ..base_route
-            }));
-        }
-
-        let next_skill = "featureforge:plan-eng-review";
-        let reason_codes =
-            engineering_approval_fidelity_reason_codes(&implementation_fidelity_gate);
-        let diagnostics = engineering_approval_fidelity_diagnostics(
-            &plan,
-            &implementation_fidelity_gate,
-            next_skill,
-        );
-        let reason = compatibility_reason(&reason_codes);
-        return Ok(decorate(WorkflowRoute {
-            status: String::from("plan_review_required"),
-            next_skill: String::from(next_skill),
-            reason_codes,
-            diagnostics,
-            plan_fidelity_review: Some(implementation_fidelity_gate),
-            reason: reason.clone(),
-            note: reason,
-            ..base_route
-        }));
-    }
-
-    if plan.workflow_state == "Engineering Approved" && base_route.contract_state == "stale" {
-        return Ok(decorate(WorkflowRoute {
-            status: String::from("stale_plan"),
-            next_skill: String::from("featureforge:writing-plans"),
-            reason_codes,
-            diagnostics,
-            reason: reason.clone(),
-            note: reason,
-            ..base_route
-        }));
-    }
-
-    Ok(decorate(WorkflowRoute {
-        status: String::from("plan_draft"),
-        next_skill: String::from("featureforge:plan-eng-review"),
-        reason_codes,
-        diagnostics,
-        reason: reason.clone(),
-        note: reason,
-        ..base_route
-    }))
+    Ok(decorate(route_for_plan_candidate(
+        RouteForPlanCandidateInput {
+            runtime: workflow,
+            approved_spec: &approved_spec,
+            plan: &plan,
+            approved_spec_exists,
+            context: WorkflowRouteCandidateContext {
+                scan_truncated: resolved_route.scan_truncated,
+                spec_candidate_count: resolved_route.spec_candidate_count,
+                plan_candidate_count: 1,
+                manifest_path: resolved_route.manifest_path.clone(),
+                root: resolved_route.root.clone(),
+            },
+        },
+    )))
 }
 
 fn scan_specs(repo_root: &Path) -> (Vec<WorkflowSpecCandidate>, Vec<WorkflowSpecCandidate>) {
@@ -1425,6 +1239,7 @@ fn workflow_route_schema_json(schema_label: &str) -> Result<String, DiagnosticEr
         )
     })?;
     lock_workflow_route_schema_version(&mut schema)?;
+    annotate_workflow_next_public_action_schema(&mut schema)?;
     serde_json::to_string_pretty(&schema).map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
@@ -1441,8 +1256,11 @@ fn workflow_operator_schema_json(schema_label: &str) -> Result<String, Diagnosti
         )
     })?;
     lock_workflow_operator_schema_version(&mut schema)?;
+    inject_workflow_operator_route_vocabulary_schemas(&mut schema)?;
     tighten_workflow_operator_public_context_schemas(&mut schema)?;
     tighten_workflow_operator_routing_field_schemas(&mut schema)?;
+    annotate_workflow_public_command_template_schema(&mut schema, schema_label)?;
+    annotate_workflow_next_public_action_schema(&mut schema)?;
     tighten_workflow_operator_phase_bound_recording_context_contracts(&mut schema)?;
     serde_json::to_string_pretty(&schema).map_err(|err| {
         DiagnosticError::new(
@@ -1460,7 +1278,13 @@ fn workflow_handoff_schema_json(schema_label: &str) -> Result<String, Diagnostic
         )
     })?;
     lock_workflow_handoff_schema_version(&mut schema)?;
-    inject_embedded_plan_execution_phase_schema(&mut schema)?;
+    inject_workflow_handoff_route_vocabulary_schemas(&mut schema)?;
+    inject_embedded_plan_execution_route_vocabulary_schemas(&mut schema)?;
+    annotate_workflow_handoff_routing_field_schemas(&mut schema)?;
+    annotate_workflow_public_command_template_schema(&mut schema, schema_label)?;
+    annotate_workflow_next_public_action_schema(&mut schema)?;
+    annotate_workflow_required_follow_up_schema(&mut schema)?;
+    annotate_embedded_plan_execution_routing_schema(&mut schema)?;
     serde_json::to_string_pretty(&schema).map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
@@ -1469,7 +1293,150 @@ fn workflow_handoff_schema_json(schema_label: &str) -> Result<String, Diagnostic
     })
 }
 
-fn inject_embedded_plan_execution_phase_schema(
+fn inject_workflow_operator_route_vocabulary_schemas(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let root = schema.as_object_mut().ok_or_else(|| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "WorkflowOperator schema root should be an object.",
+        )
+    })?;
+    {
+        let defs = root
+            .get_mut("$defs")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| {
+                DiagnosticError::new(
+                    FailureClass::InstructionParseFailed,
+                    "WorkflowOperator schema is missing `$defs`.",
+                )
+            })?;
+        insert_workflow_string_enum_definition(
+            defs,
+            "WorkflowOperatorPhaseSchema",
+            WORKFLOW_OPERATOR_PHASE_VALUES,
+        );
+        insert_workflow_string_enum_definition(
+            defs,
+            "WorkflowOperatorPhaseDetailSchema",
+            PLAN_EXECUTION_STATUS_PHASE_DETAIL_VALUES,
+        );
+        insert_workflow_string_enum_definition(
+            defs,
+            "WorkflowOperatorReviewStateStatusSchema",
+            PUBLIC_REVIEW_STATE_STATUS_VALUES,
+        );
+        insert_workflow_string_enum_definition(
+            defs,
+            "WorkflowOperatorStateKindSchema",
+            PUBLIC_STATE_KIND_VALUES,
+        );
+        insert_workflow_string_enum_definition(
+            defs,
+            "WorkflowOperatorQaRequirementSchema",
+            PLAN_QA_REQUIREMENT_VALUES,
+        );
+        insert_workflow_string_enum_definition(
+            defs,
+            "WorkflowOperatorNextActionSchema",
+            PUBLIC_NEXT_ACTION_VALUES,
+        );
+        insert_workflow_string_enum_definition(
+            defs,
+            "WorkflowOperatorCommandKindSchema",
+            PUBLIC_EXECUTION_COMMAND_KIND_VALUES,
+        );
+        insert_workflow_string_enum_definition(
+            defs,
+            "PublicRepairTargetCommandKindSchema",
+            PUBLIC_REPAIR_TARGET_COMMAND_KIND_VALUES,
+        );
+        set_workflow_public_repair_target_schema(defs)?;
+    }
+    let properties = root
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator schema is missing top-level `properties`.",
+            )
+        })?;
+    set_workflow_schema_property_ref(properties, "phase", "WorkflowOperatorPhaseSchema")?;
+    set_workflow_schema_property_ref(
+        properties,
+        "phase_detail",
+        "WorkflowOperatorPhaseDetailSchema",
+    )?;
+    set_workflow_schema_property_ref(
+        properties,
+        "review_state_status",
+        "WorkflowOperatorReviewStateStatusSchema",
+    )?;
+    set_workflow_schema_property_ref(
+        properties,
+        "next_action",
+        "WorkflowOperatorNextActionSchema",
+    )?;
+    set_workflow_schema_property_ref(properties, "state_kind", "WorkflowOperatorStateKindSchema")?;
+    set_workflow_schema_property_nullable_ref(
+        properties,
+        "qa_requirement",
+        "WorkflowOperatorQaRequirementSchema",
+    )?;
+    Ok(())
+}
+
+fn inject_workflow_handoff_route_vocabulary_schemas(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let root = schema.as_object_mut().ok_or_else(|| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "WorkflowHandoff schema root should be an object.",
+        )
+    })?;
+    let defs = root
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowHandoff schema is missing `$defs`.",
+            )
+        })?;
+    insert_workflow_string_enum_definition(defs, "PhaseSchema", WORKFLOW_OPERATOR_PHASE_VALUES);
+    insert_workflow_string_enum_definition(
+        defs,
+        "PhaseDetailSchema",
+        PLAN_EXECUTION_STATUS_PHASE_DETAIL_VALUES,
+    );
+    insert_workflow_string_enum_definition(
+        defs,
+        "ReviewStateStatusSchema",
+        PUBLIC_REVIEW_STATE_STATUS_VALUES,
+    );
+    insert_workflow_string_enum_definition(defs, "StateKindSchema", PUBLIC_STATE_KIND_VALUES);
+    insert_workflow_string_enum_definition(defs, "NextActionSchema", PUBLIC_NEXT_ACTION_VALUES);
+    let properties = root
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowHandoff schema is missing top-level `properties`.",
+            )
+        })?;
+    set_workflow_schema_property_ref(properties, "phase", "PhaseSchema")?;
+    set_workflow_schema_property_ref(properties, "phase_detail", "PhaseDetailSchema")?;
+    set_workflow_schema_property_ref(properties, "review_state_status", "ReviewStateStatusSchema")?;
+    set_workflow_schema_property_ref(properties, "next_action", "NextActionSchema")?;
+    set_workflow_schema_property_ref(properties, "state_kind", "StateKindSchema")?;
+    Ok(())
+}
+
+fn inject_embedded_plan_execution_route_vocabulary_schemas(
     schema: &mut serde_json::Value,
 ) -> Result<(), DiagnosticError> {
     let defs = schema
@@ -1481,32 +1448,42 @@ fn inject_embedded_plan_execution_phase_schema(
                 "Workflow schema is missing `$defs`.",
             )
         })?;
-    defs.insert(
-        String::from("PublicStatusPhaseSchema"),
-        serde_json::json!({
-            "enum": PUBLIC_STATUS_PHASE_VALUES,
-            "type": "string"
-        }),
+    insert_workflow_string_enum_definition(
+        defs,
+        "PublicStatusPhaseSchema",
+        PUBLIC_STATUS_PHASE_VALUES,
     );
-    let plan_execution_status = defs
-        .get_mut("PlanExecutionStatus")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                "Workflow schema is missing embedded `PlanExecutionStatus`.",
-            )
-        })?;
-    let properties = plan_execution_status
-        .get_mut("properties")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                "Embedded PlanExecutionStatus schema is missing `properties`.",
-            )
-        })?;
-    properties.insert(
+    insert_workflow_string_enum_definition(
+        defs,
+        "PhaseDetailSchema",
+        PLAN_EXECUTION_STATUS_PHASE_DETAIL_VALUES,
+    );
+    insert_workflow_string_enum_definition(
+        defs,
+        "ReviewStateStatusSchema",
+        PUBLIC_REVIEW_STATE_STATUS_VALUES,
+    );
+    insert_workflow_string_enum_definition(defs, "StateKindSchema", PUBLIC_STATE_KIND_VALUES);
+    insert_workflow_string_enum_definition(defs, "QaRequirementSchema", PLAN_QA_REQUIREMENT_VALUES);
+    insert_workflow_string_enum_definition(defs, "NextActionSchema", PUBLIC_NEXT_ACTION_VALUES);
+    insert_workflow_string_enum_definition(
+        defs,
+        "RequiredFollowUpSchema",
+        REQUIRED_FOLLOW_UP_SCHEMA_VALUES,
+    );
+    insert_workflow_string_enum_definition(
+        defs,
+        "ExecutionCommandKindSchema",
+        PUBLIC_EXECUTION_COMMAND_KIND_VALUES,
+    );
+    insert_workflow_string_enum_definition(
+        defs,
+        "PublicRepairTargetCommandKindSchema",
+        PUBLIC_REPAIR_TARGET_COMMAND_KIND_VALUES,
+    );
+    let plan_properties =
+        workflow_def_properties(defs, "PlanExecutionStatus", "Embedded PlanExecutionStatus")?;
+    plan_properties.insert(
         String::from("phase"),
         serde_json::json!({
             "anyOf": [
@@ -1515,7 +1492,193 @@ fn inject_embedded_plan_execution_phase_schema(
             ]
         }),
     );
+    set_workflow_schema_property_ref(plan_properties, "phase_detail", "PhaseDetailSchema")?;
+    set_workflow_schema_property_ref(
+        plan_properties,
+        "review_state_status",
+        "ReviewStateStatusSchema",
+    )?;
+    set_workflow_schema_property_ref(plan_properties, "state_kind", "StateKindSchema")?;
+    set_workflow_schema_property_ref(plan_properties, "next_action", "NextActionSchema")?;
+    set_workflow_schema_property_nullable_ref(
+        plan_properties,
+        "qa_requirement",
+        "QaRequirementSchema",
+    )?;
+    let status_blocking_properties =
+        workflow_def_properties(defs, "StatusBlockingRecord", "StatusBlockingRecord")?;
+    set_workflow_schema_property_nullable_ref(
+        status_blocking_properties,
+        "required_follow_up",
+        "RequiredFollowUpSchema",
+    )?;
+    let execution_context_properties = workflow_def_properties(
+        defs,
+        "PublicExecutionCommandContext",
+        "PublicExecutionCommandContext",
+    )?;
+    set_workflow_schema_property_ref(
+        execution_context_properties,
+        "command_kind",
+        "ExecutionCommandKindSchema",
+    )?;
+    set_workflow_public_repair_target_schema(defs)?;
     Ok(())
+}
+
+fn annotate_embedded_plan_execution_routing_schema(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let defs = schema
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Workflow schema is missing `$defs`.",
+            )
+        })?;
+    let properties =
+        workflow_def_properties(defs, "PlanExecutionStatus", "Embedded PlanExecutionStatus")?;
+    annotate_operator_schema_property(
+        properties,
+        "next_action",
+        &embedded_execution_status_schema_description(NEXT_ACTION_SCHEMA_DESCRIPTION),
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "recommended_command",
+        &embedded_execution_status_schema_description(RECOMMENDED_COMMAND_SCHEMA_DESCRIPTION),
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "recommended_public_command_argv",
+        &embedded_execution_status_schema_description(
+            PLAN_EXECUTION_STATUS_RECOMMENDED_PUBLIC_COMMAND_ARGV_SCHEMA_DESCRIPTION,
+        ),
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "recommended_public_command_template",
+        &embedded_execution_status_schema_description(
+            RECOMMENDED_PUBLIC_COMMAND_TEMPLATE_SCHEMA_DESCRIPTION,
+        ),
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "required_inputs",
+        &embedded_execution_status_schema_description(REQUIRED_INPUTS_SCHEMA_DESCRIPTION),
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "next_public_action",
+        "Embedded execution-status display-only compatibility object; not executable.",
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "blockers",
+        "Embedded execution-status blocker diagnostics. Any nested next_public_action is display-only.",
+    )?;
+    Ok(())
+}
+
+fn insert_workflow_string_enum_definition(
+    defs: &mut serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    values: &[&str],
+) {
+    defs.insert(
+        String::from(name),
+        serde_json::json!({
+            "enum": values,
+            "type": "string"
+        }),
+    );
+}
+
+fn set_workflow_schema_property_ref(
+    properties: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    def_name: &str,
+) -> Result<(), DiagnosticError> {
+    require_workflow_schema_property(properties, field)?;
+    properties.insert(
+        String::from(field),
+        serde_json::json!({ "$ref": format!("#/$defs/{def_name}") }),
+    );
+    Ok(())
+}
+
+fn set_workflow_schema_property_nullable_ref(
+    properties: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    def_name: &str,
+) -> Result<(), DiagnosticError> {
+    require_workflow_schema_property(properties, field)?;
+    properties.insert(
+        String::from(field),
+        serde_json::json!({
+            "anyOf": [
+                { "$ref": format!("#/$defs/{def_name}") },
+                { "type": "null" }
+            ]
+        }),
+    );
+    Ok(())
+}
+
+fn require_workflow_schema_property(
+    properties: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<(), DiagnosticError> {
+    if properties.contains_key(field) {
+        Ok(())
+    } else {
+        Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Workflow schema is missing property `{field}`."),
+        ))
+    }
+}
+
+fn workflow_def_properties<'a>(
+    defs: &'a mut serde_json::Map<String, serde_json::Value>,
+    def_name: &str,
+    label: &str,
+) -> Result<&'a mut serde_json::Map<String, serde_json::Value>, DiagnosticError> {
+    defs.get_mut(def_name)
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|schema| schema.get_mut("properties"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!("Workflow schema is missing `{label}.properties`."),
+            )
+        })
+}
+
+fn set_workflow_public_repair_target_schema(
+    defs: &mut serde_json::Map<String, serde_json::Value>,
+) -> Result<(), DiagnosticError> {
+    let properties = workflow_def_properties(defs, "PublicRepairTarget", "PublicRepairTarget")?;
+    set_workflow_schema_property_ref(
+        properties,
+        "command_kind",
+        "PublicRepairTargetCommandKindSchema",
+    )
+}
+
+fn embedded_execution_status_schema_description(description: &str) -> String {
+    let mut chars = description.chars();
+    let Some(first) = chars.next() else {
+        return String::from("Embedded execution-status.");
+    };
+    format!(
+        "Embedded execution-status {}{}",
+        first.to_ascii_lowercase(),
+        chars.as_str()
+    )
 }
 
 fn lock_workflow_route_schema_version(
@@ -1629,20 +1792,77 @@ fn tighten_workflow_operator_routing_field_schemas(
             )
         })?;
     tighten_operator_schema_property_type(properties, "recommended_command", "string")?;
+    annotate_operator_schema_property(properties, "next_action", NEXT_ACTION_SCHEMA_DESCRIPTION)?;
+    annotate_operator_schema_property(
+        properties,
+        "next_public_action",
+        ROUTE_NEXT_PUBLIC_ACTION_SCHEMA_DESCRIPTION,
+    )?;
     annotate_operator_schema_property(
         properties,
         "recommended_command",
-        "Display-only compatibility summary; do not parse or execute this string. Use recommended_public_command_argv when present.",
+        RECOMMENDED_COMMAND_SCHEMA_DESCRIPTION,
     )?;
     annotate_operator_schema_property(
         properties,
         "recommended_public_command_argv",
-        "Executable public command argv authority when present. Run these tokens as argv instead of parsing recommended_command.",
+        RECOMMENDED_PUBLIC_COMMAND_ARGV_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "recommended_public_command_template",
+        RECOMMENDED_PUBLIC_COMMAND_TEMPLATE_SCHEMA_DESCRIPTION,
     )?;
     annotate_operator_schema_property(
         properties,
         "required_inputs",
-        "Parseable input contract for the routed public command when executable argv cannot be emitted yet.",
+        REQUIRED_INPUTS_SCHEMA_DESCRIPTION,
+    )?;
+    Ok(())
+}
+
+fn annotate_workflow_handoff_routing_field_schemas(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let properties = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowHandoff schema is missing top-level `properties`.",
+            )
+        })?;
+    annotate_operator_schema_property(properties, "next_action", NEXT_ACTION_SCHEMA_DESCRIPTION)?;
+    annotate_operator_schema_property(
+        properties,
+        "next_public_action",
+        ROUTE_NEXT_PUBLIC_ACTION_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "recommended_command",
+        RECOMMENDED_COMMAND_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "recommended_public_command_argv",
+        RECOMMENDED_PUBLIC_COMMAND_ARGV_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "recommended_public_command_template",
+        RECOMMENDED_PUBLIC_COMMAND_TEMPLATE_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "required_inputs",
+        REQUIRED_INPUTS_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "recommended_skill",
+        "Legacy handoff recommendation derived from the authoritative route skill when present; compatibility projection only, not a separate routing authority.",
     )?;
     Ok(())
 }
@@ -1665,6 +1885,113 @@ fn annotate_operator_schema_property(
         String::from("description"),
         serde_json::Value::from(description),
     );
+    Ok(())
+}
+
+fn annotate_workflow_required_follow_up_schema(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let required_follow_up = schema
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|defs| defs.get_mut("RequiredFollowUpSchema"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Workflow handoff schema is missing `RequiredFollowUpSchema`.",
+            )
+        })?;
+    required_follow_up.insert(
+        String::from("description"),
+        serde_json::Value::from(REQUIRED_FOLLOW_UP_SCHEMA_DESCRIPTION),
+    );
+    Ok(())
+}
+
+fn annotate_workflow_public_command_template_schema(
+    schema: &mut serde_json::Value,
+    schema_label: &str,
+) -> Result<(), DiagnosticError> {
+    let properties = schema
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|defs| defs.get_mut("PublicCommandTemplate"))
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|template| template.get_mut("properties"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!("{schema_label} schema is missing `PublicCommandTemplate.properties`."),
+            )
+        })?;
+    annotate_operator_schema_property(
+        properties,
+        "command_kind",
+        PUBLIC_COMMAND_TEMPLATE_KIND_SCHEMA_DESCRIPTION,
+    )?;
+    Ok(())
+}
+
+fn annotate_workflow_next_public_action_schema(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let defs = schema
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Workflow schema is missing `$defs`.",
+            )
+        })?;
+    let Some(next_public_action) = defs
+        .get_mut("NextPublicAction")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return Ok(());
+    };
+    let properties = next_public_action
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Workflow NextPublicAction schema is missing `properties`.",
+            )
+        })?;
+    annotate_operator_schema_property(
+        properties,
+        "display_only",
+        NEXT_PUBLIC_ACTION_DISPLAY_ONLY_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "command",
+        NEXT_PUBLIC_ACTION_COMMAND_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_operator_schema_property(
+        properties,
+        "args_template",
+        NEXT_PUBLIC_ACTION_ARGS_TEMPLATE_SCHEMA_DESCRIPTION,
+    )?;
+    let blocker_properties = defs
+        .get_mut("Blocker")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|blocker| blocker.get_mut("properties"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Workflow schema is missing `Blocker.properties`.",
+            )
+        })?;
+    annotate_operator_schema_property(
+        blocker_properties,
+        "next_public_action",
+        BLOCKER_NEXT_PUBLIC_ACTION_SCHEMA_DESCRIPTION,
+    )?;
     Ok(())
 }
 
@@ -1724,6 +2051,11 @@ fn tighten_operator_execution_command_context_schema(
         })?;
     tighten_operator_schema_property_type(properties, "task_number", "integer")?;
     tighten_operator_schema_property_type(properties, "step_id", "integer")?;
+    set_workflow_schema_property_ref(
+        properties,
+        "command_kind",
+        "WorkflowOperatorCommandKindSchema",
+    )?;
     schema.insert(
         String::from("required"),
         serde_json::json!(["command_kind", "task_number", "step_id"]),
@@ -1949,11 +2281,8 @@ fn parse_workflow_plan_candidate(path: &Path) -> Result<WorkflowPlanCandidate, D
     })?;
     let workflow_state = parse_header_value(&source, "Workflow State")?;
     let last_reviewed_by = parse_header_value(&source, "Last Reviewed By").unwrap_or_default();
-    let last_reviewed_by_valid = matches!(
-        (workflow_state.as_str(), last_reviewed_by.as_str()),
-        ("Draft", "writing-plans" | "plan-eng-review")
-            | ("Engineering Approved", "plan-eng-review")
-    );
+    let last_reviewed_by_valid =
+        plan_last_reviewer_is_valid_for_state(&workflow_state, &last_reviewed_by);
     let source_spec_path = normalize_repo_path(Path::new(
         parse_header_value(&source, "Source Spec")?.trim_matches('`'),
     ))?;
@@ -2070,7 +2399,7 @@ fn workflow_diagnostics(
                 plan.source_spec_path, spec.path
             ),
             remediation: String::from(
-                "Update the plan Source Spec header or rewrite the plan from the current approved spec.",
+                "Return to `featureforge:writing-plans` for the current approved-spec route and update the plan Source Spec binding or rewrite the plan from that spec.",
             ),
         });
     }
@@ -2085,7 +2414,7 @@ fn workflow_diagnostics(
                 report.map_or(0, |report| report.task_count)
             ),
             remediation: String::from(
-                "Repair the plan so every task has a buildable packet before treating it as ready.",
+                "Return to `featureforge:writing-plans` for the current plan-draft route and make every task packet-buildable before execution.",
             ),
         });
     }
@@ -2113,7 +2442,7 @@ fn workflow_diagnostics(
                 artifact: plan.path.clone(),
                 message: diagnostic.message.clone(),
                 remediation: String::from(
-                    "Repair the plan contract so workflow status can route the current plan safely.",
+                    "Return to `featureforge:writing-plans` for the current plan-draft route and correct the plan contract fields reported by this diagnostic.",
                 ),
             });
         }
@@ -2209,12 +2538,12 @@ fn fidelity_review_visible_for_route(
     next_skill: &str,
     gate: &PlanFidelityReviewReport,
 ) -> bool {
-    next_skill == "featureforge:plan-fidelity-review"
-        || (next_skill == "featureforge:plan-eng-review"
+    next_skill == SKILL_PLAN_FIDELITY_REVIEW
+        || (next_skill == SKILL_PLAN_ENG_REVIEW
             && plan.workflow_state == "Draft"
             && plan.last_reviewed_by == "plan-eng-review"
             && matches!(gate.state.as_str(), "pass" | "fail"))
-        || (next_skill == "featureforge:plan-eng-review"
+        || (next_skill == SKILL_PLAN_ENG_REVIEW
             && plan.workflow_state == "Engineering Approved"
             && !plan_fidelity_allows_implementation(gate))
 }
@@ -2239,7 +2568,7 @@ fn fidelity_review_template_visible_for_route(
     next_skill: &str,
     gate: &PlanFidelityReviewReport,
 ) -> bool {
-    next_skill == "featureforge:plan-fidelity-review"
+    next_skill == SKILL_PLAN_FIDELITY_REVIEW
         || (plan.workflow_state == "Engineering Approved"
             && !plan_fidelity_allows_implementation(gate))
 }

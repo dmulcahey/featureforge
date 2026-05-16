@@ -1,4 +1,12 @@
-use super::*;
+use super::{
+    BTreeMap, BTreeSet, ExecutionContext, FailureClass, GateState, JsonFailure, JsonSchema,
+    NO_REPO_FILES_MARKER, PlanStepState, RebuildEvidenceArgs, RebuildEvidenceCandidate,
+    RebuildEvidenceRequest, Serialize, current_file_proof, current_file_proof_checked,
+    hash_contract_plan, latest_attempt_indices_by_step, latest_completed_attempts_by_file,
+    latest_completed_attempts_by_step, public_workflow_operator_remediation_for_plan, sha256_hex,
+    step_completed_by_authoritative_truth, task_packet_fingerprint,
+};
+use crate::execution::gate_reason_codes::FILES_PROVEN_DRIFTED;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct RebuildEvidenceCounts {
@@ -249,7 +257,7 @@ fn rebuild_candidate_for_step(
                 match current_file_proof_checked(&context.runtime.repo_root, &proof.path) {
                     Ok(current_proof) => {
                         if current_proof != proof.proof {
-                            pre_invalidation_reason = Some(String::from("files_proven_drifted"));
+                            pre_invalidation_reason = Some(String::from(FILES_PROVEN_DRIFTED));
                             target_kind = String::from("stale_completed_attempt");
                             needs_reopen = true;
                             break;
@@ -356,17 +364,49 @@ pub fn discover_rebuild_candidates(
 }
 
 pub fn validate_v2_evidence_provenance(context: &ExecutionContext, gate: &mut GateState) {
+    validate_v2_evidence_provenance_for_completed_steps(context, gate, None);
+}
+
+pub fn validate_v2_evidence_provenance_for_completed_steps(
+    context: &ExecutionContext,
+    gate: &mut GateState,
+    authoritative_completed_steps: Option<&BTreeSet<(u32, u32)>>,
+) {
+    check_v2_evidence_provenance(
+        context,
+        gate,
+        EvidenceProvenanceDisposition::GateFailure,
+        authoritative_completed_steps,
+    );
+}
+
+pub fn warn_v2_evidence_provenance(context: &ExecutionContext, gate: &mut GateState) {
+    check_v2_evidence_provenance(context, gate, EvidenceProvenanceDisposition::Warning, None);
+}
+
+#[derive(Clone, Copy)]
+enum EvidenceProvenanceDisposition {
+    GateFailure,
+    Warning,
+}
+
+fn check_v2_evidence_provenance(
+    context: &ExecutionContext,
+    gate: &mut GateState,
+    disposition: EvidenceProvenanceDisposition,
+    authoritative_completed_steps: Option<&BTreeSet<(u32, u32)>>,
+) {
     let contract_plan_fingerprint = hash_contract_plan(&context.plan_source);
     let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
     let latest_attempts = latest_completed_attempts_by_step(&context.evidence);
     let latest_file_proofs = latest_completed_attempts_by_file(&context.evidence, &latest_attempts);
-    let public_repair_remediation = format!(
-        "The affected step's execution proof metadata is stale. Follow `featureforge workflow operator --plan {}` and then the returned `recommended_public_command_argv` to replay or repair the step through public runtime commands.",
-        context.plan_rel
-    );
+    let public_repair_remediation =
+        public_workflow_operator_remediation_for_plan(&context.plan_rel);
 
     if context.evidence.plan_fingerprint.as_deref() != Some(contract_plan_fingerprint.as_str()) {
-        gate.fail(
+        report_evidence_provenance_issue(
+            gate,
+            disposition,
             FailureClass::StaleExecutionEvidence,
             "plan_fingerprint_mismatch",
             "Execution evidence plan fingerprint no longer matches the approved plan source.",
@@ -375,15 +415,21 @@ pub fn validate_v2_evidence_provenance(context: &ExecutionContext, gate: &mut Ga
     }
     if context.evidence.source_spec_fingerprint.as_deref() != Some(source_spec_fingerprint.as_str())
     {
-        gate.fail(
+        report_evidence_provenance_issue(
+            gate,
+            disposition,
             FailureClass::StaleExecutionEvidence,
             "source_spec_fingerprint_mismatch",
             "Execution evidence source spec fingerprint no longer matches the approved source spec.",
-            public_repair_remediation,
+            public_repair_remediation.clone(),
         );
     }
 
-    for step in context.steps.iter().filter(|step| step.checked) {
+    for step in context
+        .steps
+        .iter()
+        .filter(|step| step_completed_by_authoritative_truth(step, authoritative_completed_steps))
+    {
         let Some(attempt_index) = latest_attempts
             .get(&(step.task_number, step.step_number))
             .copied()
@@ -398,14 +444,16 @@ pub fn validate_v2_evidence_provenance(context: &ExecutionContext, gate: &mut Ga
             step.step_number,
         );
         if attempt.packet_fingerprint.as_deref() != expected_packet.as_deref() {
-            gate.fail(
+            report_evidence_provenance_issue(
+                gate,
+                disposition,
                 FailureClass::StaleExecutionEvidence,
                 "packet_fingerprint_mismatch",
                 format!(
                     "Task {} Step {} evidence packet provenance no longer matches the current approved plan/spec pair.",
                     step.task_number, step.step_number
                 ),
-                "Rebuild the packet and reopen the affected step.",
+                public_repair_remediation.clone(),
             );
         }
         for proof in &attempt.file_proofs {
@@ -423,16 +471,37 @@ pub fn validate_v2_evidence_provenance(context: &ExecutionContext, gate: &mut Ga
             }
             let current = current_file_proof(&context.runtime.repo_root, &proof.path);
             if current != proof.proof {
-                gate.fail(
+                report_evidence_provenance_issue(
+                    gate,
+                    disposition,
                     FailureClass::MissedReopenRequired,
-                    "files_proven_drifted",
+                    FILES_PROVEN_DRIFTED,
                     format!(
                         "Task {} Step {} proved file '{}' no longer matches its recorded fingerprint.",
                         step.task_number, step.step_number, proof.path
                     ),
-                    "Reopen the step and rebuild its evidence.",
+                    public_repair_remediation.clone(),
                 );
             }
+        }
+    }
+}
+
+fn report_evidence_provenance_issue(
+    gate: &mut GateState,
+    disposition: EvidenceProvenanceDisposition,
+    failure_class: FailureClass,
+    code: &str,
+    message: impl Into<String>,
+    remediation: impl Into<String>,
+) {
+    match disposition {
+        EvidenceProvenanceDisposition::GateFailure => {
+            gate.fail(failure_class, code, message, remediation);
+        }
+        EvidenceProvenanceDisposition::Warning => {
+            let _ = (failure_class, message.into(), remediation.into());
+            gate.warn(code);
         }
     }
 }

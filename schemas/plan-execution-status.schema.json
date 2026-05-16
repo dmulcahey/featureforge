@@ -18,10 +18,15 @@
           "type": "string"
         },
         "next_public_action": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NextPublicAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional display-only blocker action summary; not executable."
         },
         "record_id": {
           "type": [
@@ -133,24 +138,31 @@
         "hand off",
         "pivot / return to planning",
         "refresh test plan",
-        "repair review state / reenter execution",
+        "repair review state",
         "resolve release blocker",
         "run QA",
-        "wait for external review result",
-        "run verification"
+        "run verification",
+        "wait for external review result"
       ],
       "type": "string"
     },
     "NextPublicAction": {
       "properties": {
         "args_template": {
+          "description": "Display-only legacy argument template summary; not executable.",
           "type": [
             "string",
             "null"
           ]
         },
         "command": {
+          "description": "Display-only legacy command summary; not executable.",
           "type": "string"
+        },
+        "display_only": {
+          "default": true,
+          "description": "Legacy compatibility marker; nested command fields are display-only.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -179,6 +191,30 @@
         "task_closure_recording_ready",
         "task_review_result_pending",
         "test_plan_refresh_required"
+      ],
+      "type": "string"
+    },
+    "PublicCommandInputBinding": {
+      "properties": {
+        "flag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/PublicCommandInputBindingKind"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "PublicCommandInputBindingKind": {
+      "enum": [
+        "flag",
+        "virtual"
       ],
       "type": "string"
     },
@@ -217,6 +253,77 @@
       "required": [
         "name",
         "kind"
+      ],
+      "type": "object"
+    },
+    "PublicCommandTemplate": {
+      "properties": {
+        "base_argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command_kind": {
+          "description": "Public command intent label for a template; not executable by itself.",
+          "type": "string"
+        },
+        "input_bindings": {
+          "items": {
+            "$ref": "#/$defs/PublicCommandTemplateInput"
+          },
+          "type": "array"
+        },
+        "required_input_names": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "command_kind",
+        "base_argv",
+        "required_input_names",
+        "input_bindings"
+      ],
+      "type": "object"
+    },
+    "PublicCommandTemplateInput": {
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/PublicCommandInputBinding"
+        },
+        "kind": {
+          "$ref": "#/$defs/PublicCommandInputKind"
+        },
+        "must_exist": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required_when": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shell_escape_by_caller": {
+          "type": "boolean"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "binding",
+        "shell_escape_by_caller"
       ],
       "type": "object"
     },
@@ -382,6 +489,7 @@
       "type": "string"
     },
     "RequiredFollowUpSchema": {
+      "description": "Required follow-up intent token; record_handoff is compatibility metadata, not executable.",
       "enum": [
         "execution_reentry",
         "repair_review_state",
@@ -551,6 +659,7 @@
         "waiting_external_input",
         "terminal",
         "blocked_runtime_bug",
+        "planning_reentry_required",
         "runtime_reconcile_required"
       ],
       "type": "string"
@@ -1017,7 +1126,8 @@
       "type": "integer"
     },
     "next_action": {
-      "$ref": "#/$defs/NextActionSchema"
+      "$ref": "#/$defs/NextActionSchema",
+      "description": "Display-only route diagnostic label; not executable."
     },
     "next_public_action": {
       "anyOf": [
@@ -1027,7 +1137,8 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Optional display-only public route action summary; not executable."
     },
     "non_passing_evaluator_kinds": {
       "items": {
@@ -1103,11 +1214,11 @@
       "type": "array"
     },
     "recommended_command": {
-      "description": "Display-only compatibility summary; do not parse or execute this string. Use recommended_public_command_argv when present.",
+      "description": "Display-only compatibility summary; not executable.",
       "type": "string"
     },
     "recommended_public_command_argv": {
-      "description": "Executable public command argv authority when present. Run these tokens as argv instead of parsing recommended_command.",
+      "description": "Diagnostic mirror of operator-derived public command argv when present; workflow operator JSON remains the normal executable route authority.",
       "items": {
         "type": "string"
       },
@@ -1115,6 +1226,17 @@
         "array",
         "null"
       ]
+    },
+    "recommended_public_command_template": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublicCommandTemplate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Non-executable public command template for input-required routes."
     },
     "recording_context": {
       "$ref": "#/$defs/PublicRecordingContext"
@@ -1144,7 +1266,7 @@
       "type": "array"
     },
     "required_inputs": {
-      "description": "Parseable input contract for the routed public command when executable argv cannot be emitted yet.",
+      "description": "Input names required to materialize a public command template.",
       "items": {
         "$ref": "#/$defs/PublicCommandInputRequirement"
       },

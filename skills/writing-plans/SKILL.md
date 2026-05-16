@@ -38,18 +38,13 @@ _featureforge_exec_public_argv() {
     "$_FEATUREFORGE_BIN" "$@"
     return $?
   fi
-  "$@"
+  echo "featureforge: refusing non-featureforge public argv: $1" >&2
+  return 2
 }
 ```
-## Installed Control Plane
+## Runtime Route Reference
 
-Live FeatureForge workflow routing is install-owned:
-- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
-- do not route live workflow commands through `./bin/featureforge`
-- do not route live workflow commands through `target/debug/featureforge`
-- do not route live workflow commands through `cargo run`
-
-When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
+This skill does not own live workflow routing. If another workflow surface gives you workflow/operator JSON, follow `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` instead of reconstructing route law here.
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -82,7 +77,7 @@ Write comprehensive implementation plans for skilled engineers with little repo/
 
 **Save plans to:** `docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md`
 - (User preferences for plan location override this default)
-- Use that repo-relative plan path consistently in later review and workflow/operator commands; do not route through compatibility-only `workflow expect` or `workflow sync` helpers.
+- Use that repo-relative plan path consistently in later review and workflow/operator commands; do not route through retired workflow command surfaces.
 
 ## Protected-Branch Repo-Write Gate
 
@@ -92,7 +87,7 @@ Before writing or updating the plan file on disk, run the shared repo-safety pre
 $_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:writing-plans --task-id <current-plan-write> --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
 ```
 
-- If the helper returns `allowed`, continue with the plan write.
+- If the repo-safety check returns `allowed`, continue with the plan write.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact plan-writing scope.
 - If the user explicitly approves writing this plan on the current protected branch, approve the full protected-branch task scope you intend to use, including the plan path and any follow-on git targets that are part of the same task slice:
 
@@ -194,7 +189,7 @@ See `$_FEATUREFORGE_ROOT/references/writing-plans-examples.md` for expanded task
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For Codex and GitHub Copilot workers:** REQUIRED: Use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` as routing authority after engineering approval, and follow the runtime-selected execution owner skill; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For Codex and GitHub Copilot workers:** REQUIRED: Use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` as routing authority after engineering approval, and follow the runtime-selected execution owner skill; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Workflow State:** Draft
 **Plan Revision:** 1
@@ -231,7 +226,7 @@ See `$_FEATUREFORGE_ROOT/references/writing-plans-examples.md` for expanded task
 **Context:**
 - [Why this task exists in the plan]
 - [Repo or architecture fact the implementer/reviewer must know]
-- [Spec, decision, or non-goal reference when required by review/plan-task-contract.md]
+- [Spec, decision, or non-goal reference when required by $_FEATUREFORGE_ROOT/review/plan-task-contract.md]
 
 **Constraints:**
 - [Hard rule inherited from the approved spec or review]
@@ -250,11 +245,11 @@ See `$_FEATUREFORGE_ROOT/references/writing-plans-examples.md` for expanded task
 ````
 
 - `## Task N:` is canonical. Do not use `### Task N:`.
-- Every task must include `Spec Coverage`, `Goal`, `Context`, `Constraints`, `Done when`, and a parseable `Files:` block in the order defined by `review/plan-task-contract.md`.
+- Every task must include `Spec Coverage`, `Goal`, `Context`, `Constraints`, `Done when`, and a parseable `Files:` block in the order defined by `$_FEATUREFORGE_ROOT/review/plan-task-contract.md`.
 - `Open Questions` is not part of the final approved task contract. Draft-only questions belong outside approved task bodies before approval.
 - `Goal` must be one sentence and describe one exact outcome rather than a bucket of related work.
 - `Context` must be a bullet list that makes the task self-contained enough for a fresh implementer and fresh reviewer to reach the same interpretation.
-- Add exact spec, decision, or non-goal references in `Context` only when one of the trigger conditions in `review/plan-task-contract.md` applies.
+- Add exact spec, decision, or non-goal references in `Context` only when one of the trigger conditions in `$_FEATUREFORGE_ROOT/review/plan-task-contract.md` applies.
 - `Constraints` must be hard rules, including reuse law when the task must extend an existing parser, normalizer, validator, routing path, policy path, prompt assembly path, or other shared implementation. For example: `Extend the existing task-contract parser; do not add a second parser path.`
 - `Done when` bullets must be atomic, binary, objectively reviewable, reviewable without interpretation drift, and concrete. A bullet may be verified by diff inspection, targeted tests, or artifacts; it does not have to map to one command.
 - Do not bundle unrelated outcomes into one task when that would force reviewers to judge partial completion.
@@ -308,9 +303,9 @@ After saving the full plan:
 2. Invoke `featureforge:plan-eng-review` for the first engineering review pass.
 3. Do not invoke `featureforge:plan-fidelity-review` directly from `writing-plans`; plan-fidelity runs only after engineering-review edits are complete and `plan-eng-review` has set `**Last Reviewed By:** plan-eng-review` on the final draft.
 4. Keep this handoff fail-closed:
-   - if engineering review finds plan issues, return to `featureforge:writing-plans` for plan repair
-   - if engineering review edits the draft, keep `**Workflow State:** Draft` and `**Last Reviewed By:** writing-plans` until all engineering-review issues are resolved
-   - when engineering review has no remaining edits, `featureforge:plan-eng-review` owns the handoff to `featureforge:plan-fidelity-review`
+   - if engineering review finds plan issues, `featureforge:plan-eng-review` owns the Draft plan edit loop until all engineering-review issues are resolved
+   - while engineering review edits the draft, keep `**Workflow State:** Draft` and `**Last Reviewed By:** writing-plans`
+   - when engineering review has no remaining edits, `featureforge:plan-eng-review` sets `**Last Reviewed By:** plan-eng-review` and owns the handoff to `featureforge:plan-fidelity-review`
 
 **The terminal state is invoking `featureforge:plan-eng-review`.**
 

@@ -1,6 +1,6 @@
 ---
 name: plan-eng-review
-description: Use when a written FeatureForge implementation plan from a CEO-approved spec needs engineering review before execution or needs a late refresh-test-plan regeneration before finish gating
+description: Use when a written FeatureForge implementation plan from a CEO-approved spec needs engineering review before execution or when workflow/operator explicitly routes to late refresh-test-plan regeneration
 ---
 
 {{REVIEW_PREAMBLE}}
@@ -27,7 +27,7 @@ description: Use when a written FeatureForge implementation plan from a CEO-appr
 - If any header line is missing or malformed, normalize the plan to this contract before continuing and treat it as `Draft`.
 - `writing-plans` is only valid while the plan remains `Draft`. An `Engineering Approved` plan must end with `**Last Reviewed By:** plan-eng-review`.
 - Read the source spec named in `**Source Spec:**` and confirm both the path and revision match the latest approved spec before approving execution.
-- Treat `Requirement Index`, `Requirement Coverage Matrix`, canonical `## Task N:` headings, `Spec Coverage`, `Goal`, `Context`, `Constraints`, `Done when`, and `Files:` blocks as required plan contract surface for engineering approval. `review/plan-task-contract.md` is the authoritative field, determinism, spec-reference, obligation-index, migration, and hard-fail reuse law.
+- Treat `Requirement Index`, `Requirement Coverage Matrix`, canonical `## Task N:` headings, `Spec Coverage`, `Goal`, `Context`, `Constraints`, `Done when`, and `Files:` blocks as required plan contract surface for engineering approval. `$_FEATUREFORGE_ROOT/review/plan-task-contract.md` is the authoritative field, determinism, spec-reference, obligation-index, migration, and hard-fail reuse law.
 - When review decisions change the written plan, update the plan document before continuing.
 - **Protected-Branch Repo-Write Gate:**
 - Before editing the plan body or changing approval headers on disk, run the shared repo-safety preflight for the exact review-write scope:
@@ -37,7 +37,7 @@ $_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:plan-en
 ```
 
 - When the mutation is specifically an approval-header edit, use the same command shape with `--write-target approval-header-write`.
-- If the helper returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact review scope.
+- If the repo-safety check returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact review scope.
 - If the user explicitly approves the protected-branch review write, run:
 
 ```bash
@@ -47,13 +47,14 @@ $_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:plan-en
 
 - Repeat the same approve -> re-check pattern for `approval-header-write` before flipping `**Workflow State:**` or any other approval header on a protected branch.
 - Keep the plan in `Draft` while review issues remain open or while the source spec path or revision is stale.
-- Only write `**Workflow State:** Engineering Approved` as the last step of a successful review, and set `**Last Reviewed By:** plan-eng-review` at the same time.
+- Keep engineering-review edits in `Draft`; when every engineering-review issue is resolved, update only `**Last Reviewed By:** plan-eng-review` to mark the plan ready for `featureforge:plan-fidelity-review`.
+- Only after a current pass plan-fidelity review artifact exists for the approval-stable binding surfaced in the route/template should you flip `**Workflow State:** Engineering Approved` as the last step of a successful review.
 - When the review is resolved and the written plan is approved, present the normal execution preflight handoff.
 - `featureforge:subagent-driven-development` and `featureforge:executing-plans` own implementation. Do not start implementation inside `plan-eng-review`.
 
 **The terminal state is presenting the execution preflight handoff with the approved plan path.**
 
-plan-eng-review also owns the late refresh-test-plan lane when approved-plan `QA Requirement` is `required` and finish readiness reports `test_plan_artifact_missing`, `test_plan_artifact_malformed`, `test_plan_artifact_stale`, `test_plan_artifact_authoritative_provenance_invalid`, or `test_plan_artifact_generator_mismatch` for the current approved plan revision.
+plan-eng-review also owns the late refresh-test-plan lane only when workflow/operator explicitly routes to `qa_pending` with `phase_detail=test_plan_refresh_required` for the current approved plan revision. Missing or stale source test-plan projections on current QA recording or finish readiness are diagnostic-only and must not be treated as a refresh request by themselves.
 
 In that late-stage lane, the terminal state is returning to the finish-gate flow with a regenerated current-branch test-plan artifact, not reopening execution preflight.
 
@@ -67,8 +68,8 @@ Use the detailed rubrics, domain overlays, examples, and output templates in `$_
 
 - Accelerated review is available only when the user explicitly requests `accelerated` or `accelerator` mode for the current engineering review.
 - Do not activate accelerated review from heuristics, vague wording like "make this fast", saved preferences, or agent-only judgment.
-- Use the existing ENG review sections as canonical section boundaries and brief the reviewer with `skills/plan-eng-review/accelerated-reviewer-prompt.md`.
-- That reviewer prompt plus `review/review-accelerator-packet-contract.md` defines required section-packet schema and keeps the reviewer limited to draft-only output.
+- Use the existing ENG review sections as canonical section boundaries and brief the reviewer with skill-local `accelerated-reviewer-prompt.md`.
+- That reviewer prompt plus `$_FEATUREFORGE_ROOT/review/review-accelerator-packet-contract.md` defines required section-packet schema and keeps the reviewer limited to draft-only output.
 - Accelerated ENG `SMALL CHANGE` review still limits the reviewer to one primary issue per canonical section and may not collapse into one bundled approval round.
 - Persist packets under `~/.featureforge/projects/<slug>/...`, resume only from the last approved-and-applied section boundary, and regenerate stale packets when the source artifact fingerprint changes.
 - Final explicit human approval remains unchanged, and only the main review agent may write authoritative artifacts, apply approved patches, or change approval headers.
@@ -103,7 +104,7 @@ Before moving into review sections:
 5. Start engineering review for a structurally parseable draft even when no plan-fidelity review artifact exists yet.
 6. If you make plan edits during this review, keep `**Workflow State:** Draft` and keep `**Last Reviewed By:** writing-plans` until every engineering-review issue is resolved.
 7. When all engineering-review issues are resolved, update only `**Last Reviewed By:** plan-eng-review` and hand control to `featureforge:plan-fidelity-review` for the final independent fidelity pass.
-8. After a current pass plan-fidelity review artifact exists for the final draft fingerprint, return here for the final approval-header mutation.
+8. After a current pass plan-fidelity review artifact exists for the approval-stable plan-fidelity binding surfaced by workflow routing, return here for the final approval-header mutation.
 9. Do not look for or require a runtime-owned plan-fidelity projection file. The authoritative fidelity evidence is the parseable review artifact surfaced by workflow routing and `plan contract analyze-plan` as `plan_fidelity_review`.
 
 ## Plan-Contract Gate
@@ -119,7 +120,7 @@ PLAN_ANALYSIS_JSON="$("$_FEATUREFORGE_BIN" plan contract analyze-plan \
 
 Engineering approval must fail closed unless `contract_state == valid` and `packet_buildable_tasks == task_count`.
 
-Engineering approval must also fail closed unless `plan_fidelity_review.state == pass` for the current plan/spec fingerprint.
+Engineering approval must also fail closed unless `plan_fidelity_review.state == pass` for the current plan-fidelity binding/spec fingerprint.
 
 Engineering approval must also fail closed unless `execution_strategy_present`, `dependency_diagram_present`, `execution_topology_valid`, `serial_hazards_resolved`, `parallel_lane_ownership_valid`, and `parallel_workspace_isolation_valid` are all `true`.
 
@@ -131,13 +132,13 @@ Engineering approval must fail closed when `analyze-plan` reports missing or mal
 
 If `coverage_complete`, `task_structure_valid`, `files_blocks_valid`, `execution_strategy_present`, `dependency_diagram_present`, `execution_topology_valid`, `serial_hazards_resolved`, `parallel_lane_ownership_valid`, `parallel_workspace_isolation_valid`, `task_contract_valid`, `task_goal_valid`, `task_context_sufficient`, `task_constraints_valid`, `task_done_when_deterministic`, or `tasks_self_contained` is not `true`, keep the plan in `Draft` and continue review or route back to `featureforge:writing-plans`.
 
-Do not use legacy task-level `Open Questions` review as the primary approval model after cutover. Legacy `Task Outcome`, `Plan Constraints`, and task-level `Open Questions` are invalid through the task-contract analyzer and `review/plan-task-contract.md`; approval depends on the canonical `Goal`, `Context`, `Constraints`, `Done when`, `Spec Coverage`, and `Files` contract.
+Do not use legacy task-level `Open Questions` review as the primary approval model after cutover. Legacy `Task Outcome`, `Plan Constraints`, and task-level `Open Questions` are invalid through the task-contract analyzer and `$_FEATUREFORGE_ROOT/review/plan-task-contract.md`; approval depends on the canonical `Goal`, `Context`, `Constraints`, `Done when`, `Spec Coverage`, and `Files` contract.
 
-Separately, use reviewer judgment against `review/plan-task-contract.md` for reuse and architecture hygiene that cannot be fully proven by structural booleans. Keep the plan in `Draft` when any task duplicates substantive production behavior without an approved exception, fails to name the shared implementation home when reuse is required, or is too broad or under-specified for two independent reviewers to reach the same verdict.
+Separately, use reviewer judgment against `$_FEATUREFORGE_ROOT/review/plan-task-contract.md` for reuse and architecture hygiene that cannot be fully proven by structural booleans. Keep the plan in `Draft` when any task duplicates substantive production behavior without an approved exception, fails to name the shared implementation home when reuse is required, or is too broad or under-specified for two independent reviewers to reach the same verdict.
 
-The reuse gate is a hard approval gate, not advisory design feedback. When a task plans substantive parser, normalizer, validator, routing, eligibility, policy, prompt-assembly, state-transition, artifact-binding, or freshness behavior, the plan must either extend the named shared implementation home or name one approved exception category from `review/plan-task-contract.md` with its boundary rationale. Generated code, fixtures or test data, tiny test-only setup repetition, platform-specific adapters, controlled migration shims, and explicit layer-boundary separation are the only approved exception categories.
+The reuse gate is a hard approval gate, not advisory design feedback. When a task plans substantive parser, normalizer, validator, routing, eligibility, policy, prompt-assembly, state-transition, artifact-binding, or freshness behavior, the plan must either extend the named shared implementation home or name one approved exception category from `$_FEATUREFORGE_ROOT/review/plan-task-contract.md` with its boundary rationale. Generated code, fixtures or test data, tiny test-only setup repetition, platform-specific adapters, controlled migration shims, and explicit layer-boundary separation are the only approved exception categories.
 
-For every concrete engineering-review issue, use the deterministic review finding shape from `review/plan-task-contract.md`: `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail: yes|no`. Do not use general feedback when a failed task field, analyzer boolean, packet-assigned obligation, or checklist law can be named. `Required Fix` must be the smallest repair delta needed to make the plan approvable without the next author paraphrasing reviewer prose into a new interpretation.
+For every concrete engineering-review issue, use the deterministic review finding shape from `$_FEATUREFORGE_ROOT/review/plan-task-contract.md`: `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail: yes|no`. Do not use general feedback when a failed task field, analyzer boolean, packet-assigned obligation, or checklist law can be named. `Required Fix` must be the smallest repair delta needed to make the plan approvable without the next author paraphrasing reviewer prose into a new interpretation.
 
 Before approval, explicitly answer these questions:
 
@@ -219,7 +220,7 @@ Set `**Browser QA Required:** yes` when approved-plan `**QA Requirement:** requi
 
 After all review sections are complete, optionally get an outside voice. It is informative by default and actionable only if the main reviewer explicitly adopts a finding and patches the authoritative plan body.
 
-- Use `skills/plan-eng-review/outside-voice-prompt.md` when briefing the outside voice.
+- Use skill-local `outside-voice-prompt.md` when briefing the outside voice.
 - Label the source as `cross-model` only when the outside voice definitely uses a different model/provider than the main reviewer.
 - If model provenance is the same, unknown, or only a fresh-context rerun of the same reviewer family, label the source as `fresh-context-subagent`.
 - If the transport truncates or summarizes the outside-voice output, disclose that limitation plainly in review prose instead of overstating independence.
@@ -266,11 +267,10 @@ Check the git log for this branch. If prior commits suggest a previous review cy
 
 Before presenting the final execution preflight handoff, if `$_FEATUREFORGE_BIN` is available, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`.
 
-- Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, and `required_inputs` as authoritative for public routing. `recommended_command` is display-only compatibility text.
-- If workflow/operator returns `phase` `executing`, present the normal execution preflight handoff below.
-- If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv` when present instead of reopening execution preflight; when argv is absent, satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.
+- If workflow/operator JSON returns `phase` `executing`, present the normal execution preflight handoff below.
+- If workflow/operator JSON returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported route instead of reopening execution preflight; use the Installed Control Plane section and canonical route reference for any public mutation.
 - `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` is supporting diagnostic detail only; do not let it override workflow/operator routing.
-- Only fall back to manual artifact inspection if the helper is unavailable or fails.
+- If workflow/operator is unavailable or fails, stop and report the doctor/operator diagnostic. Fix only obvious installed-binary, state-dir, or repo-root binding, then rerun workflow/operator JSON; do not reconstruct execution handoff from artifacts manually.
 - Present the runtime-selected execution owner skill as the default path with the approved plan path.
 - During handoff, name the exact approved plan path and approved plan revision, and remind the execution skill to reject draft or stale plans.
 - If any task packet is missing, stale, or non-buildable for the approved plan revision, stop and route back to review instead of handing off execution.
