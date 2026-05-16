@@ -2,6 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
+use crate::execution::gate_reason_codes::files_proven_drifted_reason_code;
+#[cfg(test)]
+use crate::execution::review_route_tokens::{
+    REASON_BROWSER_QA_STATE_NOT_FRESH, REASON_BROWSER_QA_STATE_STALE,
+    REASON_FINAL_REVIEW_STATE_NOT_FRESH, REASON_FINAL_REVIEW_STATE_STALE,
+    REASON_RELEASE_DOCS_STATE_NOT_FRESH, REASON_RELEASE_DOCS_STATE_STALE,
+};
 use crate::execution::transitions::{AuthoritativeTransitionState, ClosureHistorySnapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -872,27 +879,25 @@ fn closure_freshness_from_status(status: &str) -> Option<ClosureFreshness> {
     match status {
         "current" => Some(ClosureFreshness::Current),
         "superseded" => Some(ClosureFreshness::Superseded),
-        "stale_unreviewed" => Some(ClosureFreshness::StaleUnreviewed),
+        crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED => {
+            Some(ClosureFreshness::StaleUnreviewed)
+        }
         "historical" => Some(ClosureFreshness::Historical),
         _ => None,
     }
 }
 
-pub(crate) fn reason_code_indicates_stale_unreviewed(reason_code: &str) -> bool {
+pub(crate) fn reason_code_indicates_late_stage_control_plane_stale(reason_code: &str) -> bool {
     matches!(
         reason_code,
-        "review_artifact_worktree_dirty"
-            | "post_review_repo_write_detected"
-            | "release_docs_state_stale"
-            | "release_docs_state_not_fresh"
-            | "final_review_state_stale"
-            | "final_review_state_not_fresh"
-            | "browser_qa_state_stale"
-            | "browser_qa_state_not_fresh"
-            | "plain_unit_review_receipt_fingerprint_mismatch"
-            | "files_proven_drifted"
-    ) || reason_code.ends_with("_stale")
-        || reason_code.ends_with("_not_fresh")
+        "review_artifact_worktree_dirty" | "post_review_repo_write_detected"
+    ) || files_proven_drifted_reason_code(reason_code)
+}
+
+pub(crate) fn reason_code_indicates_stale_unreviewed(reason_code: &str) -> bool {
+    reason_code_indicates_late_stage_control_plane_stale(reason_code)
+        || reason_code
+            == crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_STALE
 }
 
 fn append_unique(values: &mut Vec<String>, value: String) {
@@ -985,6 +990,26 @@ mod tests {
     }
 
     #[test]
+    fn late_stage_document_freshness_reason_codes_are_diagnostic_only() {
+        for reason_code in [
+            REASON_RELEASE_DOCS_STATE_STALE,
+            REASON_RELEASE_DOCS_STATE_NOT_FRESH,
+            REASON_FINAL_REVIEW_STATE_STALE,
+            REASON_FINAL_REVIEW_STATE_NOT_FRESH,
+            REASON_BROWSER_QA_STATE_STALE,
+            REASON_BROWSER_QA_STATE_NOT_FRESH,
+            concat!("plain_unit_review_", "rec", "eipt_fingerprint_mismatch"),
+            "custom_projection_not_fresh",
+            "custom_projection_stale",
+        ] {
+            assert!(
+                !reason_code_indicates_stale_unreviewed(reason_code),
+                "`{reason_code}` must remain diagnostic-only and must not create stale routing truth"
+            );
+        }
+    }
+
+    #[test]
     fn does_not_project_late_stage_staleness_onto_current_task_closures_without_bound_targets() {
         let snapshot = ClosureHistorySnapshot {
             task_closure_record_history: BTreeMap::from([(
@@ -995,7 +1020,7 @@ mod tests {
         };
         let signals = ClosureGraphSignals {
             late_stage_stale_unreviewed: true,
-            stale_reason_codes: vec![String::from("final_review_state_stale")],
+            stale_reason_codes: vec![String::from(REASON_FINAL_REVIEW_STATE_STALE)],
             ..ClosureGraphSignals::default()
         };
 
@@ -1286,11 +1311,21 @@ mod tests {
             task_closure_record_history: BTreeMap::from([
                 (
                     String::from("task-4"),
-                    task_status("task-4", 4, "stale_unreviewed", 10),
+                    task_status(
+                        "task-4",
+                        4,
+                        crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED,
+                        10,
+                    ),
                 ),
                 (
                     String::from("task-6"),
-                    task_status("task-6", 6, "stale_unreviewed", 20),
+                    task_status(
+                        "task-6",
+                        6,
+                        crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED,
+                        20,
+                    ),
                 ),
                 (
                     String::from("task-7"),

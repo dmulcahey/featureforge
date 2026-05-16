@@ -20,6 +20,9 @@ use featureforge::execution::authority::{
 };
 use featureforge::execution::follow_up::execution_step_repair_target_id;
 use featureforge::execution::harness::{ChunkId, ExecutionRunId, RunIdentitySnapshot};
+use featureforge::execution::public_repair_target_reasons::{
+    PublicRepairTargetReason, persisted_review_state_repair_follow_up_reason,
+};
 use featureforge::execution::semantic_identity::{
     branch_definition_identity_for_context, task_definition_identity_for_task,
 };
@@ -125,6 +128,36 @@ fn parse_json(output: &Output, context: &str) -> Value {
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
+fn public_route_argv_strings(surface: &Value) -> Option<Vec<String>> {
+    let argv = surface
+        .get("recommended_public_command_argv")
+        .and_then(Value::as_array)
+        .or_else(|| {
+            surface
+                .get("recommended_public_command_template")
+                .and_then(|template| template.get("base_argv"))
+                .and_then(Value::as_array)
+        })?;
+    Some(
+        argv.iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+fn public_route_text(surface: &Value, context: &str) -> String {
+    public_route_argv_strings(surface)
+        .unwrap_or_else(|| panic!("{context} should expose typed public route argv: {surface}"))
+        .join(" ")
+}
+
+fn public_route_text_or_empty(surface: &Value) -> String {
+    public_route_argv_strings(surface)
+        .unwrap_or_default()
+        .join(" ")
+}
+
 fn parse_failure_json(output: &Output, context: &str) -> Value {
     assert!(
         !output.status.success(),
@@ -209,37 +242,6 @@ fn write_file(path: &Path, contents: &str) {
         fs::create_dir_all(parent).expect("parent directory should be creatable");
     }
     fs::write(path, contents).expect("file should be writable");
-    if is_execution_harness_state_path(path) {
-        sync_or_clear_execution_harness_event_log(path, contents);
-    }
-}
-
-fn sync_or_clear_execution_harness_event_log(path: &Path, contents: &str) {
-    if let Ok(payload) = serde_json::from_str::<Value>(contents)
-        && payload.is_object()
-    {
-        featureforge::execution::event_log::sync_fixture_event_log_for_tests(path, &payload)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "execution harness fixture event log should sync for {}: {}",
-                    path.display(),
-                    error.message
-                )
-            });
-        let _ = fs::remove_file(path.with_file_name("state.legacy.json"));
-        return;
-    }
-    let _ = fs::remove_file(path.with_file_name("events.jsonl"));
-    let _ = fs::remove_file(path.with_file_name("events.lock"));
-    let _ = fs::remove_file(path.with_file_name("state.legacy.json"));
-}
-
-fn is_execution_harness_state_path(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| name == "state.json")
-        && path
-            .parent()
-            .and_then(Path::file_name)
-            .is_some_and(|name| name == "execution-harness")
 }
 
 fn init_repo(_name: &str) -> (TempDir, TempDir) {
@@ -355,7 +357,7 @@ fn write_completed_task_authority(
         current_records.insert(task_scope_key, task_closure_record.clone());
         history_records.insert(task_closure_record_id, task_closure_record);
     }
-    write_authoritative_harness_fixture_payload(
+    synthetic_write_authoritative_harness_fixture_payload(
         repo,
         state,
         &json!({
@@ -799,7 +801,7 @@ fn harness_state_file_path(repo: &Path, state: &Path) -> PathBuf {
         .join("state.json")
 }
 
-fn reduced_authoritative_harness_state_for_path(state_path: &Path) -> Option<Value> {
+fn synthetic_reduced_authoritative_harness_state_for_path(state_path: &Path) -> Option<Value> {
     featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(state_path)
         .unwrap_or_else(|error| {
             panic!(
@@ -810,8 +812,8 @@ fn reduced_authoritative_harness_state_for_path(state_path: &Path) -> Option<Val
         })
 }
 
-fn authoritative_harness_state_for_merge(state_path: &Path) -> Option<Value> {
-    reduced_authoritative_harness_state_for_path(state_path).or_else(|| {
+fn synthetic_authoritative_harness_state_for_merge(state_path: &Path) -> Option<Value> {
+    synthetic_reduced_authoritative_harness_state_for_path(state_path).or_else(|| {
         state_path.is_file().then(|| {
             serde_json::from_str(
                 &fs::read_to_string(state_path)
@@ -822,9 +824,9 @@ fn authoritative_harness_state_for_merge(state_path: &Path) -> Option<Value> {
     })
 }
 
-fn read_authoritative_harness_state(repo: &Path, state: &Path, purpose: &str) -> Value {
+fn synthetic_read_authoritative_harness_state(repo: &Path, state: &Path, purpose: &str) -> Value {
     let state_path = harness_state_file_path(repo, state);
-    authoritative_harness_state_for_merge(&state_path).unwrap_or_else(|| {
+    synthetic_authoritative_harness_state_for_merge(&state_path).unwrap_or_else(|| {
         panic!(
             "harness state should be present for {purpose} at {}",
             state_path.display()
@@ -832,21 +834,22 @@ fn read_authoritative_harness_state(repo: &Path, state: &Path, purpose: &str) ->
     })
 }
 
-fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
+fn synthetic_write_harness_state_projection_payload(repo: &Path, state: &Path, payload: &Value) {
     let state_path = harness_state_file_path(repo, state);
-    let mut merged = if let Some(existing) = authoritative_harness_state_for_merge(&state_path) {
-        match (existing, payload.clone()) {
-            (Value::Object(mut existing), Value::Object(patch)) => {
-                for (key, value) in patch {
-                    existing.insert(key, value);
+    let mut merged =
+        if let Some(existing) = synthetic_authoritative_harness_state_for_merge(&state_path) {
+            match (existing, payload.clone()) {
+                (Value::Object(mut existing), Value::Object(patch)) => {
+                    for (key, value) in patch {
+                        existing.insert(key, value);
+                    }
+                    Value::Object(existing)
                 }
-                Value::Object(existing)
+                (_, replacement) => replacement,
             }
-            (_, replacement) => replacement,
-        }
-    } else {
-        payload.clone()
-    };
+        } else {
+            payload.clone()
+        };
     if let Value::Object(object) = &mut merged {
         object
             .entry("strategy_state".to_string())
@@ -871,8 +874,12 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
     let _ = fs::remove_file(legacy_backup_path);
 }
 
-fn write_authoritative_harness_fixture_payload(repo: &Path, state: &Path, payload: &Value) {
-    write_harness_state_payload(repo, state, payload);
+fn synthetic_write_authoritative_harness_fixture_payload(
+    repo: &Path,
+    state: &Path,
+    payload: &Value,
+) {
+    synthetic_write_harness_state_projection_payload(repo, state, payload);
     let state_path = harness_state_file_path(repo, state);
     let state_json: Value = serde_json::from_str(
         &fs::read_to_string(&state_path)
@@ -920,7 +927,7 @@ fn public_repair_targets_include_persisted_follow_up(
     step: Option<u64>,
     source_record_id: Option<&str>,
 ) -> bool {
-    let reason_code = format!("persisted_review_state_repair_follow_up:{follow_up}");
+    let reason_code = persisted_review_state_repair_follow_up_reason(follow_up);
     status["public_repair_targets"]
         .as_array()
         .is_some_and(|targets| {
@@ -941,14 +948,14 @@ fn public_repair_targets_include_any_persisted_follow_up(status: &Value) -> bool
         .is_some_and(|targets| {
             targets.iter().any(|target| {
                 target["reason_code"].as_str().is_some_and(|reason| {
-                    reason.starts_with("persisted_review_state_repair_follow_up")
+                    PublicRepairTargetReason::PersistedReviewStateRepairFollowUp.matches(reason)
                 })
             })
         })
 }
 
 fn write_initial_dispatch_harness_state(repo: &Path, state: &Path, execution_run_id: &str) {
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -965,7 +972,7 @@ fn write_initial_dispatch_harness_state(repo: &Path, state: &Path, execution_run
     );
 }
 
-fn bind_explicit_reopen_repair_target(repo: &Path, state: &Path, task: u32, step: u32) {
+fn synthetic_bind_explicit_reopen_repair_target(repo: &Path, state: &Path, task: u32, step: u32) {
     let _ = run_rust_json(
         repo,
         state,
@@ -978,7 +985,7 @@ fn bind_explicit_reopen_repair_target(repo: &Path, state: &Path, task: u32, step
         ],
         "materialize event-authoritative state before binding explicit reopen repair target",
     );
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -999,7 +1006,8 @@ fn bind_explicit_reopen_repair_target(repo: &Path, state: &Path, task: u32, step
 }
 
 fn current_authoritative_run_identity(repo: &Path, state: &Path) -> (String, String) {
-    let state_json = read_authoritative_harness_state(repo, state, "current run identity");
+    let state_json =
+        synthetic_read_authoritative_harness_state(repo, state, "current run identity");
     let run_identity = state_json
         .get("run_identity")
         .and_then(Value::as_object)
@@ -1085,7 +1093,7 @@ fn write_harness_state_fixture_impl(input: HarnessStateFixtureInput<'_>) {
         "handoff_required": handoff_required,
         "open_failed_criteria": []
     });
-    write_harness_state_payload(repo, state, &payload);
+    synthetic_write_harness_state_projection_payload(repo, state, &payload);
 }
 
 fn write_execution_contract_artifact(
@@ -1324,6 +1332,20 @@ fn write_serial_unit_review_receipt_artifact(
     (receipt_path, receipt_fingerprint)
 }
 
+fn finished_fixture_serial_unit_review_receipt_path(repo: &Path, state: &Path) -> PathBuf {
+    let harness_state =
+        synthetic_read_authoritative_harness_state(repo, state, "finished fixture serial receipt");
+    let execution_run_id = harness_state["run_identity"]["execution_run_id"]
+        .as_str()
+        .expect("finished fixture should expose execution run id");
+    harness_authoritative_artifact_path(
+        state,
+        &repo_slug(repo),
+        &branch_name(repo),
+        &format!("unit-review-{execution_run_id}-task-1-step-1.md"),
+    )
+}
+
 fn begin_task_1_step_1_for_mutation_oracle_fixture(repo: &Path, state: &Path) -> Value {
     write_approved_spec(repo);
     write_plan(repo, "none");
@@ -1426,9 +1448,14 @@ fn mutation_oracle_rejects_non_exact_reopen_even_when_step_is_completed() {
         "got {failure}"
     );
     assert!(
-        message.contains("featureforge plan execution begin --plan"),
+        message.contains("typed_public_route=command_kind=begin,task=1,step=2"),
         "got {failure}"
     );
+    assert!(
+        message.contains("route_field=recommended_public_command_argv"),
+        "got {failure}"
+    );
+    assert!(!message.contains("Next public action:"), "got {failure}");
 }
 
 #[test]
@@ -1878,8 +1905,8 @@ fn prepare_finished_single_step_finish_gate_fixture_with_plan_qa_requirement(
     harness_state["task_closure_record_history"] = json!({
         "task-1-closure": task_closure_record,
     });
-    write_authoritative_harness_fixture_payload(repo, state, &harness_state);
-    write_authoritative_harness_fixture_payload(
+    synthetic_write_authoritative_harness_fixture_payload(repo, state, &harness_state);
+    synthetic_write_authoritative_harness_fixture_payload(
         repo,
         state,
         &json!({
@@ -1949,6 +1976,16 @@ fn run_rust_with_env(
 
 fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     parse_json(&run_rust(repo, state, args, context), context)
+}
+
+fn run_workflow_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
+    let mut command = Command::new(compiled_featureforge_path());
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args(["workflow"])
+        .args(args);
+    parse_json(&run(command, context), context)
 }
 
 fn materialize_state_dir_projections(repo: &Path, state: &Path, context: &str) {
@@ -2576,7 +2613,7 @@ fn write_authoritative_worktree_lease_artifact_rejects_unsafe_execution_context_
     write_approved_spec(repo);
     write_plan(repo, "featureforge:executing-plans");
     let safe_branch = normalize_identifier(&branch_name(repo));
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -2644,7 +2681,7 @@ fn write_authoritative_unit_review_receipt_artifact_rejects_unsafe_execution_uni
     write_approved_spec(repo);
     write_plan(repo, "featureforge:executing-plans");
     let safe_branch = normalize_identifier(&branch_name(repo));
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -2708,7 +2745,7 @@ fn persist_active_worktree_lease_index_respects_write_authority_lock() {
     write_approved_spec(repo);
     write_plan(repo, "featureforge:executing-plans");
     let safe_branch = normalize_identifier(&branch_name(repo));
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -2772,7 +2809,7 @@ fn canonical_reopen_invalidates_completed_attempt_and_sets_resume_state() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_default_approved_single_step_execution_fixture(repo, state);
-    bind_explicit_reopen_repair_target(repo, state, 1, 1);
+    synthetic_bind_explicit_reopen_repair_target(repo, state, 1, 1);
 
     let status_after_repair = run_rust_json(
         repo,
@@ -2851,7 +2888,7 @@ fn task4_reopen_stales_active_evaluation_handoff_and_downstream_provenance() {
         ),
         &fs::read_to_string(repo.join(contract_rel)).expect("contract source should be readable"),
     );
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -2885,7 +2922,7 @@ fn task4_reopen_stales_active_evaluation_handoff_and_downstream_provenance() {
         }),
     );
 
-    bind_explicit_reopen_repair_target(repo, state, 1, 1);
+    synthetic_bind_explicit_reopen_repair_target(repo, state, 1, 1);
     let status_before = run_rust_json(
         repo,
         state,
@@ -2947,7 +2984,8 @@ fn task4_reopen_stales_active_evaluation_handoff_and_downstream_provenance() {
         "reopen should stale evaluator provenance verdict"
     );
 
-    let persisted = read_authoritative_harness_state(repo, state, "reopen stale provenance check");
+    let persisted =
+        synthetic_read_authoritative_harness_state(repo, state, "reopen stale provenance check");
     assert_eq!(
         persisted["final_review_state"],
         Value::Null,
@@ -2998,7 +3036,7 @@ fn task4_reopen_rolls_back_plan_evidence_and_harness_state_when_state_publish_fa
         false,
     );
 
-    bind_explicit_reopen_repair_target(repo, state, 1, 1);
+    synthetic_bind_explicit_reopen_repair_target(repo, state, 1, 1);
     let status_before = run_rust_json(
         repo,
         state,
@@ -3085,7 +3123,7 @@ fn task4_reopen_keeps_plan_and_evidence_when_projection_refresh_fails_after_even
         false,
     );
 
-    bind_explicit_reopen_repair_target(repo, state, 1, 1);
+    synthetic_bind_explicit_reopen_repair_target(repo, state, 1, 1);
     let status_before = run_rust_json(
         repo,
         state,
@@ -3189,11 +3227,13 @@ fn task4_reopen_keeps_plan_and_evidence_when_projection_refresh_fails_after_even
         status_json["phase_detail"],
         Value::from("execution_reentry_required")
     );
+    let status_route = public_route_text(
+        &status_json,
+        "status after projection-refresh failure after committed event append",
+    );
     assert!(
-        status_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("plan execution begin --plan")),
-        "status should continue routing from event authority even when plan/evidence projections are stale: {status_json:?}"
+        status_route.contains("plan execution begin --plan"),
+        "status should continue routing from event authority through typed public argv even when plan/evidence projections are stale: {status_json:?}"
     );
 }
 
@@ -3315,6 +3355,16 @@ fn normalize_transfer_request_rejects_mixed_legacy_and_routed_shapes() {
         failure.message.contains("either the routed handoff shape"),
         "failure should explain the mixed transfer shape contract: {failure:?}"
     );
+    assert!(
+        failure
+            .message
+            .contains("compatibility-only route-authorized legacy repair-step shape")
+            && failure.message.contains("recommended_public_command_argv")
+            && failure
+                .message
+                .contains("recommended_public_command_template"),
+        "failure should identify the legacy shape as route-authorized compatibility only: {failure:?}"
+    );
 }
 
 #[test]
@@ -3395,6 +3445,16 @@ fn normalize_transfer_request_requires_legacy_fields() {
         assert!(
             failure.message.contains(expected_message),
             "legacy failure should mention {expected_message}: {failure:?}"
+        );
+        assert!(
+            failure
+                .message
+                .contains("compatibility-only and route-authorized")
+                && failure.message.contains("recommended_public_command_argv")
+                && failure
+                    .message
+                    .contains("recommended_public_command_template"),
+            "legacy failure should direct agents to typed route authority: {failure:?}"
         );
     }
 }
@@ -3617,11 +3677,257 @@ fn repair_review_state_clears_stale_follow_up_when_review_state_is_already_curre
     );
 
     let authoritative_state =
-        read_authoritative_harness_state(repo, state, "repair-review-state clear");
+        synthetic_read_authoritative_harness_state(repo, state, "repair-review-state clear");
     assert_eq!(
         authoritative_state["review_state_repair_follow_up"],
         Value::Null,
         "repair-review-state should clear the persisted reroute latch when no follow-up is required",
+    );
+}
+
+#[test]
+fn public_status_treats_missing_serial_unit_review_receipt_as_diagnostic_only() {
+    let (repo_dir, state_dir) = init_repo("public-status-missing-serial-unit-review-receipt");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let baseline_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "public status baseline before removing serial unit-review receipt",
+    );
+    let receipt_path = finished_fixture_serial_unit_review_receipt_path(repo, state);
+    fs::remove_file(&receipt_path).unwrap_or_else(|error| {
+        panic!(
+            "serial unit-review receipt should be removable at {}: {error}",
+            receipt_path.display()
+        )
+    });
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "public status should treat missing serial unit-review receipt as diagnostic",
+    );
+
+    assert_eq!(
+        status["phase_detail"], baseline_status["phase_detail"],
+        "missing serial receipt must not change public route: {status}"
+    );
+    assert_eq!(
+        public_route_argv_strings(&status),
+        public_route_argv_strings(&baseline_status),
+        "missing serial receipt must not change typed public argv/template route: {status}"
+    );
+    assert!(
+        status["warning_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code.as_str()
+                == Some("serial_unit_review_projection_missing_diagnostic_only"))),
+        "missing serial receipt should surface as diagnostic warning only: {status}"
+    );
+    assert!(
+        !status["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code
+                .as_str()
+                .is_some_and(|code| code.starts_with("serial_unit_review_receipt_")))),
+        "missing serial receipt must not become public route authority: {status}"
+    );
+    let operator = run_workflow_json(
+        repo,
+        state,
+        &["operator", "--plan", PLAN_REL, "--json"],
+        "workflow operator should sanitize missing serial unit-review projection warning",
+    );
+    assert_eq!(
+        operator["phase_detail"], status["phase_detail"],
+        "operator route must stay aligned with status when serial receipt drift is diagnostic only: {operator}"
+    );
+    assert_eq!(
+        public_route_argv_strings(&operator),
+        public_route_argv_strings(&status),
+        "operator typed route must stay aligned with status when serial receipt drift is diagnostic only: {operator}"
+    );
+    assert!(
+        !operator.to_string().contains("receipt"),
+        "operator must not leak receipt vocabulary for diagnostic-only projection drift: {operator}"
+    );
+    let doctor = run_workflow_json(
+        repo,
+        state,
+        &["doctor", "--plan", PLAN_REL, "--json"],
+        "workflow doctor should sanitize missing serial unit-review projection warning",
+    );
+    assert!(
+        doctor
+            .to_string()
+            .contains("serial_unit_review_projection_missing_diagnostic_only"),
+        "doctor should surface projection-safe missing warning: {doctor}"
+    );
+    assert!(
+        !doctor.to_string().contains("receipt"),
+        "doctor must not leak receipt vocabulary for diagnostic-only projection drift: {doctor}"
+    );
+}
+
+#[test]
+fn public_status_treats_corrupt_serial_unit_review_receipt_as_diagnostic_only() {
+    let (repo_dir, state_dir) = init_repo("public-status-corrupt-serial-unit-review-receipt");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let baseline_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "public status baseline before corrupting serial unit-review receipt",
+    );
+    let receipt_path = finished_fixture_serial_unit_review_receipt_path(repo, state);
+    let receipt_source = fs::read_to_string(&receipt_path).unwrap_or_else(|error| {
+        panic!(
+            "serial unit-review receipt should be readable at {}: {error}",
+            receipt_path.display()
+        )
+    });
+    write_file(
+        &receipt_path,
+        &receipt_source.replace(
+            "**Generated By:** featureforge:unit-review",
+            "**Generated By:** stale-generator",
+        ),
+    );
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "public status should treat corrupt serial unit-review receipt as diagnostic",
+    );
+
+    assert_eq!(
+        status["phase_detail"], baseline_status["phase_detail"],
+        "corrupt serial receipt must not change public route: {status}"
+    );
+    assert_eq!(
+        public_route_argv_strings(&status),
+        public_route_argv_strings(&baseline_status),
+        "corrupt serial receipt must not change typed public argv/template route: {status}"
+    );
+    assert!(
+        status["warning_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code.as_str()
+                == Some("worktree_lease_review_projection_generator_mismatch_diagnostic_only"))),
+        "corrupt serial receipt should surface as diagnostic warning only: {status}"
+    );
+    assert!(
+        !status["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code
+                .as_str()
+                .is_some_and(|code| code.starts_with("worktree_lease_review_receipt_")))),
+        "corrupt serial receipt must not become public route authority: {status}"
+    );
+    let operator = run_workflow_json(
+        repo,
+        state,
+        &["operator", "--plan", PLAN_REL, "--json"],
+        "workflow operator should sanitize corrupt serial unit-review projection warning",
+    );
+    assert_eq!(
+        operator["phase_detail"], status["phase_detail"],
+        "operator route must stay aligned with status when corrupt serial receipt drift is diagnostic only: {operator}"
+    );
+    assert_eq!(
+        public_route_argv_strings(&operator),
+        public_route_argv_strings(&status),
+        "operator typed route must stay aligned with status when corrupt serial receipt drift is diagnostic only: {operator}"
+    );
+    assert!(
+        !operator.to_string().contains("receipt"),
+        "operator must not leak receipt vocabulary for diagnostic-only projection drift: {operator}"
+    );
+    let doctor = run_workflow_json(
+        repo,
+        state,
+        &["doctor", "--plan", PLAN_REL, "--json"],
+        "workflow doctor should sanitize corrupt serial unit-review projection warning",
+    );
+    assert!(
+        doctor
+            .to_string()
+            .contains("worktree_lease_review_projection_generator_mismatch_diagnostic_only"),
+        "doctor should surface projection-safe corrupt warning: {doctor}"
+    );
+    assert!(
+        !doctor.to_string().contains("receipt"),
+        "doctor must not leak receipt vocabulary for diagnostic-only projection drift: {doctor}"
+    );
+}
+
+#[test]
+fn public_status_accepts_current_qa_without_source_test_plan_projection_binding() {
+    let (repo_dir, state_dir) = init_repo("public-status-qa-without-test-plan-projection-binding");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (authoritative_test_plan_path, _qa_path, _review_path, _release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    fs::remove_file(&authoritative_test_plan_path).unwrap_or_else(|error| {
+        panic!(
+            "authoritative test-plan projection should be removable at {}: {error}",
+            authoritative_test_plan_path.display()
+        )
+    });
+    let mut authoritative_state =
+        synthetic_read_authoritative_harness_state(repo, state, "QA source test-plan projection");
+    let current_qa_record_id = authoritative_state["current_qa_record_id"]
+        .as_str()
+        .expect("finished QA fixture should expose current QA record id")
+        .to_owned();
+    authoritative_state["browser_qa_record_history"][&current_qa_record_id]["source_test_plan_fingerprint"] =
+        Value::Null;
+    synthetic_write_authoritative_harness_fixture_payload(repo, state, &authoritative_state);
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "public status should accept current QA without source test-plan projection binding",
+    );
+
+    assert_eq!(
+        status["phase_detail"],
+        Value::from("finish_completion_gate_ready"),
+        "current QA without source test-plan projection binding should still allow finish route: {status}"
+    );
+    assert_eq!(
+        status["current_qa_state"],
+        Value::from("fresh"),
+        "current QA runtime state should remain fresh: {status}"
+    );
+    assert!(
+        public_route_text(&status, "QA without test-plan projection binding")
+            .contains("advance-late-stage"),
+        "finish route should remain typed and public: {status}"
+    );
+    assert!(
+        status["warning_codes"]
+            .as_array()
+            .is_some_and(|warnings| warnings.iter().any(|warning| warning.as_str()
+                == Some("qa_source_test_plan_projection_missing_diagnostic_only"))),
+        "missing source test-plan binding should be diagnostic only: {status}"
+    );
+    assert!(
+        !status["reason_codes"].as_array().is_some_and(|codes| codes
+            .iter()
+            .any(|code| code.as_str() == Some("qa_source_test_plan_mismatch"))),
+        "missing source test-plan binding must not be route authority: {status}"
     );
 }
 
@@ -3668,7 +3974,7 @@ fn repair_review_state_clears_stale_record_branch_closure_follow_up_when_review_
     );
 
     let authoritative_state =
-        read_authoritative_harness_state(repo, state, "stale branch reroute clear");
+        synthetic_read_authoritative_harness_state(repo, state, "stale branch reroute clear");
     assert_eq!(
         authoritative_state["review_state_repair_follow_up"],
         Value::Null,
@@ -3709,16 +4015,25 @@ fn repair_review_state_rebase_then_repair_returns_exact_closure_recording_target
         "json: {repair}"
     );
 
-    let recommended_command = repair["recommended_command"]
-        .as_str()
-        .expect("repair-review-state should return a concrete follow-up command");
+    let recommended_argv = repair["recommended_public_command_argv"]
+        .as_array()
+        .expect("repair-review-state should expose typed public follow-up argv");
     assert!(
-        recommended_command.starts_with("featureforge plan execution reopen --plan"),
-        "repair-review-state should reroute through reopen after rebase drift when late-stage-only classification is unavailable, got {recommended_command:?}"
+        recommended_argv
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .starts_with(&["featureforge", "plan", "execution", "reopen", "--plan"]),
+        "repair-review-state should reroute through typed reopen argv after rebase drift when late-stage-only classification is unavailable, got {recommended_argv:?}"
     );
     assert!(
-        recommended_command.contains("--task 1 --step 1"),
-        "repair-review-state should keep the reopened execution target pinned to Task 1 Step 1, got {recommended_command:?}"
+        recommended_argv
+            .windows(2)
+            .any(|window| window[0] == "--task" && window[1] == "1")
+            && recommended_argv
+                .windows(2)
+                .any(|window| window[0] == "--step" && window[1] == "1"),
+        "repair-review-state should keep the typed reopened execution target pinned to Task 1 Step 1, got {recommended_argv:?}"
     );
     assert!(
         repair["trace_summary"]
@@ -3767,7 +4082,8 @@ fn late_stage_status_ignores_stale_execution_reentry_follow_up_when_current_trut
         "json: {status}"
     );
     assert_eq!(
-        status["recommended_command"], baseline_status["recommended_command"],
+        public_route_argv_strings(&status),
+        public_route_argv_strings(&baseline_status),
         "json: {status}"
     );
     assert_eq!(
@@ -3779,12 +4095,9 @@ fn late_stage_status_ignores_stale_execution_reentry_follow_up_when_current_trut
         Value::from("execution_reentry_required"),
         "status should not get trapped in execution reentry from a stale persisted follow-up: {status}",
     );
-    assert_ne!(
-        status["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution repair-review-state --plan {PLAN_REL}"
-        )),
-        "status should not keep recommending repair-review-state after live truth is already current: {status}",
+    assert!(
+        !public_route_text_or_empty(&status).contains("repair-review-state"),
+        "status should not keep repair-review-state in typed public argv after live truth is already current: {status}",
     );
 }
 
@@ -3805,7 +4118,7 @@ fn legacy_record_branch_closure_follow_up_token_is_non_actionable_when_unbound()
             &["status", "--plan", PLAN_REL],
             "status baseline before injecting unbound legacy branch follow-up token",
         );
-        write_harness_state_payload(
+        synthetic_write_harness_state_projection_payload(
             repo,
             state,
             &json!({
@@ -3825,12 +4138,10 @@ fn legacy_record_branch_closure_follow_up_token_is_non_actionable_when_unbound()
             status["phase_detail"], baseline_status["phase_detail"],
             "json: {status}"
         );
-        assert_ne!(
-            status["recommended_command"],
-            Value::from(format!(
-                "featureforge plan execution advance-late-stage --plan {PLAN_REL}"
-            )),
-            "legacy {legacy_token} token must not reactivate late-stage routing: {status}"
+        assert_eq!(
+            public_route_argv_strings(&status),
+            public_route_argv_strings(&baseline_status),
+            "legacy {legacy_token} token must not change the live typed public route: {status}"
         );
         assert!(
             status["warning_codes"]
@@ -3864,13 +4175,14 @@ fn target_bound_branch_closure_follow_up_routes_only_while_exact_target_bound() 
         .as_str()
         .expect("baseline status should expose semantic workspace id")
         .to_owned();
-    let state_json = read_authoritative_harness_state(repo, state, "branch follow-up injection");
+    let state_json =
+        synthetic_read_authoritative_harness_state(repo, state, "branch follow-up injection");
     let branch_closure_id = state_json["current_branch_closure_id"]
         .as_str()
         .expect("finished fixture should expose a current branch closure id")
         .to_owned();
 
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -3887,8 +4199,11 @@ fn target_bound_branch_closure_follow_up_routes_only_while_exact_target_bound() 
             "review_state_repair_follow_up": null
         }),
     );
-    let injected_state =
-        read_authoritative_harness_state(repo, state, "branch follow-up injection result");
+    let injected_state = synthetic_read_authoritative_harness_state(
+        repo,
+        state,
+        "branch follow-up injection result",
+    );
     assert_eq!(
         injected_state["review_state_repair_follow_up_record"]["kind"],
         Value::from("record_branch_closure"),
@@ -3926,7 +4241,7 @@ fn target_bound_branch_closure_follow_up_routes_only_while_exact_target_bound() 
         "structured branch follow-up should not be quarantined as a legacy token: {bound_status}",
     );
 
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -3981,7 +4296,8 @@ fn repair_review_state_persists_target_bound_execution_reentry_follow_up_record(
         "json: {repair}"
     );
 
-    let state_json = read_authoritative_harness_state(repo, state, "target-bound repair follow-up");
+    let state_json =
+        synthetic_read_authoritative_harness_state(repo, state, "target-bound repair follow-up");
     let record = &state_json["review_state_repair_follow_up_record"];
     assert_eq!(state_json["review_state_repair_follow_up"], Value::Null);
     assert_eq!(record["kind"], Value::from("execution_reentry"));
@@ -4030,12 +4346,12 @@ fn target_bound_execution_reentry_follow_up_expires_after_current_closure_repair
         "status baseline before injecting target-bound follow-up for already-current closure",
     );
     let state_json =
-        read_authoritative_harness_state(repo, state, "structured follow-up injection");
+        synthetic_read_authoritative_harness_state(repo, state, "structured follow-up injection");
     let current_closure = &state_json["current_task_closure_records"]["task-1"];
     let closure_record_id = current_closure["closure_record_id"]
         .as_str()
         .expect("finished fixture should have a current task closure id");
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -4088,7 +4404,7 @@ fn legacy_task_follow_up_without_step_expires_after_current_closure_repair() {
         "status baseline before injecting legacy task-scoped follow-up",
     );
 
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -4130,7 +4446,7 @@ fn legacy_step_follow_up_expires_after_current_closure_repair() {
         "status baseline before injecting legacy step-scoped follow-up",
     );
 
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -4171,7 +4487,7 @@ fn target_bound_follow_up_expires_on_semantic_workspace_change() {
         &["status", "--plan", PLAN_REL],
         "status baseline before injecting semantic-mismatched follow-up",
     );
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -4224,7 +4540,7 @@ fn target_bound_follow_up_survives_projection_only_change_with_same_semantic_wor
         .as_str()
         .expect("baseline status should expose semantic workspace id")
         .to_owned();
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -4287,6 +4603,82 @@ fn target_bound_follow_up_survives_projection_only_change_with_same_semantic_wor
             None,
         ),
         "target-bound follow-up should remain matched by semantic identity across projection-only churn: {status}"
+    );
+}
+
+#[test]
+fn stale_close_current_task_follow_up_hash_cannot_bridge_execution_reentry_route() {
+    let (repo_dir, state_dir) = init_repo("stale-close-task-follow-up-cannot-bridge-route");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let baseline_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status baseline before injecting stale close-current-task follow-up",
+    );
+    let semantic_workspace_id = baseline_status["semantic_workspace_tree_id"]
+        .as_str()
+        .expect("baseline status should expose semantic workspace id")
+        .to_owned();
+    synthetic_write_harness_state_projection_payload(
+        repo,
+        state,
+        &json!({
+            "current_task_closure_records": {},
+            "task_closure_record_history": {},
+            "review_state_repair_follow_up_record": {
+                "kind": "close_task",
+                "target_scope": "task_closure",
+                "target_task": 1,
+                "semantic_workspace_state_id": semantic_workspace_id,
+                "source_route_decision_hash": "stale-route-before-current-source-route",
+                "created_sequence": 1,
+                "expires_on_plan_fingerprint_change": true
+            },
+            "review_state_repair_follow_up": null
+        }),
+    );
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should expire hash-stale close-current-task follow-up before route repair targets",
+    );
+    assert!(
+        !public_repair_targets_include_persisted_follow_up(
+            &status,
+            "close_current_task",
+            Some(1),
+            None,
+            None,
+        ),
+        "hash-stale close-current-task follow-up must not remain public/actionable: {status}"
+    );
+
+    let mut command = Command::new(compiled_featureforge_path());
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args(["workflow", "operator", "--plan", PLAN_REL, "--json"]);
+    let operator = parse_json(
+        &run(
+            command,
+            "workflow/operator should not bridge execution reentry through a hash-stale close-current-task follow-up",
+        ),
+        "workflow/operator stale close-current-task follow-up bridge",
+    );
+
+    assert!(
+        !operator["recommended_public_command_argv"]
+            .as_array()
+            .is_some_and(|argv| argv
+                .iter()
+                .any(|part| part.as_str() == Some("close-current-task"))),
+        "hash-stale close-current-task follow-up must not surface executable close-current-task argv: {operator}",
     );
 }
 
@@ -4361,15 +4753,10 @@ fn workflow_operator_ignores_stale_record_branch_closure_follow_up_when_current_
         Value::from("branch_closure_recording_required_for_release_readiness"),
         "workflow/operator should not keep routing to branch-closure recording from a stale persisted follow-up: {operator}",
     );
-    assert_ne!(
-        operator["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution {} --plan {PLAN_REL}",
-            concat!("record", "-branch-closure")
-        )),
-        "workflow/operator should not keep recommending {} after live truth is already current: {}",
-        operator,
-        concat!("record", "-branch-closure"),
+    assert_eq!(
+        public_route_argv_strings(&operator),
+        public_route_argv_strings(&baseline_operator),
+        "workflow/operator should keep the live typed public route unchanged when stale persisted branch follow-up is ignored: {operator}",
     );
 }
 
@@ -4392,7 +4779,7 @@ fn workflow_operator_ignores_stale_execution_reentry_follow_up_when_current_trut
         ),
         "workflow/operator baseline stale follow-up ignore",
     );
-    write_harness_state_payload(
+    synthetic_write_harness_state_projection_payload(
         repo,
         state,
         &json!({
@@ -4431,7 +4818,8 @@ fn workflow_operator_ignores_stale_execution_reentry_follow_up_when_current_trut
         "json: {operator}"
     );
     assert_eq!(
-        operator["recommended_command"], baseline_operator["recommended_command"],
+        public_route_argv_strings(&operator),
+        public_route_argv_strings(&baseline_operator),
         "json: {operator}"
     );
     assert_ne!(
@@ -4439,82 +4827,8 @@ fn workflow_operator_ignores_stale_execution_reentry_follow_up_when_current_trut
         Value::from("execution_reentry_required"),
         "workflow/operator should not stay in fake execution reentry from a stale persisted follow-up: {operator}",
     );
-    assert_ne!(
-        operator["recommended_command"],
-        Value::from(format!(
-            "featureforge plan execution repair-review-state --plan {PLAN_REL}"
-        )),
-        "workflow/operator should not keep recommending repair-review-state after live truth is already current: {operator}",
-    );
-}
-
-#[test]
-fn runtime_remediation_inventory_includes_plan_execution_invariant_regressions() {
-    let inventory = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-remediation/README.md"),
-    )
-    .expect("runtime-remediation inventory should be readable");
-    for scenario in [
-        "FS-03", "FS-04", "FS-05", "FS-12", "FS-13", "FS-14", "FS-16",
-    ] {
-        assert!(
-            inventory.contains(scenario),
-            "runtime-remediation inventory should include {scenario}"
-        );
-    }
     assert!(
-        inventory.contains(
-            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch"
-        ),
-        "runtime-remediation inventory should map FS-03 to an explicit compiled-cli plan-execution regression"
-    );
-    assert!(
-        inventory.contains(
-            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest"
-        ),
-        "runtime-remediation inventory should map FS-04 to the authoritative-state-digest invariant in plan execution"
-    );
-    assert!(
-        inventory.contains(
-            "tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation"
-        ),
-        "runtime-remediation inventory should map FS-05 to explicit no-mutation target-mismatch coverage in plan execution"
-    );
-    assert!(
-        inventory.contains(
-            "tests/internal_plan_execution.rs::internal_only_compatibility_record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation"
-        ),
-        "runtime-remediation inventory should map FS-05 to final-review scope no-mutation coverage in plan execution"
-    );
-    assert!(
-        inventory.contains(
-            "tests/internal_plan_execution.rs::internal_only_compatibility_record_final_review_rejects_unapproved_reviewer_source_before_mutation"
-        ),
-        "runtime-remediation inventory should map FS-05 to final-review reviewer-source no-mutation coverage in plan execution"
-    );
-    assert!(
-        inventory.contains(&format!(
-            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_{}",
-            concat!("pre", "flight")
-        )),
-        "runtime-remediation inventory should map FS-12 to authoritative run-identity closure recording coverage in plan execution"
-    );
-    assert!(
-        inventory.contains(
-            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state"
-        ),
-        "runtime-remediation inventory should map FS-13 to authoritative open-step state mutation coverage in plan execution"
-    );
-    assert!(
-        inventory.contains(
-            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch"
-        ),
-        "runtime-remediation inventory should map FS-14 to closure-baseline regeneration coverage in plan execution"
-    );
-    assert!(
-        inventory.contains(
-            "tests/internal_plan_execution.rs::internal_only_compatibility_runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts"
-        ),
-        "runtime-remediation inventory should map FS-16 to begin-time closure-authority coverage in plan execution"
+        !public_route_text_or_empty(&operator).contains("repair-review-state"),
+        "workflow/operator should not keep repair-review-state in typed public argv after live truth is already current: {operator}",
     );
 }

@@ -1934,10 +1934,15 @@ fn status_routes_release_readiness_before_final_review_when_release_state_stales
         );
     } else {
         assert_eq!(
-            status["recommended_command"],
-            Value::from(format!(
-                "featureforge plan execution advance-late-stage --plan {PLAN_REL}"
-            ))
+            status["recommended_public_command_argv"],
+            json!([
+                "featureforge",
+                "plan",
+                "execution",
+                "advance-late-stage",
+                "--plan",
+                PLAN_REL
+            ])
         );
     }
 }

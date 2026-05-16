@@ -45,7 +45,7 @@ pub fn begin(
         context.plan_document.execution_mode = execution_mode;
     }
     let preflight_persistence_required =
-        public_intent_preflight_persistence_required(&context, "begin")?;
+        public_intent_preflight_persistence_required(&context, PublicCommandKind::Begin)?;
     let _write_authority = claim_step_write_authority(runtime)?;
     let mut authoritative_state =
         Some(load_or_initialize_authoritative_transition_state(&context)?);
@@ -67,22 +67,16 @@ pub fn begin(
                 authoritative_state.as_ref().is_some_and(|state| {
                     state
                         .review_state_repair_follow_up_record()
-                        .is_some_and(|record| record.kind.public_token() == "execution_reentry")
+                        .is_some_and(|record| record.kind.public_token() == crate::execution::review_route_tokens::FOLLOW_UP_EXECUTION_REENTRY)
                 });
             if would_consume_execution_reentry_follow_up {
                 require_public_mutation(
                     &begin_status,
-                    PublicMutationRequest {
-                        kind: PublicMutationKind::Begin,
-                        task: Some(request.task),
-                        step: Some(request.step),
-                        expect_execution_fingerprint: Some(
-                            request.expect_execution_fingerprint.clone(),
-                        ),
-                        transfer_mode: None,
-                        transfer_scope: None,
-                        command_name: "begin",
-                    },
+                    PublicMutationRequest::begin(
+                        request.task,
+                        request.step,
+                        Some(request.expect_execution_fingerprint.clone()),
+                    ),
                     begin_failure_class_from_status(&begin_status),
                 )?;
             }
@@ -91,7 +85,10 @@ pub fn begin(
             if consumed_execution_reentry_follow_up
                 && let Some(authoritative_state) = authoritative_state.as_mut()
             {
-                persist_authoritative_state_without_rollback(authoritative_state, "begin")?;
+                persist_authoritative_state_without_rollback(
+                    authoritative_state,
+                    PublicCommandKind::Begin.public_mutation_token(),
+                )?;
                 let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
                 return status_with_shared_routing_or_context(runtime, &args.plan, &reloaded);
             }
@@ -111,15 +108,11 @@ pub fn begin(
     })?;
     require_public_mutation(
         &begin_status,
-        PublicMutationRequest {
-            kind: PublicMutationKind::Begin,
-            task: Some(request.task),
-            step: Some(request.step),
-            expect_execution_fingerprint: Some(request.expect_execution_fingerprint.clone()),
-            transfer_mode: None,
-            transfer_scope: None,
-            command_name: "begin",
-        },
+        PublicMutationRequest::begin(
+            request.task,
+            request.step,
+            Some(request.expect_execution_fingerprint.clone()),
+        ),
         begin_failure_class_from_status(&begin_status),
     )?;
     if context.steps[step_index].checked {
@@ -194,7 +187,7 @@ pub fn begin(
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         persist_authoritative_state_with_rollback(
             authoritative_state,
-            "begin",
+            PublicCommandKind::Begin.public_mutation_token(),
             &context.plan_abs,
             &context.plan_source,
             &context.evidence_abs,

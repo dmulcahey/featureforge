@@ -173,10 +173,15 @@
           "type": "string"
         },
         "next_public_action": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NextPublicAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional display-only blocker action summary; not executable."
         },
         "record_id": {
           "type": [
@@ -310,24 +315,31 @@
         "hand off",
         "pivot / return to planning",
         "refresh test plan",
-        "repair review state / reenter execution",
+        "repair review state",
         "resolve release blocker",
         "run QA",
-        "wait for external review result",
-        "run verification"
+        "run verification",
+        "wait for external review result"
       ],
       "type": "string"
     },
     "NextPublicAction": {
       "properties": {
         "args_template": {
+          "description": "Display-only legacy argument template summary; not executable.",
           "type": [
             "string",
             "null"
           ]
         },
         "command": {
+          "description": "Display-only legacy command summary; not executable.",
           "type": "string"
+        },
+        "display_only": {
+          "default": true,
+          "description": "Legacy compatibility marker; nested command fields are display-only.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -407,6 +419,22 @@
       ],
       "type": "string"
     },
+    "PhaseSchema": {
+      "enum": [
+        "blocked",
+        "document_release_pending",
+        "executing",
+        "execution_preflight",
+        "final_review_pending",
+        "handoff_required",
+        "implementation_handoff",
+        "pivot_required",
+        "qa_pending",
+        "ready_for_branch_completion",
+        "task_closure_pending"
+      ],
+      "type": "string"
+    },
     "PlanExecutionStatus": {
       "properties": {
         "active_contract_fingerprint": {
@@ -441,6 +469,7 @@
           "$ref": "#/$defs/AggregateEvaluationState"
         },
         "blockers": {
+          "description": "Embedded execution-status blocker diagnostics. Any nested next_public_action is display-only.",
           "items": {
             "$ref": "#/$defs/Blocker"
           },
@@ -698,7 +727,8 @@
           "type": "integer"
         },
         "next_action": {
-          "$ref": "#/$defs/NextActionSchema"
+          "$ref": "#/$defs/NextActionSchema",
+          "description": "Embedded execution-status display-only route diagnostic label; not executable."
         },
         "next_public_action": {
           "anyOf": [
@@ -708,7 +738,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Embedded execution-status display-only compatibility object; not executable."
         },
         "non_passing_evaluator_kinds": {
           "items": {
@@ -784,12 +815,14 @@
           "type": "array"
         },
         "recommended_command": {
+          "description": "Embedded execution-status display-only compatibility summary; not executable.",
           "type": [
             "string",
             "null"
           ]
         },
         "recommended_public_command_argv": {
+          "description": "Embedded execution-status diagnostic mirror of operator-derived public command argv when present; workflow operator JSON remains the normal executable route authority.",
           "items": {
             "type": "string"
           },
@@ -797,6 +830,17 @@
             "array",
             "null"
           ]
+        },
+        "recommended_public_command_template": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PublicCommandTemplate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Embedded execution-status non-executable public command template for input-required routes."
         },
         "recording_context": {
           "$ref": "#/$defs/PublicRecordingContext"
@@ -826,6 +870,7 @@
           "type": "array"
         },
         "required_inputs": {
+          "description": "Embedded execution-status input names required to materialize a public command template.",
           "items": {
             "$ref": "#/$defs/PublicCommandInputRequirement"
           },
@@ -1157,6 +1202,30 @@
       ],
       "type": "object"
     },
+    "PublicCommandInputBinding": {
+      "properties": {
+        "flag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/PublicCommandInputBindingKind"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "PublicCommandInputBindingKind": {
+      "enum": [
+        "flag",
+        "virtual"
+      ],
+      "type": "string"
+    },
     "PublicCommandInputKind": {
       "enum": [
         "text",
@@ -1192,6 +1261,77 @@
       "required": [
         "name",
         "kind"
+      ],
+      "type": "object"
+    },
+    "PublicCommandTemplate": {
+      "properties": {
+        "base_argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command_kind": {
+          "description": "Public command intent label for a template; not executable by itself.",
+          "type": "string"
+        },
+        "input_bindings": {
+          "items": {
+            "$ref": "#/$defs/PublicCommandTemplateInput"
+          },
+          "type": "array"
+        },
+        "required_input_names": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "command_kind",
+        "base_argv",
+        "required_input_names",
+        "input_bindings"
+      ],
+      "type": "object"
+    },
+    "PublicCommandTemplateInput": {
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/PublicCommandInputBinding"
+        },
+        "kind": {
+          "$ref": "#/$defs/PublicCommandInputKind"
+        },
+        "must_exist": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required_when": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shell_escape_by_caller": {
+          "type": "boolean"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "binding",
+        "shell_escape_by_caller"
       ],
       "type": "object"
     },
@@ -1442,6 +1582,7 @@
       "type": "object"
     },
     "RequiredFollowUpSchema": {
+      "description": "Required follow-up intent token; record_handoff is compatibility metadata, not executable.",
       "enum": [
         "execution_reentry",
         "repair_review_state",
@@ -1611,6 +1752,7 @@
         "waiting_external_input",
         "terminal",
         "blocked_runtime_bug",
+        "planning_reentry_required",
         "runtime_reconcile_required"
       ],
       "type": "string"
@@ -1688,16 +1830,6 @@
         "remediation"
       ],
       "type": "object"
-    },
-    "WorkflowOperatorStateKindSchema": {
-      "enum": [
-        "actionable_public_command",
-        "waiting_external_input",
-        "terminal",
-        "blocked_runtime_bug",
-        "runtime_reconcile_required"
-      ],
-      "type": "string"
     },
     "WorkflowRoute": {
       "properties": {
@@ -1820,7 +1952,8 @@
       ]
     },
     "next_action": {
-      "type": "string"
+      "$ref": "#/$defs/NextActionSchema",
+      "description": "Display-only route diagnostic label; not executable."
     },
     "next_public_action": {
       "anyOf": [
@@ -1830,16 +1963,17 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Optional display-only public route action summary; not executable."
     },
     "next_skill": {
       "type": "string"
     },
     "phase": {
-      "type": "string"
+      "$ref": "#/$defs/PhaseSchema"
     },
     "phase_detail": {
-      "type": "string"
+      "$ref": "#/$defs/PhaseDetailSchema"
     },
     "plan_contract": {
       "anyOf": [
@@ -1877,12 +2011,14 @@
       "type": "string"
     },
     "recommended_command": {
+      "description": "Display-only compatibility summary; not executable.",
       "type": [
         "string",
         "null"
       ]
     },
     "recommended_public_command_argv": {
+      "description": "Executable public command argv when present.",
       "items": {
         "type": "string"
       },
@@ -1891,17 +2027,30 @@
         "null"
       ]
     },
+    "recommended_public_command_template": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublicCommandTemplate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Non-executable public command template for input-required routes."
+    },
     "recommended_skill": {
+      "description": "Legacy handoff recommendation derived from the authoritative route skill when present; compatibility projection only, not a separate routing authority.",
       "type": "string"
     },
     "required_inputs": {
+      "description": "Input names required to materialize a public command template.",
       "items": {
         "$ref": "#/$defs/PublicCommandInputRequirement"
       },
       "type": "array"
     },
     "review_state_status": {
-      "type": "string"
+      "$ref": "#/$defs/ReviewStateStatusSchema"
     },
     "route": {
       "$ref": "#/$defs/WorkflowRoute"
@@ -1922,7 +2071,7 @@
       "type": "string"
     },
     "state_kind": {
-      "$ref": "#/$defs/WorkflowOperatorStateKindSchema"
+      "$ref": "#/$defs/StateKindSchema"
     }
   },
   "required": [

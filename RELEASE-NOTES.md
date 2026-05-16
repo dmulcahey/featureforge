@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- prompt-budget review: tighten `skills/skill-doc-budgets.json` to a
+  5,015-line generated top-level skill budget, keep mandatory route law
+  top-level, and keep expanded examples and binding details in packaged
+  companion references instead of growing high-use skill prompts.
+
 ## v1.10.1 - 2026-05-03
 
 - harden the public runtime cutover so `Engineering Approved` plans require a
@@ -20,12 +25,14 @@
   and full no-fail-fast nextest branch gate; internal-helper suites are not
   public UX proof
 - compact generated top-level skill prompts from 7,191 lines to 4,829 lines,
-  enforce the 5,600-line prompt budget in tests, keep mandatory workflow gates
+  enforce the then-current 5,600-line prompt budget in tests, keep mandatory workflow gates
   and fail-closed routing law top-level, preserve reviewer-recursion prevention
   as prompt-only reviewer guidance, and package extended examples in companion
   references instead of duplicating them across active skills
 - refresh the checked-in repo runtime binary and darwin/windows prebuilt
   artifacts for `1.10.1`
+
+Historical note: older sections below may mention hidden compatibility/debug commands as part of the contract at that release date. Those references are historical and are not current normal-path guidance.
 
 ## v1.10.0 - 2026-04-25
 
@@ -54,8 +61,6 @@ Patch release focused on closing the remaining open authority/documentation gaps
 - make the `executing-plans` doc contract converge on the runtime-owned projection wording and remove the older checklist-as-authoritative-record sentence from the checked-in doc/test contract surface
 - add the exact command-form `rebuild-evidence` README/install-doc contract sentence while keeping the broader statement that the helper is compatibility/debug-only and not part of normal public routing
 - refresh the checked-in repo runtime binary and darwin/windows prebuilt artifacts for `1.9.1`
-
-Historical note: older sections below may mention hidden compatibility/debug commands as part of the contract at that release date. Those references are historical and are not current normal-path guidance.
 
 ### Breaking Output Contract Changes
 
@@ -96,8 +101,8 @@ First-class plan-fidelity stage release focused on making `featureforge:plan-fid
 - split public `featureforge plan execution gate-review` into a read-only gate check and an explicit dispatch-only mutation path for workflow/runtime review-cycle bookkeeping (historical v1.7 contract)
 - let `rebuild-evidence` restore authoritative final-review, test-plan, QA, and release-readiness truth after successful replay, including safe no-op rebinding after rebases when execution evidence is already current
 - teach finish readiness to ignore tracked execution-evidence-only writeback so rebuilt evidence does not by itself stale downstream finish gates
-- add a first-class `featureforge:plan-fidelity-review` skill surface and reviewer prompt with explicit fresh-context independence and runtime receipt-recording guidance
-- route draft-plan fidelity receipt-state blockers (missing, stale, malformed, non-pass, non-independent) to `featureforge:plan-fidelity-review`, while preserving `featureforge:writing-plans` for true authoring defects
+- add a first-class `featureforge:plan-fidelity-review` skill surface and reviewer prompt with explicit fresh-context independence; this historical v1.7 surface used runtime receipt-recording guidance that has since been retired in favor of parseable review artifacts
+- route historical draft-plan fidelity artifact-state blockers (missing, stale, malformed, non-pass, non-independent) to `featureforge:plan-fidelity-review`, while preserving `featureforge:writing-plans` for true authoring defects
 - align root/platform docs plus `using-featureforge`, `writing-plans`, and `plan-eng-review` templates/generated docs to the canonical sequence `writing-plans -> plan-fidelity-review -> plan-eng-review`
 - expand runtime and instruction contract coverage for first-class stage routing, direct-routing guardrails, and wording parity across active workflow surfaces
 - refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts for `1.7.0`

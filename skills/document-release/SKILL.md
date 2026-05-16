@@ -38,18 +38,15 @@ _featureforge_exec_public_argv() {
     "$_FEATUREFORGE_BIN" "$@"
     return $?
   fi
-  "$@"
+  echo "featureforge: refusing non-featureforge public argv: $1" >&2
+  return 2
 }
 ```
 ## Installed Control Plane
 
-Live FeatureForge workflow routing is install-owned:
-- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
-- do not route live workflow commands through `./bin/featureforge`
-- do not route live workflow commands through `target/debug/featureforge`
-- do not route live workflow commands through `cargo run`
+Live workflow routing uses only `$_FEATUREFORGE_BIN`; never use `./bin/featureforge`, `target/debug/featureforge`, or `cargo run` for live routing. Query workflow/operator JSON with `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`.
 
-When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
+If the installed runtime/root cannot be resolved, stop before making workflow mutations. Use only typed operator JSON route surfaces: execute `recommended_public_command_argv` when present; when `recommended_public_command_template` appears, treat `required_inputs` as validation metadata and materialize templates only by rerunning `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --input NAME=VALUE --json`. Detailed binding and route-specific stop rules live in `$_FEATUREFORGE_ROOT/references/operator-route-authority.md`. Treat display-only `recommended_command` as non-executable; if no typed executable surface exists, stop and report the route diagnostic.
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -77,19 +74,19 @@ Per-skill instructions may add additional formatting rules on top of this baseli
 
 Audit and update project documentation after implementation work is complete. This skill is mostly automatic for factual corrections and conservative everywhere else.
 
-For workflow-routed implementation work, this is the required `document-release` handoff before branch completion. Treat it as the repo-facing release-readiness pass, not as an optional polish step.
+For workflow-routed implementation work, run this handoff only when workflow/operator selects the release-doc lane. Treat it as the repo-facing release-readiness pass, not as optional polish when selected.
 
-For workflow-routed terminal sequencing, `featureforge:document-release` must run before the terminal `featureforge:requesting-code-review` whole-diff gate.
+Do not infer the next late-stage lane from this skill. After document-release changes, requery workflow/operator and follow the selected public argv/template route or selected handoff lane.
 
 `featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: low-level compatibility/debug commands stay out of the normal-path flow.
 
-When you need explicit late-stage phase/action/skill grounding while updating docs, cite `review/late-stage-precedence-reference.md`.
+When you need late-stage phase/action vocabulary while updating docs, cite `$_FEATUREFORGE_ROOT/review/late-stage-precedence-reference.md`; do not treat that reference as executable ordering authority.
 
 Extended audit examples live in `$_FEATUREFORGE_ROOT/references/execution-review-qa-examples.md`.
 
 ## Step 0: Require base branch context
 
-For workflow-routed work, get `BASE_BRANCH` from `$_FEATUREFORGE_BIN workflow operator --json` (`base_branch`) for the concrete approved plan path; any `<approved-plan-path>` command text here is input shape, not exact argv.
+For workflow-routed work, get `BASE_BRANCH` from `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` (`base_branch`) using the concrete approved plan path.
 
 For non-workflow work, require `BASE_BRANCH` explicitly and keep it stable for this run:
 
@@ -116,7 +113,7 @@ Before editing release-facing docs or metadata on disk, run the shared repo-safe
 $_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:document-release --task-id <current-release-doc-pass> --path <release-doc-path> --write-target release-doc-write
 ```
 
-- If the helper returns `allowed`, continue with the doc or metadata write.
+- If the repo-safety check returns `allowed`, continue with the doc or metadata write.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact release-doc scope.
 - If the user explicitly approves the protected-branch release write, approve the full release-doc scope you intend to use on that branch, including the release-doc path:
 
@@ -191,7 +188,7 @@ If `TODOS.md` exists:
 
 For workflow-routed implementation work, runtime emits a project-scoped release-readiness companion artifact:
 
-- Treat `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` as an input shape only; substitute concrete plan, result, and existing summary file, or invoke `recommended_public_command_argv` exactly when present.
+- Treat release-readiness recording inputs as workflow/operator-owned public route inputs; use `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` for route-specific binding rules.
 - Derive `Source Plan` and `Source Plan Revision` from that exact approved plan; do not leave placeholders or guess from prose.
 - If the approved plan path or revision is unavailable, stop and return to the current workflow instead of writing a partial artifact.
 - Use the runtime-provided base branch from Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
@@ -211,38 +208,16 @@ Derived artifact minimum fields under `# Release Readiness Result` include:
 Allowed `**Result:**` values:
 - `pass`
 - `blocked`
-Artifact `pass` is the runtime-rendered form of CLI input `--result ready`.
 
 ## Step 7.6: Runtime-Owned Release-Readiness Recording (Workflow-Routed)
 
 For workflow-routed implementation work, the derived companion artifact above is not the release gate itself.
 
 - workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.
-- For reviewed-closure late-stage routing, use the workflow/operator input shape `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path>` with the concrete plan; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_public_command_argv`. `recommended_command` is display-only compatibility text.
-- If `recommended_public_command_argv` is present, invoke it exactly. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun workflow/operator.
-- Confirm the current `phase_detail` before recording release-readiness.
-- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, use input shape `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path>` with the concrete plan and rerun workflow/operator.
-- When workflow/operator reports `phase_detail=release_readiness_recording_ready`, use input shape `$_FEATUREFORGE_BIN plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` only after substituting concrete values.
-- When workflow/operator reports `phase_detail=release_blocker_resolution_required`, resolve the blocker and then use that same concrete release-readiness input shape.
-- The `advance-late-stage --result ready|blocked` input shape renders `**Result:** pass|blocked` in the derived companion artifact; do not rewrite the artifact to mirror the command input.
-- If workflow/operator reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions.
-
-Example runtime-owned path after substituting concrete values:
-
-```bash
-OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
-PHASE_DETAIL=$(printf '%s\n' "$OPERATOR_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
-if [ "$PHASE_DETAIL" = "branch_closure_recording_required_for_release_readiness" ]; then
-  "$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "$APPROVED_PLAN_PATH"
-  OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
-  PHASE_DETAIL=$(printf '%s\n' "$OPERATOR_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
-fi
-if [ "$PHASE_DETAIL" != "release_readiness_recording_ready" ] && [ "$PHASE_DETAIL" != "release_blocker_resolution_required" ]; then
-  echo "Stop and return to workflow: release-readiness recording is not currently routable."
-  exit 1
-fi
-"$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "$APPROVED_PLAN_PATH" --result ready --summary-file release-summary.md
-```
+- For reviewed-closure late-stage routing, use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` with the concrete plan.
+- Confirm workflow/operator is routing release-readiness or release-blocker progression before recording release-readiness.
+- For branch-closure bootstrap, release-readiness recording, or release-blocker resolution routes, follow workflow/operator and the canonical route reference; do not inline route-specific binding details here.
+- If workflow/operator JSON reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions.
 
 ## Output
 

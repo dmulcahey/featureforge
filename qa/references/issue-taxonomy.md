@@ -57,4 +57,4 @@ This taxonomy is a workflow-routed downstream review gate aid, not an authoritat
 
 For harness-driven handoffs, keep each QA artifact tied to its source plan, source test plan, task-packet context, coverage matrix, and execution evidence path provenance.
 
-Do not use this taxonomy to aggregate chunk-level verifier state or mutate execution state directly; those authoritative operations stay helper-owned and fail closed outside the runtime gate flow.
+Do not use this taxonomy to aggregate chunk-level verifier state or mutate execution state directly; those authoritative operations stay runtime-owned and fail closed outside the runtime gate flow.

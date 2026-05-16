@@ -18,13 +18,13 @@ use crate::execution::dependency_index::{
     DependencyNode, DependencyNodeId, IndexedArtifactKind,
 };
 use crate::execution::event_log::{
-    append_typed_state_event_for_state_path, ensure_event_log_migrated_from_legacy_state,
-    load_reduced_authoritative_state,
+    append_typed_state_event_for_state_path, load_reduced_authoritative_state,
 };
 use crate::execution::gates::{
-    GateAuthorityState, normalize_artifact_repo_path, require_active_contract_state,
-    validate_contract_provenance, validate_evaluator_semantics, validate_handoff_provenance,
-    validate_handoff_semantics, validate_harness_provenance, validate_report_provenance,
+    GateAuthorityState, normalize_artifact_repo_path, public_gate_remediation,
+    public_gate_remediation_for_plan, require_active_contract_state, validate_contract_provenance,
+    validate_evaluator_semantics, validate_handoff_provenance, validate_handoff_semantics,
+    validate_harness_provenance, validate_report_provenance,
 };
 use crate::execution::harness::{
     ChunkId, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE, RunIdentitySnapshot,
@@ -34,10 +34,12 @@ use crate::execution::internal_args::{
     RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs,
 };
 use crate::execution::leases::{process_is_running, validate_worktree_lease};
+use crate::execution::migration::ensure_event_log_migrated_from_legacy_state_with_route_parity;
 use crate::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters,
 };
 use crate::execution::state::{ExecutionContext, ExecutionRuntime, GateResult, GateState};
+use crate::execution::transitions::AuthoritativeTransitionState;
 use crate::git::sha256_hex;
 use crate::paths::{
     harness_authoritative_artifact_path, harness_authoritative_artifacts_dir, harness_branch_root,
@@ -61,7 +63,7 @@ pub fn record_contract(
                 FailureClass::ContractMismatch,
                 "contract_artifact_unreadable",
                 error.to_string(),
-                "Provide a readable execution contract artifact and retry record-contract.",
+                public_gate_remediation(&context, "Provide a readable execution contract artifact"),
             );
             return Ok(gate.finish());
         }
@@ -76,7 +78,7 @@ pub fn record_contract(
                     "Could not read execution contract artifact {}: {error}",
                     artifact_abs.display()
                 ),
-                "Provide a readable execution contract artifact and retry record-contract.",
+                public_gate_remediation(&context, "Provide a readable execution contract artifact"),
             );
             return Ok(gate.finish());
         }
@@ -87,6 +89,7 @@ pub fn record_contract(
         &contract.contract_fingerprint,
         "contract",
         "contract_fingerprint_mismatch",
+        &context,
         &mut gate,
     ) else {
         return Ok(gate.finish());
@@ -96,13 +99,14 @@ pub fn record_contract(
         &contract.generated_by,
         FailureClass::NonHarnessProvenance,
         "contract_non_harness_provenance",
+        &context.plan_rel,
         &mut gate,
     );
     if !gate.allowed {
         return Ok(gate.finish());
     }
 
-    record_authoritative_contract(runtime, contract, source, contract_fingerprint)
+    record_authoritative_contract(runtime, context, contract, source, contract_fingerprint)
 }
 
 pub fn record_evaluation(
@@ -121,7 +125,7 @@ pub fn record_evaluation(
                 FailureClass::EvaluationMismatch,
                 "evaluation_artifact_unreadable",
                 error.to_string(),
-                "Provide a readable evaluation artifact and retry record-evaluation.",
+                public_gate_remediation(&context, "Provide a readable evaluation artifact"),
             );
             return Ok(gate.finish());
         }
@@ -136,7 +140,7 @@ pub fn record_evaluation(
                     "Could not read evaluation report artifact {}: {error}",
                     artifact_abs.display()
                 ),
-                "Provide a readable evaluation report artifact and retry record-evaluation.",
+                public_gate_remediation(&context, "Provide a readable evaluation report artifact"),
             );
             return Ok(gate.finish());
         }
@@ -147,6 +151,7 @@ pub fn record_evaluation(
         &report.report_fingerprint,
         "evaluation",
         "evaluation_fingerprint_mismatch",
+        &context,
         &mut gate,
     ) else {
         return Ok(gate.finish());
@@ -156,6 +161,7 @@ pub fn record_evaluation(
         &report.generated_by,
         FailureClass::NonHarnessProvenance,
         "evaluation_non_harness_provenance",
+        &context.plan_rel,
         &mut gate,
     );
     if !matches!(report.verdict.as_str(), "pass" | "fail" | "blocked") {
@@ -163,7 +169,10 @@ pub fn record_evaluation(
             FailureClass::EvaluationMismatch,
             "evaluation_verdict_illegal",
             "Evaluation verdict must be pass, fail, or blocked.",
-            "Regenerate the evaluation report with a legal verdict.",
+            public_gate_remediation(
+                &context,
+                "Regenerate the evaluation report with a legal verdict",
+            ),
         );
     }
     if !matches!(
@@ -174,7 +183,10 @@ pub fn record_evaluation(
             FailureClass::EvaluationMismatch,
             "evaluation_recommended_action_illegal",
             "Evaluation recommended_action must be continue, repair, pivot, handoff, or escalate.",
-            "Regenerate the evaluation report with a legal recommended_action.",
+            public_gate_remediation(
+                &context,
+                "Regenerate the evaluation report with a legal recommended_action",
+            ),
         );
     }
     if !gate.allowed {
@@ -200,7 +212,7 @@ pub fn record_handoff(
                 FailureClass::MissingRequiredHandoff,
                 "handoff_artifact_unreadable",
                 error.to_string(),
-                "Provide a readable execution handoff artifact and retry record-handoff.",
+                public_gate_remediation(&context, "Provide a readable execution handoff artifact"),
             );
             return Ok(gate.finish());
         }
@@ -215,7 +227,7 @@ pub fn record_handoff(
                     "Could not read execution handoff artifact {}: {error}",
                     artifact_abs.display()
                 ),
-                "Provide a readable execution handoff artifact and retry record-handoff.",
+                public_gate_remediation(&context, "Provide a readable execution handoff artifact"),
             );
             return Ok(gate.finish());
         }
@@ -226,6 +238,7 @@ pub fn record_handoff(
         &handoff.handoff_fingerprint,
         "handoff",
         "handoff_fingerprint_mismatch",
+        &context,
         &mut gate,
     ) else {
         return Ok(gate.finish());
@@ -235,6 +248,7 @@ pub fn record_handoff(
         &handoff.generated_by,
         FailureClass::NonHarnessProvenance,
         "handoff_non_harness_provenance",
+        &context.plan_rel,
         &mut gate,
     );
     if !handoff.open_criteria.is_empty() && handoff.open_findings.is_empty() {
@@ -242,7 +256,10 @@ pub fn record_handoff(
             FailureClass::MissingRequiredHandoff,
             "handoff_unresolved_criteria_missing_findings",
             "Execution handoff with unresolved criteria must include open findings.",
-            "Regenerate the handoff with concrete unresolved findings.",
+            public_gate_remediation(
+                &context,
+                "Regenerate the handoff with concrete unresolved findings",
+            ),
         );
     }
     if !gate.allowed {
@@ -487,6 +504,7 @@ impl MutableHarnessState {
 
 fn record_authoritative_contract(
     runtime: &ExecutionRuntime,
+    context: ExecutionContext,
     contract: ExecutionContract,
     source: String,
     contract_fingerprint: String,
@@ -498,6 +516,7 @@ fn record_authoritative_contract(
     let artifact_file_name = format!("contract-{contract_fingerprint}.md");
     let artifact_file_name_for_state = artifact_file_name.clone();
     let contract_fingerprint_for_state = contract_fingerprint.clone();
+    let plan_rel = context.plan_rel.clone();
     record_authoritative_mutation(
         runtime,
         source,
@@ -506,8 +525,9 @@ fn record_authoritative_contract(
         ObservabilityRecordContext {
             command_name: "record-contract",
             active_contract_fingerprint: Some(contract_fingerprint),
+            plan_rel,
         },
-        revalidate_contract_locked_state,
+        move |state, gate| revalidate_contract_locked_state(&context, state, gate),
         move |state| {
             state.harness_phase = Some(String::from("contract_approved"));
             state.active_contract_path = Some(artifact_file_name_for_state.clone());
@@ -559,6 +579,7 @@ fn record_authoritative_evaluation(
     let evaluator_kind_for_state = evaluator_kind.clone();
     let verdict_for_state = verdict.clone();
     let report_for_revalidation = report;
+    let plan_rel = context.plan_rel.clone();
     let context_for_revalidation = context;
     record_authoritative_mutation(
         runtime,
@@ -568,6 +589,7 @@ fn record_authoritative_evaluation(
         ObservabilityRecordContext {
             command_name: "record-evaluation",
             active_contract_fingerprint: None,
+            plan_rel,
         },
         move |state, gate| {
             revalidate_evaluation_locked_state(
@@ -644,6 +666,7 @@ fn record_authoritative_handoff(
     let artifact_file_name = format!("handoff-{handoff_fingerprint}.md");
     let open_criteria = handoff.open_criteria.clone();
     let handoff_for_revalidation = handoff;
+    let plan_rel = context.plan_rel.clone();
     let context_for_revalidation = context;
     record_authoritative_mutation(
         runtime,
@@ -653,6 +676,7 @@ fn record_authoritative_handoff(
         ObservabilityRecordContext {
             command_name: "record-handoff",
             active_contract_fingerprint: None,
+            plan_rel,
         },
         move |state, gate| {
             revalidate_handoff_locked_state(
@@ -670,7 +694,11 @@ fn record_authoritative_handoff(
     )
 }
 
-fn revalidate_contract_locked_state(state: &MutableHarnessState, gate: &mut GateState) {
+fn revalidate_contract_locked_state(
+    context: &ExecutionContext,
+    state: &MutableHarnessState,
+    gate: &mut GateState,
+) {
     if !matches!(
         state.harness_phase.as_deref(),
         Some("contract_pending_approval")
@@ -679,7 +707,10 @@ fn revalidate_contract_locked_state(state: &MutableHarnessState, gate: &mut Gate
             FailureClass::IllegalHarnessPhase,
             "contract_illegal_phase",
             "Execution contract approval and recording are only legal while the authoritative harness phase is contract_pending_approval.",
-            "Advance the harness to contract_pending_approval (after execution_preflight acceptance) before running gate-contract or record-contract.",
+            public_gate_remediation(
+                context,
+                "Advance the harness to contract_pending_approval after execution_preflight acceptance",
+            ),
         );
     }
 }
@@ -698,7 +729,10 @@ fn revalidate_evaluation_locked_state(
             FailureClass::IllegalHarnessPhase,
             "evaluation_illegal_phase",
             "Evaluation artifacts are only legal while the harness phase is executing, evaluating, or repairing.",
-            "Advance the harness into an evaluation-ready phase before running gate-evaluator.",
+            public_gate_remediation(
+                context,
+                "Advance the harness into an evaluation-ready phase",
+            ),
         );
     }
 
@@ -711,7 +745,10 @@ fn revalidate_evaluation_locked_state(
             FailureClass::DependencyIndexMismatch,
             "evaluation_contract_fingerprint_mismatch",
             "Evaluation report depends on a contract fingerprint that is not the active authoritative contract.",
-            "Regenerate the evaluation report from the currently active authoritative contract.",
+            public_gate_remediation(
+                context,
+                "Regenerate the evaluation report from the currently active authoritative contract",
+            ),
         );
     }
 
@@ -724,7 +761,10 @@ fn revalidate_evaluation_locked_state(
             FailureClass::EvaluationMismatch,
             "evaluator_kind_not_required",
             "Evaluation report evaluator_kind is not required by the active authoritative harness contract state.",
-            "Run only evaluators listed in required_evaluator_kinds for the active contract.",
+            public_gate_remediation(
+                context,
+                "Run only evaluators listed in required_evaluator_kinds for the active contract",
+            ),
         );
     }
     if report.authoritative_sequence < state.latest_sequence() {
@@ -747,7 +787,7 @@ fn revalidate_handoff_locked_state(
             FailureClass::IllegalHarnessPhase,
             "handoff_illegal_phase",
             "Execution handoff artifacts are only legal while the authoritative harness phase is handoff_required.",
-            "Advance the harness to handoff_required before running gate-handoff.",
+            public_gate_remediation(context, "Advance the harness to handoff_required"),
         );
     }
 
@@ -756,7 +796,10 @@ fn revalidate_handoff_locked_state(
             FailureClass::MissingRequiredHandoff,
             "handoff_not_required",
             "Authoritative harness state does not currently require a handoff artifact.",
-            "Require handoff in authoritative state before publishing an execution handoff.",
+            public_gate_remediation(
+                context,
+                "Require handoff in authoritative state before publishing an execution handoff",
+            ),
         );
     }
 
@@ -769,13 +812,17 @@ fn revalidate_handoff_locked_state(
             FailureClass::DependencyIndexMismatch,
             "handoff_contract_fingerprint_mismatch",
             "Execution handoff depends on a contract fingerprint that is not the active authoritative contract.",
-            "Regenerate the handoff artifact from the active authoritative contract.",
+            public_gate_remediation(
+                context,
+                "Regenerate the handoff artifact from the active authoritative contract",
+            ),
         );
     }
     if handoff.authoritative_sequence < state.latest_sequence() {
         return;
     }
     validate_handoff_semantics(
+        context,
         handoff,
         &active_contract.contract,
         &state.open_failed_criteria,
@@ -809,6 +856,7 @@ where
     FRevalidate: Fn(&MutableHarnessState, &mut GateState),
     FApply: Fn(&mut MutableHarnessState),
 {
+    let plan_rel = observability.plan_rel.as_str();
     let mut gate = GateState::default();
     let _lock = match WriteAuthorityLock::acquire(runtime) {
         Ok(lock) => lock,
@@ -817,7 +865,10 @@ where
                 FailureClass::ConcurrentWriterConflict,
                 "concurrent_writer_conflict",
                 "Another runtime writer currently holds authoritative mutation authority.",
-                "Retry once the active writer releases authority.",
+                public_gate_remediation_for_plan(
+                    plan_rel,
+                    "Retry once the active writer releases authority",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -826,7 +877,7 @@ where
                 FailureClass::PartialAuthoritativeMutation,
                 "write_authority_unavailable",
                 message,
-                "Restore write-authority lock access and retry the authoritative record command.",
+                public_gate_remediation_for_plan(plan_rel, "Restore write-authority lock access"),
             );
             return Ok(gate.finish());
         }
@@ -844,7 +895,10 @@ where
                     "No authoritative harness state was found at {}.",
                     state_path.display()
                 ),
-                "Publish authoritative harness state before contract, evaluator, or handoff gate commands.",
+                public_gate_remediation_for_plan(
+                    plan_rel,
+                    "Publish authoritative harness state before contract, evaluator, or handoff checks",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -853,7 +907,10 @@ where
                 FailureClass::NonAuthoritativeArtifact,
                 "active_contract_missing",
                 message,
-                "Restore authoritative harness state readability and retry the gate command.",
+                public_gate_remediation_for_plan(
+                    plan_rel,
+                    "Restore authoritative harness state readability",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -862,7 +919,10 @@ where
                 FailureClass::NonAuthoritativeArtifact,
                 "active_contract_missing",
                 message,
-                "Repair the authoritative harness state and republish valid authoritative execution state before gating artifacts.",
+                public_gate_remediation_for_plan(
+                    plan_rel,
+                    "Republish valid authoritative execution state before checking artifacts",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -881,7 +941,10 @@ where
             format!(
                 "Candidate authoritative sequence {authoritative_sequence} is older than latest authoritative sequence {latest_sequence}."
             ),
-            "Regenerate the artifact with a fresh authoritative sequence before recording.",
+            public_gate_remediation_for_plan(
+                plan_rel,
+                "Regenerate the artifact with a fresh authoritative sequence",
+            ),
         );
         return Ok(gate.finish());
     }
@@ -901,7 +964,10 @@ where
                 FailureClass::IdempotencyConflict,
                 "idempotency_conflict",
                 "Authoritative artifact replay conflicts with an existing recorded artifact.",
-                "Regenerate the artifact or record a new authoritative sequence.",
+                public_gate_remediation_for_plan(
+                    plan_rel,
+                    "Regenerate the artifact or record a new authoritative sequence",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -914,7 +980,10 @@ where
                     "Could not read prior authoritative artifact {}: {error}",
                     target_path.display()
                 ),
-                "Restore authoritative artifact directory readability and retry.",
+                public_gate_remediation_for_plan(
+                    plan_rel,
+                    "Restore authoritative artifact directory readability",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -932,7 +1001,10 @@ where
                         "Could not publish authoritative artifact {}: {error}",
                         target_path.display()
                     ),
-                    "Restore authoritative artifact write access and retry.",
+                    public_gate_remediation_for_plan(
+                        plan_rel,
+                        "Restore authoritative artifact write access",
+                    ),
                 );
             }
             if gate.allowed
@@ -946,7 +1018,10 @@ where
                     FailureClass::PartialAuthoritativeMutation,
                     "dependency_index_publish_failed",
                     error,
-                    "Restore dependency-index write access and retry.",
+                    public_gate_remediation_for_plan(
+                        plan_rel,
+                        "Restore dependency-index write access",
+                    ),
                 );
             }
             return Ok(gate.finish());
@@ -955,7 +1030,10 @@ where
             FailureClass::AuthoritativeOrderingMismatch,
             "authoritative_sequence_replay_mismatch",
             "Authoritative replay sequence matches the latest sequence but the authoritative state transition does not match the replay artifact.",
-            "Regenerate a new higher authoritative sequence for this artifact mutation.",
+            public_gate_remediation_for_plan(
+                plan_rel,
+                "Regenerate a new higher authoritative sequence for this artifact mutation",
+            ),
         );
         return Ok(gate.finish());
     }
@@ -969,7 +1047,10 @@ where
                     "Could not publish authoritative artifact {}: {error}",
                     target_path.display()
                 ),
-                "Restore authoritative artifact write access and retry.",
+                public_gate_remediation_for_plan(
+                    plan_rel,
+                    "Restore authoritative artifact write access",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -991,7 +1072,7 @@ where
             FailureClass::PartialAuthoritativeMutation,
             "dependency_index_publish_failed",
             error,
-            "Restore dependency-index write access and retry.",
+            public_gate_remediation_for_plan(plan_rel, "Restore dependency-index write access"),
         );
         return Ok(gate.finish());
     }
@@ -1008,7 +1089,7 @@ where
             FailureClass::PartialAuthoritativeMutation,
             "observability_publish_failed",
             error,
-            "Restore observability sink write access and retry.",
+            public_gate_remediation_for_plan(plan_rel, "Restore observability sink write access"),
         );
         return Ok(gate.finish());
     }
@@ -1020,7 +1101,10 @@ where
                 FailureClass::PartialAuthoritativeMutation,
                 "authoritative_state_serialize_failed",
                 format!("Could not serialize authoritative harness state mutation: {error}"),
-                "Repair authoritative harness state serialization and retry the record command.",
+                public_gate_remediation_for_plan(
+                    plan_rel,
+                    "Repair authoritative harness state serialization",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -1035,7 +1119,10 @@ where
                 FailureClass::PartialAuthoritativeMutation,
                 "authoritative_state_serialize_failed",
                 format!("Could not encode authoritative harness state mutation: {error}"),
-                "Repair authoritative harness state serialization and retry the record command.",
+                public_gate_remediation_for_plan(
+                    plan_rel,
+                    "Repair authoritative harness state serialization",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -1054,7 +1141,7 @@ where
             FailureClass::PartialAuthoritativeMutation,
             "authoritative_event_log_append_failed",
             error.message,
-            "Restore event-log mutation access and retry the authoritative record command.",
+            public_gate_remediation_for_plan(plan_rel, "Restore event-log mutation access"),
         );
         return Ok(gate.finish());
     }
@@ -1070,7 +1157,7 @@ where
                 "Could not publish authoritative harness state {}: {error}",
                 state_path.display()
             ),
-            "Restore authoritative state write access and retry.",
+            public_gate_remediation_for_plan(plan_rel, "Restore authoritative state write access"),
         );
     }
     Ok(gate.finish())
@@ -1234,6 +1321,123 @@ pub(crate) struct WorktreeLeaseReleaseDecision {
     pub(crate) release_records: Vec<WorktreeLeaseReleaseRecord>,
 }
 
+struct WorktreeLeaseReleaseApplication {
+    released_by: Vec<(u32, String)>,
+    removed_fingerprints: BTreeSet<String>,
+    release_records: Vec<WorktreeLeaseReleaseRecord>,
+}
+
+pub(crate) fn active_worktree_leases_would_release<F>(
+    runtime: &ExecutionRuntime,
+    compute_release: F,
+) -> Result<bool, JsonFailure>
+where
+    F: FnOnce(
+        &RunIdentitySnapshot,
+        &[String],
+        &[WorktreeLeaseBindingSnapshot],
+    ) -> Result<WorktreeLeaseReleaseDecision, JsonFailure>,
+{
+    let state_path =
+        harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
+    let state = match load_mutable_harness_state_from_event_authority(runtime, &state_path) {
+        Ok(state) => state,
+        Err(MutableStateLoadError::MissingState) => return Ok(false),
+        Err(MutableStateLoadError::Unreadable(message))
+        | Err(MutableStateLoadError::Malformed(message)) => {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                message,
+            ));
+        }
+    };
+    Ok(active_worktree_lease_release_preview_from_state(&state, compute_release)?.is_some())
+}
+
+pub(crate) fn active_worktree_lease_release_preview_from_authority<F>(
+    authoritative_state: &AuthoritativeTransitionState,
+    compute_release: F,
+) -> Result<Option<WorktreeLeaseReleaseDecision>, JsonFailure>
+where
+    F: FnOnce(
+        &RunIdentitySnapshot,
+        &[String],
+        &[WorktreeLeaseBindingSnapshot],
+    ) -> Result<WorktreeLeaseReleaseDecision, JsonFailure>,
+{
+    let mut state: MutableHarnessState = serde_json::from_value(strip_top_level_null_fields(
+        authoritative_state.state_payload_snapshot(),
+    ))
+    .map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!("Reduced authoritative state is malformed for worktree lease preview: {error}"),
+        )
+    })?;
+    state.normalize_defaults();
+    active_worktree_lease_release_preview_from_state(&state, compute_release)
+}
+
+fn active_worktree_lease_release_preview_from_state<F>(
+    state: &MutableHarnessState,
+    compute_release: F,
+) -> Result<Option<WorktreeLeaseReleaseDecision>, JsonFailure>
+where
+    F: FnOnce(
+        &RunIdentitySnapshot,
+        &[String],
+        &[WorktreeLeaseBindingSnapshot],
+    ) -> Result<WorktreeLeaseReleaseDecision, JsonFailure>,
+{
+    let active_worktree_lease_fingerprints = state
+        .active_worktree_lease_fingerprints
+        .clone()
+        .unwrap_or_default();
+    let active_worktree_lease_bindings = state
+        .active_worktree_lease_bindings
+        .clone()
+        .unwrap_or_default();
+    if active_worktree_lease_fingerprints.is_empty() && active_worktree_lease_bindings.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(run_identity) = state.run_identity.clone() else {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "Authoritative worktree lease index cannot be refreshed because execution_run_id is missing.",
+        ));
+    };
+    let Some(chunk_id) = state.chunk_id.as_deref() else {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "Authoritative worktree lease index cannot be refreshed because chunk_id is missing.",
+        ));
+    };
+    validate_safe_identifier_token(run_identity.execution_run_id.as_str(), "execution_run_id")?;
+    validate_safe_identifier_token(chunk_id, "chunk_id")?;
+    validate_worktree_lease_bindings(&run_identity, &active_worktree_lease_bindings)?;
+
+    let decision = compute_release(
+        &run_identity,
+        &active_worktree_lease_fingerprints,
+        &active_worktree_lease_bindings,
+    )?;
+    let Some(application) = prepare_worktree_lease_release_application(
+        &run_identity,
+        &active_worktree_lease_fingerprints,
+        &active_worktree_lease_bindings,
+        decision,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(WorktreeLeaseReleaseDecision {
+        released_by: application.released_by,
+        lease_fingerprints: application.removed_fingerprints,
+        release_records: application.release_records,
+    }))
+}
+
 pub(crate) fn release_active_worktree_leases_with_locked_index<F>(
     runtime: &ExecutionRuntime,
     compute_release: F,
@@ -1280,8 +1484,49 @@ where
         &active_worktree_lease_fingerprints,
         &active_worktree_lease_bindings,
     )?;
-    if decision.lease_fingerprints.is_empty() {
+    let Some(application) = prepare_worktree_lease_release_application(
+        &run_identity,
+        &active_worktree_lease_fingerprints,
+        &active_worktree_lease_bindings,
+        decision,
+    )?
+    else {
         return Ok(Vec::new());
+    };
+
+    state.active_worktree_lease_fingerprints = Some(
+        active_worktree_lease_fingerprints
+            .into_iter()
+            .filter(|fingerprint| !application.removed_fingerprints.contains(fingerprint))
+            .collect(),
+    );
+    state.active_worktree_lease_bindings = Some(
+        active_worktree_lease_bindings
+            .into_iter()
+            .filter(|binding| {
+                !application
+                    .removed_fingerprints
+                    .contains(&binding.lease_fingerprint)
+            })
+            .collect(),
+    );
+    append_unique_worktree_lease_release_records(&mut state, application.release_records);
+    persist_mutable_harness_state(
+        &state_path,
+        &state,
+        "authoritative_worktree_lease_index_refresh",
+    )?;
+    Ok(application.released_by)
+}
+
+fn prepare_worktree_lease_release_application(
+    run_identity: &RunIdentitySnapshot,
+    active_worktree_lease_fingerprints: &[String],
+    active_worktree_lease_bindings: &[WorktreeLeaseBindingSnapshot],
+    decision: WorktreeLeaseReleaseDecision,
+) -> Result<Option<WorktreeLeaseReleaseApplication>, JsonFailure> {
+    if decision.lease_fingerprints.is_empty() {
+        return Ok(None);
     }
 
     let mut removed_fingerprints = active_worktree_lease_fingerprints
@@ -1300,7 +1545,7 @@ where
             .map(|binding| binding.lease_fingerprint.clone()),
     );
     if removed_fingerprints.is_empty() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
 
     let release_records = decision
@@ -1318,27 +1563,13 @@ where
             "Authoritative worktree lease index cannot release an active lease without a matching release record.",
         ));
     }
-    validate_worktree_lease_release_records(&run_identity, &release_records)?;
+    validate_worktree_lease_release_records(run_identity, &release_records)?;
 
-    state.active_worktree_lease_fingerprints = Some(
-        active_worktree_lease_fingerprints
-            .into_iter()
-            .filter(|fingerprint| !removed_fingerprints.contains(fingerprint))
-            .collect(),
-    );
-    state.active_worktree_lease_bindings = Some(
-        active_worktree_lease_bindings
-            .into_iter()
-            .filter(|binding| !removed_fingerprints.contains(&binding.lease_fingerprint))
-            .collect(),
-    );
-    append_unique_worktree_lease_release_records(&mut state, release_records);
-    persist_mutable_harness_state(
-        &state_path,
-        &state,
-        "authoritative_worktree_lease_index_refresh",
-    )?;
-    Ok(decision.released_by)
+    Ok(Some(WorktreeLeaseReleaseApplication {
+        released_by: decision.released_by,
+        removed_fingerprints,
+        release_records,
+    }))
 }
 
 fn persist_worktree_lease_index(
@@ -1528,13 +1759,14 @@ fn load_mutable_harness_state_from_event_authority(
     runtime: &ExecutionRuntime,
     state_path: &Path,
 ) -> Result<MutableHarnessState, MutableStateLoadError> {
-    ensure_event_log_migrated_from_legacy_state(runtime, state_path).map_err(|error| {
-        MutableStateLoadError::Unreadable(format!(
-            "Could not migrate legacy authoritative state for {}: {}",
-            state_path.display(),
-            error.message
-        ))
-    })?;
+    ensure_event_log_migrated_from_legacy_state_with_route_parity(runtime, state_path, None)
+        .map_err(|error| {
+            MutableStateLoadError::Unreadable(format!(
+                "Could not migrate legacy authoritative state for {}: {}",
+                state_path.display(),
+                error.message
+            ))
+        })?;
     let reduced = load_reduced_authoritative_state(runtime).map_err(|error| {
         MutableStateLoadError::Unreadable(format!(
             "Could not reduce authoritative event log for {}: {}",
@@ -1721,6 +1953,7 @@ fn ensure_dependency_index_artifact_exists(runtime: &ExecutionRuntime) -> Result
 struct ObservabilityRecordContext {
     command_name: &'static str,
     active_contract_fingerprint: Option<String>,
+    plan_rel: String,
 }
 
 fn persist_observability_after_authoritative_record(
@@ -2245,6 +2478,7 @@ fn is_harness_authoritative_producer(generated_by: &str) -> bool {
         generated_by,
         FailureClass::NonHarnessProvenance,
         "evaluation_non_harness_provenance",
+        "<approved-plan-path>",
         &mut gate,
     );
     gate.allowed
@@ -2312,6 +2546,7 @@ fn verify_declared_fingerprint(
     declared_fingerprint: &str,
     artifact_label: &str,
     mismatch_reason_code: &str,
+    context: &ExecutionContext,
     gate: &mut GateState,
 ) -> Option<String> {
     let Some(canonical_fingerprint) =
@@ -2323,8 +2558,11 @@ fn verify_declared_fingerprint(
             format!(
                 "Could not recompute canonical {artifact_label} fingerprint because `{header_label}` is missing or malformed."
             ),
-            format!(
-                "Regenerate the {artifact_label} artifact with a valid `{header_label}` header."
+            public_gate_remediation(
+                context,
+                format!(
+                    "Regenerate the {artifact_label} artifact with a valid `{header_label}` header"
+                ),
             ),
         );
         return None;
@@ -2337,8 +2575,11 @@ fn verify_declared_fingerprint(
             format!(
                 "Declared {artifact_label} fingerprint does not match canonical content-derived fingerprint."
             ),
-            format!(
-                "Regenerate the {artifact_label} artifact and ensure `{header_label}` is computed from canonical content."
+            public_gate_remediation(
+                context,
+                format!(
+                    "Regenerate the {artifact_label} artifact and ensure `{header_label}` is computed from canonical content"
+                ),
             ),
         );
         return None;
@@ -2645,7 +2886,9 @@ mod tests {
                         lease_fingerprint: released_fingerprint.clone(),
                         source_task: 1,
                         source_task_closure_record_id: String::from("task-closure-1"),
-                        released_by: String::from("repair_review_state"),
+                        released_by: String::from(
+                            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+                        ),
                     }],
                 })
             },

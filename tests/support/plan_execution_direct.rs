@@ -10,6 +10,7 @@ use clap::Parser;
 use featureforge::cli::plan_execution::{PlanExecutionCommand, StatusArgs};
 use featureforge::cli::{Cli, Command as RootCommand, PlanCommand};
 use featureforge::diagnostics::JsonFailure;
+use featureforge::execution::commands::repair_review_state::repair_review_state_command;
 use featureforge::execution::internal_args::{
     GateContractArgs, GateEvaluatorArgs, GateHandoffArgs, RebuildEvidenceArgs, RecommendArgs,
     RecordBranchClosureArgs, RecordContractArgs, RecordEvaluationArgs, RecordFinalReviewArgs,
@@ -322,9 +323,9 @@ fn execute_plan_execution_command_json(
 
     match command {
         PlanExecutionCommand::Status(args) => Ok(to_json!(runtime.status(&args)?)),
-        PlanExecutionCommand::RepairReviewState(args) => Ok(to_json!(
-            review_state::repair_review_state_command(runtime, &args)?
-        )),
+        PlanExecutionCommand::RepairReviewState(args) => {
+            Ok(to_json!(repair_review_state_command(runtime, &args)?))
+        }
         PlanExecutionCommand::CloseCurrentTask(args) => {
             Ok(to_json!(mutate::close_current_task(runtime, &args)?))
         }

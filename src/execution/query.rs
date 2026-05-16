@@ -7,16 +7,16 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::cli::plan_execution::StatusArgs;
+use crate::contracts::workflow::WorkflowRoute;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::closure_diagnostics::public_task_boundary_decision;
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
 use crate::execution::command_eligibility::PublicCommand;
-use crate::execution::current_closure_projection::project_current_task_closures;
+use crate::execution::current_closure_projection::project_current_task_closures_from_authoritative_state;
 #[cfg(test)]
 use crate::execution::current_truth::late_stage_stale_unreviewed as shared_late_stage_stale_unreviewed;
 use crate::execution::current_truth::{
     BranchRerecordingUnsupportedReason, ReviewStateRepairReroute,
-    branch_closure_refresh_missing_current_closure as shared_branch_closure_refresh_missing_current_closure,
     branch_closure_rerecording_assessment,
     current_task_negative_result_task as shared_current_task_negative_result_task,
     late_stage_qa_blocked as shared_late_stage_qa_blocked,
@@ -38,29 +38,31 @@ use crate::execution::current_truth::{
 use crate::execution::follow_up::{
     normalize_persisted_repair_follow_up_token, normalize_public_routing_follow_up_token,
 };
-use crate::execution::harness::HarnessPhase;
 use crate::execution::implementation_gate::implementation_entry_started;
-#[cfg(test)]
-use crate::execution::next_action::{
-    NextActionDecision, NextActionKind, compute_next_action_decision, public_next_action_text,
+use crate::execution::late_stage_precedence::{
+    GateState, LateStageSignals, resolve as resolve_late_stage_precedence,
 };
+#[cfg(test)]
+use crate::execution::next_action::{NextActionDecision, NextActionKind, public_next_action_text};
 use crate::execution::phase;
-use crate::execution::read_model_support::qa_pending_requires_test_plan_refresh;
 use crate::execution::reducer::{RuntimeState, reduce_execution_read_scope};
+#[cfg(test)]
+use crate::execution::route_plan::public_command_from_status_context;
+use crate::execution::route_plan::{
+    RouteDecision, diagnostic_route_decision_from_status, required_follow_up_from_route_decision,
+};
 use crate::execution::router::{
-    RouteDecision, project_non_runtime_workflow_routing_state, project_runtime_routing_state,
-    required_follow_up_from_route_decision, route_decision_from_routing,
-    route_is_engineering_approval_fidelity_blocked,
+    project_final_runtime_routing_projection, project_non_runtime_workflow_routing_state,
 };
 use crate::execution::runtime::state_dir as default_state_dir;
 use crate::execution::runtime_provenance::{RuntimeProvenance, runtime_provenance_for_paths};
 use crate::execution::stale_target_projection::{
     ReviewStateStaleClosureProjection, ReviewStateStaleClosureProjectionInputs,
-    project_review_state_stale_unreviewed_closures,
+    project_review_state_stale_unreviewed_closures, targetless_stale_authority_for_gate_snapshot,
 };
 use crate::execution::state::{
     ExecutionContext, ExecutionReadScope, ExecutionRuntime, GateResult, PlanExecutionStatus,
-    apply_public_read_invariants_to_status,
+    apply_public_read_invariants_to_read_scope,
     apply_shared_routing_projection_to_read_scope_with_routing,
     current_branch_closure_structural_review_state_reason, load_execution_read_scope,
     missing_derived_review_state_fields, shared_repair_review_state_reroute_decision,
@@ -70,14 +72,13 @@ use crate::execution::state::{
 #[cfg(test)]
 use crate::execution::state::{load_execution_context, load_execution_context_for_exact_plan};
 use crate::execution::status::PublicReviewStateTaskClosure;
+use crate::execution::status_assembly::require_public_execution_command_route_target;
+use crate::execution::status_support::qa_pending_requires_test_plan_refresh;
 use crate::git::discover_slug_identity_and_head;
-use crate::workflow::late_stage_precedence::{
-    GateState, LateStageSignals, resolve as resolve_late_stage_precedence,
-};
 #[cfg(test)]
 use crate::workflow::pivot::pivot_decision_reason_codes;
 use crate::workflow::status::{
-    WorkflowRoute, WorkflowRuntime, explicit_plan_override_route as resolve_explicit_plan_override,
+    WorkflowRuntime, explicit_plan_override_route as resolve_explicit_plan_override,
 };
 
 pub type ReviewStateTaskClosure = PublicReviewStateTaskClosure;
@@ -142,31 +143,6 @@ pub struct ExecutionRoutingExecutionCommandContext {
     pub step_id: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
-pub(crate) struct ExecutionBlockingProjection {
-    pub(crate) scope: Option<String>,
-    pub(crate) task: Option<u32>,
-}
-
-impl ExecutionBlockingProjection {
-    pub(crate) fn apply_to_status(&self, status: &mut PlanExecutionStatus) {
-        status.blocking_scope.clone_from(&self.scope);
-        status.blocking_task = self.task;
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ExecutionBlockingProjectionInputs<'a> {
-    pub(crate) phase_detail: &'a str,
-    pub(crate) review_state_status: &'a str,
-    pub(crate) status: Option<&'a PlanExecutionStatus>,
-    pub(crate) fallback_scope: Option<&'a str>,
-    pub(crate) fallback_task: Option<u32>,
-    pub(crate) execution_command_task: Option<u32>,
-    pub(crate) recording_task: Option<u32>,
-    pub(crate) blocker_task: Option<u32>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExecutionRoutingState {
     pub route: WorkflowRoute,
@@ -207,46 +183,11 @@ pub struct ExecutionRoutingState {
     pub base_branch: Option<String>,
 }
 
-impl ExecutionRoutingState {
-    pub(crate) fn bind_public_command(
-        &mut self,
-        command: PublicCommand,
-        execution_command_context: Option<ExecutionRoutingExecutionCommandContext>,
-    ) {
-        let recommended_command = command
-            .to_invocation()
-            .map(|_| command.to_display_command());
-        if let Some(route_decision) = self.route_decision.as_mut() {
-            route_decision.bind_public_command(Some(command.clone()));
-            route_decision.execution_command_context = execution_command_context.clone();
-        }
-        self.recommended_command = recommended_command;
-        self.recommended_public_command = Some(command);
-        self.execution_command_context = execution_command_context;
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WorkflowRoutingDecision {
-    pub(crate) phase: String,
-    pub(crate) phase_detail: String,
-    pub(crate) review_state_status: String,
-    pub(crate) recording_context: Option<ExecutionRoutingRecordingContext>,
-    pub(crate) execution_command_context: Option<ExecutionRoutingExecutionCommandContext>,
-    pub(crate) next_action: String,
-    pub(crate) recommended_public_command: Option<PublicCommand>,
-    pub(crate) recommended_command: Option<String>,
-    pub(crate) blocking_scope: Option<String>,
-    pub(crate) blocking_task: Option<u32>,
-    pub(crate) external_wait_state: Option<String>,
-    pub(crate) blocking_reason_codes: Vec<String>,
-}
-
 pub(crate) fn required_follow_up_from_routing(routing: &ExecutionRoutingState) -> Option<String> {
-    if let Some(route_decision) = routing.route_decision.as_ref() {
-        return required_follow_up_from_route_decision(route_decision);
-    }
-    route_decision_from_routing(routing, &[]).required_follow_up
+    routing
+        .route_decision
+        .as_ref()
+        .and_then(required_follow_up_from_route_decision)
 }
 
 pub(crate) fn normalize_public_follow_up_alias(required_follow_up: Option<&str>) -> Option<&str> {
@@ -279,7 +220,7 @@ fn query_review_state_internal(
 ) -> Result<ReviewStateSnapshot, JsonFailure> {
     let mut read_scope = load_execution_read_scope(runtime, plan_path, exact_plan_override)?;
     apply_shared_routing_projection_to_read_scope_with_routing(&mut read_scope, false, false)?;
-    apply_public_read_invariants_to_status(&mut read_scope.status);
+    apply_public_read_invariants_to_read_scope(&mut read_scope);
     review_state_snapshot_from_read_scope_with_status(&read_scope, &read_scope.status)
 }
 
@@ -322,14 +263,17 @@ fn review_state_snapshot_from_read_scope_with_runtime_state(
             gate_snapshot.stale_reason_codes.clone(),
         ),
     );
-    let current_task_closures = project_current_task_closures(context, authoritative_state)?
-        .into_iter()
-        .filter(|closure| {
-            closure_graph
-                .current_task_closure(closure.task)
-                .is_none_or(|evaluation| evaluation.identity.record_id == closure.closure_record_id)
-        })
-        .collect::<Vec<_>>();
+    let current_task_closures =
+        project_current_task_closures_from_authoritative_state(context, authoritative_state)?
+            .into_iter()
+            .filter(|closure| {
+                closure_graph
+                    .current_task_closure(closure.task)
+                    .is_none_or(|evaluation| {
+                        evaluation.identity.record_id == closure.closure_record_id
+                    })
+            })
+            .collect::<Vec<_>>();
     let current_branch_closure = closure_graph.current_branch_closure().map(|evaluation| {
         let branch_closure_id = evaluation.identity.record_id.clone();
         let contract_identity = usable_current_branch_closure_identity_from_authoritative_state(
@@ -424,13 +368,15 @@ fn review_state_snapshot_from_read_scope_with_runtime_state(
             String::from(
                 "Current branch-closure reviewed-state provenance is structurally invalid and requires branch-closure repair.",
             )
-        } else if status.review_state_status == "missing_current_closure" {
+        } else if status.review_state_status
+            == crate::execution::review_route_tokens::REVIEW_STATE_MISSING_CURRENT_CLOSURE
+        {
             String::from(
                 "Review state is missing_current_closure because the active workflow phase still requires a current reviewed closure.",
             )
         } else if missing_derived_overlays_present {
             String::from(
-                "Review state is blocked because derivable overlay fields are missing from authoritative state and must be reconciled.",
+                "Review state is current; derivable overlay fields are missing and reported as projection diagnostics.",
             )
         } else {
             String::from("Review state is already current for the present workspace.")
@@ -450,7 +396,7 @@ fn query_workflow_execution_state_internal(
     plan_path: &str,
     exact_plan_override: bool,
     preloaded_read_scope: Option<&ExecutionReadScope>,
-    _require_exact_execution_command: bool,
+    require_exact_execution_command: bool,
 ) -> Result<WorkflowExecutionState, JsonFailure> {
     if plan_path.is_empty() {
         return Ok(WorkflowExecutionState::default());
@@ -463,6 +409,15 @@ fn query_workflow_execution_state_internal(
         owned_read_scope = load_execution_read_scope(runtime, &plan_path_buf, exact_plan_override)?;
         &owned_read_scope
     };
+    if require_exact_execution_command {
+        let projection = project_final_runtime_routing_projection(read_scope, false, true)?;
+        require_public_execution_command_route_target(&projection.status_projection)?;
+        return workflow_execution_state_from_runtime_state_with_status(
+            read_scope,
+            &projection.runtime_state,
+            &projection.status_projection,
+        );
+    }
     let runtime_state = reduce_execution_read_scope(read_scope)?;
     workflow_execution_state_from_runtime_state(read_scope, &runtime_state)
 }
@@ -471,14 +426,26 @@ pub(crate) fn workflow_execution_state_from_runtime_state(
     read_scope: &ExecutionReadScope,
     runtime_state: &RuntimeState,
 ) -> Result<WorkflowExecutionState, JsonFailure> {
+    workflow_execution_state_from_runtime_state_with_status(
+        read_scope,
+        runtime_state,
+        &runtime_state.status,
+    )
+}
+
+fn workflow_execution_state_from_runtime_state_with_status(
+    read_scope: &ExecutionReadScope,
+    runtime_state: &RuntimeState,
+    projected_status: &PlanExecutionStatus,
+) -> Result<WorkflowExecutionState, JsonFailure> {
     let context = runtime_state.context.clone();
-    let projected_execution_status = runtime_state.status.clone();
+    let projected_execution_status = projected_status.clone();
     let review_state_snapshot = review_state_snapshot_from_read_scope_with_runtime_state(
         read_scope,
         &projected_execution_status,
         runtime_state,
     )?;
-    let execution_status = runtime_state.status.clone();
+    let execution_status = projected_status.clone();
     let overlay = read_scope.overlay.clone();
     let authoritative_state = read_scope.authoritative_state.as_ref();
     let preflight = runtime_state.preflight.clone();
@@ -520,18 +487,25 @@ pub(crate) fn workflow_execution_state_from_runtime_state(
     let task_scope_repair_precedence_active =
         repair_route_decision.task_scope_repair_precedence_active;
     let mut repair_review_state_follow_up = match repair_route_decision.repair_reroute {
-        ReviewStateRepairReroute::RecordBranchClosure => Some(String::from("advance_late_stage")),
-        ReviewStateRepairReroute::ExecutionReentry => Some(String::from("execution_reentry")),
+        ReviewStateRepairReroute::RecordBranchClosure => Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE,
+        )),
+        ReviewStateRepairReroute::ExecutionReentry => Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_EXECUTION_REENTRY,
+        )),
         ReviewStateRepairReroute::None => None,
     };
     let persisted_branch_reroute_without_current_binding = repair_review_state_follow_up.as_deref()
-        != Some("execution_reentry")
-        && persisted_repair_follow_up == Some("advance_late_stage")
+        != Some(crate::execution::review_route_tokens::FOLLOW_UP_EXECUTION_REENTRY)
+        && persisted_repair_follow_up
+            == Some(crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE)
         && !task_scope_repair_precedence_active
         && branch_reroute_still_valid
         && execution_status.current_branch_closure_id.is_none();
     if persisted_branch_reroute_without_current_binding {
-        repair_review_state_follow_up = Some(String::from("advance_late_stage"));
+        repair_review_state_follow_up = Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE,
+        ));
     }
     let final_review_dispatch_authority = runtime_state.final_review_dispatch_authority.clone();
     let final_review_dispatch_id = final_review_dispatch_authority.dispatch_id.clone();
@@ -617,7 +591,7 @@ fn query_workflow_routing_state_internal(
     external_review_result_ready: bool,
     runtime_override: Option<&ExecutionRuntime>,
     preloaded_read_scope: Option<&ExecutionReadScope>,
-    _require_exact_execution_command: bool,
+    require_exact_execution_command: bool,
 ) -> Result<ExecutionRoutingState, JsonFailure> {
     let (fallback_identity, fallback_head_sha) = discover_slug_identity_and_head(current_dir);
     let workflow = if let Some(runtime) = runtime_override {
@@ -651,8 +625,7 @@ fn query_workflow_routing_state_internal(
         route = explicit_route_for_plan_override(&workflow, &route, plan_override)?;
     }
     let explicit_plan_query = plan_override.is_some();
-    let engineering_approval_fidelity_blocked =
-        route_is_engineering_approval_fidelity_blocked(&route);
+    let engineering_approval_fidelity_blocked = route.is_engineering_approval_fidelity_blocked();
     let should_load_execution_state = !route.plan_path.is_empty()
         && (route.status == phase::WORKFLOW_STATUS_IMPLEMENTATION_READY
             || explicit_plan_query
@@ -662,8 +635,21 @@ fn query_workflow_routing_state_internal(
             .cloned()
             .unwrap_or(ExecutionRuntime::discover(current_dir)?);
         if let Some(read_scope) = preloaded_read_scope {
-            let (mut routing, _) =
-                project_runtime_routing_state(&runtime, read_scope, external_review_result_ready)?;
+            let projection = project_final_runtime_routing_projection(
+                read_scope,
+                external_review_result_ready,
+                require_exact_execution_command,
+            )?;
+            let mut routing = projection.routing;
+            let targetless_stale_authority = routing.execution_status.as_ref().map(|_| {
+                targetless_stale_authority_for_gate_snapshot(
+                    &projection.runtime_state.gate_snapshot,
+                )
+            });
+            apply_read_surface_invariants_to_routing_with_targetless_authority(
+                &mut routing,
+                targetless_stale_authority,
+            );
             attach_runtime_provenance(&mut routing, Some(&runtime), current_dir);
             if engineering_approval_fidelity_blocked
                 && projected_runtime_route_is_before_execution_entry(&routing, &read_scope.context)
@@ -680,7 +666,6 @@ fn query_workflow_routing_state_internal(
             {
                 routing.route = route;
             }
-            apply_read_surface_invariants_to_routing(&mut routing);
             return Ok(routing);
         }
         let mut read_scope = load_execution_read_scope(
@@ -691,9 +676,14 @@ fn query_workflow_routing_state_internal(
         let (mut routing, _) = apply_shared_routing_projection_to_read_scope_with_routing(
             &mut read_scope,
             external_review_result_ready,
-            false,
+            require_exact_execution_command,
         )?;
+        let status_before_invariants = read_scope.status.clone();
+        apply_public_read_invariants_to_read_scope(&mut read_scope);
         routing.execution_status = Some(read_scope.status.clone());
+        if read_scope.status != status_before_invariants {
+            sync_routing_surface_from_status(&mut routing, &read_scope.status);
+        }
         attach_runtime_provenance(&mut routing, Some(&runtime), current_dir);
         if engineering_approval_fidelity_blocked
             && projected_runtime_route_is_before_execution_entry(&routing, &read_scope.context)
@@ -708,7 +698,6 @@ fn query_workflow_routing_state_internal(
         {
             routing.route = route;
         }
-        apply_read_surface_invariants_to_routing(&mut routing);
         return Ok(routing);
     }
     let (mut routing, _) =
@@ -738,6 +727,15 @@ fn attach_runtime_provenance(
 }
 
 pub fn apply_read_surface_invariants_to_routing(routing: &mut ExecutionRoutingState) {
+    apply_read_surface_invariants_to_routing_with_targetless_authority(routing, None);
+}
+
+fn apply_read_surface_invariants_to_routing_with_targetless_authority(
+    routing: &mut ExecutionRoutingState,
+    targetless_stale_authority: Option<
+        crate::execution::reentry_reconcile::TargetlessStaleAuthority,
+    >,
+) {
     let Some(status) = routing.execution_status.as_mut() else {
         return;
     };
@@ -745,7 +743,10 @@ pub fn apply_read_surface_invariants_to_routing(routing: &mut ExecutionRoutingSt
     let invariant_projection_already_active =
         crate::execution::invariants::read_surface_invariant_projection_active(status);
     let before = status.clone();
-    crate::execution::invariants::apply_read_surface_invariants(status);
+    crate::execution::invariants::apply_read_surface_invariants_with_targetless_authority(
+        status,
+        targetless_stale_authority,
+    );
     if *status == before && !invariant_projection_already_active {
         return;
     }
@@ -757,7 +758,6 @@ fn sync_routing_surface_from_status(
     routing: &mut ExecutionRoutingState,
     status: &PlanExecutionStatus,
 ) {
-    routing.route_decision = None;
     if let Some(phase) = status.phase.clone() {
         routing.workflow_phase = phase.clone();
         routing.phase = phase;
@@ -797,275 +797,12 @@ fn sync_routing_surface_from_status(
     routing
         .blocking_reason_codes
         .clone_from(&status.blocking_reason_codes);
-}
-
-pub(crate) fn default_phase_for_status(status: &PlanExecutionStatus) -> String {
-    if matches!(
-        status.harness_phase,
-        HarnessPhase::ContractDrafting | HarnessPhase::PivotRequired
-    ) {
-        String::from(phase::PHASE_PIVOT_REQUIRED)
-    } else if status.harness_phase == HarnessPhase::HandoffRequired
-        || (status.phase_detail == phase::DETAIL_EXECUTION_IN_PROGRESS
-            && status.execution_command_context.is_some())
-    {
-        String::from(phase::PHASE_HANDOFF_REQUIRED)
-    } else if (status.harness_phase == HarnessPhase::Executing
-        && matches!(
-            status.phase_detail.as_str(),
-            phase::DETAIL_HANDOFF_RECORDING_REQUIRED
-                | phase::DETAIL_PLANNING_REENTRY_REQUIRED
-                | phase::DETAIL_EXECUTION_REENTRY_REQUIRED
-        ))
-        || (status.execution_started == "yes"
-            && status.phase_detail == phase::DETAIL_EXECUTION_IN_PROGRESS
-            && status.execution_command_context.is_none())
-    {
-        String::from(phase::PHASE_EXECUTING)
-    } else if status.phase_detail == phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED
-        && status.harness_phase != HarnessPhase::ExecutionPreflight
-    {
-        status.harness_phase.to_string()
-    } else {
-        status
-            .phase
-            .clone()
-            .unwrap_or_else(|| status.harness_phase.to_string())
-    }
-}
-
-pub(crate) fn project_execution_blocking(
-    inputs: ExecutionBlockingProjectionInputs<'_>,
-) -> ExecutionBlockingProjection {
-    let mut task = inputs.fallback_task;
-    match inputs.phase_detail {
-        phase::DETAIL_EXECUTION_REENTRY_REQUIRED => {
-            task = inputs
-                .execution_command_task
-                .or(inputs.blocker_task)
-                .or_else(|| inputs.status.and_then(blocking_task_from_status_records))
-                .or_else(|| {
-                    inputs
-                        .status
-                        .and_then(projected_earliest_stale_task_candidate_from_status)
-                })
-                .or(task);
-        }
-        phase::DETAIL_TASK_CLOSURE_RECORDING_READY => {
-            task = inputs
-                .recording_task
-                .or(task)
-                .or_else(|| inputs.status.and_then(blocking_task_from_status_records))
-                .or_else(|| {
-                    inputs
-                        .status
-                        .and_then(projected_earliest_stale_task_candidate_from_status)
-                });
-        }
-        phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS => {
-            task = None;
-        }
-        _ => {}
-    }
-    let scope = blocking_scope_for_phase_detail(
-        inputs.phase_detail,
-        task,
-        inputs.status,
-        inputs.review_state_status,
-    )
-    .or_else(|| inputs.fallback_scope.map(str::to_owned));
-    ExecutionBlockingProjection { scope, task }
-}
-
-pub(crate) fn canonical_phase_for_shared_decision(
-    default_phase: &str,
-    phase_detail: &str,
-) -> String {
-    match phase_detail {
-        phase::DETAIL_TASK_REVIEW_RESULT_PENDING | phase::DETAIL_TASK_CLOSURE_RECORDING_READY => {
-            String::from(phase::PHASE_TASK_CLOSURE_PENDING)
-        }
-        phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
-        | phase::DETAIL_RELEASE_READINESS_RECORDING_READY
-        | phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED => {
-            String::from(phase::PHASE_DOCUMENT_RELEASE_PENDING)
-        }
-        phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-            if default_phase == phase::PHASE_DOCUMENT_RELEASE_PENDING =>
-        {
-            String::from(phase::PHASE_DOCUMENT_RELEASE_PENDING)
-        }
-        phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-        | phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
-        | phase::DETAIL_FINAL_REVIEW_RECORDING_READY => {
-            String::from(phase::PHASE_FINAL_REVIEW_PENDING)
-        }
-        phase::DETAIL_QA_RECORDING_REQUIRED | phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED => {
-            String::from(phase::PHASE_QA_PENDING)
-        }
-        phase::DETAIL_FINISH_REVIEW_GATE_READY | phase::DETAIL_FINISH_COMPLETION_GATE_READY => {
-            String::from(phase::PHASE_READY_FOR_BRANCH_COMPLETION)
-        }
-        phase::DETAIL_EXECUTION_PREFLIGHT_REQUIRED => {
-            if matches!(
-                default_phase,
-                phase::PHASE_PIVOT_REQUIRED | phase::PHASE_HANDOFF_REQUIRED
-            ) {
-                default_phase.to_owned()
-            } else {
-                String::from(phase::PHASE_EXECUTION_PREFLIGHT)
-            }
-        }
-        phase::DETAIL_EXECUTION_REENTRY_REQUIRED => String::from(phase::PHASE_EXECUTING),
-        phase::DETAIL_EXECUTION_IN_PROGRESS => {
-            if matches!(
-                default_phase,
-                phase::PHASE_EXECUTION_PREFLIGHT | phase::PHASE_HANDOFF_REQUIRED
-            ) {
-                default_phase.to_owned()
-            } else {
-                String::from(phase::PHASE_EXECUTING)
-            }
-        }
-        phase::DETAIL_PLANNING_REENTRY_REQUIRED => String::from(phase::PHASE_PIVOT_REQUIRED),
-        phase::DETAIL_HANDOFF_RECORDING_REQUIRED => {
-            if default_phase == phase::PHASE_EXECUTING {
-                String::from(phase::PHASE_EXECUTING)
-            } else {
-                String::from(phase::PHASE_HANDOFF_REQUIRED)
-            }
-        }
-        _ => default_phase.to_owned(),
-    }
-}
-
-pub(crate) fn blocking_scope_for_phase_detail(
-    phase_detail: &str,
-    blocking_task: Option<u32>,
-    status: Option<&PlanExecutionStatus>,
-    review_state_status: &str,
-) -> Option<String> {
-    let scope = match phase_detail {
-        phase::DETAIL_TASK_REVIEW_RESULT_PENDING | phase::DETAIL_TASK_CLOSURE_RECORDING_READY => {
-            Some("task")
-        }
-        phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
-        | phase::DETAIL_RELEASE_READINESS_RECORDING_READY
-        | phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED
-        | phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED
-        | phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING
-        | phase::DETAIL_FINAL_REVIEW_RECORDING_READY
-        | phase::DETAIL_QA_RECORDING_REQUIRED
-        | phase::DETAIL_TEST_PLAN_REFRESH_REQUIRED
-        | phase::DETAIL_FINISH_REVIEW_GATE_READY
-        | phase::DETAIL_FINISH_COMPLETION_GATE_READY => Some("branch"),
-        phase::DETAIL_PLANNING_REENTRY_REQUIRED => Some("workflow"),
-        phase::DETAIL_HANDOFF_RECORDING_REQUIRED => {
-            if blocking_task.is_some() {
-                Some("task")
-            } else {
-                Some("workflow")
-            }
-        }
-        phase::DETAIL_EXECUTION_REENTRY_REQUIRED => {
-            if review_state_status == "stale_unreviewed"
-                && let Some(task) = blocking_task
-                && status.is_some_and(|status| status_has_task_blocking_record(status, task))
-            {
-                Some("task")
-            } else if review_state_status == "stale_unreviewed"
-                && blocking_task.is_some()
-                && status.is_some_and(|status| !status.stale_unreviewed_closures.is_empty())
-            {
-                Some("task")
-            } else if matches!(
-                review_state_status,
-                "missing_current_closure" | "stale_unreviewed"
-            ) || status.is_some_and(|status| {
-                shared_branch_closure_refresh_missing_current_closure(status)
-                    || current_branch_closure_structural_review_state_reason(status).is_some()
-            }) {
-                Some("branch")
-            } else if blocking_task.is_some() {
-                Some("task")
-            } else {
-                Some("workflow")
-            }
-        }
-        _ => None,
-    };
-    scope.map(str::to_owned)
-}
-
-pub(crate) fn task_number_from_task_scope_key(scope_key: &str) -> Option<u32> {
-    let raw = scope_key.strip_prefix("task-")?;
-    let digits = raw
-        .chars()
-        .take_while(|character| character.is_ascii_digit())
-        .collect::<String>();
-    (!digits.is_empty())
-        .then(|| digits.parse::<u32>().ok())
-        .flatten()
-}
-
-pub(crate) fn blocking_task_from_status_records(status: &PlanExecutionStatus) -> Option<u32> {
-    status.blocking_records.iter().find_map(|record| {
-        (record.scope_type == "task")
-            .then(|| task_number_from_task_scope_key(&record.scope_key))
+    if let Some(route_decision) =
+        crate::execution::invariants::read_surface_invariant_projection_active(status)
+            .then(|| diagnostic_route_decision_from_status(status))
             .flatten()
-    })
-}
-
-pub(crate) fn projected_earliest_stale_task_candidate_from_status(
-    status: &PlanExecutionStatus,
-) -> Option<u32> {
-    status
-        .blocking_records
-        .iter()
-        .filter(|record| record.scope_type == "task")
-        .filter_map(|record| task_number_from_task_scope_key(&record.scope_key))
-        .chain(
-            status
-                .stale_unreviewed_closures
-                .iter()
-                .filter_map(|record_id| task_number_from_task_scope_key(record_id)),
-        )
-        .chain(
-            status
-                .public_repair_targets
-                .iter()
-                .filter_map(|target| target.task),
-        )
-        .min()
-}
-
-fn status_has_task_blocking_record(status: &PlanExecutionStatus, task: u32) -> bool {
-    status.blocking_records.iter().any(|record| {
-        record.scope_type == "task"
-            && task_number_from_task_scope_key(&record.scope_key) == Some(task)
-    })
-}
-
-pub(crate) fn external_wait_state_for_phase_detail(
-    phase_detail: &str,
-    blocking_reason_codes: &[String],
-    external_review_result_ready: bool,
-) -> Option<String> {
-    if external_review_result_ready {
-        return None;
-    }
-    match phase_detail {
-        phase::DETAIL_TASK_REVIEW_RESULT_PENDING
-            if !task_review_result_requires_verification(
-                blocking_reason_codes.iter().map(String::as_str),
-            ) =>
-        {
-            Some(String::from("waiting_for_external_review_result"))
-        }
-        phase::DETAIL_FINAL_REVIEW_OUTCOME_PENDING => {
-            Some(String::from("waiting_for_external_review_result"))
-        }
-        _ => None,
+    {
+        routing.route_decision = Some(route_decision);
     }
 }
 
@@ -1081,11 +818,19 @@ pub(crate) fn compact_operator_reason_codes(
     }
 
     let mut reason_codes = Vec::new();
-    if review_state_status == "missing_current_closure" {
-        push_unique_reason(&mut reason_codes, "missing_current_closure");
+    if review_state_status
+        == crate::execution::review_route_tokens::REVIEW_STATE_MISSING_CURRENT_CLOSURE
+    {
+        push_unique_reason(
+            &mut reason_codes,
+            crate::execution::review_route_tokens::REVIEW_STATE_MISSING_CURRENT_CLOSURE,
+        );
     }
-    if review_state_status == "stale_unreviewed" {
-        push_unique_reason(&mut reason_codes, "stale_unreviewed");
+    if review_state_status == crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED {
+        push_unique_reason(
+            &mut reason_codes,
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED,
+        );
     }
     if let Some(status) = status {
         if matches!(
@@ -1107,15 +852,15 @@ pub(crate) fn compact_operator_reason_codes(
             && status.resume_task.is_none()
             && status.resume_step.is_none()
         {
-            push_unique_reason(&mut reason_codes, "task_closure_baseline_repair_candidate");
+            push_unique_reason(&mut reason_codes, crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_TASK_CLOSURE_BASELINE_REPAIR_CANDIDATE);
         }
         if phase_detail == phase::DETAIL_EXECUTION_REENTRY_REQUIRED {
             for code in [
-                "prior_task_current_closure_invalid",
-                "prior_task_current_closure_reviewed_state_malformed",
-                "prior_task_current_closure_missing",
-                "prior_task_current_closure_stale",
-                "current_task_closure_overlay_restore_required",
+                crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_INVALID,
+                crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_REVIEWED_STATE_MALFORMED,
+                crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_MISSING,
+                crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_STALE,
+                crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_CURRENT_TASK_CLOSURE_OVERLAY_RESTORE_REQUIRED,
             ] {
                 if status
                     .reason_codes
@@ -1132,12 +877,13 @@ pub(crate) fn compact_operator_reason_codes(
                 phase::DETAIL_FINAL_REVIEW_DISPATCH_REQUIRED,
             );
         }
-        if status
-            .reason_codes
-            .iter()
-            .any(|code| code == "blocked_on_plan_revision")
-        {
-            push_unique_reason(&mut reason_codes, "blocked_on_plan_revision");
+        if status.reason_codes.iter().any(|code| {
+            code == crate::execution::observability::REASON_CODE_BLOCKED_ON_PLAN_REVISION
+        }) {
+            push_unique_reason(
+                &mut reason_codes,
+                crate::execution::observability::REASON_CODE_BLOCKED_ON_PLAN_REVISION,
+            );
         }
         if status
             .reason_codes
@@ -1241,22 +987,24 @@ fn late_stage_repair_review_state_status(
 
     let stale_review_state = execution_status.is_some_and(|status| {
         shared_public_late_stage_stale_unreviewed(status, gate_review, gate_finish)
-            || status.review_state_status == "stale_unreviewed"
+            || status.review_state_status
+                == crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
     }) || (execution_status.is_none()
         && shared_late_stage_stale_unreviewed(gate_review, gate_finish));
     if stale_review_state {
-        return Some("stale_unreviewed");
+        return Some(crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED);
     }
 
     execution_status.and_then(|status| {
         if current_branch_closure_structural_review_state_reason(status).is_some() {
-            return Some("missing_current_closure");
+            return Some(
+                crate::execution::review_route_tokens::REVIEW_STATE_MISSING_CURRENT_CLOSURE,
+            );
         }
         (current_branch_closure_id.is_some()
-            && status
-                .reason_codes
-                .iter()
-                .any(|code| code == "derived_review_state_missing"))
+            && status.reason_codes.iter().any(|code| {
+                code == crate::execution::review_route_tokens::REASON_DERIVED_REVIEW_STATE_MISSING
+            }))
         .then_some("clean")
     })
 }
@@ -1303,7 +1051,7 @@ fn required_execution_command_for_routing(
     status: &PlanExecutionStatus,
     exact_plan_query: bool,
     message: &str,
-) -> Result<(ExecutionRoutingExecutionCommandContext, String), JsonFailure> {
+) -> Result<(ExecutionRoutingExecutionCommandContext, Vec<String>), JsonFailure> {
     let runtime = if let Some(runtime) = runtime_override {
         runtime.clone()
     } else {
@@ -1315,22 +1063,21 @@ fn required_execution_command_for_routing(
     } else {
         load_execution_context(&runtime, &plan_path_buf)?
     };
-    let decision = compute_next_action_decision(&context, status, plan_path)
-        .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
-    let command = decision
-        .recommended_public_command
-        .as_ref()
+    let command = public_command_from_status_context(&context, status, plan_path)
         .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
     let request = command
         .to_mutation_request()
         .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
     Ok((
         ExecutionRoutingExecutionCommandContext {
-            command_kind: request.command_name.to_owned(),
+            command_kind: request
+                .public_command_name()
+                .expect("typed public command mutation requests must expose a command token")
+                .to_owned(),
             task_number: request.task,
             step_id: request.step,
         },
-        command.to_display_command(),
+        command.to_argv(),
     ))
 }
 
@@ -1340,9 +1087,8 @@ mod routing_helper_tests {
     use crate::execution::current_truth::{
         task_review_dispatch_task, task_review_result_pending_task,
     };
-    use crate::execution::router::{
-        SharedNextActionRoutingInputs, shared_next_action_seed_from_decision,
-    };
+    use crate::execution::route_plan::next_action_choice::next_action_decision_for_tests;
+    use crate::execution::route_plan::route_decision_from_non_runtime_workflow_routing;
     use crate::execution::state::status_from_context;
     use crate::test_support::init_committed_test_repo;
     use std::fs;
@@ -1463,13 +1209,25 @@ mod routing_helper_tests {
         }
     }
 
+    fn finalized_routing(mut routing: ExecutionRoutingState) -> ExecutionRoutingState {
+        let route_decision = {
+            let blocking_records = routing
+                .execution_status
+                .as_ref()
+                .map_or(&[][..], |status| status.blocking_records.as_slice());
+            route_decision_from_non_runtime_workflow_routing(&routing, blocking_records, false)
+        };
+        routing.route_decision = Some(route_decision);
+        routing
+    }
+
     #[test]
     fn task_review_result_pending_task_demotes_verification_reason_codes_to_diagnostics() {
         let status = unresolved_status();
         for reason_code in [
-            "prior_task_verification_missing",
-            "prior_task_verification_missing_legacy",
-            "task_verification_summary_malformed",
+            crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_VERIFICATION_MISSING,
+            crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_VERIFICATION_MISSING_LEGACY,
+            crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_VERIFICATION_SUMMARY_MALFORMED,
         ] {
             let mut mutated = status.clone();
             mutated.reason_codes = vec![reason_code.to_owned()];
@@ -1485,8 +1243,8 @@ mod routing_helper_tests {
     fn task_review_result_pending_task_excludes_invalid_review_reason_codes() {
         let status = unresolved_status();
         for reason_code in [
-            "task_review_not_independent",
-            "task_review_artifact_malformed",
+            crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_REVIEW_NOT_INDEPENDENT,
+            crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_REVIEW_ARTIFACT_MALFORMED,
         ] {
             let mut mutated = status.clone();
             mutated.reason_codes = vec![reason_code.to_owned()];
@@ -1501,7 +1259,7 @@ mod routing_helper_tests {
     #[test]
     fn task_review_dispatch_task_ignores_stale_dispatch_reason_code() {
         let mut status = unresolved_status();
-        status.reason_codes = vec![String::from("prior_task_review_dispatch_stale")];
+        status.reason_codes = vec![String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_REVIEW_DISPATCH_STALE)];
         assert_eq!(
             task_review_dispatch_task(&status),
             None,
@@ -1512,7 +1270,7 @@ mod routing_helper_tests {
     #[test]
     fn task_review_result_pending_task_excludes_stale_dispatch_reason_code() {
         let mut status = unresolved_status();
-        status.reason_codes = vec![String::from("prior_task_review_dispatch_stale")];
+        status.reason_codes = vec![String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_REVIEW_DISPATCH_STALE)];
         assert_eq!(
             task_review_result_pending_task(&status, Some("dispatch-task-1")),
             None,
@@ -1524,9 +1282,9 @@ mod routing_helper_tests {
     fn required_follow_up_from_routing_keeps_non_green_review_in_execution_reentry_lane() {
         let routing = routing_state_for_follow_up(
             phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
-            vec![String::from("prior_task_review_not_green")],
+            vec![String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_REVIEW_NOT_GREEN)],
         );
-        let routing = ExecutionRoutingState {
+        let routing = finalized_routing(ExecutionRoutingState {
             recommended_public_command: Some(PublicCommand::RepairReviewState {
                 plan: String::from("<approved-plan-path>"),
             }),
@@ -1534,34 +1292,75 @@ mod routing_helper_tests {
                 "featureforge plan execution repair-review-state --plan <approved-plan-path>",
             )),
             ..routing
-        };
+        });
         assert_eq!(
             required_follow_up_from_routing(&routing).as_deref(),
-            Some("repair_review_state")
+            Some(crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE)
+        );
+    }
+
+    #[test]
+    fn required_follow_up_from_routing_fails_closed_without_finalized_route_decision() {
+        let routing = ExecutionRoutingState {
+            recommended_public_command: Some(PublicCommand::RepairReviewState {
+                plan: String::from("<approved-plan-path>"),
+            }),
+            recommended_command: Some(String::from(
+                "featureforge plan execution repair-review-state --plan <approved-plan-path>",
+            )),
+            ..routing_state_for_follow_up(
+                phase::DETAIL_EXECUTION_REENTRY_REQUIRED,
+                vec![String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_REVIEW_NOT_GREEN)],
+            )
+        };
+
+        assert_eq!(
+            required_follow_up_from_routing(&routing),
+            None,
+            "runtime callers must not reconstruct RouteDecision authority from routing DTO fields"
         );
     }
 
     #[test]
     fn required_follow_up_from_routing_requires_verification_for_verification_blockers() {
-        let routing = routing_state_for_follow_up(
+        let routing = finalized_routing(routing_state_for_follow_up(
             phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
-            vec![String::from("prior_task_verification_missing")],
-        );
+            vec![String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_VERIFICATION_MISSING)],
+        ));
         assert_eq!(
             required_follow_up_from_routing(&routing).as_deref(),
-            Some("run_verification")
+            Some(crate::execution::review_route_tokens::FOLLOW_UP_RUN_VERIFICATION)
+        );
+    }
+
+    #[test]
+    fn required_follow_up_from_routing_ignores_derived_review_state_diagnostics() {
+        let mut status = unresolved_status();
+        status.current_branch_closure_id = None;
+        status.reason_codes = vec![String::from(
+            crate::execution::review_route_tokens::REASON_DERIVED_REVIEW_STATE_MISSING,
+        )];
+        let routing = finalized_routing(ExecutionRoutingState {
+            execution_status: Some(status),
+            ..routing_state_for_follow_up(phase::DETAIL_EXECUTION_IN_PROGRESS, Vec::new())
+        });
+
+        assert_eq!(
+            required_follow_up_from_routing(&routing).as_deref(),
+            None,
+            "derived review-state freshness is diagnostic-only and must not select repair-review-state"
         );
     }
 
     #[test]
     fn verification_blockers_align_task_review_pending_follow_up_with_public_next_action() {
-        let routing = routing_state_for_follow_up(
+        let routing = finalized_routing(routing_state_for_follow_up(
             phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
-            vec![String::from("prior_task_verification_missing_legacy")],
-        );
+            vec![String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_VERIFICATION_MISSING_LEGACY)],
+        ));
         assert_eq!(
             required_follow_up_from_routing(&routing).as_deref(),
-            Some("run_verification")
+            Some(crate::execution::review_route_tokens::FOLLOW_UP_RUN_VERIFICATION)
         );
         let decision = NextActionDecision {
             kind: NextActionKind::WaitForTaskReviewResult,
@@ -1572,30 +1371,8 @@ mod routing_helper_tests {
             step_number: None,
             blocking_task: Some(1),
             blocking_reason_codes: routing.blocking_reason_codes.clone(),
-            recommended_public_command: None,
         };
         assert_eq!(public_next_action_text(&decision), "run verification");
-    }
-
-    #[test]
-    fn external_wait_state_omits_external_review_wait_for_verification_blockers() {
-        assert_eq!(
-            external_wait_state_for_phase_detail(
-                phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
-                &[String::from("prior_task_verification_missing")],
-                false,
-            ),
-            None
-        );
-        assert_eq!(
-            external_wait_state_for_phase_detail(
-                phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
-                &[String::from("prior_task_review_not_green")],
-                false,
-            )
-            .as_deref(),
-            Some("waiting_for_external_review_result")
-        );
     }
 
     #[test]
@@ -1607,38 +1384,34 @@ mod routing_helper_tests {
         status.blocking_task = Some(1);
         status.blocking_step = None;
         status.reason_codes = vec![
-            String::from("prior_task_current_closure_missing"),
-            String::from("task_closure_baseline_repair_candidate"),
-            String::from("prior_task_verification_missing"),
+            String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_MISSING),
+            String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_TASK_CLOSURE_BASELINE_REPAIR_CANDIDATE),
+            String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_VERIFICATION_MISSING),
         ];
 
-        let routing = shared_next_action_seed_from_decision(
+        let decision = next_action_decision_for_tests(
             &context,
             &status,
-            SharedNextActionRoutingInputs {
-                plan_path: &plan_rel,
-                external_review_result_ready: true,
-                require_exact_execution_command: false,
-                task_review_dispatch_id: Some("dispatch-task-1"),
-                final_review_dispatch_id: None,
-                final_review_dispatch_lineage_present: false,
-                current_branch_closure_id: None,
-            },
+            &plan_rel,
+            true,
+            Some("dispatch-task-1"),
+            None,
+            false,
         )
-        .expect("routing derivation should succeed")
-        .expect("diagnostic verification blockers should still produce a routing decision");
+        .expect("diagnostic verification blockers should still produce a next-action decision");
 
         assert_ne!(
-            routing.phase_detail,
+            decision.phase_detail,
             phase::DETAIL_TASK_REVIEW_RESULT_PENDING
         );
-        assert_ne!(routing.next_action, "run verification");
+        assert_ne!(public_next_action_text(&decision), "run verification");
     }
 
     #[test]
     fn late_stage_repair_review_state_required_overrides_missing_release_readiness_when_stale() {
         let mut status = unresolved_status();
-        status.review_state_status = String::from("stale_unreviewed");
+        status.review_state_status =
+            String::from(crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED);
 
         assert!(
             late_stage_repair_review_state_status(
@@ -1731,7 +1504,8 @@ mirror **Generated By:** featureforge:workflow-record-pivot\n",
         fs::remove_file(&artifact_path).expect("decoy pivot artifact should clean up");
 
         assert_eq!(
-            follow_up, "repair_review_state",
+            follow_up,
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
             "follow_up_override pivot clearing must rely on authoritative checkpoint headers, not body substring matches"
         );
     }
@@ -1745,7 +1519,7 @@ mirror **Generated By:** featureforge:workflow-record-pivot\n",
         status.recommended_command = None;
 
         let unrelated_dir = TempDir::new().expect("unrelated current_dir should exist");
-        let (_, recommended_command) = required_execution_command_for_routing(
+        let (execution_command_context, recommended_argv) = required_execution_command_for_routing(
             unrelated_dir.path(),
             Some(&runtime),
             &plan_rel,
@@ -1755,13 +1529,24 @@ mirror **Generated By:** featureforge:workflow-record-pivot\n",
         )
         .expect("runtime override should recover the exact execution command");
 
-        assert!(
-            recommended_command.starts_with("featureforge plan execution "),
-            "expected an execution command, got {recommended_command}"
+        assert_eq!(
+            execution_command_context.task_number,
+            Some(1),
+            "typed execution command context should target the first unresolved task"
         );
         assert!(
-            recommended_command.contains(&plan_rel),
-            "recovered command should stay bound to the injected runtime plan path"
+            recommended_argv.iter().map(String::as_str).take(3).eq([
+                "featureforge",
+                "plan",
+                "execution"
+            ]),
+            "expected typed public plan-execution argv, got {recommended_argv:?}"
+        );
+        assert!(
+            recommended_argv
+                .windows(2)
+                .any(|window| window[0] == "--plan" && window[1].as_str() == plan_rel),
+            "recovered typed argv should stay bound to the injected runtime plan path, got {recommended_argv:?}"
         );
     }
 }

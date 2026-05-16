@@ -255,7 +255,7 @@ Tie-break constraints:
 | plan path missing or unreadable | `JsonFailure.error_class=InvalidCommandInput` | command input failure | provide valid `--plan <path>` and rerun doctor |
 | runtime discovery/read failure (non-git, missing runtime context, state corruption) | `JsonFailure.error_class` from runtime failure contract | runtime state failure | fix runtime/repo context, then rerun doctor |
 | actionable command exists | `recommended_public_command_argv` present | `resolution.kind=actionable_public_command` | run the argv exactly |
-| command requires typed inputs first | `recommended_public_command_argv` absent and `required_inputs` non-empty | `resolution.kind=actionable_public_command` with `command_available=false` | supply required inputs, then rerun route owner |
+| command requires typed inputs first | `recommended_public_command_argv` absent and `required_inputs` non-empty | `resolution.kind=actionable_public_command` with `command_available=false` | rerun the same plan-bound workflow/operator query with `--input NAME=VALUE --json`, then execute the returned Rust-materialized public argv |
 | waiting for external review result | `external_wait_state` present and no actionable argv | `resolution.kind=waiting_external_input` | wait for external result, rerun with `--external-review-result-ready` when available |
 | runtime diagnostic stop | no actionable argv, no required inputs, canonical diagnostic reason codes present | `resolution.kind=runtime_diagnostic_required` | follow runtime diagnostic lane; do not invent new command families |
 | terminal/no-op state | no actionable argv, no required inputs, terminal classification | `resolution.kind=terminal` | no mutation command required; continue with normal finish workflow if applicable |

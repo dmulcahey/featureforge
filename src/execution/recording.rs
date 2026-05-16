@@ -7,15 +7,19 @@ use std::collections::BTreeSet;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::authority::{
-    WorktreeLeaseReleaseDecision, release_active_worktree_leases_with_locked_index,
+    WorktreeLeaseReleaseDecision, active_worktree_leases_would_release,
+    release_active_worktree_leases_with_locked_index,
+};
+use crate::execution::current_task_closure_cleanup::{
+    current_task_closure_postcondition_resolution,
+    worktree_lease_release_decision_for_current_task_closures_from_authority,
 };
 use crate::execution::current_truth::current_late_stage_branch_bindings as shared_current_late_stage_branch_bindings;
+use crate::execution::event_command::EventCommandOwner;
 use crate::execution::follow_up::RepairFollowUpRecord;
-use crate::execution::harness::WorktreeLeaseReleaseRecord;
 use crate::execution::query::normalize_persisted_follow_up_alias;
 use crate::execution::state::{
     ExecutionContext, ExecutionRuntime,
-    releasable_terminal_worktree_lease_fingerprints_for_task_closure,
     still_current_task_closure_records_from_authoritative_state,
     validated_current_branch_closure_identity,
 };
@@ -210,8 +214,10 @@ pub(crate) fn resolve_current_task_closure_postconditions_for_current_workspace_
         closure_record_id,
     )?;
     if resolved_closure_id.is_some() {
-        authoritative_state
-            .persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+        authoritative_state.persist_if_dirty_with_failpoint_and_command(
+            None,
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+        )?;
     }
     Ok(resolved_closure_id)
 }
@@ -219,151 +225,89 @@ pub(crate) fn resolve_current_task_closure_postconditions_for_current_workspace_
 pub(crate) fn release_worktree_leases_for_current_task_closures_and_persist(
     runtime: &ExecutionRuntime,
     context: &ExecutionContext,
+    released_by_command: &str,
 ) -> Result<Vec<(u32, String)>, JsonFailure> {
     release_active_worktree_leases_with_locked_index(
         runtime,
         |run_identity, active_fingerprints, active_bindings| {
-            let mut authoritative_state = load_authoritative_transition_state(context)?;
-            let Some(authoritative_state) = authoritative_state.as_mut() else {
-                return Ok(WorktreeLeaseReleaseDecision {
-                    released_by: Vec::new(),
-                    lease_fingerprints: BTreeSet::new(),
-                    release_records: Vec::new(),
-                });
-            };
-            let current_closures = still_current_task_closure_records_from_authoritative_state(
+            worktree_lease_release_decision_for_current_task_closures(
                 context,
-                authoritative_state,
-            )?;
-            let execution_run_id = run_identity.execution_run_id.as_str();
-            let mut released_by = Vec::new();
-            let mut release_records = Vec::new();
-            let mut releasable = BTreeSet::new();
-            for closure in current_closures.iter().filter(|closure| {
-                closure.review_result == "pass" && closure.verification_result == "pass"
-            }) {
-                let closure_releasable =
-                    releasable_terminal_worktree_lease_fingerprints_for_task_closure(
-                        context,
-                        Some(execution_run_id),
-                        active_fingerprints,
-                        active_bindings,
-                        closure.task,
-                    );
-                if !closure_releasable.is_empty() {
-                    for lease_fingerprint in closure_releasable {
-                        if releasable.insert(lease_fingerprint.clone()) {
-                            release_records.push(WorktreeLeaseReleaseRecord {
-                                execution_run_id: execution_run_id.to_owned(),
-                                lease_fingerprint,
-                                source_task: closure.task,
-                                source_task_closure_record_id: closure.closure_record_id.clone(),
-                                released_by: String::from("repair_review_state"),
-                            });
-                        }
-                    }
-                    released_by.push((closure.task, closure.closure_record_id.clone()));
-                }
-            }
-            Ok(WorktreeLeaseReleaseDecision {
-                released_by,
-                lease_fingerprints: releasable,
-                release_records,
-            })
+                run_identity.execution_run_id.as_str(),
+                active_fingerprints,
+                active_bindings,
+                released_by_command,
+                None,
+            )
         },
     )
 }
 
-pub(crate) fn current_task_closure_postconditions_would_mutate(
-    authoritative_state: &AuthoritativeTransitionState,
+pub(crate) fn release_worktree_leases_for_current_task_closure_and_persist(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
     task_number: u32,
-    closure_record_id: &str,
-    reviewed_state_id: &str,
-) -> bool {
-    let state_resolution = current_task_closure_postcondition_resolution(
-        authoritative_state,
-        task_number,
-        closure_record_id,
-        reviewed_state_id,
-    );
-    state_resolution.would_mutate()
+    released_by_command: &str,
+) -> Result<Vec<(u32, String)>, JsonFailure> {
+    release_active_worktree_leases_with_locked_index(
+        runtime,
+        |run_identity, active_fingerprints, active_bindings| {
+            worktree_lease_release_decision_for_current_task_closures(
+                context,
+                run_identity.execution_run_id.as_str(),
+                active_fingerprints,
+                active_bindings,
+                released_by_command,
+                Some(task_number),
+            )
+        },
+    )
 }
 
-struct CurrentTaskClosurePostconditionResolution {
-    clear_cycle_break: bool,
-    clear_repair_follow_up: bool,
-}
-
-impl CurrentTaskClosurePostconditionResolution {
-    fn would_mutate(&self) -> bool {
-        self.clear_cycle_break || self.clear_repair_follow_up
-    }
-}
-
-fn current_task_closure_postcondition_resolution(
-    authoritative_state: &AuthoritativeTransitionState,
+pub(crate) fn current_task_closure_worktree_lease_cleanup_would_mutate(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
     task_number: u32,
-    closure_record_id: &str,
-    _reviewed_state_id: &str,
-) -> CurrentTaskClosurePostconditionResolution {
-    let Some(current_closure) = authoritative_state.current_task_closure_result(task_number) else {
-        return CurrentTaskClosurePostconditionResolution {
-            clear_cycle_break: false,
-            clear_repair_follow_up: false,
-        };
+) -> Result<bool, JsonFailure> {
+    active_worktree_leases_would_release(
+        runtime,
+        |run_identity, active_fingerprints, active_bindings| {
+            worktree_lease_release_decision_for_current_task_closures(
+                context,
+                run_identity.execution_run_id.as_str(),
+                active_fingerprints,
+                active_bindings,
+                "close_current_task",
+                Some(task_number),
+            )
+        },
+    )
+}
+
+fn worktree_lease_release_decision_for_current_task_closures(
+    context: &ExecutionContext,
+    execution_run_id: &str,
+    active_fingerprints: &[String],
+    active_bindings: &[crate::execution::harness::WorktreeLeaseBindingSnapshot],
+    released_by_command: &str,
+    task_filter: Option<u32>,
+) -> Result<WorktreeLeaseReleaseDecision, JsonFailure> {
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(WorktreeLeaseReleaseDecision {
+            released_by: Vec::new(),
+            lease_fingerprints: BTreeSet::new(),
+            release_records: Vec::new(),
+        });
     };
-    let current_positive_closure_on_current_reviewed_state = current_closure.closure_record_id
-        == closure_record_id
-        && current_closure.review_result == "pass"
-        && current_closure.verification_result == "pass"
-        && current_closure
-            .closure_status
-            .as_deref()
-            .is_none_or(|status| status == "current");
-    if !current_positive_closure_on_current_reviewed_state
-        || authoritative_state
-            .task_closure_negative_result(task_number)
-            .is_some()
-    {
-        return CurrentTaskClosurePostconditionResolution {
-            clear_cycle_break: false,
-            clear_repair_follow_up: false,
-        };
-    }
-    let clear_cycle_break = authoritative_state.strategy_cycle_break_task() == Some(task_number);
-    let repair_follow_up_matches_current_closure = authoritative_state
-        .review_state_repair_follow_up_task()
-        .is_some_and(|task| task == task_number)
-        || authoritative_state
-            .review_state_repair_follow_up_closure_record_id()
-            .is_some_and(|record_id| record_id == closure_record_id);
-    let structured_follow_up_kind = authoritative_state
-        .review_state_repair_follow_up_record()
-        .map(|record| record.kind);
-    let legacy_follow_up = authoritative_state.review_state_repair_follow_up();
-    let cycle_break_follow_up_matches_task = clear_cycle_break
-        && legacy_follow_up
-            .is_some_and(|follow_up| matches!(follow_up, "cycle_break" | "cycle_break_repair"));
-    let repair_follow_up_kind_can_clear = structured_follow_up_kind.is_some_and(|kind| {
-        matches!(
-            kind.public_token(),
-            "execution_reentry" | "repair_review_state" | "close_current_task"
-        )
-    }) || legacy_follow_up.is_some_and(|follow_up| {
-        matches!(
-            follow_up,
-            "execution_reentry"
-                | "repair_review_state"
-                | "task_closure_baseline_repair"
-                | "cycle_break"
-                | "cycle_break_repair"
-        )
-    });
-    CurrentTaskClosurePostconditionResolution {
-        clear_cycle_break,
-        clear_repair_follow_up: repair_follow_up_kind_can_clear
-            && (repair_follow_up_matches_current_closure || cycle_break_follow_up_matches_task),
-    }
+    worktree_lease_release_decision_for_current_task_closures_from_authority(
+        context,
+        authoritative_state,
+        execution_run_id,
+        active_fingerprints,
+        active_bindings,
+        released_by_command,
+        task_filter,
+    )
 }
 
 pub(crate) fn record_current_task_closure(
@@ -420,9 +364,10 @@ pub(crate) fn record_negative_task_closure(
     authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "close_current_task")
 }
 
-pub(crate) fn record_current_branch_closure(
+pub(crate) fn record_current_branch_closure_for_command(
     authoritative_state: &mut AuthoritativeTransitionState,
     input: BranchClosureWrite<'_>,
+    command_owner: EventCommandOwner,
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_branch_closure(BranchClosureResultRecord {
         branch_closure_id: input.branch_closure_id,
@@ -452,12 +397,13 @@ pub(crate) fn record_current_branch_closure(
         input.reviewed_state_id,
         input.contract_identity,
     )?;
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "record_branch_closure")
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, command_owner.as_str())
 }
 
-pub(crate) fn record_release_readiness(
+pub(crate) fn record_release_readiness_for_command(
     authoritative_state: &mut AuthoritativeTransitionState,
     input: ReleaseReadinessWrite<'_>,
+    command_owner: EventCommandOwner,
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_release_readiness_result(ReleaseReadinessResultRecord {
         branch_closure_id: input.branch_closure_id,
@@ -474,13 +420,13 @@ pub(crate) fn record_release_readiness(
         summary_hash: input.summary_hash,
         generated_by_identity: input.generated_by_identity,
     })?;
-    authoritative_state
-        .persist_if_dirty_with_failpoint_and_command(None, "record_release_readiness")
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, command_owner.as_str())
 }
 
-pub(crate) fn record_final_review(
+pub(crate) fn record_final_review_for_command(
     authoritative_state: &mut AuthoritativeTransitionState,
     input: FinalReviewWrite<'_>,
+    command_owner: EventCommandOwner,
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_final_review_result(FinalReviewMilestoneRecord {
         branch_closure_id: input.branch_closure_id,
@@ -502,12 +448,13 @@ pub(crate) fn record_final_review(
         summary: input.summary,
         summary_hash: input.summary_hash,
     })?;
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "record_final_review")
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, command_owner.as_str())
 }
 
-pub(crate) fn record_browser_qa(
+pub(crate) fn record_browser_qa_for_command(
     authoritative_state: &mut AuthoritativeTransitionState,
     input: BrowserQaWrite<'_>,
+    command_owner: EventCommandOwner,
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_browser_qa_result(BrowserQaResultRecord {
         branch_closure_id: input.branch_closure_id,
@@ -526,7 +473,7 @@ pub(crate) fn record_browser_qa(
         summary_hash: input.summary_hash,
         generated_by_identity: input.generated_by_identity,
     })?;
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "record_qa")
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, command_owner.as_str())
 }
 
 pub(crate) fn clear_current_branch_closure_for_structural_repair(
@@ -541,7 +488,10 @@ pub(crate) fn clear_current_branch_closure_for_structural_repair(
     if !authoritative_state.clear_current_branch_closure_for_structural_repair()? {
         return Ok(false);
     }
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(
+        None,
+        crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+    )?;
     Ok(true)
 }
 
@@ -554,7 +504,7 @@ pub(crate) fn restore_review_state_projection_overlays(
     let Some(authoritative_state) = authoritative_state.as_mut() else {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
-            "reconcile-review-state requires authoritative harness state.",
+            "repair-review-state requires authoritative harness state.",
         ));
     };
 
@@ -661,7 +611,10 @@ pub(crate) fn restore_review_state_projection_overlays(
         return Ok(actions_performed);
     }
 
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(
+        None,
+        crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+    )?;
     Ok(actions_performed)
 }
 
@@ -678,7 +631,10 @@ pub(crate) fn clear_task_review_dispatch_lineage_for_execution_reentry(
     if !authoritative_state.clear_task_review_dispatch_lineage(task_number)? {
         return Ok(false);
     }
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(
+        None,
+        crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+    )?;
     Ok(true)
 }
 
@@ -695,7 +651,10 @@ pub(crate) fn clear_task_review_dispatch_lineage_for_structural_repair(
     if !authoritative_state.clear_task_review_dispatch_lineage_for_structural_repair(task_number)? {
         return Ok(false);
     }
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(
+        None,
+        crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+    )?;
     Ok(true)
 }
 
@@ -729,7 +688,10 @@ pub(crate) fn clear_current_task_closure_results_for_execution_reentry(
     }
     authoritative_state
         .clear_current_task_closure_results_for_execution_reentry(cleared_tasks.iter().copied())?;
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(
+        None,
+        crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+    )?;
     Ok(cleared_tasks)
 }
 
@@ -763,7 +725,10 @@ pub(crate) fn clear_current_task_closure_results_for_structural_repair(
     }
     authoritative_state
         .clear_current_task_closure_results_for_structural_repair(cleared_tasks.iter().copied())?;
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(
+        None,
+        crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+    )?;
     Ok(cleared_tasks)
 }
 
@@ -796,7 +761,10 @@ pub(crate) fn clear_current_task_closure_results_for_structural_repair_scope_key
     authoritative_state.clear_current_task_closure_results_for_structural_repair_scope_keys(
         cleared_scope_keys.clone(),
     )?;
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(
+        None,
+        crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+    )?;
     Ok(cleared_scope_keys)
 }
 
@@ -816,7 +784,10 @@ pub(crate) fn clear_open_step_state(
         return Ok(false);
     }
     authoritative_state.clear_open_step_state()?;
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(
+        None,
+        crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+    )?;
     Ok(true)
 }
 
@@ -831,7 +802,10 @@ pub(crate) fn persist_review_state_repair_follow_up(
         return Ok(());
     };
     authoritative_state.set_review_state_repair_follow_up_record(follow_up)?;
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(
+        None,
+        crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+    )?;
     Ok(())
 }
 

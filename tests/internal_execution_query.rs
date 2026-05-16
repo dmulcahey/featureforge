@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use featureforge::execution::internal_args::RecordReviewDispatchArgs;
+use featureforge::execution::phase;
 use featureforge::execution::query::{
     ExecutionRoutingState, query_workflow_routing_state_for_runtime,
 };
@@ -234,11 +235,6 @@ fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, ope
         operator["next_action"],
         Value::from(routing.next_action.clone()),
         "routing next action should match workflow/operator",
-    );
-    assert_eq!(
-        operator.get("recommended_command").and_then(Value::as_str),
-        routing.recommended_command.as_deref(),
-        "routing recommended command should match workflow/operator",
     );
     assert_eq!(
         operator.get("blocking_scope").and_then(Value::as_str),
@@ -459,7 +455,8 @@ fn internal_only_compatibility_routing_snapshot_matches_workflow_operator_record
     );
 
     assert_eq!(
-        routing.phase_detail, "task_closure_recording_ready",
+        routing.phase_detail,
+        phase::DETAIL_TASK_CLOSURE_RECORDING_READY,
         "fixture should route to task_closure_recording_ready",
     );
     let routing_recording_context = routing
@@ -501,11 +498,14 @@ fn internal_only_compatibility_routing_external_review_ready_without_dispatch_li
         "workflow operator json for missing task-dispatch-lineage fixture",
     );
 
-    assert_eq!(routing.phase_detail, "task_closure_recording_ready");
+    assert_eq!(
+        routing.phase_detail,
+        phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+    );
     assert_eq!(routing.next_action, "close current task");
     assert!(
         routing.recommended_command.is_none(),
-        "external-review-ready routing without dispatch lineage should omit executable command text until required inputs are supplied",
+        "external-review-ready routing without dispatch lineage should omit display-only recommended_command text until required inputs are supplied",
     );
     assert_task_closure_required_inputs(&operator, 1);
     assert!(
@@ -514,13 +514,6 @@ fn internal_only_compatibility_routing_external_review_ready_without_dispatch_li
             .iter()
             .any(|code| code == "prior_task_current_closure_missing"),
         "task-closure-recording-ready routing should preserve the task-boundary closure-missing reason code",
-    );
-    assert!(
-        routing
-            .recommended_command
-            .as_deref()
-            .is_none_or(|command| !command.contains(concat!("record", "-review-dispatch"))),
-        "external-review-ready task-boundary routing should not require hidden dispatch helpers",
     );
     assert_routing_parity_with_operator_json(&routing, &operator);
 }

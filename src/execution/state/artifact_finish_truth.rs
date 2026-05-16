@@ -1,4 +1,51 @@
-use super::*;
+use super::{
+    AuthoritativeTransitionState, CurrentBrowserQaRecord, ErrorKind, ExecutionContext,
+    FailureClass, GateState, JsonFailure, PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION, Path, PathBuf,
+    authoritative_strategy_checkpoint_fingerprint_checked, fs, harness_authoritative_artifacts_dir,
+    normalize_summary_content, parse_artifact_document, public_typed_operator_route_remediation,
+    sha256_hex, shared_reviewer_source_is_valid,
+};
+use crate::execution::review_route_tokens::REASON_RELEASE_DOCS_STATE_MISSING;
+
+fn release_readiness_typed_route_remediation() -> String {
+    public_typed_operator_route_remediation(
+        "Refresh the release-readiness milestone for the current branch closure.",
+    )
+}
+
+fn release_blocker_typed_route_remediation() -> String {
+    public_typed_operator_route_remediation(
+        "Resolve the release blocker, then refresh release-readiness through the public route.",
+    )
+}
+
+fn final_review_typed_route_remediation() -> String {
+    public_typed_operator_route_remediation(
+        "Refresh the final-review milestone for the current branch closure.",
+    )
+}
+
+fn final_review_release_binding_typed_route_remediation() -> String {
+    public_typed_operator_route_remediation(
+        "Refresh release-readiness and final-review milestone bindings in order.",
+    )
+}
+
+fn qa_typed_route_remediation() -> String {
+    public_typed_operator_route_remediation(
+        "Refresh the QA milestone for the current branch closure.",
+    )
+}
+
+fn qa_test_plan_typed_route_remediation() -> String {
+    public_typed_operator_route_remediation("Refresh QA from the latest test-plan handoff.")
+}
+
+fn qa_review_binding_typed_route_remediation() -> String {
+    public_typed_operator_route_remediation(
+        "Refresh final-review and QA milestone bindings in order.",
+    )
+}
 
 struct ArtifactGateValidationFailure {
     failure_class: FailureClass,
@@ -176,9 +223,9 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
     else {
         gate.fail(
             FailureClass::ReleaseArtifactNotFresh,
-            "release_docs_state_missing",
+            REASON_RELEASE_DOCS_STATE_MISSING,
             "Finish readiness requires a current release-readiness milestone for the current branch closure.",
-            "Run document-release and return with a fresh release-readiness result.",
+            release_readiness_typed_route_remediation(),
         );
         return false;
     };
@@ -187,9 +234,9 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
     else {
         gate.fail(
             FailureClass::ReleaseArtifactNotFresh,
-            "release_docs_state_missing",
+            REASON_RELEASE_DOCS_STATE_MISSING,
             "Finish readiness requires a current release-readiness milestone for the current branch closure.",
-            "Run document-release and return with a fresh release-readiness result.",
+            release_readiness_typed_route_remediation(),
         );
         return false;
     };
@@ -214,7 +261,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
     if record.branch_closure_id != current_branch_closure_id {
         gate.fail(
             FailureClass::ReleaseArtifactNotFresh,
-            "release_docs_state_missing",
+            REASON_RELEASE_DOCS_STATE_MISSING,
             "The current release-readiness milestone is not bound to the still-current branch closure.",
             PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
         );
@@ -227,7 +274,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::ReleaseArtifactNotFresh,
             "release_artifact_plan_mismatch",
             "The current release-readiness milestone does not match the current approved plan revision.",
-            "Run document-release for the current approved plan revision.",
+            release_readiness_typed_route_remediation(),
         );
         return false;
     }
@@ -236,7 +283,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::ReleaseArtifactNotFresh,
             "release_artifact_branch_mismatch",
             "The current release-readiness milestone does not match the current branch.",
-            "Run document-release for the current approved plan revision.",
+            release_readiness_typed_route_remediation(),
         );
         return false;
     }
@@ -245,7 +292,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::ReleaseArtifactNotFresh,
             "release_artifact_base_branch_unresolved",
             "The current release-readiness milestone is missing its base branch binding.",
-            "Run document-release for the current approved plan revision.",
+            release_readiness_typed_route_remediation(),
         );
         return false;
     }
@@ -254,7 +301,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::ReleaseArtifactNotFresh,
             "release_artifact_base_branch_mismatch",
             "The current release-readiness milestone does not match the expected base branch.",
-            "Run document-release for the current approved plan revision.",
+            release_readiness_typed_route_remediation(),
         );
         return false;
     }
@@ -263,7 +310,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::ReleaseArtifactNotFresh,
             "release_artifact_repo_mismatch",
             "The current release-readiness milestone does not match the current repo.",
-            "Run document-release for the current approved plan revision.",
+            release_readiness_typed_route_remediation(),
         );
         return false;
     }
@@ -290,7 +337,7 @@ pub(super) fn require_current_release_readiness_ready_for_finish(
             FailureClass::ReleaseArtifactNotFresh,
             "release_result_not_pass",
             "The current release-readiness milestone is not ready.",
-            "Resolve the release blocker and rerun document-release.",
+            release_blocker_typed_route_remediation(),
         );
         return false;
     }
@@ -314,7 +361,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_release_binding_missing",
             "The current final-review milestone is missing its release-readiness dependency binding.",
-            "Run document-release, then rerun requesting-code-review for the current branch closure.",
+            final_review_release_binding_typed_route_remediation(),
         );
         return false;
     };
@@ -327,7 +374,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_missing",
             "Finish readiness requires a current final-review milestone for the current branch closure.",
-            "Run requesting-code-review and return with a fresh final-review result.",
+            final_review_typed_route_remediation(),
         );
         return false;
     };
@@ -338,7 +385,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_missing",
             "Finish readiness requires a current final-review milestone for the current branch closure.",
-            "Run requesting-code-review and return with a fresh final-review result.",
+            final_review_typed_route_remediation(),
         );
         return false;
     };
@@ -365,7 +412,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_missing",
             "The current final-review milestone is not bound to the still-current branch closure.",
-            "Run requesting-code-review and return with a fresh final-review result.",
+            final_review_typed_route_remediation(),
         );
         return false;
     }
@@ -376,7 +423,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_release_binding_mismatch",
             "The current final-review milestone is not bound to the current release-readiness milestone identity.",
-            "Run requesting-code-review and return with a fresh final-review result.",
+            final_review_typed_route_remediation(),
         );
         return false;
     }
@@ -387,7 +434,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_plan_mismatch",
             "The current final-review milestone does not match the current approved plan revision.",
-            "Run requesting-code-review and return with a fresh final-review result.",
+            final_review_typed_route_remediation(),
         );
         return false;
     }
@@ -396,7 +443,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_branch_mismatch",
             "The current final-review milestone does not match the current branch.",
-            "Run requesting-code-review and return with a fresh final-review result.",
+            final_review_typed_route_remediation(),
         );
         return false;
     }
@@ -405,7 +452,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_base_branch_unresolved",
             "The current final-review milestone is missing its base branch binding.",
-            "Run requesting-code-review and return with a fresh final-review result.",
+            final_review_typed_route_remediation(),
         );
         return false;
     }
@@ -414,7 +461,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_base_branch_mismatch",
             "The current final-review milestone does not match the expected base branch.",
-            "Run requesting-code-review and return with a fresh final-review result.",
+            final_review_typed_route_remediation(),
         );
         return false;
     }
@@ -423,7 +470,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_repo_mismatch",
             "The current final-review milestone does not match the current repo.",
-            "Run requesting-code-review and return with a fresh final-review result.",
+            final_review_typed_route_remediation(),
         );
         return false;
     }
@@ -432,7 +479,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_reviewed_state_mismatch",
             "The current final-review milestone does not match the current reviewed branch state.",
-            "Run requesting-code-review and return with a fresh final-review result.",
+            final_review_typed_route_remediation(),
         );
         return false;
     }
@@ -473,7 +520,7 @@ pub(super) fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_result_not_pass",
             "The current final-review milestone is not pass.",
-            "Address the final-review findings and rerun requesting-code-review.",
+            final_review_typed_route_remediation(),
         );
         return false;
     }
@@ -568,7 +615,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::MalformedExecutionState,
             "qa_artifact_malformed",
             "The current QA milestone is missing its final-review dependency binding.",
-            "Run requesting-code-review, then rerun qa-only for the current branch closure.",
+            qa_review_binding_typed_route_remediation(),
         );
         return false;
     };
@@ -581,7 +628,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_missing",
             "Finish readiness requires a current QA milestone for the current branch closure.",
-            "Run qa-only and return with a fresh QA result.",
+            qa_typed_route_remediation(),
         );
         return false;
     };
@@ -590,7 +637,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_missing",
             "Finish readiness requires a current QA milestone for the current branch closure.",
-            "Run qa-only and return with a fresh QA result.",
+            qa_typed_route_remediation(),
         );
         return false;
     };
@@ -612,15 +659,13 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
         );
         return false;
     }
-    if !require_authoritative_test_plan_binding_for_current_qa(context, &record, gate) {
-        return false;
-    }
+    warn_if_current_qa_lacks_test_plan_binding(&record, gate);
     if record.branch_closure_id != current_branch_closure_id {
         gate.fail(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_missing",
             "The current QA milestone is not bound to the still-current branch closure.",
-            "Run qa-only and return with a fresh QA result.",
+            qa_typed_route_remediation(),
         );
         return false;
     }
@@ -629,7 +674,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_review_binding_mismatch",
             "The current QA milestone is not bound to the current final-review milestone identity.",
-            "Run qa-only and return with a fresh QA result.",
+            qa_typed_route_remediation(),
         );
         return false;
     }
@@ -640,7 +685,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_plan_mismatch",
             "The current QA milestone does not match the current approved plan revision.",
-            "Run qa-only using the latest test-plan handoff.",
+            qa_test_plan_typed_route_remediation(),
         );
         return false;
     }
@@ -649,7 +694,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_branch_mismatch",
             "The current QA milestone does not match the current branch.",
-            "Run qa-only using the latest test-plan handoff.",
+            qa_test_plan_typed_route_remediation(),
         );
         return false;
     }
@@ -658,7 +703,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_base_branch_unresolved",
             "The current QA milestone is missing its base branch binding.",
-            "Run qa-only using the latest test-plan handoff.",
+            qa_test_plan_typed_route_remediation(),
         );
         return false;
     }
@@ -667,7 +712,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_base_branch_mismatch",
             "The current QA milestone does not match the expected base branch.",
-            "Run qa-only using the latest test-plan handoff.",
+            qa_test_plan_typed_route_remediation(),
         );
         return false;
     }
@@ -676,7 +721,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_repo_mismatch",
             "The current QA milestone does not match the current repo.",
-            "Run qa-only using the latest test-plan handoff.",
+            qa_test_plan_typed_route_remediation(),
         );
         return false;
     }
@@ -685,7 +730,7 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_head_mismatch",
             "The current QA milestone does not match the current reviewed branch state.",
-            "Run qa-only using the latest test-plan handoff.",
+            qa_test_plan_typed_route_remediation(),
         );
         return false;
     }
@@ -703,34 +748,24 @@ pub(super) fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_result_not_pass",
             "The current QA milestone is not pass.",
-            "Address the QA findings and rerun qa-only.",
+            qa_typed_route_remediation(),
         );
         return false;
     }
     true
 }
 
-fn require_authoritative_test_plan_binding_for_current_qa(
-    _context: &ExecutionContext,
+fn warn_if_current_qa_lacks_test_plan_binding(
     record: &CurrentBrowserQaRecord,
     gate: &mut GateState,
-) -> bool {
-    let Some(_test_plan_fingerprint) =
-        record
-            .source_test_plan_fingerprint
-            .as_deref()
-            .and_then(|value| {
-                let value = value.trim();
-                (!value.is_empty()).then_some(value)
-            })
-    else {
-        gate.fail(
-            FailureClass::QaArtifactNotFresh,
-            "qa_source_test_plan_mismatch",
-            "The current QA milestone is missing its authoritative test-plan binding.",
-            PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION,
-        );
-        return false;
-    };
-    true
+) {
+    if record
+        .source_test_plan_fingerprint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        gate.warn("qa_source_test_plan_projection_missing_diagnostic_only");
+    }
 }

@@ -230,7 +230,7 @@ fn authoritative_harness_state_path(repo: &Path, state: &Path) -> PathBuf {
     harness_state_path(state, &runtime.repo_slug, &runtime.branch_name)
 }
 
-fn authoritative_harness_state(repo: &Path, state: &Path) -> Value {
+fn synthetic_authoritative_harness_state(repo: &Path, state: &Path) -> Value {
     let state_path = authoritative_harness_state_path(repo, state);
     featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(&state_path)
         .unwrap_or_else(|error| {
@@ -248,9 +248,13 @@ fn authoritative_harness_state(repo: &Path, state: &Path) -> Value {
         })
 }
 
-fn update_authoritative_harness_state(repo: &Path, state: &Path, updates: &[(&str, Value)]) {
+fn synthetic_update_authoritative_harness_state(
+    repo: &Path,
+    state: &Path,
+    updates: &[(&str, Value)],
+) {
     let state_path = authoritative_harness_state_path(repo, state);
-    let mut payload = authoritative_harness_state(repo, state);
+    let mut payload = synthetic_authoritative_harness_state(repo, state);
     let object = payload
         .as_object_mut()
         .expect("authoritative harness state should remain a json object");
@@ -301,10 +305,6 @@ fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, ope
     assert_eq!(
         operator["next_action"],
         Value::from(routing.next_action.clone())
-    );
-    assert_eq!(
-        operator.get("recommended_command").and_then(Value::as_str),
-        routing.recommended_command.as_deref()
     );
     assert_eq!(
         operator.get("blocking_scope").and_then(Value::as_str),
@@ -407,6 +407,31 @@ fn runtime_golden_scenario(label: &str) -> Value {
         .clone()
 }
 
+fn runtime_golden_surface_payload(scenario: &Value, surface: &str) -> Value {
+    if let Some(json) = scenario
+        .get(surface)
+        .and_then(|surface| surface.get("json"))
+    {
+        return json.clone();
+    }
+    let mut payload = scenario["route_semantics"]
+        .as_object()
+        .unwrap_or_else(|| {
+            panic!("runtime route golden semantic scenario should expose route_semantics")
+        })
+        .clone();
+    if let Some(surface_specific) = scenario
+        .get("surface_specific")
+        .and_then(|specific| specific.get(surface))
+        .and_then(Value::as_object)
+    {
+        for (key, value) in surface_specific {
+            payload.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(payload)
+}
+
 #[test]
 fn runtime_route_golden_status_and_operator_share_blocking_projection_by_route_family() {
     for (label, expected_phase_detail) in [
@@ -426,13 +451,13 @@ fn runtime_route_golden_status_and_operator_share_blocking_projection_by_route_f
         ("blocked_runtime_bug_diagnostic", "blocked_runtime_bug"),
     ] {
         let scenario = runtime_golden_scenario(label);
-        let status = &scenario["plan_execution_status"]["json"];
-        let operator = &scenario["workflow_operator"]["json"];
+        let status = runtime_golden_surface_payload(&scenario, "plan_execution_status");
+        let operator = runtime_golden_surface_payload(&scenario, "workflow_operator");
         assert_eq!(
             status["phase_detail"], expected_phase_detail,
             "{label} should preserve the expected route family in the golden fixture"
         );
-        assert_status_operator_blocking_projection(label, status, operator);
+        assert_status_operator_blocking_projection(label, &status, &operator);
     }
 }
 
@@ -579,7 +604,7 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
 
 fn setup_fs08_stale_blocker_fixture(repo: &Path, state: &Path) {
     setup_task_boundary_blocked_case(repo, state);
-    update_authoritative_harness_state(
+    synthetic_update_authoritative_harness_state(
         repo,
         state,
         &[
@@ -847,7 +872,8 @@ fn execution_module_exports_query_boundary() {
 }
 
 #[test]
-fn workflow_operator_uses_execution_query_boundary_instead_of_raw_execution_internals() {
+fn internal_semantic_workflow_operator_uses_execution_query_boundary_instead_of_raw_execution_internals()
+ {
     let (repo_dir, state_dir) = init_repo("contracts-boundary-operator-query-parity");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -896,10 +922,6 @@ fn missing_state_projection_keeps_status_and_operator_event_authoritative() {
         "workflow operator should route from events when state projection is missing",
     );
 
-    assert_eq!(
-        operator["recommended_command"], status["recommended_command"],
-        "status and operator should preserve shared route truth when only events.jsonl remains authoritative"
-    );
     assert_eq!(
         operator["phase_detail"], status["phase_detail"],
         "phase routing should remain event-authoritative when state.json is absent"
@@ -1053,6 +1075,44 @@ fn workflow_status_legacy_summary_flag_failure_is_compiled_cli_contract() {
 }
 
 #[test]
+fn workflow_status_text_is_diagnostic_and_points_to_operator_authority() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-workflow-status-diagnostic-text");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state);
+
+    let output = run_featureforge_output(
+        repo,
+        state,
+        &["workflow", "status"],
+        "compiled-cli workflow status text diagnostic output",
+    );
+    assert!(
+        output.status.success(),
+        "workflow status text should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout)
+        .expect("workflow status text output should be valid utf-8");
+    assert!(
+        stdout.starts_with("diagnostic_only: true\n"),
+        "workflow status text must start by declaring diagnostic-only status, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "route_authority: featureforge workflow operator --plan {PLAN_REL} --json\n"
+        )),
+        "workflow status text must point to operator JSON as executable route authority, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("next_skill:"),
+        "workflow status may still expose diagnostic compatibility fields, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn mutation_commands_and_review_state_use_recording_boundary_for_transition_writes() {
     let mutate_source = fs::read_to_string(repo_root().join("src/execution/mutate.rs"))
         .expect("execution mutate source should be readable");
@@ -1093,9 +1153,9 @@ fn mutation_commands_and_review_state_use_recording_boundary_for_transition_writ
     assert!(
         paths_contain_leaf(
             &command_call_paths,
-            "project_runtime_routing_state_with_reduced_state"
+            "project_final_runtime_routing_projection"
         ),
-        "execution commands should consume the execution-owned routing projection boundary",
+        "execution commands should consume the execution-owned final routing projection boundary",
     );
     assert!(
         !paths_contain_dependency(&command_dependency_paths, "crate::workflow::operator"),
@@ -1271,6 +1331,12 @@ fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
     let review_gate_source =
         fs::read_to_string(repo_root().join("src/execution/state/review_gate.rs"))
             .expect("execution review gate source should be readable");
+    let runtime_methods_source =
+        fs::read_to_string(repo_root().join("src/execution/state/runtime_methods.rs"))
+            .expect("execution runtime methods source should be readable");
+    let advance_late_stage_source =
+        fs::read_to_string(repo_root().join("src/execution/commands/advance_late_stage.rs"))
+            .expect("advance-late-stage command source should be readable");
     let dispatch_start = closure_dispatch_mutation_source
         .find("fn record_review_dispatch_strategy_checkpoint(")
         .expect(
@@ -1280,15 +1346,24 @@ fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
         .find("fn record_review_dispatch_strategy_checkpoint_without_claim(")
         .map(|offset| dispatch_start + offset)
         .expect("closure_dispatch_mutation/recording.rs should keep no-claim dispatch mutation after authoritative wrapper");
-    let checkpoint_start = review_gate_source
-        .find("fn persist_finish_review_gate_pass_checkpoint(")
-        .expect("review_gate.rs should keep persist_finish_review_gate_pass_checkpoint");
-    let checkpoint_end = review_gate_source[checkpoint_start..]
-        .find("fn gate_review_from_context_internal(")
-        .map(|offset| checkpoint_start + offset)
-        .expect("review_gate.rs should keep gate_review_from_context_internal");
+    let review_gate_start = runtime_methods_source
+        .find("pub fn review_gate(")
+        .expect("runtime_methods.rs should expose the public review gate mutation path");
+    let review_gate_end = runtime_methods_source[review_gate_start..]
+        .find("pub fn record_review_dispatch_authority(")
+        .map(|offset| review_gate_start + offset)
+        .expect("runtime_methods.rs should keep record-review-dispatch after review_gate");
+    let finish_review_checkpoint_start = advance_late_stage_source
+        .find("if advance_late_stage_operator_routes_finish_review(&operator)")
+        .expect("advance_late_stage.rs should route finish-review checkpointing explicitly");
+    let finish_review_checkpoint_end = advance_late_stage_source[finish_review_checkpoint_start..]
+        .find("if advance_late_stage_operator_routes_branch_closure(&operator)")
+        .map(|offset| finish_review_checkpoint_start + offset)
+        .expect("advance_late_stage.rs should keep branch-closure routing after finish-review checkpointing");
     let dispatch_source = &closure_dispatch_mutation_source[dispatch_start..dispatch_end];
-    let checkpoint_source = &review_gate_source[checkpoint_start..checkpoint_end];
+    let review_gate_mutation_source = &runtime_methods_source[review_gate_start..review_gate_end];
+    let finish_review_checkpoint_source =
+        &advance_late_stage_source[finish_review_checkpoint_start..finish_review_checkpoint_end];
 
     assert!(
         dispatch_source.contains("load_authoritative_transition_state("),
@@ -1301,19 +1376,41 @@ fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
         concat!("record", "-review-dispatch"),
     );
     assert!(
-        checkpoint_source.contains("load_authoritative_transition_state("),
+        review_gate_mutation_source.contains("load_authoritative_transition_state("),
         "{} checkpoint mutation should validate authoritative active-contract truth through the strict transition-state loader",
         concat!("gate", "-review"),
     );
     assert!(
-        !checkpoint_source.contains("load_authoritative_transition_state_relaxed("),
+        !review_gate_mutation_source.contains("load_authoritative_transition_state_relaxed("),
         "{} checkpoint mutation must not bypass active-contract validation with the relaxed transition-state loader",
         concat!("gate", "-review"),
+    );
+    assert!(
+        finish_review_checkpoint_source.contains("load_authoritative_transition_state("),
+        "{} finish-review checkpointing should validate authoritative active-contract truth through the strict transition-state loader",
+        concat!("advance", "-late-stage"),
+    );
+    assert!(
+        !finish_review_checkpoint_source.contains("load_authoritative_transition_state_relaxed("),
+        "{} finish-review checkpointing must not bypass active-contract validation with the relaxed transition-state loader",
+        concat!("advance", "-late-stage"),
+    );
+    assert!(
+        review_gate_mutation_source.contains(
+            "persist_finish_review_gate_pass_checkpoint_for_command_with_authoritative_state"
+        ) && finish_review_checkpoint_source.contains(
+            "persist_finish_review_gate_pass_checkpoint_for_command_with_authoritative_state"
+        ),
+        "public finish-review checkpoint mutations should persist against the same loaded authoritative transition state",
+    );
+    assert!(
+        !review_gate_source.contains("fn persist_finish_review_gate_pass_checkpoint_for_command("),
+        "review_gate.rs should not keep a compatibility checkpoint wrapper that reloads authoritative state",
     );
 }
 
 #[test]
-fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
+fn internal_semantic_gate_follow_up_contract_uses_exact_shared_fs04_action() {
     let (repo_dir, state_dir) = init_repo("contracts-boundary-fs04-shared-action");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1340,7 +1437,7 @@ fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
     );
     assert!(
         routing.recommended_command.is_none(),
-        "FS-04 shared-action contract should omit executable command text until review/verification inputs are supplied"
+        "FS-04 shared-action contract should omit display-only recommended_command text until review/verification inputs are supplied"
     );
     assert_task_closure_required_inputs(&operator, 1);
     assert_routing_parity_with_operator_json(&routing, &operator);
@@ -1356,21 +1453,40 @@ fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
         .expect("query.rs should keep normalize_public_follow_up_alias after follow-up helper");
     let query_follow_up_source = &query_source[query_follow_up_start..query_follow_up_end];
     assert!(
-        query_follow_up_source.contains("required_follow_up_from_route_decision")
-            && query_follow_up_source.contains("route_decision_from_routing"),
-        "query follow-up projection must delegate to the shared RouteDecision authority"
+        query_follow_up_source.contains("required_follow_up_from_route_decision"),
+        "query follow-up projection must consume the finalized shared RouteDecision authority"
+    );
+    assert!(
+        !query_follow_up_source.contains("route_decision_from_"),
+        "query follow-up projection must not reconstruct RouteDecision authority from routing DTO fields"
+    );
+
+    let review_state_source = fs::read_to_string(repo_root().join("src/execution/review_state.rs"))
+        .expect("execution review-state source should be readable");
+    assert!(
+        !review_state_source.contains("route_decision_from_non_runtime_workflow_routing")
+            && !review_state_source.contains("route_decision_from_routing"),
+        "review-state runtime callers must fail closed instead of reconstructing RouteDecision authority from routing DTO fields"
     );
 
     let router_source = fs::read_to_string(repo_root().join("src/execution/router.rs"))
         .expect("execution router source should be readable");
-    let follow_up_start = router_source
+    assert!(
+        router_source.contains("route_decision_from_non_runtime_workflow_routing"),
+        "the only DTO-to-RouteDecision helper should be explicitly scoped to non-runtime workflow routing"
+    );
+
+    let route_follow_up_source =
+        fs::read_to_string(repo_root().join("src/execution/route_plan/follow_up.rs"))
+            .expect("route-plan follow-up source should be readable");
+    let follow_up_start = route_follow_up_source
         .find("fn derive_required_follow_up_from_optional_status")
-        .expect("router.rs should keep shared derive_required_follow_up_from_optional_status");
-    let follow_up_end = router_source[follow_up_start..]
+        .expect("route_plan/follow_up.rs should keep shared derive_required_follow_up_from_optional_status");
+    let follow_up_end = route_follow_up_source[follow_up_start..]
         .find("fn route_requires_review_state_repair(")
         .map(|offset| follow_up_start + offset)
-        .expect("router.rs should keep route_requires_review_state_repair");
-    let follow_up_source = &router_source[follow_up_start..follow_up_end];
+        .expect("route_plan/follow_up.rs should keep route_requires_review_state_repair");
+    let follow_up_source = &route_follow_up_source[follow_up_start..follow_up_end];
     let repair_index = follow_up_source
         .find("route_requires_review_state_repair(")
         .expect("shared required-follow-up derivation should consult repair routing");
@@ -1384,7 +1500,7 @@ fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
     assert!(
         follow_up_source.contains("normalize_public_routing_follow_up_token")
             && follow_up_source.contains("follow_up_from_phase_detail"),
-        "router required-follow-up derivation must delegate alias and phase-detail truth to execution::follow_up"
+        "route-plan required-follow-up derivation must delegate alias and phase-detail truth to execution::follow_up"
     );
 
     let follow_up_helper_source =
@@ -1404,90 +1520,19 @@ fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
     let runtime_methods_source =
         fs::read_to_string(repo_root().join("src/execution/state/runtime_methods.rs"))
             .expect("execution runtime methods source should be readable");
-    let explicit_start = runtime_methods_source
-        .find("fn specific_gate_reason_is_explicit_direct_follow_up(")
-        .expect("runtime_methods.rs should keep specific_gate_reason_is_explicit_direct_follow_up");
-    let explicit_end = runtime_methods_source[explicit_start..]
-        .find("struct SpecificGateRecommendation")
-        .map(|offset| explicit_start + offset)
-        .expect("runtime_methods.rs should render direct gate surfaces through SpecificGateRecommendation");
-    let explicit_source = &runtime_methods_source[explicit_start..explicit_end];
-    assert!(
-        !explicit_source.contains("reason_code_indicates_stale_unreviewed"),
-        "gate follow-up compatibility fallback must not re-derive branch-closure routing from stale_unreviewed reason-code heuristics",
-    );
-    assert!(
-        !explicit_source.contains("current_branch_closure_id_missing"),
-        "gate follow-up compatibility fallback must not hardcode current_branch_closure_id_missing into a direct branch-closure recommendation",
-    );
-    let direct_recommendation_start = runtime_methods_source
-        .find("fn specific_gate_direct_recommendation(")
-        .expect("runtime_methods.rs should keep specific_gate_direct_recommendation");
-    let direct_recommendation_end = runtime_methods_source[direct_recommendation_start..]
-        .find("fn set_gate_public_command(")
-        .map(|offset| direct_recommendation_start + offset)
-        .expect("runtime_methods.rs should keep set_gate_public_command");
-    let direct_recommendation_source =
-        &runtime_methods_source[direct_recommendation_start..direct_recommendation_end];
-    assert!(
-        direct_recommendation_source.contains("SpecificGateRecommendation::from_route_decision")
-            && !direct_recommendation_source.contains("materialized_follow_up_kind_command"),
-        "gate follow-up output must preserve router-owned route surfaces instead of synthesizing fallback commands"
-    );
-}
-
-#[test]
-fn runtime_remediation_inventory_includes_boundary_contract_regressions() {
-    let inventory = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-remediation/README.md"),
-    )
-    .expect("runtime-remediation inventory should be readable");
-    assert!(
-        inventory.contains("FS-03"),
-        "runtime-remediation inventory should include FS-03 compiled-cli target-coherence coverage"
-    );
-    assert!(
-        inventory.contains("FS-04"),
-        "runtime-remediation inventory should include FS-04 repair-route parity coverage"
-    );
-    assert!(
-        inventory.contains("FS-05"),
-        "runtime-remediation inventory should include FS-05 mutation-before-validation coverage"
-    );
-    assert!(
-        inventory.contains("FS-06"),
-        "runtime-remediation inventory should include FS-06 compiled-cli parity coverage"
-    );
-    assert!(
-        inventory.contains("FS-08"),
-        "runtime-remediation inventory should include FS-08 stale-blocker visibility coverage"
-    );
-    assert!(
-        inventory.contains("FS-13"),
-        "runtime-remediation inventory should include FS-13 authoritative open-step runtime-state coverage"
-    );
-    assert!(
-        inventory.contains("FS-14"),
-        "runtime-remediation inventory should include FS-14 closure-baseline repair routing coverage"
-    );
-    assert!(
-        inventory.contains("FS-15"),
-        "runtime-remediation inventory should include FS-15 earliest-stale-boundary targeting coverage"
-    );
-    assert!(
-        inventory.contains("FS-16"),
-        "runtime-remediation inventory should include FS-16 begin-time closure-authority coverage"
-    );
-    assert!(
-        inventory.contains(
-            "tests/internal_contracts_execution_runtime_boundaries.rs::internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task"
-        ),
-        "runtime-remediation inventory should map FS-15 parity coverage to the compiled-cli boundary contract test"
-    );
-    assert!(
-        inventory.contains("tests/contracts_execution_runtime_boundaries.rs"),
-        "runtime-remediation inventory should map boundary coverage to tests/contracts_execution_runtime_boundaries.rs"
-    );
+    for forbidden in [
+        "reason_code_indicates_stale_unreviewed",
+        "current_branch_closure_id_missing",
+        "materialized_follow_up_kind_command",
+        "set_gate_public_command",
+        "repair_review_state_public_command",
+        "public_advance_late_stage_command_for_phase_detail",
+    ] {
+        assert!(
+            !runtime_methods_source.contains(forbidden),
+            "gate follow-up output must preserve router-owned route surfaces or requery instead of synthesizing commands through `{forbidden}`"
+        );
+    }
 }
 
 #[test]
@@ -1516,10 +1561,6 @@ fn runtime_remediation_fs04_repair_route_visibility_is_compiled_cli_contract() {
     );
     assert_task_closure_required_inputs(&operator, 1);
     assert_task_closure_required_inputs(&repair, 1);
-    assert_eq!(
-        operator["recommended_command"], repair["recommended_command"],
-        "FS-04 compiled-cli repair output should agree with operator on missing-input command absence"
-    );
     assert_eq!(
         repair["action"],
         Value::from("blocked"),
@@ -1573,10 +1614,6 @@ fn runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_fl
             "--json",
         ],
         "FS-04 operator after repair-review-state flag acceptance",
-    );
-    assert_eq!(
-        routed["recommended_command"], operator["recommended_command"],
-        "FS-04 repair and operator should agree on missing-input command absence"
     );
     assert_task_closure_required_inputs(&operator, 1);
     assert_task_closure_required_inputs(&routed, 1);
@@ -1657,7 +1694,7 @@ fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_
     let state = state_dir.path();
     setup_execution_in_progress(repo, state);
 
-    let authoritative_state = authoritative_harness_state(repo, state);
+    let authoritative_state = synthetic_authoritative_harness_state(repo, state);
     assert_eq!(
         authoritative_state["current_open_step_state"]["task"],
         Value::from(1_u64)
@@ -1703,7 +1740,11 @@ fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_
     assert_eq!(status_after_tamper["active_step"], Value::from(1_u64));
     assert_eq!(status_after_tamper["resume_task"], Value::Null);
 
-    update_authoritative_harness_state(repo, state, &[("current_open_step_state", Value::Null)]);
+    synthetic_update_authoritative_harness_state(
+        repo,
+        state,
+        &[("current_open_step_state", Value::Null)],
+    );
 
     let status_without_authority = run_featureforge_json(
         repo,
@@ -1740,9 +1781,6 @@ fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_
         "FS-13 compiled-cli operator should ignore legacy markdown note when authoritative open-step state is absent",
     );
 
-    let recommended = operator_without_authority["recommended_command"]
-        .as_str()
-        .unwrap_or("");
     let recommended_argv = operator_without_authority["recommended_public_command_argv"]
         .as_array()
         .expect(
@@ -1757,8 +1795,13 @@ fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_
     );
     assert_eq!(command_kind, "begin");
     assert!(
-        recommended.starts_with("featureforge plan execution begin "),
-        "FS-13 operator should recover through the typed public begin route instead of legacy markdown note state when authoritative open-step state is absent: {operator_without_authority:?}",
+        recommended_argv
+            .windows(4)
+            .any(|window| window[0] == "featureforge"
+                && window[1] == "plan"
+                && window[2] == "execution"
+                && window[3] == "begin"),
+        "FS-13 operator should recover through typed public begin argv instead of legacy markdown note state when authoritative open-step state is absent: {operator_without_authority:?}",
     );
     assert!(
         recommended_argv.iter().all(|value| value
@@ -1799,6 +1842,7 @@ fn status_and_operator_share_state_taxonomy_and_semantic_identity_fields() {
                 | "waiting_external_input"
                 | "terminal"
                 | "blocked_runtime_bug"
+                | phase::DETAIL_PLANNING_REENTRY_REQUIRED
                 | phase::DETAIL_RUNTIME_RECONCILE_REQUIRED
         ),
         "status state_kind should use the public taxonomy: {state_kind}"
@@ -1843,6 +1887,11 @@ fn status_and_operator_share_state_taxonomy_and_semantic_identity_fields() {
         .unwrap_or(Value::Null);
     for next_public_action in [&status_next_public, &operator_next_public] {
         if let Some(next_public_action) = next_public_action.as_object() {
+            assert_eq!(
+                next_public_action.get("display_only"),
+                Some(&Value::Bool(true)),
+                "next_public_action must explicitly mark command-shaped legacy fields display-only: {next_public_action:?}"
+            );
             let command = next_public_action
                 .get("command")
                 .and_then(Value::as_str)
@@ -1853,7 +1902,7 @@ fn status_and_operator_share_state_taxonomy_and_semantic_identity_fields() {
             );
             assert!(
                 !command.contains("<approved-plan-path>"),
-                "next_public_action command is route authority and must bind the concrete plan path: {command}"
+                "next_public_action display summary should still bind the concrete plan path: {command}"
             );
             if let Some(args_template) = next_public_action
                 .get("args_template")
@@ -1861,7 +1910,7 @@ fn status_and_operator_share_state_taxonomy_and_semantic_identity_fields() {
             {
                 assert!(
                     !args_template.contains("<approved-plan-path>"),
-                    "next_public_action args_template is route authority and must bind the concrete plan path: {args_template}"
+                    "next_public_action display template should still bind the concrete plan path: {args_template}"
                 );
             }
         }

@@ -61,6 +61,16 @@ fn active_engineering_approved_plans_reference_existing_source_specs() {
             continue;
         }
 
+        let source = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "active approved plan fixture should be readable: {}: {error}",
+                path.display()
+            )
+        });
+        if !raw_plan_source_declares_engineering_approved(&source) {
+            continue;
+        }
+
         let plan = parse_plan_file(&path).unwrap_or_else(|error| {
             panic!(
                 "active approved plan fixture should parse: {}: {error}",
@@ -87,6 +97,12 @@ fn active_engineering_approved_plans_reference_existing_source_specs() {
         missing.is_empty(),
         "every active Engineering Approved plan should point at an existing source spec, missing: {missing:?}"
     );
+}
+
+fn raw_plan_source_declares_engineering_approved(source: &str) -> bool {
+    source
+        .lines()
+        .any(|line| line.trim() == "**Workflow State:** Engineering Approved")
 }
 
 fn install_fixture(repo_root: &Path, fixture_name: &str, destination_rel: &str) {
@@ -1607,6 +1623,48 @@ fn analyze_plan_rejects_invalid_plan_headers_in_library_path() {
 }
 
 #[test]
+fn analyze_plan_rejects_engineering_approved_plan_reviewed_by_writing_plans() {
+    let repo_root = unique_temp_dir("contract-analyze-approved-writing-plans-reviewer");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "**Last Reviewed By:** plan-eng-review",
+        "**Last Reviewed By:** writing-plans",
+    );
+
+    let error = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect_err("Engineering Approved plan must be reviewed by plan-eng-review");
+
+    assert_eq!(error.failure_class(), "InstructionParseFailed");
+    assert!(error.message().contains("header is missing or malformed"));
+}
+
+#[test]
+fn parse_plan_accepts_draft_reviewed_by_writing_plans() {
+    let repo_root = unique_temp_dir("contract-parse-draft-writing-plans-reviewer");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "**Workflow State:** Engineering Approved",
+        "**Workflow State:** Draft",
+    );
+    replace_in_file(
+        &plan_path,
+        "**Last Reviewed By:** plan-eng-review",
+        "**Last Reviewed By:** writing-plans",
+    );
+
+    let plan = parse_plan_file(&plan_path).expect("Draft plan may be reviewed by writing-plans");
+
+    assert_eq!(plan.workflow_state, "Draft");
+    assert_eq!(plan.last_reviewed_by, "writing-plans");
+}
+
+#[test]
 fn analyze_plan_accepts_valid_last_directive_with_immediate_predecessor_edge() {
     let repo_root = unique_temp_dir("contract-analyze-valid-last");
     install_valid_artifacts(&repo_root);
@@ -1816,8 +1874,8 @@ fn plan_fidelity_review_validation_rejects_non_independent_reviewer_provenance()
             spec_path: SPEC_REL,
             spec_revision: 1,
             review_verdict: "pass",
-            reviewer_source: "same-context",
-            reviewer_id: "writer-context",
+            reviewer_source: "cross-model",
+            reviewer_id: "cross-model-reviewer",
             verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
@@ -3037,7 +3095,7 @@ fn analyze_plan_returns_fillable_plan_fidelity_artifact_template() {
     );
     assert_eq!(
         template["reviewer_source_options"],
-        json!(["fresh-context-subagent", "cross-model"])
+        json!(["fresh-context-subagent"])
     );
     assert_eq!(
         template["required_distinct_from_stages"],
@@ -3291,8 +3349,8 @@ fn analyze_plan_reports_stale_or_non_independent_plan_fidelity_review_artifacts(
             spec_path: SPEC_REL,
             spec_revision: 1,
             review_verdict: "pass",
-            reviewer_source: "same-context",
-            reviewer_id: "writer-context",
+            reviewer_source: "cross-model",
+            reviewer_id: "cross-model-reviewer",
             verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );

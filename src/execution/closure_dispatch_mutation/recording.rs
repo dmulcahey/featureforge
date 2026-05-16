@@ -8,9 +8,13 @@ use crate::execution::closure_dispatch::{
     review_dispatch_cycle_target, validate_expected_dispatch_id, validate_review_dispatch_request,
 };
 use crate::execution::context::{ExecutionContext, load_execution_context_for_exact_plan};
+use crate::execution::event_command::EventCommandOwner;
 use crate::execution::harness::RunIdentitySnapshot;
 use crate::execution::internal_args::{RecordReviewDispatchArgs, ReviewDispatchScopeArg};
 use crate::execution::read_model::usable_current_branch_closure_identity_from_authoritative_state;
+use crate::execution::status_support::{
+    PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT, WORKFLOW_OPERATOR_JSON_DISPLAY_COMMAND,
+};
 use crate::execution::topology::persist_preflight_acceptance;
 use crate::execution::transitions::{
     claim_step_write_authority, load_authoritative_transition_state,
@@ -18,27 +22,12 @@ use crate::execution::transitions::{
 
 use super::ReviewDispatchMutationAction;
 
-pub(crate) fn ensure_current_review_dispatch_id(
-    context: &ExecutionContext,
-    scope: ReviewDispatchScopeArg,
-    task: Option<u32>,
-    expected_dispatch_id: Option<&str>,
-) -> Result<String, JsonFailure> {
-    ensure_current_review_dispatch_id_for_command(
-        context,
-        scope,
-        task,
-        expected_dispatch_id,
-        "record_review_dispatch",
-    )
-}
-
 pub(crate) fn ensure_current_review_dispatch_id_for_command(
     context: &ExecutionContext,
     scope: ReviewDispatchScopeArg,
     task: Option<u32>,
     expected_dispatch_id: Option<&str>,
-    command_name: &'static str,
+    command_owner: EventCommandOwner,
 ) -> Result<String, JsonFailure> {
     let args = RecordReviewDispatchArgs {
         plan: PathBuf::from(context.plan_rel.clone()),
@@ -61,12 +50,12 @@ pub(crate) fn ensure_current_review_dispatch_id_for_command(
             task,
         ));
     }
-    ensure_review_dispatch_authoritative_bootstrap(context)?;
+    ensure_review_dispatch_authoritative_bootstrap(context, command_owner)?;
     let action = record_review_dispatch_strategy_checkpoint_for_command(
         context,
         &args,
         cycle_target,
-        command_name,
+        command_owner,
     )?;
     let refreshed = load_execution_context_for_exact_plan(&context.runtime, &args.plan)?;
     let dispatch_id = match action {
@@ -85,7 +74,7 @@ pub(crate) fn ensure_current_review_dispatch_id_for_command(
     .ok_or_else(|| {
         JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
-            "review-dispatch lineage binding did not yield a current dispatch id.",
+            "runtime review-state binding did not yield a current dispatch id.",
         )
     })?;
     validate_expected_dispatch_id(&dispatch_id, expected_dispatch_id, scope, task)?;
@@ -120,12 +109,23 @@ fn just_recorded_final_review_dispatch_id_from_authority(
 
 pub(crate) fn ensure_review_dispatch_authoritative_bootstrap(
     context: &ExecutionContext,
+    command_owner: EventCommandOwner,
 ) -> Result<(), JsonFailure> {
     if load_authoritative_transition_state(context)?
         .as_ref()
         .is_some_and(|state| state.execution_run_id_opt().is_some())
     {
         return Ok(());
+    }
+    if command_owner.is_public() {
+        return Err(JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            format!(
+                "{} requires execution preflight and run identity established by begin before it can refresh review dispatch authority. Re-query `{WORKFLOW_OPERATOR_JSON_DISPLAY_COMMAND}` for `{}`; {PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT}.",
+                command_owner.as_str(),
+                context.plan_rel
+            ),
+        ));
     }
     let acceptance = persist_preflight_acceptance(context)?;
     ensure_preflight_authoritative_bootstrap_with_existing_authority(
@@ -148,7 +148,7 @@ pub(crate) fn record_review_dispatch_strategy_checkpoint(
         context,
         args,
         cycle_target,
-        "record_review_dispatch",
+        EventCommandOwner::InternalRecordReviewDispatch,
     )
 }
 
@@ -156,7 +156,7 @@ pub(crate) fn record_review_dispatch_strategy_checkpoint_for_command(
     context: &ExecutionContext,
     args: &RecordReviewDispatchArgs,
     cycle_target: ReviewDispatchCycleTarget,
-    command_name: &'static str,
+    command_owner: EventCommandOwner,
 ) -> Result<ReviewDispatchMutationAction, JsonFailure> {
     let _ = load_authoritative_transition_state(context)?;
     let _write_authority = claim_step_write_authority(&context.runtime)?;
@@ -164,7 +164,7 @@ pub(crate) fn record_review_dispatch_strategy_checkpoint_for_command(
         context,
         args,
         cycle_target,
-        command_name,
+        command_owner,
     )
 }
 
@@ -172,7 +172,7 @@ fn record_review_dispatch_strategy_checkpoint_without_claim(
     context: &ExecutionContext,
     args: &RecordReviewDispatchArgs,
     cycle_target: ReviewDispatchCycleTarget,
-    command_name: &'static str,
+    command_owner: EventCommandOwner,
 ) -> Result<ReviewDispatchMutationAction, JsonFailure> {
     if current_review_dispatch_id_if_still_current(context, args)?.is_some() {
         return Ok(ReviewDispatchMutationAction::AlreadyCurrent);
@@ -199,6 +199,7 @@ fn record_review_dispatch_strategy_checkpoint_without_claim(
         &context.plan_document.execution_mode,
         cycle_target,
     )?;
-    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, command_name)?;
+    authoritative_state
+        .persist_if_dirty_with_failpoint_and_command(None, command_owner.as_str())?;
     Ok(ReviewDispatchMutationAction::Recorded)
 }

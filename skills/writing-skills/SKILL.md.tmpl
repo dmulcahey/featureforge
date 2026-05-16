@@ -20,7 +20,7 @@ Load these only when their detail is needed:
 - `$_FEATUREFORGE_ROOT/skills/writing-skills/copilot-best-practices.md`: GitHub Copilot local-install compatibility notes.
 - `$_FEATUREFORGE_ROOT/skills/writing-skills/testing-skills-with-subagents.md`: full RED/GREEN/REFACTOR pressure-test methodology.
 - `$_FEATUREFORGE_ROOT/skills/writing-skills/persuasion-principles.md`: rationale for discipline-enforcing wording.
-- `$_FEATUREFORGE_ROOT/skills/writing-skills/graphviz-conventions.dot` and `render-graphs.js`: optional flowchart style and rendering helpers.
+- `$_FEATUREFORGE_ROOT/skills/writing-skills/graphviz-conventions.dot` and `$_FEATUREFORGE_ROOT/skills/writing-skills/render-graphs.js`: optional flowchart style and rendering helpers.
 
 ## When to Create or Edit a Skill
 
@@ -92,7 +92,7 @@ Keep Codex and GitHub Copilot behavior aligned:
 - Put canonical skills under repo `skills/` and install/link them into each platform's discovery path.
 - Preserve workflow ordering and output contracts across platforms; only discovery paths and platform-specific tool names should vary.
 - Keep descriptions trigger-only for both platforms.
-- Keep supporting files packaged beside the skill and referenced with portable relative paths or `$_FEATUREFORGE_ROOT/...` paths.
+- Keep supporting files packaged beside the skill and referenced with portable relative paths or concrete installed-root paths derived from `$_FEATUREFORGE_ROOT`.
 
 See the Codex and Copilot companion references for platform-specific details.
 

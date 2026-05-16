@@ -63,7 +63,7 @@ The Copilot skills discovery link must point to `~/.featureforge/install/skills`
 
 ## Runtime Helpers
 
-Runtime helper state lives in `~/.featureforge/`. Generated skill preambles use this directory for session markers, contributor logs, update-check cache files, and project-scoped artifacts under `~/.featureforge/projects/`.
+Runtime helper state lives in `~/.featureforge/`. Generated skill preambles bind this directory as the shared runtime state root, with project-scoped artifacts under `~/.featureforge/projects/`.
 
 Generated skill preambles always invoke the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows). That packaged install binary resolves the active runtime root through `featureforge repo runtime-root --path`, so repo checkouts and `~/.featureforge/install` use the same runtime-owned contract without swapping executables.
 

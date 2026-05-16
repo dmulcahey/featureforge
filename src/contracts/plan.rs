@@ -69,9 +69,13 @@ pub const PLAN_FIDELITY_REQUIRED_SURFACES: [&str; 5] = [
 ];
 pub const PLAN_FIDELITY_DISTINCT_STAGES: [&str; 2] =
     ["featureforge:writing-plans", "featureforge:plan-eng-review"];
-pub const PLAN_FIDELITY_REVIEWER_SOURCE_OPTIONS: [&str; 2] =
-    ["fresh-context-subagent", "cross-model"];
+pub const PLAN_FIDELITY_REVIEWER_SOURCE_OPTIONS: [&str; 1] = ["fresh-context-subagent"];
 pub const PLAN_FIDELITY_REVIEW_VERDICT_OPTIONS: [&str; 2] = ["pass", "fail"];
+pub const PLAN_QA_REQUIREMENT_VALUES: &[&str] = &["required", "not-required"];
+pub const PLAN_WORKFLOW_STATE_DRAFT: &str = "Draft";
+pub const PLAN_WORKFLOW_STATE_ENGINEERING_APPROVED: &str = "Engineering Approved";
+pub const PLAN_REVIEWER_WRITING_PLANS: &str = "writing-plans";
+pub const PLAN_REVIEWER_PLAN_ENG_REVIEW: &str = "plan-eng-review";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PlanFidelityReviewArtifactTemplate {
@@ -368,7 +372,23 @@ pub fn plan_fidelity_review_applicable(plan: &PlanDocument) -> bool {
 }
 
 pub fn plan_fidelity_review_applicable_workflow_state(workflow_state: &str) -> bool {
-    matches!(workflow_state, "Draft" | "Engineering Approved")
+    matches!(
+        workflow_state,
+        PLAN_WORKFLOW_STATE_DRAFT | PLAN_WORKFLOW_STATE_ENGINEERING_APPROVED
+    )
+}
+
+pub fn plan_last_reviewer_is_valid_for_state(workflow_state: &str, last_reviewed_by: &str) -> bool {
+    matches!(
+        (workflow_state, last_reviewed_by),
+        (
+            PLAN_WORKFLOW_STATE_DRAFT,
+            PLAN_REVIEWER_WRITING_PLANS | PLAN_REVIEWER_PLAN_ENG_REVIEW
+        ) | (
+            PLAN_WORKFLOW_STATE_ENGINEERING_APPROVED,
+            PLAN_REVIEWER_PLAN_ENG_REVIEW
+        )
+    )
 }
 
 pub fn analyze_documents(spec: &SpecDocument, plan: &PlanDocument) -> AnalyzePlanReport {
@@ -542,6 +562,8 @@ pub fn evaluate_plan_fidelity_review(
     let mut stale_candidate = None;
     let mut invalid_candidate = None;
     let mut current_reports = Vec::new();
+    let accepted_plan_fingerprints = plan_fidelity_accepted_plan_fingerprints(plan);
+    let spec_fingerprint = sha256_hex(spec.source.as_bytes());
     for candidate in candidates {
         let artifact_path_string = candidate
             .strip_prefix(repo_root)
@@ -569,10 +591,10 @@ pub fn evaluate_plan_fidelity_review(
             "pass" | "fail" | "invalid" => {
                 if artifact.reviewed_plan_path == plan.path
                     && artifact.reviewed_plan_revision == plan.plan_revision
-                    && artifact.reviewed_plan_fingerprint == sha256_hex(plan.source.as_bytes())
+                    && accepted_plan_fingerprints.contains(&artifact.reviewed_plan_fingerprint)
                     && artifact.reviewed_spec_path == spec.path
                     && artifact.reviewed_spec_revision == spec.spec_revision
-                    && artifact.reviewed_spec_fingerprint == sha256_hex(spec.source.as_bytes())
+                    && artifact.reviewed_spec_fingerprint == spec_fingerprint
                 {
                     current_reports.push(report);
                 } else if stale_candidate.is_none() {
@@ -622,11 +644,11 @@ fn evaluate_parsed_plan_fidelity_review_artifact(
 ) -> PlanFidelityReviewReport {
     let mut diagnostics = Vec::new();
     let mut reason_codes = Vec::new();
-    let plan_fingerprint = sha256_hex(plan.source.as_bytes());
+    let accepted_plan_fingerprints = plan_fidelity_accepted_plan_fingerprints(plan);
     let spec_fingerprint = sha256_hex(spec.source.as_bytes());
     let stale_binding = artifact.reviewed_plan_path != plan.path
         || artifact.reviewed_plan_revision != plan.plan_revision
-        || artifact.reviewed_plan_fingerprint != plan_fingerprint
+        || !accepted_plan_fingerprints.contains(&artifact.reviewed_plan_fingerprint)
         || artifact.reviewed_spec_path != spec.path
         || artifact.reviewed_spec_revision != spec.spec_revision
         || artifact.reviewed_spec_fingerprint != spec_fingerprint;
@@ -783,7 +805,7 @@ fn build_plan_fidelity_review_artifact_template(
     plan: &PlanDocument,
     artifact_path: String,
 ) -> PlanFidelityReviewArtifactTemplate {
-    let reviewed_plan_fingerprint = sha256_hex(plan.source.as_bytes());
+    let reviewed_plan_fingerprint = plan_fidelity_reviewed_plan_fingerprint(plan);
     let reviewed_spec_fingerprint = sha256_hex(spec.source.as_bytes());
     let reviewer_source_options = PLAN_FIDELITY_REVIEWER_SOURCE_OPTIONS
         .iter()
@@ -856,6 +878,61 @@ fn build_plan_fidelity_review_artifact_template(
         required_verified_surfaces,
         required_requirement_ids,
         summary_placeholder,
+    }
+}
+
+fn plan_fidelity_reviewed_plan_fingerprint(plan: &PlanDocument) -> String {
+    sha256_hex(plan_fidelity_reviewed_plan_source(plan).as_bytes())
+}
+
+fn plan_fidelity_accepted_plan_fingerprints(plan: &PlanDocument) -> BTreeSet<String> {
+    let mut fingerprints = BTreeSet::new();
+    fingerprints.insert(sha256_hex(plan.source.as_bytes()));
+    if plan.last_reviewed_by == "plan-eng-review" {
+        fingerprints.insert(sha256_hex(
+            plan_source_with_workflow_state(plan, "Draft").as_bytes(),
+        ));
+        fingerprints.insert(sha256_hex(
+            plan_source_with_workflow_state(plan, "Engineering Approved").as_bytes(),
+        ));
+    }
+    fingerprints
+}
+
+fn plan_fidelity_reviewed_plan_source(plan: &PlanDocument) -> String {
+    if plan.last_reviewed_by == "plan-eng-review" {
+        return plan_source_with_workflow_state(plan, "Engineering Approved");
+    }
+    plan.source.clone()
+}
+
+fn plan_source_with_workflow_state(plan: &PlanDocument, workflow_state: &str) -> String {
+    let current_header = format!("**Workflow State:** {}", plan.workflow_state);
+    let normalized_header = format!("**Workflow State:** {workflow_state}");
+    let mut normalized_source = String::with_capacity(plan.source.len());
+    let mut replaced = false;
+    for segment in plan.source.split_inclusive('\n') {
+        let (line_body, line_ending) = if let Some(without_lf) = segment.strip_suffix('\n') {
+            if let Some(without_crlf) = without_lf.strip_suffix('\r') {
+                (without_crlf, "\r\n")
+            } else {
+                (without_lf, "\n")
+            }
+        } else {
+            (segment, "")
+        };
+        if !replaced && line_body == current_header {
+            normalized_source.push_str(&normalized_header);
+            normalized_source.push_str(line_ending);
+            replaced = true;
+        } else {
+            normalized_source.push_str(segment);
+        }
+    }
+    if replaced {
+        normalized_source
+    } else {
+        plan.source.clone()
     }
 }
 
@@ -972,7 +1049,7 @@ pub fn parse_plan_source(path: &Path, source: String) -> Result<PlanDocument, Di
         .parse::<u32>()
         .map_err(|_| missing_header("Source Spec Revision"))?;
     let last_reviewed_by = parse_required_header(&source, "Last Reviewed By")?;
-    validate_plan_last_reviewed_by(&last_reviewed_by)?;
+    validate_plan_last_reviewer_for_state(&workflow_state, &last_reviewed_by)?;
     let qa_requirement = headers::parse_required_header(&source, "QA Requirement")
         .and_then(|value| normalize_plan_qa_requirement(&value));
     let coverage_matrix = parse_coverage_matrix(&source)?;
@@ -999,7 +1076,7 @@ fn parse_required_header(source: &str, header: &str) -> Result<String, Diagnosti
 
 fn validate_plan_workflow_state(workflow_state: &str) -> Result<(), DiagnosticError> {
     match workflow_state {
-        "Draft" | "Engineering Approved" => Ok(()),
+        PLAN_WORKFLOW_STATE_DRAFT | PLAN_WORKFLOW_STATE_ENGINEERING_APPROVED => Ok(()),
         _ => Err(malformed_header("Workflow State")),
     }
 }
@@ -1013,19 +1090,24 @@ fn validate_plan_execution_mode(execution_mode: &str) -> Result<(), DiagnosticEr
     }
 }
 
-fn validate_plan_last_reviewed_by(last_reviewed_by: &str) -> Result<(), DiagnosticError> {
-    match last_reviewed_by {
-        "writing-plans" | "plan-eng-review" => Ok(()),
-        _ => Err(malformed_header("Last Reviewed By")),
+fn validate_plan_last_reviewer_for_state(
+    workflow_state: &str,
+    last_reviewed_by: &str,
+) -> Result<(), DiagnosticError> {
+    if plan_last_reviewer_is_valid_for_state(workflow_state, last_reviewed_by) {
+        Ok(())
+    } else {
+        Err(malformed_header("Last Reviewed By"))
     }
 }
 
 pub(crate) fn normalize_plan_qa_requirement(value: &str) -> Option<String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "required" => Some(String::from("required")),
-        "not-required" => Some(String::from("not-required")),
-        _ => None,
-    }
+    let normalized = value.trim().to_ascii_lowercase();
+    PLAN_QA_REQUIREMENT_VALUES
+        .iter()
+        .copied()
+        .find(|allowed| normalized == *allowed)
+        .map(str::to_owned)
 }
 
 fn parse_coverage_matrix(source: &str) -> Result<BTreeMap<String, Vec<u32>>, DiagnosticError> {

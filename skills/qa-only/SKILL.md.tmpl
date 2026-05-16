@@ -48,7 +48,7 @@ PLAN_ARTIFACT=""
 for CANDIDATE in $(ls -t "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"/*-test-plan-*.md 2>/dev/null); do
   [ -f "$CANDIDATE" ] || continue
   ARTIFACT_BRANCH=$(sed -n 's/^\*\*Branch:\*\* //p' "$CANDIDATE" | head -1)
-  if [ "$ARTIFACT_BRANCH" = "$BRANCH" ]; then
+  if [ "$ARTIFACT_BRANCH" = "$_BRANCH" ]; then
     PLAN_ARTIFACT="$CANDIDATE"
     break
   fi

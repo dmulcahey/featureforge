@@ -1,6 +1,8 @@
 // Internal compatibility tests extracted from tests/contracts_execution_runtime_boundaries.rs.
 // This file intentionally reuses the source fixture scaffolding from the public-facing integration test.
 
+#[path = "support/follow_up_parity.rs"]
+mod follow_up_parity_support;
 #[path = "support/internal_only_direct_helpers.rs"]
 mod internal_only_direct_helpers;
 #[path = "support/process.rs"]
@@ -21,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use featureforge::execution::final_review::resolve_release_base_branch;
+use featureforge::execution::phase;
 use featureforge::execution::query::{
     ExecutionRoutingState, query_workflow_routing_state_for_runtime,
 };
@@ -30,16 +33,137 @@ use featureforge::execution::semantic_identity::{
 use featureforge::execution::state::load_execution_context;
 use featureforge::git::{discover_repository, discover_slug_identity};
 use featureforge::paths::harness_state_path;
+use follow_up_parity_support::assert_follow_up_blocker_parity_with_operator;
 use internal_only_direct_helpers::internal_runtime_direct;
 use runtime_support::execution_runtime;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use syn::visit::{self, Visit};
 use workflow_support::{
     init_repo, install_full_contract_ready_artifacts,
     write_current_pass_plan_fidelity_review_artifact_for_plan,
 };
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+#[derive(Default)]
+struct RecordingContextLiteralSummary {
+    task_closure_recording_contexts: usize,
+    branch_closure_recording_contexts: usize,
+    final_review_recording_contexts: usize,
+}
+
+fn member_name(member: &syn::Member) -> Option<String> {
+    match member {
+        syn::Member::Named(ident) => Some(ident.to_string()),
+        syn::Member::Unnamed(_) => None,
+    }
+}
+
+fn expr_path_ident(expr: &syn::Expr) -> Option<String> {
+    match expr {
+        syn::Expr::Path(path) if path.qself.is_none() && path.path.segments.len() == 1 => path
+            .path
+            .segments
+            .first()
+            .map(|segment| segment.ident.to_string()),
+        syn::Expr::Group(group) => expr_path_ident(&group.expr),
+        syn::Expr::Paren(paren) => expr_path_ident(&paren.expr),
+        _ => None,
+    }
+}
+
+fn expr_reads_ident(expr: &syn::Expr, ident: &str) -> bool {
+    match expr {
+        syn::Expr::Path(_) => expr_path_ident(expr).as_deref() == Some(ident),
+        syn::Expr::MethodCall(method_call) => expr_reads_ident(&method_call.receiver, ident),
+        syn::Expr::Reference(reference) => expr_reads_ident(&reference.expr, ident),
+        syn::Expr::Group(group) => expr_reads_ident(&group.expr, ident),
+        syn::Expr::Paren(paren) => expr_reads_ident(&paren.expr, ident),
+        _ => false,
+    }
+}
+
+fn expr_is_none(expr: &syn::Expr) -> bool {
+    expr_path_ident(expr).as_deref() == Some("None")
+}
+
+fn expr_is_some_of_ident(expr: &syn::Expr, ident: &str) -> bool {
+    match expr {
+        syn::Expr::Call(call) => {
+            expr_path_ident(call.func.as_ref()).as_deref() == Some("Some")
+                && call.args.len() == 1
+                && call
+                    .args
+                    .first()
+                    .is_some_and(|arg| expr_reads_ident(arg, ident))
+        }
+        syn::Expr::Group(group) => expr_is_some_of_ident(&group.expr, ident),
+        syn::Expr::Paren(paren) => expr_is_some_of_ident(&paren.expr, ident),
+        _ => false,
+    }
+}
+
+struct RecordingContextLiteralVisitor {
+    summary: RecordingContextLiteralSummary,
+}
+
+impl<'ast> Visit<'ast> for RecordingContextLiteralVisitor {
+    fn visit_expr_struct(&mut self, expr_struct: &'ast syn::ExprStruct) {
+        let is_recording_context = expr_struct
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "ExecutionRoutingRecordingContext");
+        if !is_recording_context {
+            visit::visit_expr_struct(self, expr_struct);
+            return;
+        }
+
+        let field_expr = |name: &str| {
+            expr_struct
+                .fields
+                .iter()
+                .find(|field| member_name(&field.member).as_deref() == Some(name))
+                .map(|field| &field.expr)
+        };
+        let task_number = field_expr("task_number");
+        let dispatch_id = field_expr("dispatch_id");
+        let branch_closure_id = field_expr("branch_closure_id");
+
+        if task_number.is_some_and(|expr| expr_is_some_of_ident(expr, "task_number"))
+            && dispatch_id.is_some_and(|expr| expr_reads_ident(expr, "task_review_dispatch_id"))
+            && branch_closure_id.is_some_and(expr_is_none)
+        {
+            self.summary.task_closure_recording_contexts += 1;
+        }
+        if task_number.is_some_and(expr_is_none)
+            && dispatch_id.is_some_and(expr_is_none)
+            && branch_closure_id
+                .is_some_and(|expr| expr_is_some_of_ident(expr, "branch_closure_id"))
+        {
+            self.summary.branch_closure_recording_contexts += 1;
+        }
+        if task_number.is_some_and(expr_is_none)
+            && dispatch_id.is_some_and(|expr| expr_reads_ident(expr, "final_review_dispatch_id"))
+            && branch_closure_id
+                .is_some_and(|expr| expr_is_some_of_ident(expr, "branch_closure_id"))
+        {
+            self.summary.final_review_recording_contexts += 1;
+        }
+
+        visit::visit_expr_struct(self, expr_struct);
+    }
+}
+
+fn recording_context_literal_summary(rel: &str, source: &str) -> RecordingContextLiteralSummary {
+    let syntax = rust_source_scan::parse_rust_source(rel, source);
+    let mut visitor = RecordingContextLiteralVisitor {
+        summary: RecordingContextLiteralSummary::default(),
+    };
+    visitor.visit_file(&syntax);
+    visitor.summary
+}
 
 #[derive(Clone, Copy)]
 enum FeatureforgeExecutionPath {
@@ -465,39 +589,71 @@ fn route_semantics_without_runtime_provenance(surface: &Value) -> Value {
     normalized
 }
 
-fn run_recommended_plan_execution_command(
-    repo: &Path,
-    state: &Path,
-    recommended_command: &str,
-    context: &str,
-) -> Value {
-    let command_parts = recommended_command.split_whitespace().collect::<Vec<_>>();
+fn public_recommended_command_argv(surface: &Value, context: &str) -> Vec<String> {
+    let command_parts = surface["recommended_public_command_argv"]
+        .as_array()
+        .unwrap_or_else(|| {
+            panic!("{context} should expose typed recommended_public_command_argv: {surface}")
+        })
+        .iter()
+        .map(|part| {
+            part.as_str()
+                .unwrap_or_else(|| {
+                    panic!("{context} recommended_public_command_argv entries must be strings: {surface}")
+                })
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
     assert!(
         command_parts.len() >= 4,
-        "{context} should expose a full featureforge plan-execution command, got {recommended_command}"
+        "{context} should expose a full featureforge plan-execution argv, got {command_parts:?}"
     );
     assert_eq!(
         command_parts[0], "featureforge",
-        "{context} recommended command must start with featureforge, got {recommended_command}"
+        "{context} recommended argv must start with featureforge, got {command_parts:?}"
     );
     assert_eq!(
         command_parts[1], "plan",
-        "{context} recommended command must route through `plan execution`, got {recommended_command}"
+        "{context} recommended argv must route through `plan execution`, got {command_parts:?}"
     );
     assert_eq!(
         command_parts[2], "execution",
-        "{context} recommended command must route through `plan execution`, got {recommended_command}"
+        "{context} recommended argv must route through `plan execution`, got {command_parts:?}"
     );
     assert!(
         command_parts.iter().all(|part| !["<", ">", "|", "[", "]"]
             .iter()
             .any(|token| part.contains(token))),
-        "{context} recommended command must be executable as emitted, got {recommended_command}"
+        "{context} recommended argv must be executable as emitted, got {command_parts:?}"
     );
-    let command_args = command_parts[1..]
-        .iter()
-        .map(|part| (*part).to_owned())
-        .collect::<Vec<_>>();
+    command_parts
+}
+
+fn public_command_argv_flag_value<'a>(
+    command_parts: &'a [String],
+    flag: &str,
+    context: &str,
+) -> Option<&'a str> {
+    command_parts
+        .windows(2)
+        .find_map(|window| (window[0] == flag).then_some(window[1].as_str()))
+        .or_else(|| {
+            assert!(
+                !command_parts.iter().any(|part| part == flag),
+                "{context} recommended argv flag `{flag}` must include a value: {command_parts:?}"
+            );
+            None
+        })
+}
+
+fn run_recommended_public_command_argv(
+    repo: &Path,
+    state: &Path,
+    surface: &Value,
+    context: &str,
+) -> Value {
+    let command_parts = public_recommended_command_argv(surface, context);
+    let command_args = command_parts[1..].to_vec();
     let command_args_refs = command_args.iter().map(String::as_str).collect::<Vec<_>>();
     run_featureforge_json(
         repo,
@@ -506,64 +662,6 @@ fn run_recommended_plan_execution_command(
         FeatureforgeExecutionPath::CompiledCli,
         context,
     )
-}
-
-fn assert_follow_up_blocker_parity_with_operator(
-    operator: &Value,
-    follow_up: &Value,
-    context: &str,
-) {
-    if follow_up["action"].as_str() != Some("blocked") {
-        return;
-    }
-    let follow_up_blocking_reason_codes = follow_up
-        .get("blocking_reason_codes")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| {
-            panic!(
-                "{context} blocked follow-up must include blocking_reason_codes metadata: {follow_up:?}"
-            )
-        });
-    let operator_blocking_reason_codes = operator
-        .get("blocking_reason_codes")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| {
-            panic!(
-                "{context} operator route must include blocking_reason_codes metadata for blocked parity checks: {operator:?}"
-            )
-        });
-    assert!(
-        !follow_up_blocking_reason_codes.is_empty(),
-        "{context} blocked follow-up must keep a non-empty blocker reason-code set",
-    );
-    assert!(
-        !operator_blocking_reason_codes.is_empty(),
-        "{context} operator route must keep a non-empty blocker reason-code set for blocked parity checks",
-    );
-    assert_eq!(
-        follow_up["blocking_scope"], operator["blocking_scope"],
-        "{context} blocked follow-up must preserve operator blocking scope"
-    );
-    assert_eq!(
-        follow_up["blocking_task"], operator["blocking_task"],
-        "{context} blocked follow-up must preserve operator blocking task"
-    );
-    assert_eq!(
-        follow_up["blocking_reason_codes"], operator["blocking_reason_codes"],
-        "{context} blocked follow-up must preserve operator blocker reason-code set"
-    );
-    if !follow_up["blocking_step"].is_null() || !operator["blocking_step"].is_null() {
-        assert_eq!(
-            follow_up["blocking_step"], operator["blocking_step"],
-            "{context} blocked follow-up must preserve operator blocking step"
-        );
-    }
-    if !follow_up["authoritative_next_action"].is_null() {
-        assert_eq!(
-            follow_up["authoritative_next_action"], operator["recommended_command"],
-            "{context} blocked follow-up authoritative next action must mirror workflow operator"
-        );
-    }
 }
 
 fn authoritative_harness_state_path(repo: &Path, state: &Path) -> PathBuf {
@@ -812,10 +910,6 @@ fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, ope
         Value::from(routing.next_action.clone())
     );
     assert_eq!(
-        operator.get("recommended_command").and_then(Value::as_str),
-        routing.recommended_command.as_deref()
-    );
-    assert_eq!(
         operator.get("blocking_scope").and_then(Value::as_str),
         routing.blocking_scope.as_deref()
     );
@@ -1056,7 +1150,10 @@ fn internal_only_compatibility_execution_query_recording_ready_states_surface_re
         true,
         "workflow operator json for task_closure_recording_ready fixture",
     );
-    assert_eq!(routing.phase_detail, "task_closure_recording_ready");
+    assert_eq!(
+        routing.phase_detail,
+        phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+    );
     let recording_context = routing
         .recording_context
         .as_ref()
@@ -1071,28 +1168,34 @@ fn internal_only_compatibility_execution_query_recording_ready_states_surface_re
     );
     assert_routing_parity_with_operator_json(&routing, &operator);
 
-    let public_route_source =
-        fs::read_to_string(repo_root().join("src/execution/public_route_selection.rs"))
-            .expect("execution public route selection source should be readable");
+    let route_source =
+        fs::read_to_string(repo_root().join("src/execution/route_plan/next_action_route.rs"))
+            .expect("execution route-plan next-action source should be readable");
+    let recording_source = fs::read_to_string(
+        repo_root().join("src/execution/route_plan/next_action_finalization.rs"),
+    )
+    .expect("execution route-plan next-action finalization source should be readable");
+    let recording_contexts = recording_context_literal_summary(
+        "src/execution/route_plan/next_action_finalization.rs",
+        &recording_source,
+    );
+    let route_and_recording_source = format!("{route_source}\n{recording_source}");
 
     assert!(
-        public_route_source.contains("phase::DETAIL_TASK_CLOSURE_RECORDING_READY")
-            && public_route_source.contains("task_number: Some(task_number)")
-            && public_route_source.contains("dispatch_id: task_review_dispatch_id.clone()"),
+        route_and_recording_source.contains("phase::DETAIL_TASK_CLOSURE_RECORDING_READY")
+            && recording_contexts.task_closure_recording_contexts > 0,
         "task_closure_recording_ready should expose task_number and may surface dispatch_id in recording_context",
     );
     assert!(
-        public_route_source.contains("phase::DETAIL_RELEASE_READINESS_RECORDING_READY")
-            && public_route_source.contains("phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED")
-            && public_route_source
-                .contains("branch_closure_id: Some(branch_closure_id.to_owned())"),
+        route_and_recording_source.contains("phase::DETAIL_RELEASE_READINESS_RECORDING_READY")
+            && route_and_recording_source
+                .contains("phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED")
+            && recording_contexts.branch_closure_recording_contexts > 0,
         "release-readiness recording-ready states should expose branch_closure_id recording_context ids",
     );
     assert!(
-        public_route_source.contains("phase::DETAIL_FINAL_REVIEW_RECORDING_READY")
-            && public_route_source.contains("dispatch_id: final_review_dispatch_id.clone()")
-            && public_route_source
-                .contains("branch_closure_id: Some(branch_closure_id.to_owned())"),
+        route_and_recording_source.contains("phase::DETAIL_FINAL_REVIEW_RECORDING_READY")
+            && recording_contexts.final_review_recording_contexts > 0,
         "final_review_recording_ready should expose branch_closure_id and may surface dispatch_id in the routing constructor",
     );
 }
@@ -1281,7 +1384,7 @@ fn internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefe
     );
     assert_eq!(
         repair_task1["phase_detail"],
-        Value::from("task_closure_recording_ready"),
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
         "FS-15 bootstrap task 1 repair-review-state should surface the public closure-recording repair bridge"
     );
     assert_task_closure_required_inputs(&repair_task1, 1);
@@ -1430,14 +1533,26 @@ fn internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefe
         Value::from(2_u64),
         "FS-15 should always target the earliest unresolved stale boundary (Task 2)"
     );
-    if let Some(recommended_command) = operator_real["recommended_command"].as_str() {
-        assert!(
-            recommended_command.contains("--task 2"),
-            "FS-15 compiled-cli operator should route to Task 2 while it is the earliest stale boundary, got {recommended_command}",
+    if operator_real["recommended_public_command_argv"].is_array() {
+        let command_parts = public_recommended_command_argv(
+            &operator_real,
+            "FS-15 compiled-cli operator typed follow-up argv",
         );
         assert!(
-            !recommended_command.contains("--task 6"),
-            "FS-15 compiled-cli operator must not route to Task 6 while Task 2 is stale, got {recommended_command}",
+            public_command_argv_flag_value(
+                &command_parts,
+                "--task",
+                "FS-15 compiled-cli operator typed follow-up argv"
+            ) == Some("2"),
+            "FS-15 compiled-cli operator should route to Task 2 while it is the earliest stale boundary, got {command_parts:?}",
+        );
+        assert!(
+            public_command_argv_flag_value(
+                &command_parts,
+                "--task",
+                "FS-15 compiled-cli operator typed follow-up argv"
+            ) != Some("6"),
+            "FS-15 compiled-cli operator must not route to Task 6 while Task 2 is stale, got {command_parts:?}",
         );
         assert_eq!(
             operator_real["execution_command_context"]["task_number"],
@@ -1451,15 +1566,19 @@ fn internal_only_compatibility_runtime_remediation_fs15_compiled_cli_never_prefe
                 "FS-15 reopen command context should target Step 1"
             );
             assert!(
-                recommended_command.contains("--step 1"),
-                "FS-15 reopen routing should keep Step 1 targeted, got {recommended_command}"
+                public_command_argv_flag_value(
+                    &command_parts,
+                    "--step",
+                    "FS-15 compiled-cli operator typed reopen argv"
+                ) == Some("1"),
+                "FS-15 reopen routing should keep Step 1 targeted, got {command_parts:?}"
             );
         }
-        let operator_follow_up = run_recommended_plan_execution_command(
+        let operator_follow_up = run_recommended_public_command_argv(
             repo,
             state,
-            recommended_command,
-            "FS-15 compiled-cli operator recommended command follow-up parity",
+            &operator_real,
+            "FS-15 compiled-cli operator recommended argv follow-up parity",
         );
         assert_follow_up_blocker_parity_with_operator(
             &operator_real,
@@ -1558,6 +1677,77 @@ fn internal_only_compatibility_fs19_compiled_cli_ignores_superseded_stale_histor
         ],
         "FS-19 bootstrap task 1 complete",
     );
+    let repair_task1 = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "repair-review-state",
+            "--plan",
+            PLAN_REL,
+            "--external-review-result-ready",
+        ],
+        "FS-19 bootstrap task 1 repair-review-state",
+    );
+    assert_eq!(
+        repair_task1["phase_detail"],
+        Value::from(phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
+        "FS-19 bootstrap task 1 repair-review-state should surface public closure recording"
+    );
+    let close_task1 = record_task_closure_with_fixture_inputs(
+        repo,
+        state,
+        1,
+        "FS-19 bootstrap task 1 concrete task-closure follow-up",
+    );
+    assert_eq!(
+        close_task1["action"],
+        Value::from("recorded"),
+        "FS-19 bootstrap task 1 follow-up should record a valid task closure"
+    );
+    let mut task_closure_record_history = authoritative_harness_state(repo, state)
+        .get("task_closure_record_history")
+        .and_then(Value::as_object)
+        .cloned()
+        .expect("FS-19 task 1 closure should leave authoritative task closure history");
+    task_closure_record_history.insert(
+        String::from("task-1-stale"),
+        serde_json::json!({
+            "closure_record_id": "task-1-stale",
+            "task": 1,
+            "source_plan_path": PLAN_REL,
+            "source_plan_revision": 1,
+            "record_sequence": 8,
+            "record_status": "stale_unreviewed",
+            "closure_status": "stale_unreviewed",
+            "effective_reviewed_surface_paths": ["README.md"]
+        }),
+    );
+    task_closure_record_history.insert(
+        String::from("task-2-stale"),
+        serde_json::json!({
+            "closure_record_id": "task-2-stale",
+            "task": 2,
+            "source_plan_path": PLAN_REL,
+            "source_plan_revision": 1,
+            "record_sequence": 10,
+            "record_status": "stale_unreviewed",
+            "closure_status": "stale_unreviewed",
+            "effective_reviewed_surface_paths": ["README.md"]
+        }),
+    );
+    task_closure_record_history.insert(
+        String::from("task-6-stale"),
+        serde_json::json!({
+            "closure_record_id": "task-6-stale",
+            "task": 6,
+            "source_plan_path": PLAN_REL,
+            "source_plan_revision": 1,
+            "record_sequence": 20,
+            "record_status": "stale_unreviewed",
+            "closure_status": "stale_unreviewed",
+            "effective_reviewed_surface_paths": ["README.md"]
+        }),
+    );
 
     update_authoritative_harness_state(
         repo,
@@ -1565,48 +1755,7 @@ fn internal_only_compatibility_fs19_compiled_cli_ignores_superseded_stale_histor
         &[
             (
                 "task_closure_record_history",
-                serde_json::json!({
-                    "task-1-stale": {
-                        "closure_record_id": "task-1-stale",
-                        "task": 1,
-                        "source_plan_path": PLAN_REL,
-                        "source_plan_revision": 1,
-                        "record_sequence": 8,
-                        "record_status": "stale_unreviewed",
-                        "closure_status": "stale_unreviewed",
-                        "effective_reviewed_surface_paths": ["README.md"]
-                    },
-                    "task-1-current": {
-                        "closure_record_id": "task-1-current",
-                        "task": 1,
-                        "source_plan_path": PLAN_REL,
-                        "source_plan_revision": 1,
-                        "record_sequence": 24,
-                        "record_status": "current",
-                        "closure_status": "current",
-                        "effective_reviewed_surface_paths": ["README.md"]
-                    },
-                    "task-2-stale": {
-                        "closure_record_id": "task-2-stale",
-                        "task": 2,
-                        "source_plan_path": PLAN_REL,
-                        "source_plan_revision": 1,
-                        "record_sequence": 10,
-                        "record_status": "stale_unreviewed",
-                        "closure_status": "stale_unreviewed",
-                        "effective_reviewed_surface_paths": ["README.md"]
-                    },
-                    "task-6-stale": {
-                        "closure_record_id": "task-6-stale",
-                        "task": 6,
-                        "source_plan_path": PLAN_REL,
-                        "source_plan_revision": 1,
-                        "record_sequence": 20,
-                        "record_status": "stale_unreviewed",
-                        "closure_status": "stale_unreviewed",
-                        "effective_reviewed_surface_paths": ["README.md"]
-                    }
-                }),
+                Value::Object(task_closure_record_history),
             ),
             (
                 "superseded_task_closure_ids",
@@ -1641,16 +1790,21 @@ fn internal_only_compatibility_fs19_compiled_cli_ignores_superseded_stale_histor
         Value::from(2_u64),
         "FS-19 compiled-cli should target Task 2 after superseding stale task 1 history",
     );
-    let recommended_command = operator_real["recommended_command"]
-        .as_str()
-        .expect("FS-19 compiled-cli operator should expose recommended command");
-    assert!(
-        recommended_command.contains("--task 2"),
-        "FS-19 compiled-cli operator should route to Task 2, got {recommended_command}",
+    let command_parts = public_recommended_command_argv(
+        &operator_real,
+        "FS-19 compiled-cli typed stale-history routing",
     );
     assert!(
-        !recommended_command.contains("--task 1"),
-        "FS-19 compiled-cli operator must not route to superseded stale task 1 history, got {recommended_command}",
+        command_parts
+            .windows(2)
+            .any(|window| window[0] == "--task" && window[1] == "2"),
+        "FS-19 compiled-cli operator should route to Task 2 through typed argv, got {command_parts:?}",
+    );
+    assert!(
+        !command_parts
+            .windows(2)
+            .any(|window| window[0] == "--task" && window[1] == "1"),
+        "FS-19 compiled-cli operator must not route to superseded stale task 1 history through typed argv, got {command_parts:?}",
     );
 }
 
@@ -1755,30 +1909,23 @@ fn internal_only_compatibility_fs20_runtime_owned_control_plane_churn_does_not_f
     ] {
         assert_ne!(
             payload["phase_detail"],
-            Value::from("branch_closure_recording_required_for_release_readiness"),
+            Value::from(phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS),
             "FS-20 {label} must not route to branch_closure_recording_required_for_release_readiness from control-plane-only churn"
         );
-        assert!(
-            !payload["recommended_command"]
-                .as_str()
-                .is_some_and(|command| command.contains(concat!("record", "-branch-closure"))),
-            "FS-20 {} must not recommend {} from control-plane-only churn",
-            label,
-            concat!("record", "-branch-closure")
-        );
+        if let Some(argv) = payload["recommended_public_command_argv"].as_array() {
+            assert!(
+                !argv
+                    .iter()
+                    .any(|part| part.as_str() == Some(concat!("record", "-branch-closure"))),
+                "FS-20 {label} must not recommend branch closure recording through typed argv from control-plane-only churn"
+            );
+        }
     }
 
     assert_ne!(
-        routing_after_churn.phase_detail, "branch_closure_recording_required_for_release_readiness",
+        routing_after_churn.phase_detail,
+        phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
         "FS-20 routing query must not reroute to branch_closure_recording_required_for_release_readiness from control-plane-only churn"
-    );
-    assert!(
-        !routing_after_churn
-            .recommended_command
-            .as_deref()
-            .is_some_and(|command| command.contains(concat!("record", "-branch-closure"))),
-        "FS-20 routing query must not recommend {} from control-plane-only churn",
-        concat!("record", "-branch-closure")
     );
     assert_routing_parity_with_operator_json(&routing_after_churn, &operator_after_churn);
 }

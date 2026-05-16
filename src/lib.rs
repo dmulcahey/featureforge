@@ -326,7 +326,12 @@ pub fn run() -> std::process::ExitCode {
                     if args.json {
                         emit_json(result.map_err(map_read_only_workflow_failure))
                     } else {
-                        emit_text(result.map(workflow::operator::render_operator))
+                        emit_text(result.map(|operator| {
+                            workflow::operator::render_operator_with_external_review_hint(
+                                operator,
+                                args.external_review_result_ready,
+                            )
+                        }))
                     }
                 }
             }
@@ -340,9 +345,14 @@ pub fn run() -> std::process::ExitCode {
     }
 }
 
-fn render_workflow_status(route: workflow::status::WorkflowRoute) -> String {
+fn render_workflow_status(route: contracts::workflow::WorkflowRoute) -> String {
+    let route_authority_plan = if route.plan_path.trim().is_empty() {
+        "<approved-plan-path>"
+    } else {
+        route.plan_path.as_str()
+    };
     format!(
-        "status: {}\nnext_skill: {}\nspec_path: {}\nplan_path: {}\ncontract_state: {}\nreason_codes: {}\n",
+        "diagnostic_only: true\nroute_authority: featureforge workflow operator --plan {route_authority_plan} --json\nstatus: {}\nnext_skill: {}\nspec_path: {}\nplan_path: {}\ncontract_state: {}\nreason_codes: {}\n",
         route.status,
         route.next_skill,
         route.spec_path,

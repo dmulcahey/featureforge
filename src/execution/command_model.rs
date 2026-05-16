@@ -13,8 +13,9 @@ pub(crate) use crate::execution::read_model::{
     public_status_from_context_with_shared_routing,
     public_status_from_supplied_context_with_shared_routing,
     usable_current_branch_closure_identity,
+    usable_current_branch_closure_identity_from_authoritative_state,
 };
-pub(crate) use crate::execution::read_model_support::{
+pub(crate) use crate::execution::status_support::{
     require_prior_task_closure_for_begin,
     task_closure_negative_result_blocks_current_reviewed_state,
     task_completion_lineage_fingerprint,

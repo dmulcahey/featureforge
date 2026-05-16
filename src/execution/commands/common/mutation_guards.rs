@@ -1,4 +1,28 @@
-use super::*;
+use super::{
+    AdvanceLateStageArgs, AdvanceLateStageResultArg, AuthoritativeTransitionState,
+    ExecutionContext, ExecutionRuntime, FailureClass, InvariantEnforcementMode, JsonFailure,
+    OpenStepStateRecord, Path, PlanExecutionStatus, PublicAdvanceLateStageMode,
+    PublicMutationRequest, RebuildEvidenceCandidate, RebuildEvidenceTarget, ReviewOutcomeArg,
+    StatusArgs, VerificationOutcomeArg, check_runtime_status_invariants,
+    load_authoritative_transition_state, load_status_authoritative_overlay_checked,
+    normalize_source, public_advance_late_stage_final_review_mutation_request,
+    public_advance_late_stage_mode_for_invocation,
+    public_advance_late_stage_operator_accepts_final_review_inputs,
+    public_advance_late_stage_operator_routes_branch_closure,
+    public_advance_late_stage_operator_routes_final_review,
+    public_advance_late_stage_operator_routes_final_review_dispatch,
+    public_advance_late_stage_operator_routes_finish_completion,
+    public_advance_late_stage_operator_routes_finish_review,
+    public_advance_late_stage_operator_routes_qa,
+    public_advance_late_stage_operator_routes_release_readiness,
+    public_advance_late_stage_status_mutation_allowed,
+    public_status_from_context_with_shared_routing, require_public_mutation,
+    semantic_paths_changed_between_raw_trees, truncate_summary,
+};
+use crate::execution::public_route_guidance::OPERATOR_ROUTE_AUTHORITY_REFERENCE;
+
+const PROJECTION_ONLY_REBUILD_STATUS: &str = "projection_only";
+const PROJECTION_ONLY_REBUILD_FAILURE_CLASS: &str = "projection_export_not_progress_route";
 
 pub(in crate::execution::commands) fn consume_execution_reentry_repair_follow_up(
     authoritative_state: Option<&mut AuthoritativeTransitionState>,
@@ -8,7 +32,10 @@ pub(in crate::execution::commands) fn consume_execution_reentry_repair_follow_up
     };
     if authoritative_state
         .review_state_repair_follow_up_record()
-        .is_none_or(|record| record.kind.public_token() != "execution_reentry")
+        .is_none_or(|record| {
+            record.kind.public_token()
+                != crate::execution::review_route_tokens::FOLLOW_UP_EXECUTION_REENTRY
+        })
     {
         return Ok(false);
     }
@@ -54,9 +81,10 @@ pub(in crate::execution::commands) fn open_step_state_record(
 pub(in crate::execution::commands) fn begin_failure_class_from_blocking_reason_codes(
     reason_codes: &[String],
 ) -> FailureClass {
-    if reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "prior_task_current_closure_reviewed_state_malformed")
+    if reason_codes.iter().any(|reason_code| {
+        reason_code
+            == crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_REVIEWED_STATE_MALFORMED
+    })
     {
         return FailureClass::MalformedExecutionState;
     }
@@ -66,20 +94,13 @@ pub(in crate::execution::commands) fn begin_failure_class_from_blocking_reason_c
         return FailureClass::PlanNotExecutionReady;
     }
     if reason_codes.iter().any(|reason_code| {
-        matches!(
-            reason_code.as_str(),
-            "current_task_closure_overlay_restore_required"
-                | "prior_task_current_closure_missing"
-                | "prior_task_current_closure_stale"
-                | "prior_task_current_closure_invalid"
-                | "prior_task_review_not_green"
-                | "prior_task_verification_missing"
-                | "prior_task_verification_missing_legacy"
-                | "task_review_not_independent"
-                | "task_review_artifact_malformed"
-                | "task_verification_summary_malformed"
-                | "task_cycle_break_active"
-        )
+        crate::execution::closure_diagnostics::task_boundary_begin_block_reason_code(reason_code)
+            || crate::execution::closure_diagnostics::task_boundary_current_closure_missing_reason_code(
+                reason_code,
+            )
+            || crate::execution::closure_diagnostics::task_boundary_pending_review_projection_reason_code(
+                reason_code,
+            )
     }) {
         return FailureClass::ExecutionStateNotReady;
     }
@@ -302,15 +323,7 @@ pub(in crate::execution::commands) fn require_close_current_task_public_mutation
 ) -> Result<(), JsonFailure> {
     require_public_mutation(
         status,
-        PublicMutationRequest {
-            kind: PublicMutationKind::CloseCurrentTask,
-            task: Some(task),
-            step: None,
-            expect_execution_fingerprint: None,
-            transfer_mode: None,
-            transfer_scope: None,
-            command_name: "close-current-task",
-        },
+        PublicMutationRequest::close_current_task(Some(task)),
         FailureClass::ExecutionStateNotReady,
     )
 }
@@ -361,20 +374,93 @@ pub(in crate::execution::commands) fn require_advance_late_stage_summary_file<'a
     })
 }
 
+pub(in crate::execution::commands) fn advance_late_stage_public_mutation_mode(
+    args: &AdvanceLateStageArgs,
+    status: &PlanExecutionStatus,
+) -> PublicAdvanceLateStageMode {
+    public_advance_late_stage_mode_for_invocation(
+        &status.phase_detail,
+        status.recommended_public_command.as_ref(),
+        args.result.map(AdvanceLateStageResultArg::as_str),
+        args.dispatch_id.is_some() || args.reviewer_source.is_some() || args.reviewer_id.is_some(),
+    )
+}
+
+pub(in crate::execution::commands) fn advance_late_stage_operator_routes_branch_closure(
+    operator: &crate::execution::query::ExecutionRoutingState,
+) -> bool {
+    public_advance_late_stage_operator_routes_branch_closure(operator)
+}
+
+pub(in crate::execution::commands) fn advance_late_stage_operator_routes_release_readiness(
+    operator: &crate::execution::query::ExecutionRoutingState,
+) -> bool {
+    public_advance_late_stage_operator_routes_release_readiness(operator)
+}
+
+pub(in crate::execution::commands) fn advance_late_stage_operator_routes_final_review_dispatch(
+    operator: &crate::execution::query::ExecutionRoutingState,
+) -> bool {
+    public_advance_late_stage_operator_routes_final_review_dispatch(operator)
+}
+
+pub(in crate::execution::commands) fn advance_late_stage_operator_routes_qa(
+    operator: &crate::execution::query::ExecutionRoutingState,
+) -> bool {
+    public_advance_late_stage_operator_routes_qa(operator)
+}
+
+pub(in crate::execution::commands) fn advance_late_stage_operator_routes_final_review(
+    operator: &crate::execution::query::ExecutionRoutingState,
+) -> bool {
+    public_advance_late_stage_operator_routes_final_review(operator)
+}
+
+pub(in crate::execution::commands) fn advance_late_stage_operator_accepts_final_review_inputs(
+    operator: &crate::execution::query::ExecutionRoutingState,
+) -> bool {
+    public_advance_late_stage_operator_accepts_final_review_inputs(operator)
+}
+
+pub(in crate::execution::commands) fn advance_late_stage_operator_routes_finish_review(
+    operator: &crate::execution::query::ExecutionRoutingState,
+) -> bool {
+    public_advance_late_stage_operator_routes_finish_review(operator)
+}
+
+pub(in crate::execution::commands) fn advance_late_stage_operator_routes_finish_completion(
+    operator: &crate::execution::query::ExecutionRoutingState,
+) -> bool {
+    public_advance_late_stage_operator_routes_finish_completion(operator)
+}
+
+pub(in crate::execution::commands) fn advance_late_stage_status_mutation_allowed(
+    status: &PlanExecutionStatus,
+    mode: PublicAdvanceLateStageMode,
+) -> bool {
+    public_advance_late_stage_status_mutation_allowed(status, mode)
+}
+
 pub(in crate::execution::commands) fn require_advance_late_stage_public_mutation(
+    status: &PlanExecutionStatus,
+    mode: PublicAdvanceLateStageMode,
+) -> Result<(), JsonFailure> {
+    if advance_late_stage_status_mutation_allowed(status, mode) {
+        return Ok(());
+    }
+    require_public_mutation(
+        status,
+        PublicMutationRequest::advance_late_stage(mode),
+        FailureClass::ExecutionStateNotReady,
+    )
+}
+
+pub(in crate::execution::commands) fn require_advance_late_stage_final_review_public_mutation(
     status: &PlanExecutionStatus,
 ) -> Result<(), JsonFailure> {
     require_public_mutation(
         status,
-        PublicMutationRequest {
-            kind: PublicMutationKind::AdvanceLateStage,
-            task: None,
-            step: None,
-            expect_execution_fingerprint: None,
-            transfer_mode: None,
-            transfer_scope: None,
-            command_name: "advance-late-stage",
-        },
+        public_advance_late_stage_final_review_mutation_request(),
         FailureClass::ExecutionStateNotReady,
     )
 }
@@ -414,18 +500,18 @@ pub(in crate::execution::commands) fn execute_rebuild_candidate_projection_only(
         target.error = Some(candidate.pre_invalidation_reason.clone());
         return target;
     }
-    let projection_only_message = String::from(
-        "projection_only: projection rebuild reports stale projection candidates without mutating runtime projections; run materialize-projections for explicit projection materialization or replay stale execution with reopen/begin/complete when execution work must be rerun.",
+    let projection_only_message = format!(
+        "projection_only: projection rebuild reports stale projection candidates without mutating runtime truth; materialize-projections is only for explicit projection export. For progress, {OPERATOR_ROUTE_AUTHORITY_REFERENCE}."
     );
     if request.skip_manual_fallback {
         target.status = String::from("failed");
-        target.failure_class = Some(String::from("manual_required"));
-        target.error = Some(format!("manual_required: {projection_only_message}"));
+        target.failure_class = Some(String::from(PROJECTION_ONLY_REBUILD_FAILURE_CLASS));
+        target.error = Some(projection_only_message);
         return target;
     }
     if target.failure_class.is_none() {
-        target.status = String::from("manual_required");
-        target.failure_class = Some(String::from("manual_required"));
+        target.status = String::from(PROJECTION_ONLY_REBUILD_STATUS);
+        target.failure_class = Some(String::from(PROJECTION_ONLY_REBUILD_FAILURE_CLASS));
         target.error = Some(projection_only_message);
     }
     target

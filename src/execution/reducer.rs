@@ -2,25 +2,30 @@ use serde::Serialize;
 
 use crate::diagnostics::JsonFailure;
 use crate::execution::current_truth::{
-    BranchRerecordingAssessment, CurrentLateStageBranchBindings, CurrentTruthSnapshot,
+    BranchRerecordingAssessment, CurrentLateStageBranchBindings, CurrentTruthFollowUpInputs,
     branch_closure_rerecording_assessment_with_authority, current_late_stage_branch_bindings,
     release_readiness_result_for_branch_closure, resolve_actionable_repair_follow_up,
 };
 use crate::execution::leases::StatusAuthoritativeOverlay;
+use crate::execution::projection_renderer::ProjectionReadModelDetail;
 use crate::execution::public_repair_targets::{
     public_repair_target_candidates_from_authority, public_repair_target_warning_codes,
 };
+use crate::execution::runtime_truth::{
+    ExecutionDerivedTruth, FinalReviewDispatchAuthority, compute_status_blocking_records,
+    current_task_review_dispatch_id_for_status, derive_execution_truth_from_authority,
+    derive_execution_truth_from_authority_with_gates_and_projection_detail,
+};
 use crate::execution::semantic_identity::{SemanticWorkspaceSnapshot, semantic_workspace_snapshot};
 use crate::execution::stale_target_projection::{
-    RuntimeGateSnapshot, StaleTargetProjectionInputs, project_authoritative_stale_targets,
-    project_stale_unreviewed_closures,
+    RuntimeGateSnapshot, StaleTargetProjection, StaleTargetProjectionInputs,
+    project_authoritative_stale_targets, project_stale_unreviewed_closures,
 };
 use crate::execution::state::{
-    ExecutionContext, ExecutionDerivedTruth, ExecutionReadScope, FinalReviewDispatchAuthority,
-    GateProjectionInputs, GateResult, GateState, PlanExecutionStatus, PublicRepairTarget,
-    compute_status_blocking_records, current_task_review_dispatch_id_for_status,
-    derive_execution_truth_from_authority, derive_execution_truth_from_authority_with_gates,
-    gate_finish_from_context, gate_review_from_context, preflight_from_context,
+    ExecutionContext, ExecutionReadScope, GateProjectionInputs, GateResult, GateState,
+    PlanExecutionStatus, PublicRepairTarget, gate_finish_from_context,
+    gate_finish_from_context_with_authoritative_state, gate_review_from_context,
+    gate_review_from_context_with_authoritative_state, preflight_from_context,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
 use crate::execution::transitions::AuthoritativeTransitionState;
@@ -31,6 +36,8 @@ pub(crate) struct RuntimeState {
     pub(crate) context: ExecutionContext,
     pub(crate) semantic_workspace: SemanticWorkspaceSnapshot,
     pub(crate) status: PlanExecutionStatus,
+    #[serde(skip)]
+    pub(crate) overlay: Option<StatusAuthoritativeOverlay>,
     pub(crate) route_repair_target_candidates: Vec<PublicRepairTarget>,
     pub(crate) preflight: Option<GateResult>,
     pub(crate) gate_review: Option<GateResult>,
@@ -47,6 +54,8 @@ pub(crate) struct RuntimeState {
     pub(crate) task_review_dispatch_id: Option<String>,
     #[serde(skip)]
     pub(crate) final_review_dispatch_authority: FinalReviewDispatchAuthority,
+    #[serde(skip)]
+    pub(crate) final_review_outcome_recorded_for_current_dispatch: bool,
 }
 
 fn should_project_late_stage_gates(status: &PlanExecutionStatus) -> bool {
@@ -67,10 +76,11 @@ fn should_project_late_stage_gates(status: &PlanExecutionStatus) -> bool {
 pub(crate) fn reduce_execution_read_scope(
     read_scope: &ExecutionReadScope,
 ) -> Result<RuntimeState, JsonFailure> {
-    reduce_runtime_state(
+    reduce_runtime_state_with_projection_detail(
         &read_scope.context,
         read_scope.authoritative_state.as_ref(),
         semantic_workspace_snapshot(&read_scope.context)?,
+        read_scope.projection_detail,
     )
 }
 
@@ -101,15 +111,32 @@ pub(crate) fn reduce_runtime_state(
     event_authority_state: Option<&AuthoritativeTransitionState>,
     semantic_workspace: SemanticWorkspaceSnapshot,
 ) -> Result<RuntimeState, JsonFailure> {
-    let gate_review = gate_review_from_context(context);
-    let gate_finish = gate_finish_from_context(context);
-    let derived = derive_execution_truth_from_authority_with_gates(
+    reduce_runtime_state_with_projection_detail(
+        context,
+        event_authority_state,
+        semantic_workspace,
+        ProjectionReadModelDetail::Full,
+    )
+}
+
+fn reduce_runtime_state_with_projection_detail(
+    context: &ExecutionContext,
+    event_authority_state: Option<&AuthoritativeTransitionState>,
+    semantic_workspace: SemanticWorkspaceSnapshot,
+    projection_detail: ProjectionReadModelDetail,
+) -> Result<RuntimeState, JsonFailure> {
+    let gate_review =
+        gate_review_from_context_with_authoritative_state(context, Ok(event_authority_state), true);
+    let gate_finish =
+        gate_finish_from_context_with_authoritative_state(context, Ok(event_authority_state));
+    let derived = derive_execution_truth_from_authority_with_gates_and_projection_detail(
         context,
         event_authority_state,
         Some(GateProjectionInputs {
             gate_review: &gate_review,
             gate_finish: &gate_finish,
         }),
+        projection_detail,
     )?;
     build_runtime_state_from_event_authority(
         context,
@@ -133,6 +160,7 @@ fn build_runtime_state_from_event_authority(
 ) -> Result<RuntimeState, JsonFailure> {
     let ExecutionDerivedTruth {
         mut status,
+        status_facts,
         overlay,
         task_review_dispatch_id,
         final_review_dispatch_authority,
@@ -153,6 +181,27 @@ fn build_runtime_state_from_event_authority(
         } else {
             (None, None)
         };
+    debug_assert_eq!(status.review_state_status, status_facts.review_state.status);
+    debug_assert_eq!(
+        status_facts
+            .review_state
+            .inputs
+            .repair_follow_up_requires_execution_reentry,
+        status_facts.repair_follow_up.requires_execution_reentry
+    );
+    debug_assert_eq!(
+        status_facts
+            .review_state
+            .inputs
+            .repair_follow_up_records_branch_closure,
+        status_facts.repair_follow_up.records_branch_closure
+    );
+    debug_assert!(
+        !(status_facts.repair_follow_up.requires_execution_reentry
+            && status_facts.repair_follow_up.requires_planning_reentry)
+    );
+    let status_projection_gates_match_reducer =
+        preflight.is_none() && gate_review.is_some() && gate_finish.is_some();
     let gate_snapshot = build_gate_snapshot(
         GateSnapshotBuildInputs {
             context,
@@ -166,6 +215,11 @@ fn build_runtime_state_from_event_authority(
         preflight.clone(),
         gate_review.clone(),
         gate_finish.clone(),
+        if status_projection_gates_match_reducer {
+            Some(&status_facts.stale_projection)
+        } else {
+            None
+        },
     )?;
     project_stale_unreviewed_closures(&mut status, &gate_snapshot);
     let fallback_gate_finish;
@@ -176,8 +230,13 @@ fn build_runtime_state_from_event_authority(
             &fallback_gate_finish
         }
     };
-    status.blocking_records =
-        compute_status_blocking_records(context, &status, gate_finish_for_blocking_records)?;
+    status.blocking_records = compute_status_blocking_records(
+        context,
+        &status,
+        gate_finish_for_blocking_records,
+        Some(&gate_snapshot.stale_targets),
+        event_authority_state,
+    )?;
     for warning_code in public_repair_target_warning_codes(event_authority_state) {
         if !status
             .warning_codes
@@ -249,10 +308,23 @@ fn build_runtime_state_from_event_authority(
     });
     let task_review_dispatch_id = task_review_dispatch_id
         .or_else(|| current_task_review_dispatch_id_for_status(context, &status, overlay.as_ref()));
+    let final_review_outcome_recorded_for_current_dispatch = final_review_dispatch_authority
+        .dispatch_id
+        .as_deref()
+        .is_some_and(|dispatch_id| {
+            event_authority_state
+                .and_then(AuthoritativeTransitionState::current_final_review_record)
+                .is_some_and(|record| {
+                    record.record_status == "current"
+                        && record.dispatch_id == dispatch_id
+                        && matches!(record.result.as_str(), "pass" | "fail")
+                })
+        });
     let mut runtime_state = RuntimeState {
         context: context.clone(),
         semantic_workspace,
         status,
+        overlay,
         route_repair_target_candidates,
         preflight,
         gate_review,
@@ -267,10 +339,17 @@ fn build_runtime_state_from_event_authority(
         branch_rerecording_assessment,
         task_review_dispatch_id,
         final_review_dispatch_authority,
+        final_review_outcome_recorded_for_current_dispatch,
     };
     runtime_state.persisted_repair_follow_up = resolve_actionable_repair_follow_up(
-        &runtime_state,
-        &CurrentTruthSnapshot::from_authoritative_state(event_authority_state),
+        CurrentTruthFollowUpInputs::new(event_authority_state, &runtime_state.status)
+            .with_gate_snapshot(Some(&runtime_state.gate_snapshot))
+            .with_semantic_workspace_state_id(Some(
+                runtime_state
+                    .semantic_workspace
+                    .semantic_workspace_tree_id
+                    .as_str(),
+            )),
     )
     .map(|record| record.kind.public_token().to_owned());
     Ok(runtime_state)
@@ -289,6 +368,7 @@ fn build_gate_snapshot(
     preflight: Option<GateResult>,
     gate_review: Option<GateResult>,
     gate_finish: Option<GateResult>,
+    precomputed_status_stale_projection: Option<&StaleTargetProjection>,
 ) -> Result<RuntimeGateSnapshot, JsonFailure> {
     let GateSnapshotBuildInputs {
         context,
@@ -297,16 +377,20 @@ fn build_gate_snapshot(
         overlay_current_branch_closure_id,
         status,
     } = inputs;
-    let projection = project_authoritative_stale_targets(StaleTargetProjectionInputs {
-        context,
-        event_authority_state,
-        overlay,
-        overlay_current_branch_closure_id,
-        status,
-        preflight: preflight.as_ref(),
-        gate_review: gate_review.as_ref(),
-        gate_finish: gate_finish.as_ref(),
-    })?;
+    let projection = if let Some(projection) = precomputed_status_stale_projection {
+        projection.clone()
+    } else {
+        project_authoritative_stale_targets(StaleTargetProjectionInputs {
+            context,
+            event_authority_state,
+            overlay,
+            overlay_current_branch_closure_id,
+            status,
+            preflight: preflight.as_ref(),
+            gate_review: gate_review.as_ref(),
+            gate_finish: gate_finish.as_ref(),
+        })?
+    };
     Ok(RuntimeGateSnapshot {
         preflight,
         gate_review,

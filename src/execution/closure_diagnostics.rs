@@ -10,31 +10,9 @@ use crate::execution::phase;
 use crate::execution::status::PlanExecutionStatus;
 use crate::paths::harness_authoritative_artifact_path;
 
-pub(crate) const TASK_BOUNDARY_PROJECTION_DIAGNOSTIC_REASON_CODES: &[&str] = &[
-    "prior_task_review_dispatch_missing",
-    "prior_task_review_dispatch_stale",
-    "prior_task_verification_missing",
-    "prior_task_verification_missing_legacy",
-    "task_review_not_independent",
-    "task_review_artifact_malformed",
-    "task_verification_summary_malformed",
-];
+mod reason_codes;
 
-pub(crate) fn task_boundary_projection_diagnostic_reason_code(reason_code: &str) -> bool {
-    TASK_BOUNDARY_PROJECTION_DIAGNOSTIC_REASON_CODES.contains(&reason_code)
-}
-
-const PUBLIC_TASK_BOUNDARY_REASON_CODES: &[&str] = &[
-    "prior_task_current_closure_missing",
-    "prior_task_current_closure_stale",
-    "prior_task_current_closure_invalid",
-    "prior_task_current_closure_reviewed_state_malformed",
-    "task_cycle_break_active",
-    "current_task_closure_overlay_restore_required",
-    "prior_task_review_not_green",
-    "task_closure_baseline_repair_candidate",
-    phase::DETAIL_TASK_CLOSURE_RECORDING_READY,
-];
+pub(crate) use reason_codes::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct PublicTaskBoundaryDecision {
@@ -55,10 +33,6 @@ pub(crate) enum PublicTaskBoundaryState {
     OverlayRestoreRequired,
     TaskClosureRecordingReady,
     ExecutionReentryRequired,
-}
-
-pub(crate) fn public_task_boundary_reason_code(reason_code: &str) -> bool {
-    PUBLIC_TASK_BOUNDARY_REASON_CODES.contains(&reason_code)
 }
 
 pub(crate) fn public_task_boundary_decision(
@@ -82,51 +56,40 @@ pub(crate) fn public_task_boundary_decision(
 
     let public_reason_codes =
         reason_codes_matching(&status.reason_codes, public_task_boundary_reason_code);
-    let diagnostic_reason_codes = reason_codes_matching(
-        &status.reason_codes,
-        task_boundary_projection_diagnostic_reason_code,
-    );
-    let state = if public_reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "task_cycle_break_active")
+    let diagnostic_reason_codes = task_boundary_projection_diagnostic_reason_codes(status);
+    let state = if reason_codes_include(&public_reason_codes, task_boundary_cycle_break_reason_code)
     {
         PublicTaskBoundaryState::CycleBreakActive
-    } else if public_reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "current_task_closure_overlay_restore_required")
-    {
+    } else if reason_codes_include(
+        &public_reason_codes,
+        task_boundary_overlay_restore_reason_code,
+    ) {
         PublicTaskBoundaryState::OverlayRestoreRequired
-    } else if public_reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "prior_task_review_not_green")
-    {
+    } else if reason_codes_include(
+        &public_reason_codes,
+        task_boundary_negative_review_reason_code,
+    ) {
         PublicTaskBoundaryState::NegativeReviewCurrent
-    } else if public_reason_codes.iter().any(|reason_code| {
-        matches!(
-            reason_code.as_str(),
-            "prior_task_current_closure_invalid"
-                | "prior_task_current_closure_reviewed_state_malformed"
-        )
-    }) {
+    } else if reason_codes_include(
+        &public_reason_codes,
+        task_boundary_current_closure_structural_reason_code,
+    ) {
         PublicTaskBoundaryState::ExecutionReentryRequired
-    } else if public_reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "prior_task_current_closure_stale")
-    {
+    } else if reason_codes_include(
+        &public_reason_codes,
+        task_boundary_current_closure_stale_reason_code,
+    ) {
         PublicTaskBoundaryState::CurrentClosureStale
-    } else if public_reason_codes
-        .iter()
-        .any(|reason_code| reason_code == "prior_task_current_closure_missing")
-    {
+    } else if reason_codes_include(
+        &public_reason_codes,
+        task_boundary_current_closure_missing_reason_code,
+    ) {
         PublicTaskBoundaryState::CurrentClosureMissing
     } else if status.phase_detail == phase::DETAIL_TASK_CLOSURE_RECORDING_READY
-        || public_reason_codes.iter().any(|reason_code| {
-            matches!(
-                reason_code.as_str(),
-                "task_closure_baseline_repair_candidate"
-                    | phase::DETAIL_TASK_CLOSURE_RECORDING_READY
-            )
-        })
+        || reason_codes_include(
+            &public_reason_codes,
+            task_boundary_closure_recording_ready_reason_code,
+        )
     {
         PublicTaskBoundaryState::TaskClosureRecordingReady
     } else {
@@ -141,8 +104,27 @@ pub(crate) fn public_task_boundary_decision(
     }
 }
 
+pub(crate) fn push_projection_diagnostic_once(status: &mut PlanExecutionStatus, reason_code: &str) {
+    if !status
+        .projection_diagnostics
+        .iter()
+        .any(|existing| existing == reason_code)
+    {
+        status.projection_diagnostics.push(reason_code.to_owned());
+    }
+}
+
 pub(crate) fn apply_task_boundary_projection_diagnostics(status: &mut PlanExecutionStatus) {
-    status.projection_diagnostics = public_task_boundary_decision(status).diagnostic_reason_codes;
+    let diagnostic_reason_codes = task_boundary_projection_diagnostic_reason_codes(status);
+    status
+        .reason_codes
+        .retain(|reason_code| !task_boundary_projection_diagnostic_reason_code(reason_code));
+    status
+        .projection_diagnostics
+        .retain(|reason_code| !task_boundary_projection_diagnostic_reason_code(reason_code));
+    for reason_code in diagnostic_reason_codes {
+        push_projection_diagnostic_once(status, &reason_code);
+    }
 }
 
 pub(crate) fn merge_status_projection_diagnostics(
@@ -164,7 +146,7 @@ pub(crate) fn merge_task_boundary_projection_diagnostics(
     mut diagnostic_reason_codes: Vec<String>,
     status: &PlanExecutionStatus,
 ) -> Vec<String> {
-    for reason_code in public_task_boundary_decision(status).diagnostic_reason_codes {
+    for reason_code in task_boundary_projection_diagnostic_reason_codes(status) {
         if !diagnostic_reason_codes
             .iter()
             .any(|existing| existing == &reason_code)
@@ -185,19 +167,33 @@ fn reason_codes_matching(reason_codes: &[String], predicate: fn(&str) -> bool) -
     matched
 }
 
+fn task_boundary_projection_diagnostic_reason_codes(status: &PlanExecutionStatus) -> Vec<String> {
+    let mut matched = reason_codes_matching(
+        &status.reason_codes,
+        task_boundary_projection_diagnostic_reason_code,
+    );
+    for reason_code in status
+        .projection_diagnostics
+        .iter()
+        .filter(|reason_code| task_boundary_projection_diagnostic_reason_code(reason_code))
+    {
+        if !matched.iter().any(|existing| existing == reason_code) {
+            matched.push(reason_code.clone());
+        }
+    }
+    matched
+}
+
 pub(crate) fn task_closure_recording_reason_code(reason_code: &str) -> bool {
     task_closure_recording_blocking_reason_code(reason_code)
-        || task_boundary_projection_diagnostic_reason_code(reason_code)
 }
 
 pub(crate) fn task_closure_recording_status_reason_codes(
     blocking_reason_codes: &[String],
-    diagnostic_reason_codes: &[String],
 ) -> Vec<String> {
     let mut reason_codes = Vec::new();
     for reason_code in blocking_reason_codes
         .iter()
-        .chain(diagnostic_reason_codes.iter())
         .filter(|reason_code| task_closure_recording_reason_code(reason_code))
     {
         if !reason_codes.iter().any(|existing| existing == reason_code) {
@@ -207,17 +203,16 @@ pub(crate) fn task_closure_recording_status_reason_codes(
     reason_codes
 }
 
-fn task_closure_recording_blocking_reason_code(reason_code: &str) -> bool {
-    matches!(
-        reason_code,
-        "prior_task_review_not_green" | "prior_task_current_closure_stale"
-    )
+pub(crate) fn task_closure_recording_blocking_reason_code(reason_code: &str) -> bool {
+    task_boundary_negative_review_reason_code(reason_code)
+        || task_boundary_current_closure_stale_reason_code(reason_code)
 }
 
 pub(crate) fn task_closure_dispatch_lineage_reason_code(reason_code: &str) -> bool {
     matches!(
         reason_code,
-        "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale"
+        TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_REVIEW_DISPATCH_MISSING
+            | TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_REVIEW_DISPATCH_STALE
     )
 }
 
@@ -250,19 +245,19 @@ pub(crate) fn task_closure_recording_diagnostic_reason_codes(
         (None, None) => {
             push_task_closure_diagnostic_reason_code_once(
                 &mut diagnostic_reason_codes,
-                "prior_task_review_dispatch_missing",
+                TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_REVIEW_DISPATCH_MISSING,
             );
         }
         (None, Some(_)) | (Some(_), None) => {
             push_task_closure_diagnostic_reason_code_once(
                 &mut diagnostic_reason_codes,
-                "prior_task_review_dispatch_stale",
+                TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_REVIEW_DISPATCH_STALE,
             );
         }
         (Some(dispatch_id), Some(lineage_dispatch_id)) if dispatch_id != lineage_dispatch_id => {
             push_task_closure_diagnostic_reason_code_once(
                 &mut diagnostic_reason_codes,
-                "prior_task_review_dispatch_stale",
+                TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_REVIEW_DISPATCH_STALE,
             );
         }
         _ => {}
@@ -270,7 +265,7 @@ pub(crate) fn task_closure_recording_diagnostic_reason_codes(
     if dispatch_id.is_some() && !lineage_reviewed_state_matches {
         push_task_closure_diagnostic_reason_code_once(
             &mut diagnostic_reason_codes,
-            "prior_task_review_dispatch_stale",
+            TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_REVIEW_DISPATCH_STALE,
         );
     }
     diagnostic_reason_codes
@@ -316,7 +311,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
                 if treat_missing_review_receipts_as_malformed {
                     push_task_closure_diagnostic_reason_code_once(
                         diagnostic_reason_codes,
-                        "task_review_artifact_malformed",
+                        TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_REVIEW_ARTIFACT_MALFORMED,
                     );
                 }
                 continue;
@@ -326,7 +321,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
                 all_review_receipts_valid = false;
                 push_task_closure_diagnostic_reason_code_once(
                     diagnostic_reason_codes,
-                    "task_review_artifact_malformed",
+                    TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_REVIEW_ARTIFACT_MALFORMED,
                 );
                 continue;
             }
@@ -335,7 +330,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
             all_review_receipts_valid = false;
             push_task_closure_diagnostic_reason_code_once(
                 diagnostic_reason_codes,
-                "task_review_artifact_malformed",
+                TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_REVIEW_ARTIFACT_MALFORMED,
             );
             continue;
         }
@@ -356,7 +351,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
             all_review_receipts_valid = false;
             push_task_closure_diagnostic_reason_code_once(
                 diagnostic_reason_codes,
-                "task_review_artifact_malformed",
+                TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_REVIEW_ARTIFACT_MALFORMED,
             );
             continue;
         }
@@ -370,14 +365,14 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
                 all_review_receipts_valid = false;
                 push_task_closure_diagnostic_reason_code_once(
                     diagnostic_reason_codes,
-                    "task_review_not_independent",
+                    TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_REVIEW_NOT_INDEPENDENT,
                 );
             }
             None => {
                 all_review_receipts_valid = false;
                 push_task_closure_diagnostic_reason_code_once(
                     diagnostic_reason_codes,
-                    "task_review_artifact_malformed",
+                    TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_REVIEW_ARTIFACT_MALFORMED,
                 );
             }
         }
@@ -394,14 +389,14 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
         Err(error) if error.kind() == ErrorKind::NotFound => {
             push_task_closure_diagnostic_reason_code_once(
                 diagnostic_reason_codes,
-                "prior_task_verification_missing",
+                TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_VERIFICATION_MISSING,
             );
             None
         }
         Err(_) => {
             push_task_closure_diagnostic_reason_code_once(
                 diagnostic_reason_codes,
-                "task_verification_summary_malformed",
+                TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_VERIFICATION_SUMMARY_MALFORMED,
             );
             None
         }
@@ -412,7 +407,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
         {
             push_task_closure_diagnostic_reason_code_once(
                 diagnostic_reason_codes,
-                "task_verification_summary_malformed",
+                TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_VERIFICATION_SUMMARY_MALFORMED,
             );
         } else {
             let verification_document = parse_artifact_document(&verification_receipt_path);
@@ -446,7 +441,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
             {
                 push_task_closure_diagnostic_reason_code_once(
                     diagnostic_reason_codes,
-                    "task_verification_summary_malformed",
+                    TASK_BOUNDARY_DIAGNOSTIC_REASON_TASK_VERIFICATION_SUMMARY_MALFORMED,
                 );
             }
         }

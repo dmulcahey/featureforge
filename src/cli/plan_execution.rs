@@ -29,13 +29,13 @@ pub enum PlanExecutionCommand {
         about = "Intent-level late-stage progression command."
     )]
     AdvanceLateStage(AdvanceLateStageArgs),
-    #[command(about = "Execution step start recorder.")]
+    #[command(about = "Start execution for a plan step.")]
     Begin(BeginArgs),
-    #[command(about = "Execution step completion recorder.")]
+    #[command(about = "Complete an execution step.")]
     Complete(CompleteArgs),
-    #[command(about = "Execution task reopen recorder.")]
+    #[command(about = "Reopen a plan step for more work.")]
     Reopen(ReopenArgs),
-    #[command(about = "Execution handoff transfer recorder.")]
+    #[command(about = "Transfer workflow ownership or repair-step work.")]
     Transfer(TransferArgs),
     #[command(
         name = "materialize-projections",

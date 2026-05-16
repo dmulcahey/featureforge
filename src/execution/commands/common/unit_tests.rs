@@ -11,9 +11,9 @@ use super::{
     AdvanceLateStageOutputContext, CloseCurrentTaskOutcomeClass, CurrentFinalReviewAuthorityCheck,
     FinalReviewProjectionInput, advance_late_stage_follow_up_or_requery_output,
     blocked_close_current_task_output_from_operator, blocked_follow_up_for_operator,
-    close_current_task_outcome_class, close_current_task_required_follow_up,
-    current_final_review_record_is_still_authoritative, late_stage_required_follow_up,
-    normalized_late_stage_surface, path_matches_late_stage_surface, render_final_review_artifacts,
+    close_current_task_outcome_class, current_final_review_record_is_still_authoritative,
+    normalized_late_stage_surface, path_matches_late_stage_surface,
+    public_recovery_contract_for_follow_up, render_final_review_artifacts,
     rewrite_branch_final_review_artifacts, rewrite_branch_head_bound_artifact,
     rewrite_branch_qa_artifact, superseded_branch_closure_ids_from_previous_current,
     task_closure_contributes_to_branch_surface, task_closure_record_covers_path,
@@ -21,13 +21,18 @@ use super::{
 };
 use crate::cli::plan_execution::{ReviewOutcomeArg, VerificationOutcomeArg};
 use crate::contracts::plan::parse_plan_file;
+use crate::contracts::workflow::WorkflowRoute;
 use crate::diagnostics::FailureClass;
-use crate::execution::command_eligibility::PublicCommand;
+use crate::execution::command_eligibility::{
+    PublicCommand, close_current_task_required_follow_up, late_stage_required_follow_up,
+};
 use crate::execution::context::EvidenceSourceOrigin;
 use crate::execution::final_review::resolve_release_base_branch;
 use crate::execution::leases::StatusAuthoritativeOverlay;
 use crate::execution::leases::authoritative_state_path;
+use crate::execution::next_action::NEXT_ACTION_REPAIR_REVIEW_STATE;
 use crate::execution::query::ExecutionRoutingState;
+use crate::execution::route_plan::route_decision_from_non_runtime_workflow_routing;
 use crate::execution::state::{
     EvidenceFormat, ExecutionContext, ExecutionEvidence, ExecutionRuntime, NO_REPO_FILES_MARKER,
 };
@@ -35,12 +40,23 @@ use crate::execution::transitions::CurrentTaskClosureRecord;
 use crate::execution::transitions::load_authoritative_transition_state;
 use crate::git::sha256_hex;
 use crate::paths::harness_authoritative_artifact_path;
-use crate::workflow::status::WorkflowRoute;
 
 fn repair_review_state_public_command(plan: &str) -> Option<PublicCommand> {
     Some(PublicCommand::RepairReviewState {
         plan: plan.to_owned(),
     })
+}
+
+fn finalized_operator_route(mut operator: ExecutionRoutingState) -> ExecutionRoutingState {
+    let route_decision = {
+        let blocking_records = operator
+            .execution_status
+            .as_ref()
+            .map_or(&[][..], |status| status.blocking_records.as_slice());
+        route_decision_from_non_runtime_workflow_routing(&operator, blocking_records, false)
+    };
+    operator.route_decision = Some(route_decision);
+    operator
 }
 
 #[test]
@@ -631,7 +647,7 @@ fn task_closure_record_covers_path_respects_directory_surface_entries() {
 
 #[test]
 fn blocked_follow_up_prefers_shared_repair_route_before_branch_closure_fallback() {
-    let operator = ExecutionRoutingState {
+    let operator = finalized_operator_route(ExecutionRoutingState {
         route_decision: None,
         runtime_provenance: None,
         route: WorkflowRoute {
@@ -661,7 +677,9 @@ fn blocked_follow_up_prefers_shared_repair_route_before_branch_closure_fallback(
         phase_detail: String::from(
             crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS,
         ),
-        review_state_status: String::from("stale_unreviewed"),
+        review_state_status: String::from(
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED,
+        ),
         qa_requirement: None,
         finish_review_gate_pass_branch_closure_id: None,
         recording_context: None,
@@ -682,22 +700,26 @@ fn blocked_follow_up_prefers_shared_repair_route_before_branch_closure_fallback(
         current_branch_closure_id: None,
         current_release_readiness_result: None,
         base_branch: None,
-    };
+    });
 
     assert_eq!(
         blocked_follow_up_for_operator(&operator),
-        Some(String::from("repair_review_state"))
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE
+        ))
     );
     assert_eq!(
         late_stage_required_follow_up("final_review", &operator),
-        Some(String::from("repair_review_state"))
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE
+        ))
     );
 }
 
 #[test]
 fn advance_late_stage_final_review_with_dispatch_id_requeries_when_dispatch_follow_up_is_required()
 {
-    let operator = ExecutionRoutingState {
+    let operator = finalized_operator_route(ExecutionRoutingState {
         route_decision: None,
         runtime_provenance: None,
         route: WorkflowRoute {
@@ -746,7 +768,7 @@ fn advance_late_stage_final_review_with_dispatch_id_requeries_when_dispatch_foll
         current_branch_closure_id: None,
         current_release_readiness_result: None,
         base_branch: None,
-    };
+    });
 
     let output = advance_late_stage_follow_up_or_requery_output(
         &operator,
@@ -770,9 +792,7 @@ fn advance_late_stage_final_review_with_dispatch_id_requeries_when_dispatch_foll
     );
     assert_eq!(
         output.recommended_command.as_deref(),
-        Some(
-            "featureforge workflow operator --plan docs/featureforge/plans/example.md --external-review-result-ready --json",
-        )
+        Some("featureforge workflow operator --plan <approved-plan-path> --json",)
     );
     assert_eq!(
         output.recommended_public_command_argv,
@@ -782,7 +802,6 @@ fn advance_late_stage_final_review_with_dispatch_id_requeries_when_dispatch_foll
             String::from("operator"),
             String::from("--plan"),
             String::from("docs/featureforge/plans/example.md"),
-            String::from("--external-review-result-ready"),
             String::from("--json"),
         ])
     );
@@ -792,7 +811,7 @@ fn advance_late_stage_final_review_with_dispatch_id_requeries_when_dispatch_foll
 
 #[test]
 fn advance_late_stage_final_review_with_matching_dispatch_lineage_keeps_dispatch_follow_up() {
-    let operator = ExecutionRoutingState {
+    let operator = finalized_operator_route(ExecutionRoutingState {
         route_decision: None,
         runtime_provenance: None,
         route: WorkflowRoute {
@@ -841,7 +860,7 @@ fn advance_late_stage_final_review_with_matching_dispatch_lineage_keeps_dispatch
         current_branch_closure_id: None,
         current_release_readiness_result: None,
         base_branch: None,
-    };
+    });
 
     let output = advance_late_stage_follow_up_or_requery_output(
         &operator,
@@ -862,9 +881,7 @@ fn advance_late_stage_final_review_with_matching_dispatch_lineage_keeps_dispatch
     assert_eq!(output.code, None);
     assert_eq!(
         output.recommended_command.as_deref(),
-        Some(
-            "featureforge workflow operator --plan docs/featureforge/plans/example.md --external-review-result-ready --json",
-        )
+        Some("featureforge workflow operator --plan <approved-plan-path> --json",)
     );
     assert_eq!(
         output.recommended_public_command_argv,
@@ -874,7 +891,6 @@ fn advance_late_stage_final_review_with_matching_dispatch_lineage_keeps_dispatch
             String::from("operator"),
             String::from("--plan"),
             String::from("docs/featureforge/plans/example.md"),
-            String::from("--external-review-result-ready"),
             String::from("--json"),
         ])
     );
@@ -884,13 +900,101 @@ fn advance_late_stage_final_review_with_matching_dispatch_lineage_keeps_dispatch
         Some(String::from("request_external_review"))
     );
     assert!(
-        !output.required_inputs.is_empty(),
-        "request_external_review should expose parseable final-review inputs"
+        output.required_inputs.is_empty(),
+        "request_external_review requery must not synthesize final-review command inputs before the route owner exposes them"
     );
 }
 
 #[test]
-fn blocked_follow_up_routes_clean_execution_reentry_repair_state_to_repair_review_state() {
+fn public_recovery_contract_does_not_synthesize_repair_review_state_without_route_command() {
+    let recovery = public_recovery_contract_for_follow_up(
+        Path::new("docs/featureforge/plans/example.md"),
+        None,
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+        )),
+    );
+
+    assert!(recovery.recommended_command.is_none());
+    assert!(recovery.recommended_public_command_argv.is_none());
+    assert!(recovery.recommended_public_command_template.is_none());
+    assert!(recovery.required_inputs.is_empty());
+    assert!(recovery.rederive_via_workflow_operator.is_none());
+    assert!(recovery.required_follow_up.is_none());
+}
+
+#[test]
+fn public_recovery_contract_does_not_synthesize_repair_review_state_from_mismatched_route() {
+    let operator = ExecutionRoutingState {
+        route_decision: None,
+        runtime_provenance: None,
+        route: WorkflowRoute {
+            schema_version: 3,
+            status: String::from("ok"),
+            next_skill: String::from("featureforge:workflow"),
+            spec_path: String::new(),
+            plan_path: String::new(),
+            contract_state: String::new(),
+            reason_codes: Vec::new(),
+            diagnostics: Vec::new(),
+            plan_fidelity_review: None,
+            scan_truncated: false,
+            spec_candidate_count: 0,
+            plan_candidate_count: 0,
+            manifest_path: String::new(),
+            root: String::new(),
+            reason: String::new(),
+            note: String::new(),
+        },
+        execution_status: None,
+        preflight: None,
+        gate_review: None,
+        gate_finish: None,
+        workflow_phase: String::from(crate::execution::phase::PHASE_EXECUTING),
+        phase: String::from(crate::execution::phase::PHASE_TASK_CLOSURE_PENDING),
+        phase_detail: String::from(crate::execution::phase::DETAIL_TASK_CLOSURE_RECORDING_READY),
+        review_state_status: String::from("clean"),
+        qa_requirement: None,
+        finish_review_gate_pass_branch_closure_id: None,
+        recording_context: None,
+        execution_command_context: None,
+        next_action: String::from("close current task"),
+        recommended_public_command: Some(PublicCommand::CloseCurrentTask {
+            plan: String::from("docs/featureforge/plans/example.md"),
+            task: Some(1),
+            result_inputs_required: true,
+        }),
+        recommended_command: None,
+        blocking_scope: None,
+        blocking_task: Some(1),
+        external_wait_state: None,
+        blocking_reason_codes: Vec::new(),
+        reason_family: String::new(),
+        diagnostic_reason_codes: Vec::new(),
+        task_review_dispatch_id: None,
+        final_review_dispatch_id: None,
+        current_branch_closure_id: None,
+        current_release_readiness_result: None,
+        base_branch: None,
+    };
+    let recovery = public_recovery_contract_for_follow_up(
+        Path::new("docs/featureforge/plans/example.md"),
+        Some(&operator),
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE,
+        )),
+    );
+
+    assert!(recovery.recommended_command.is_none());
+    assert!(recovery.recommended_public_command_argv.is_none());
+    assert!(recovery.recommended_public_command_template.is_none());
+    assert!(recovery.required_inputs.is_empty());
+    assert!(recovery.rederive_via_workflow_operator.is_none());
+    assert!(recovery.required_follow_up.is_none());
+}
+
+#[test]
+fn public_recovery_contract_does_not_synthesize_late_stage_from_mismatched_route() {
     let operator = ExecutionRoutingState {
         route_decision: None,
         runtime_provenance: None,
@@ -924,7 +1028,75 @@ fn blocked_follow_up_routes_clean_execution_reentry_repair_state_to_repair_revie
         finish_review_gate_pass_branch_closure_id: None,
         recording_context: None,
         execution_command_context: None,
-        next_action: String::from("repair review state / reenter execution"),
+        next_action: String::from(NEXT_ACTION_REPAIR_REVIEW_STATE),
+        recommended_public_command: repair_review_state_public_command(
+            "docs/featureforge/plans/example.md",
+        ),
+        recommended_command: None,
+        blocking_scope: None,
+        blocking_task: None,
+        external_wait_state: None,
+        blocking_reason_codes: Vec::new(),
+        reason_family: String::new(),
+        diagnostic_reason_codes: Vec::new(),
+        task_review_dispatch_id: None,
+        final_review_dispatch_id: None,
+        current_branch_closure_id: None,
+        current_release_readiness_result: None,
+        base_branch: None,
+    };
+    let recovery = public_recovery_contract_for_follow_up(
+        Path::new("docs/featureforge/plans/example.md"),
+        Some(&operator),
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_ADVANCE_LATE_STAGE,
+        )),
+    );
+
+    assert!(recovery.recommended_command.is_none());
+    assert!(recovery.recommended_public_command_argv.is_none());
+    assert!(recovery.recommended_public_command_template.is_none());
+    assert!(recovery.required_inputs.is_empty());
+    assert!(recovery.rederive_via_workflow_operator.is_none());
+    assert!(recovery.required_follow_up.is_none());
+}
+
+#[test]
+fn blocked_follow_up_routes_clean_execution_reentry_repair_state_to_repair_review_state() {
+    let operator = finalized_operator_route(ExecutionRoutingState {
+        route_decision: None,
+        runtime_provenance: None,
+        route: WorkflowRoute {
+            schema_version: 3,
+            status: String::from("ok"),
+            next_skill: String::from("featureforge:workflow"),
+            spec_path: String::new(),
+            plan_path: String::new(),
+            contract_state: String::new(),
+            reason_codes: Vec::new(),
+            diagnostics: Vec::new(),
+            plan_fidelity_review: None,
+            scan_truncated: false,
+            spec_candidate_count: 0,
+            plan_candidate_count: 0,
+            manifest_path: String::new(),
+            root: String::new(),
+            reason: String::new(),
+            note: String::new(),
+        },
+        execution_status: None,
+        preflight: None,
+        gate_review: None,
+        gate_finish: None,
+        workflow_phase: String::from(crate::execution::phase::PHASE_EXECUTING),
+        phase: String::from(crate::execution::phase::PHASE_EXECUTING),
+        phase_detail: String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
+        review_state_status: String::from("clean"),
+        qa_requirement: None,
+        finish_review_gate_pass_branch_closure_id: None,
+        recording_context: None,
+        execution_command_context: None,
+        next_action: String::from(NEXT_ACTION_REPAIR_REVIEW_STATE),
         recommended_public_command: repair_review_state_public_command(
             "docs/featureforge/plans/example.md",
         ),
@@ -942,25 +1114,31 @@ fn blocked_follow_up_routes_clean_execution_reentry_repair_state_to_repair_revie
         current_branch_closure_id: None,
         current_release_readiness_result: None,
         base_branch: None,
-    };
+    });
 
     assert_eq!(
         blocked_follow_up_for_operator(&operator),
-        Some(String::from("repair_review_state"))
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE
+        ))
     );
     assert_eq!(
         late_stage_required_follow_up("release_readiness", &operator),
-        Some(String::from("repair_review_state"))
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE
+        ))
     );
     assert_eq!(
         late_stage_required_follow_up("final_review", &operator),
-        Some(String::from("repair_review_state"))
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE
+        ))
     );
 }
 
 #[test]
 fn close_current_task_follow_up_preserves_structural_repair_state_lane() {
-    let operator = ExecutionRoutingState {
+    let operator = finalized_operator_route(ExecutionRoutingState {
         route_decision: None,
         runtime_provenance: None,
         route: WorkflowRoute {
@@ -993,7 +1171,7 @@ fn close_current_task_follow_up_preserves_structural_repair_state_lane() {
         finish_review_gate_pass_branch_closure_id: None,
         recording_context: None,
         execution_command_context: None,
-        next_action: String::from("repair review state / reenter execution"),
+        next_action: String::from(NEXT_ACTION_REPAIR_REVIEW_STATE),
         recommended_public_command: repair_review_state_public_command(
             "docs/featureforge/plans/example.md",
         ),
@@ -1011,17 +1189,19 @@ fn close_current_task_follow_up_preserves_structural_repair_state_lane() {
         current_branch_closure_id: None,
         current_release_readiness_result: None,
         base_branch: None,
-    };
+    });
 
     assert_eq!(
         close_current_task_required_follow_up(&operator),
-        Some(String::from("repair_review_state"))
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE
+        ))
     );
 }
 
 #[test]
 fn close_current_task_follow_up_preserves_stale_repair_state_lane() {
-    let operator = ExecutionRoutingState {
+    let operator = finalized_operator_route(ExecutionRoutingState {
         route_decision: None,
         runtime_provenance: None,
         route: WorkflowRoute {
@@ -1049,12 +1229,12 @@ fn close_current_task_follow_up_preserves_stale_repair_state_lane() {
         workflow_phase: String::from(crate::execution::phase::PHASE_EXECUTING),
         phase: String::from(crate::execution::phase::PHASE_EXECUTING),
         phase_detail: String::from(crate::execution::phase::DETAIL_EXECUTION_REENTRY_REQUIRED),
-        review_state_status: String::from("stale_unreviewed"),
+        review_state_status: String::from(crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED),
         qa_requirement: None,
         finish_review_gate_pass_branch_closure_id: None,
         recording_context: None,
         execution_command_context: None,
-        next_action: String::from("repair review state / reenter execution"),
+        next_action: String::from(NEXT_ACTION_REPAIR_REVIEW_STATE),
         recommended_public_command: repair_review_state_public_command(
             "docs/featureforge/plans/example.md",
         ),
@@ -1064,7 +1244,7 @@ fn close_current_task_follow_up_preserves_stale_repair_state_lane() {
         blocking_scope: None,
         blocking_task: Some(2),
         external_wait_state: None,
-        blocking_reason_codes: vec![String::from("prior_task_current_closure_stale")],
+        blocking_reason_codes: vec![String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_STALE)],
         reason_family: String::new(),
         diagnostic_reason_codes: Vec::new(),
         task_review_dispatch_id: None,
@@ -1072,17 +1252,19 @@ fn close_current_task_follow_up_preserves_stale_repair_state_lane() {
         current_branch_closure_id: None,
         current_release_readiness_result: None,
         base_branch: None,
-    };
+    });
 
     assert_eq!(
         close_current_task_required_follow_up(&operator),
-        Some(String::from("repair_review_state"))
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE
+        ))
     );
 }
 
 #[test]
 fn close_current_task_follow_up_waits_for_external_review_result_when_task_review_is_pending() {
-    let operator = ExecutionRoutingState {
+    let operator = finalized_operator_route(ExecutionRoutingState {
         route_decision: None,
         runtime_provenance: None,
         route: WorkflowRoute {
@@ -1123,7 +1305,9 @@ fn close_current_task_follow_up_waits_for_external_review_result_when_task_revie
         blocking_scope: Some(String::from("task")),
         blocking_task: Some(1),
         external_wait_state: Some(String::from("waiting_for_external_review_result")),
-        blocking_reason_codes: vec![String::from("prior_task_review_not_green")],
+        blocking_reason_codes: vec![String::from(
+            crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_REVIEW_NOT_GREEN,
+        )],
         reason_family: String::new(),
         diagnostic_reason_codes: Vec::new(),
         task_review_dispatch_id: Some(String::from("dispatch-task-1")),
@@ -1131,7 +1315,7 @@ fn close_current_task_follow_up_waits_for_external_review_result_when_task_revie
         current_branch_closure_id: None,
         current_release_readiness_result: None,
         base_branch: None,
-    };
+    });
 
     assert_eq!(
         close_current_task_required_follow_up(&operator),
@@ -1141,7 +1325,7 @@ fn close_current_task_follow_up_waits_for_external_review_result_when_task_revie
 
 #[test]
 fn close_current_task_follow_up_preserves_request_external_review_for_non_task_dispatch_phase() {
-    let operator = ExecutionRoutingState {
+    let operator = finalized_operator_route(ExecutionRoutingState {
         route_decision: None,
         runtime_provenance: None,
         route: WorkflowRoute {
@@ -1190,7 +1374,7 @@ fn close_current_task_follow_up_preserves_request_external_review_for_non_task_d
         current_branch_closure_id: Some(String::from("branch-closure-1")),
         current_release_readiness_result: Some(String::from("pass")),
         base_branch: None,
-    };
+    });
 
     assert_eq!(
         close_current_task_required_follow_up(&operator),
@@ -1200,7 +1384,7 @@ fn close_current_task_follow_up_preserves_request_external_review_for_non_task_d
 
 #[test]
 fn close_current_task_follow_up_requires_verification_when_verification_is_missing() {
-    let operator = ExecutionRoutingState {
+    let operator = finalized_operator_route(ExecutionRoutingState {
         route_decision: None,
         runtime_provenance: None,
         route: WorkflowRoute {
@@ -1241,7 +1425,7 @@ fn close_current_task_follow_up_requires_verification_when_verification_is_missi
         blocking_scope: Some(String::from("task")),
         blocking_task: Some(1),
         external_wait_state: None,
-        blocking_reason_codes: vec![String::from("prior_task_verification_missing")],
+        blocking_reason_codes: vec![String::from(crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_VERIFICATION_MISSING)],
         reason_family: String::new(),
         diagnostic_reason_codes: Vec::new(),
         task_review_dispatch_id: Some(String::from("dispatch-task-1")),
@@ -1249,7 +1433,7 @@ fn close_current_task_follow_up_requires_verification_when_verification_is_missi
         current_branch_closure_id: None,
         current_release_readiness_result: None,
         base_branch: None,
-    };
+    });
 
     assert_eq!(
         close_current_task_required_follow_up(&operator),
@@ -1268,7 +1452,7 @@ fn close_current_task_outcome_class_treats_review_fail_verification_pass_as_nega
 #[test]
 fn blocked_close_current_task_output_from_operator_keeps_shared_follow_up_and_command() {
     let plan_with_spaces = "docs/featureforge/plans/example plan.md";
-    let operator = ExecutionRoutingState {
+    let operator = finalized_operator_route(ExecutionRoutingState {
         route_decision: None,
         runtime_provenance: None,
         route: WorkflowRoute {
@@ -1301,7 +1485,7 @@ fn blocked_close_current_task_output_from_operator_keeps_shared_follow_up_and_co
         finish_review_gate_pass_branch_closure_id: None,
         recording_context: None,
         execution_command_context: None,
-        next_action: String::from("repair review state / reenter execution"),
+        next_action: String::from(NEXT_ACTION_REPAIR_REVIEW_STATE),
         recommended_public_command: repair_review_state_public_command(plan_with_spaces),
         recommended_command: Some(String::from(
             "featureforge plan execution repair-review-state --plan stale-display-path.md",
@@ -1310,7 +1494,7 @@ fn blocked_close_current_task_output_from_operator_keeps_shared_follow_up_and_co
         blocking_task: Some(3),
         external_wait_state: None,
         blocking_reason_codes: vec![String::from(
-            "prior_task_current_closure_reviewed_state_malformed",
+            crate::execution::closure_diagnostics::TASK_BOUNDARY_REASON_PRIOR_TASK_CURRENT_CLOSURE_REVIEWED_STATE_MALFORMED,
         )],
         reason_family: String::new(),
         diagnostic_reason_codes: Vec::new(),
@@ -1319,7 +1503,7 @@ fn blocked_close_current_task_output_from_operator_keeps_shared_follow_up_and_co
         current_branch_closure_id: None,
         current_release_readiness_result: None,
         base_branch: None,
-    };
+    });
     let output = blocked_close_current_task_output_from_operator(
         3,
         &operator,
@@ -1329,7 +1513,9 @@ fn blocked_close_current_task_output_from_operator_keeps_shared_follow_up_and_co
     assert_eq!(output.code, None);
     assert_eq!(
         output.required_follow_up,
-        Some(String::from("repair_review_state"))
+        Some(String::from(
+            crate::execution::review_route_tokens::FOLLOW_UP_REPAIR_REVIEW_STATE
+        ))
     );
     assert_eq!(
         output.recommended_command.as_deref(),

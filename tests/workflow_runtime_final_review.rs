@@ -389,7 +389,11 @@ fn write_release_readiness_artifact(repo: &Path, state: &Path, base_branch: &str
     artifact_path
 }
 
-fn update_authoritative_harness_state(repo: &Path, state: &Path, updates: &[(&str, Value)]) {
+fn synthetic_update_authoritative_harness_state(
+    repo: &Path,
+    state: &Path,
+    updates: &[(&str, Value)],
+) {
     let branch = branch_name(repo);
     let state_path = harness_state_path(state, &repo_slug(repo), &branch);
     let mut payload: Value =
@@ -476,7 +480,7 @@ fn seed_current_branch_closure_truth(repo: &Path, state: &Path) {
     let execution_run_id = String::from("run-fixture");
     let branch_contract_identity = branch_contract_identity(repo, state, PLAN_REL);
     let task_contract_identity = task_contract_identity(repo, state, PLAN_REL, 1);
-    update_authoritative_harness_state(
+    synthetic_update_authoritative_harness_state(
         repo,
         state,
         &[
@@ -584,7 +588,7 @@ fn publish_authoritative_release_truth(
     let release_summary = "Final-review fixture release-readiness milestone.";
     let release_summary_hash = sha256_hex(release_summary.as_bytes());
     let release_record_id = format!("release-readiness-record-{release_fingerprint}");
-    update_authoritative_harness_state(
+    synthetic_update_authoritative_harness_state(
         repo,
         state,
         &[
@@ -664,7 +668,7 @@ fn publish_authoritative_final_review_truth(
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_owned);
-    update_authoritative_harness_state(
+    synthetic_update_authoritative_harness_state(
         repo,
         state,
         &[
@@ -779,7 +783,7 @@ fn document_release_precedes_final_review_after_release_truth_stales() {
     let release_path = write_release_readiness_artifact(repo, state, &base_branch);
     publish_authoritative_release_truth(repo, state, &release_path, &base_branch);
     publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
-    update_authoritative_harness_state(
+    synthetic_update_authoritative_harness_state(
         repo,
         state,
         &[
@@ -871,20 +875,72 @@ fn document_release_precedes_final_review_after_release_truth_stales() {
         assert_eq!(status_json["required_inputs"], required_inputs);
         assert_eq!(operator_json["required_inputs"], required_inputs);
         assert_eq!(handoff_json["required_inputs"], required_inputs);
+        let expected_template = json!({
+            "base_argv": [
+                "featureforge",
+                "plan",
+                "execution",
+                "advance-late-stage",
+                "--plan",
+                PLAN_REL
+            ],
+            "command_kind": "advance_late_stage",
+            "input_bindings": [
+                {
+                    "binding": {
+                        "flag": "--result",
+                        "kind": "flag"
+                    },
+                    "kind": "enum",
+                    "name": "result",
+                    "shell_escape_by_caller": false,
+                    "values": ["ready", "blocked"]
+                },
+                {
+                    "binding": {
+                        "flag": "--summary-file",
+                        "kind": "flag"
+                    },
+                    "kind": "path",
+                    "must_exist": true,
+                    "name": "summary_file",
+                    "shell_escape_by_caller": false
+                }
+            ],
+            "required_input_names": ["result", "summary_file"]
+        });
+        assert_eq!(
+            status_json["recommended_public_command_template"],
+            expected_template
+        );
+        assert_eq!(
+            operator_json["recommended_public_command_template"],
+            expected_template
+        );
+        assert_eq!(
+            handoff_json["recommended_public_command_template"],
+            expected_template
+        );
     } else {
-        let expected_command =
-            format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}");
+        let expected_argv = json!([
+            "featureforge",
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            PLAN_REL
+        ]);
         assert_eq!(
-            status_json["recommended_command"],
-            Value::from(expected_command.clone())
+            status_json["recommended_public_command_argv"],
+            expected_argv
         );
         assert_eq!(
-            operator_json["recommended_command"],
-            Value::from(expected_command.clone())
+            operator_json["recommended_public_command_argv"],
+            expected_argv
         );
         assert_eq!(
-            handoff_json["recommended_command"],
-            Value::from(expected_command)
+            handoff_json["recommended_public_command_argv"],
+            expected_argv
         );
     }
 }
@@ -933,8 +989,8 @@ fn fs02_late_stage_drift_routes_consistently_across_operator_and_status() {
         status_json["review_state_status"]
     );
     assert_eq!(
-        operator_json["recommended_command"],
-        status_json["recommended_command"]
+        operator_json["recommended_public_command_argv"],
+        status_json["recommended_public_command_argv"]
     );
     let phase_detail = status_json["phase_detail"]
         .as_str()
@@ -945,7 +1001,7 @@ fn fs02_late_stage_drift_routes_consistently_across_operator_and_status() {
     );
     assert_eq!(
         status_json["next_action"],
-        Value::from("repair review state / reenter execution"),
+        Value::from("repair review state"),
         "FS-02 execution-reentry classification should require repair/reentry"
     );
 }

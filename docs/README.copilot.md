@@ -60,7 +60,6 @@ readlink ~/.copilot/skills
 Runtime state lives under `~/.featureforge/`.
 
 - config: `~/.featureforge/config/config.yaml`
-- sessions: `~/.featureforge/sessions/`
 - project artifacts and workflow manifests: `~/.featureforge/projects/`
 - contributor logs: `~/.featureforge/contributor-logs/`
 
@@ -93,19 +92,18 @@ Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-re
 - task closure is task-boundary gated: Task `N+1` may begin only after Task `N` has a current positive task-closure record; dedicated-independent fresh-context review loops and task verification are inputs to `$_FEATUREFORGE_BIN plan execution close-current-task --plan <approved-plan-path> ...`; keep normal progression on operator-led intent-level commands and do not require low-level review-dispatch primitives in the normal path
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is pre-authorized and does not require per-dispatch user-consent prompts
 - `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` is the first orientation/diagnosis surface after handoff; `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` remains the authoritative routing surface, and `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` is only for deeper diagnostics
-- `resume_task` / `resume_step` from `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` are advisory-only diagnostics; if they conflict with workflow/operator `recommended_public_command_argv`, follow the argv from workflow/operator
-- when workflow/operator reports `phase_detail=task_closure_recording_ready`, replay is complete enough to refresh closure truth; run the routed `close-current-task` command and do not reopen the same step again
+- status `resume_task` / `resume_step` and reviewed-closure replay details are advisory diagnostics only; workflow/operator `recommended_public_command_argv`, or operator-materialized argv from a same-plan template rerun with `--input NAME=VALUE`, remains the executable route authority
 - do not manually edit `**Execution Note:**` lines to recover runtime state; those markdown notes are projection-only
-- after `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <approved-plan-path>`, run the returned `recommended_public_command_argv` directly when present as the one exact next command before issuing any additional command, except installed-control-plane rebinding (`featureforge` argv[0] must execute as `~/.featureforge/install/bin/featureforge`); if argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy typed `required_inputs` or the prerequisite named by `next_action`, then rerun the route owner; `recommended_command` is display-only compatibility text and must not be shell-parsed for invocation
+- use workflow/operator typed `recommended_public_command_argv` / `recommended_public_command_template` surfaces exactly; `recommended_command` is display-only, and detailed binding/repair/diagnostic route law lives in `references/operator-route-authority.md`
 - `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` surfaces runtime strategy checkpoint state (`strategy_state`, `strategy_checkpoint_kind`, `last_strategy_checkpoint_fingerprint`, `strategy_reset_required`)
-- for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`
+- late-stage and terminal progression are operator-routed through `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`; execute the selected typed argv/template route and use `references/operator-route-authority.md` for route-specific binding or selected handoff lanes
 - compatibility/debug command boundaries (low-level `record-*` and related compatibility commands) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`
-- hidden compatibility/debug commands have been removed from the public CLI surface; normal routing and recommendations must use public commands only
+- compatibility/debug command paths are not part of the public CLI surface; normal routing and recommendations must use public commands only
 
 Runtime strategy checkpointing is execution-owned, not planning-owned. The runtime records:
 
 - `initial_dispatch` before repo-writing execution starts
-- `review_remediation` when reviewable dispatch lineage enters remediation and when remediation reopens execution work
+- `review_remediation` when reviewable runtime review state enters remediation and when remediation reopens execution work
 - `cycle_break` automatically when the same task reaches three reviewable dispatch/remediation cycles
 
 This does not send the workflow back to planning stages; it keeps remediation in execution while preserving approved plan scope.

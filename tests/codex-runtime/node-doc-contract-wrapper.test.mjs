@@ -45,20 +45,25 @@ test('codex-runtime wrapper fails closed when the grouped command exceeds the ti
   assert.match(result.stderr, /Timed out after 100ms/);
 });
 
-test('release-facing validation docs use the timeout wrapper for codex-runtime tests', () => {
+test('release-facing validation docs delegate codex-runtime command ownership to docs testing', () => {
   const readme = readUtf8(path.join(REPO_ROOT, 'README.md'));
   const testing = readUtf8(path.join(REPO_ROOT, 'docs/testing.md'));
 
-  for (const [label, content] of [
-    ['README.md', readme],
-    ['docs/testing.md', testing],
-  ]) {
-    assert.match(
-      content,
-      /node scripts\/run-codex-runtime-tests\.mjs/,
-      `${label} should use the timeout wrapper in release-facing validation commands`,
-    );
-  }
+  assert.match(
+    readme,
+    /docs\/testing\.md/,
+    'README.md should point maintainers to the canonical validation matrix',
+  );
+  assert.doesNotMatch(
+    readme,
+    /node scripts\/run-codex-runtime-tests\.mjs/,
+    'README.md should not duplicate the codex-runtime wrapper command',
+  );
+  assert.match(
+    testing,
+    /node scripts\/run-codex-runtime-tests\.mjs/,
+    'docs/testing.md should own the codex-runtime timeout wrapper command',
+  );
 
   assert.match(
     testing,

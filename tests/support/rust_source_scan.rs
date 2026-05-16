@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
 
+use syn::parse::Parser;
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
@@ -74,6 +77,64 @@ pub fn expanded_use_paths(source: &str) -> Vec<String> {
     collector.paths.sort();
     collector.paths.dedup();
     collector.paths
+}
+
+pub fn production_source_uses_parent_glob(source: &str) -> bool {
+    expanded_use_paths(source)
+        .into_iter()
+        .any(|path| path == "super::*" || (path.starts_with("super::") && path.ends_with("::*")))
+}
+
+pub fn source_tree_declares_test(root: &Path, test_name: &str) -> bool {
+    source_tree_declares_test_in_dir(&root.join("src"), test_name)
+        || source_tree_declares_test_in_dir(&root.join("tests"), test_name)
+}
+
+fn source_tree_declares_test_in_dir(dir: &Path, test_name: &str) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            if source_tree_declares_test_in_dir(&path, test_name) {
+                return true;
+            }
+            continue;
+        }
+        if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
+        if source_declares_test_function(&source, test_name) {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn source_declares_test_function(content: &str, test_name: &str) -> bool {
+    let declaration = format!("fn {test_name}(");
+    let mut saw_test_attr = false;
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line == "#[test]"
+            || line.starts_with("#[tokio::test")
+            || line.starts_with("#[rstest")
+            || line.starts_with("#[case]")
+        {
+            saw_test_attr = true;
+            continue;
+        }
+        if saw_test_attr && line.starts_with(&declaration) {
+            return true;
+        }
+        if !line.is_empty() && !line.starts_with("#[") {
+            saw_test_attr = false;
+        }
+    }
+    false
 }
 
 pub fn normalized_expanded_use_paths(rel: &str, source: &str) -> Vec<String> {
@@ -373,6 +434,648 @@ fn cfg_attr_is_test_only(attr: &syn::Attribute) -> bool {
 
 pub fn attrs_include_test_only_cfg(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(cfg_attr_is_test_only)
+}
+
+pub fn phase_detail_literals_from_source(rel: &str, source: &str) -> Vec<String> {
+    let syntax = parse_rust_source(rel, source);
+    let aliases = use_aliases(rel, &syntax);
+    let mut literals = syntax
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Const(item_const) = item else {
+                return None;
+            };
+            item_const
+                .ident
+                .to_string()
+                .starts_with("DETAIL_")
+                .then(|| phase_detail_const_expr_value(rel, &aliases, &item_const.expr))
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    literals.sort();
+    literals.dedup();
+    literals
+}
+
+fn phase_detail_const_expr_value(
+    rel: &str,
+    aliases: &BTreeMap<String, String>,
+    expr: &syn::Expr,
+) -> Option<String> {
+    match expr {
+        syn::Expr::Lit(literal) => {
+            if let syn::Lit::Str(literal) = &literal.lit {
+                Some(literal.value())
+            } else {
+                None
+            }
+        }
+        syn::Expr::Macro(macro_expr) => {
+            let raw_macro_path = syn_path_to_string(&macro_expr.mac.path);
+            let normalized_macro_path =
+                normalize_code_path_for_source(rel, &raw_macro_path, aliases);
+            if normalized_macro_path.rsplit("::").next() != Some("concat") {
+                return None;
+            }
+            macro_expr
+                .mac
+                .parse_body_with(
+                    syn::punctuated::Punctuated::<syn::LitStr, syn::Token![,]>::parse_terminated,
+                )
+                .ok()
+                .map(|parts| parts.iter().map(syn::LitStr::value).collect())
+        }
+        syn::Expr::Paren(paren) => phase_detail_const_expr_value(rel, aliases, &paren.expr),
+        syn::Expr::Group(group) => phase_detail_const_expr_value(rel, aliases, &group.expr),
+        _ => None,
+    }
+}
+
+struct StringLiteralValueCollector<'a> {
+    rel: &'a str,
+    aliases: &'a BTreeMap<String, String>,
+    values: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for StringLiteralValueCollector<'_> {
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        self.values.push(literal.value());
+    }
+
+    fn visit_expr_method_call(&mut self, method_call: &'ast syn::ExprMethodCall) {
+        if let Some(value) = literal_array_method_value(self.rel, self.aliases, method_call) {
+            self.values.push(value);
+        }
+        visit::visit_expr_method_call(self, method_call);
+    }
+
+    fn visit_macro(&mut self, macro_call: &'ast syn::Macro) {
+        if let Some(value) = macro_literal_value(self.rel, self.aliases, macro_call) {
+            self.values.push(value);
+        }
+        collect_string_literal_values_from_tokens(
+            self.rel,
+            self.aliases,
+            macro_call.tokens.clone(),
+            &mut self.values,
+        );
+        visit::visit_macro(self, macro_call);
+    }
+}
+
+fn collect_string_literal_values_from_tokens(
+    rel: &str,
+    aliases: &BTreeMap<String, String>,
+    tokens: proc_macro2::TokenStream,
+    values: &mut Vec<String>,
+) {
+    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < tokens.len() {
+        if let (
+            proc_macro2::TokenTree::Ident(ident),
+            Some(proc_macro2::TokenTree::Punct(punct)),
+            Some(proc_macro2::TokenTree::Group(group)),
+        ) = (&tokens[index], tokens.get(index + 1), tokens.get(index + 2))
+            && matches!(
+                ident.to_string().as_str(),
+                "concat" | "format" | "format_args"
+            )
+            && punct.as_char() == '!'
+        {
+            match ident.to_string().as_str() {
+                "concat" => {
+                    if let Some(value) =
+                        concat_literal_value_from_tokens(rel, aliases, group.stream())
+                    {
+                        values.push(value);
+                    }
+                }
+                "format" | "format_args" => {
+                    if let Some(value) =
+                        format_literal_value_from_tokens(rel, aliases, group.stream())
+                    {
+                        values.push(value);
+                    }
+                }
+                _ => {}
+            }
+            collect_string_literal_values_from_tokens(rel, aliases, group.stream(), values);
+            index += 3;
+            continue;
+        }
+
+        match &tokens[index] {
+            proc_macro2::TokenTree::Group(group) => {
+                collect_string_literal_values_from_tokens(rel, aliases, group.stream(), values);
+            }
+            proc_macro2::TokenTree::Literal(literal) => {
+                if let Ok(literal) = syn::parse_str::<syn::LitStr>(&literal.to_string()) {
+                    values.push(literal.value());
+                }
+            }
+            proc_macro2::TokenTree::Ident(_) | proc_macro2::TokenTree::Punct(_) => {}
+        }
+        index += 1;
+    }
+}
+
+fn macro_literal_value(
+    rel: &str,
+    aliases: &BTreeMap<String, String>,
+    macro_call: &syn::Macro,
+) -> Option<String> {
+    let raw_macro_path = syn_path_to_string(&macro_call.path);
+    let normalized_macro_path = normalize_code_path_for_source(rel, &raw_macro_path, aliases);
+    match normalized_macro_path.rsplit("::").next()? {
+        "concat" => concat_literal_value_from_tokens(rel, aliases, macro_call.tokens.clone()),
+        "format" | "format_args" => {
+            format_literal_value_from_tokens(rel, aliases, macro_call.tokens.clone())
+        }
+        _ => None,
+    }
+}
+
+fn concat_literal_value_from_tokens(
+    rel: &str,
+    aliases: &BTreeMap<String, String>,
+    tokens: proc_macro2::TokenStream,
+) -> Option<String> {
+    let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+    parser
+        .parse2(tokens)
+        .ok()
+        .and_then(|parts| {
+            parts
+                .iter()
+                .map(|expr| string_expr_value(rel, aliases, expr))
+                .collect::<Option<Vec<_>>>()
+        })
+        .filter(|parts| !parts.is_empty())
+        .map(|parts| parts.concat())
+}
+
+fn format_literal_value_from_tokens(
+    rel: &str,
+    aliases: &BTreeMap<String, String>,
+    tokens: proc_macro2::TokenStream,
+) -> Option<String> {
+    let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+    let mut parts = parser.parse2(tokens).ok()?.into_iter();
+    let template = string_expr_value(rel, aliases, &parts.next()?)?;
+    let args = parts
+        .map(|expr| string_expr_value(rel, aliases, &expr))
+        .collect::<Option<Vec<_>>>()?;
+    apply_simple_format_template(&template, &args)
+}
+
+fn apply_simple_format_template(template: &str, args: &[String]) -> Option<String> {
+    let mut output = String::new();
+    let mut chars = template.chars().peekable();
+    let mut arg_index = 0;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '{' if chars.peek() == Some(&'{') => {
+                chars.next();
+                output.push('{');
+            }
+            '{' if chars.peek() == Some(&'}') => {
+                chars.next();
+                let arg = args.get(arg_index)?;
+                output.push_str(arg);
+                arg_index += 1;
+            }
+            '{' => return None,
+            '}' if chars.peek() == Some(&'}') => {
+                chars.next();
+                output.push('}');
+            }
+            '}' => return None,
+            _ => output.push(ch),
+        }
+    }
+    (arg_index == args.len()).then_some(output)
+}
+
+fn literal_array_method_value(
+    rel: &str,
+    aliases: &BTreeMap<String, String>,
+    method_call: &syn::ExprMethodCall,
+) -> Option<String> {
+    let parts = string_array_values_from_expr(rel, aliases, &method_call.receiver)?;
+    match method_call.method.to_string().as_str() {
+        "concat" if method_call.args.is_empty() => Some(parts.concat()),
+        "join" if method_call.args.len() == 1 => {
+            let separator = string_expr_value(rel, aliases, method_call.args.first()?)?;
+            Some(parts.join(&separator))
+        }
+        _ => None,
+    }
+}
+
+fn string_array_values_from_expr(
+    rel: &str,
+    aliases: &BTreeMap<String, String>,
+    expr: &syn::Expr,
+) -> Option<Vec<String>> {
+    match expr {
+        syn::Expr::Array(array) => array
+            .elems
+            .iter()
+            .map(|expr| string_expr_value(rel, aliases, expr))
+            .collect(),
+        syn::Expr::Group(group) => string_array_values_from_expr(rel, aliases, &group.expr),
+        syn::Expr::Paren(paren) => string_array_values_from_expr(rel, aliases, &paren.expr),
+        syn::Expr::Reference(reference) => {
+            string_array_values_from_expr(rel, aliases, &reference.expr)
+        }
+        _ => None,
+    }
+}
+
+fn string_expr_value(
+    rel: &str,
+    aliases: &BTreeMap<String, String>,
+    expr: &syn::Expr,
+) -> Option<String> {
+    match expr {
+        syn::Expr::Lit(literal) => {
+            if let syn::Lit::Str(literal) = &literal.lit {
+                Some(literal.value())
+            } else {
+                None
+            }
+        }
+        syn::Expr::Macro(macro_expr) => macro_literal_value(rel, aliases, &macro_expr.mac),
+        syn::Expr::MethodCall(method_call) => literal_array_method_value(rel, aliases, method_call),
+        syn::Expr::Group(group) => string_expr_value(rel, aliases, &group.expr),
+        syn::Expr::Paren(paren) => string_expr_value(rel, aliases, &paren.expr),
+        syn::Expr::Reference(reference) => string_expr_value(rel, aliases, &reference.expr),
+        _ => None,
+    }
+}
+
+pub fn rust_string_literal_values(rel: &str, source: &str) -> Vec<String> {
+    let syntax = parse_rust_source(rel, source);
+    let aliases = use_aliases(rel, &syntax);
+    let mut collector = StringLiteralValueCollector {
+        rel,
+        aliases: &aliases,
+        values: Vec::new(),
+    };
+    collector.visit_file(&syntax);
+    collector.values
+}
+
+struct ProductionStringLiteralValueCollector<'a> {
+    rel: &'a str,
+    aliases: &'a BTreeMap<String, String>,
+    values: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for ProductionStringLiteralValueCollector<'_> {
+    fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+        if attrs_are_test_only(node.attrs.as_slice()) {
+            return;
+        }
+        visit::visit_item_mod(self, node);
+    }
+
+    fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+        if attrs_are_test_only(node.attrs.as_slice()) {
+            return;
+        }
+        visit::visit_item_fn(self, node);
+    }
+
+    fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
+        if attrs_are_test_only(node.attrs.as_slice()) {
+            return;
+        }
+        visit::visit_item_impl(self, node);
+    }
+
+    fn visit_item_const(&mut self, node: &'ast syn::ItemConst) {
+        if attrs_are_test_only(node.attrs.as_slice()) {
+            return;
+        }
+        visit::visit_item_const(self, node);
+    }
+
+    fn visit_item_static(&mut self, node: &'ast syn::ItemStatic) {
+        if attrs_are_test_only(node.attrs.as_slice()) {
+            return;
+        }
+        visit::visit_item_static(self, node);
+    }
+
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        self.values.push(literal.value());
+    }
+
+    fn visit_expr_method_call(&mut self, method_call: &'ast syn::ExprMethodCall) {
+        if let Some(value) = literal_array_method_value(self.rel, self.aliases, method_call) {
+            self.values.push(value);
+        }
+        visit::visit_expr_method_call(self, method_call);
+    }
+
+    fn visit_macro(&mut self, macro_call: &'ast syn::Macro) {
+        if let Some(value) = macro_literal_value(self.rel, self.aliases, macro_call) {
+            self.values.push(value);
+        }
+        collect_string_literal_values_from_tokens(
+            self.rel,
+            self.aliases,
+            macro_call.tokens.clone(),
+            &mut self.values,
+        );
+        visit::visit_macro(self, macro_call);
+    }
+}
+
+fn attrs_are_test_only(attrs: &[syn::Attribute]) -> bool {
+    attrs_include_test_only_cfg(attrs) || attrs.iter().any(|attr| attr.path().is_ident("test"))
+}
+
+pub fn rust_production_string_literal_values(rel: &str, source: &str) -> Vec<String> {
+    let syntax = parse_rust_source(rel, source);
+    let aliases = use_aliases(rel, &syntax);
+    let mut collector = ProductionStringLiteralValueCollector {
+        rel,
+        aliases: &aliases,
+        values: Vec::new(),
+    };
+    collector.visit_file(&syntax);
+    collector.values
+}
+
+pub fn phase_detail_literal_value_violations(
+    rel: &str,
+    source: &str,
+    known_phase_details: &[String],
+    allowed_context: &str,
+) -> Vec<String> {
+    let known_phase_details = known_phase_details
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let mut violations = rust_string_literal_values(rel, source)
+        .into_iter()
+        .filter(|literal| known_phase_details.contains(literal.as_str()))
+        .map(|literal| {
+            format!("{rel} duplicates phase-detail literal `{literal}` {allowed_context}")
+        })
+        .collect::<Vec<_>>();
+    violations.sort();
+    violations.dedup();
+    violations
+}
+
+fn is_phase_detail_shaped_literal(literal: &str) -> bool {
+    let Some(suffix) = literal.rsplit('_').next() else {
+        return false;
+    };
+    literal.contains('_')
+        && literal
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character == '_')
+        && matches!(
+            suffix,
+            "bug" | "gate" | "pending" | "progress" | "ready" | "reconcile" | "required"
+        )
+}
+
+fn collect_string_values_from_expr(
+    rel: &str,
+    aliases: &BTreeMap<String, String>,
+    expr: &syn::Expr,
+    values: &mut Vec<String>,
+) {
+    let mut collector = StringLiteralValueCollector {
+        rel,
+        aliases,
+        values: Vec::new(),
+    };
+    collector.visit_expr(expr);
+    values.extend(collector.values);
+}
+
+fn collect_string_values_from_pat(pat: &syn::Pat, values: &mut Vec<String>) {
+    match pat {
+        syn::Pat::Lit(lit) => {
+            if let syn::Lit::Str(literal) = &lit.lit {
+                values.push(literal.value());
+            }
+        }
+        syn::Pat::Or(or_pat) => {
+            for case in &or_pat.cases {
+                collect_string_values_from_pat(case, values);
+            }
+        }
+        syn::Pat::Reference(reference) => collect_string_values_from_pat(&reference.pat, values),
+        syn::Pat::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_string_values_from_pat(elem, values);
+            }
+        }
+        syn::Pat::TupleStruct(tuple) => {
+            for elem in &tuple.elems {
+                collect_string_values_from_pat(elem, values);
+            }
+        }
+        syn::Pat::Struct(struct_pat) => {
+            for field in &struct_pat.fields {
+                collect_string_values_from_pat(&field.pat, values);
+            }
+        }
+        syn::Pat::Slice(slice) => {
+            for elem in &slice.elems {
+                collect_string_values_from_pat(elem, values);
+            }
+        }
+        syn::Pat::Paren(paren) => collect_string_values_from_pat(&paren.pat, values),
+        syn::Pat::Type(typed) => collect_string_values_from_pat(&typed.pat, values),
+        syn::Pat::Const(_)
+        | syn::Pat::Ident(_)
+        | syn::Pat::Macro(_)
+        | syn::Pat::Path(_)
+        | syn::Pat::Range(_)
+        | syn::Pat::Rest(_)
+        | syn::Pat::Verbatim(_)
+        | syn::Pat::Wild(_) => {}
+        _ => {}
+    }
+}
+
+fn path_mentions_phase_detail(path: &syn::Path) -> bool {
+    path.segments
+        .iter()
+        .any(|segment| segment.ident == "phase_detail")
+}
+
+fn expr_mentions_phase_detail(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Field(field) => {
+            matches!(&field.member, syn::Member::Named(ident) if ident == "phase_detail")
+                || expr_mentions_phase_detail(&field.base)
+        }
+        syn::Expr::Path(path) => path_mentions_phase_detail(&path.path),
+        syn::Expr::Reference(reference) => expr_mentions_phase_detail(&reference.expr),
+        syn::Expr::Paren(paren) => expr_mentions_phase_detail(&paren.expr),
+        syn::Expr::Tuple(tuple) => tuple.elems.iter().any(expr_mentions_phase_detail),
+        syn::Expr::MethodCall(method_call) => expr_mentions_phase_detail(&method_call.receiver),
+        syn::Expr::Binary(binary) => {
+            expr_mentions_phase_detail(&binary.left) || expr_mentions_phase_detail(&binary.right)
+        }
+        _ => false,
+    }
+}
+
+fn pat_mentions_phase_detail(pat: &syn::Pat) -> bool {
+    match pat {
+        syn::Pat::Ident(ident) => ident.ident == "phase_detail",
+        syn::Pat::Reference(reference) => pat_mentions_phase_detail(&reference.pat),
+        syn::Pat::Tuple(tuple) => tuple.elems.iter().any(pat_mentions_phase_detail),
+        syn::Pat::TupleStruct(tuple) => tuple.elems.iter().any(pat_mentions_phase_detail),
+        syn::Pat::Struct(struct_pat) => struct_pat.fields.iter().any(|field| {
+            matches!(&field.member, syn::Member::Named(ident) if ident == "phase_detail")
+                || pat_mentions_phase_detail(&field.pat)
+        }),
+        _ => false,
+    }
+}
+
+struct PhaseDetailContextLiteralCollector<'a> {
+    rel: &'a str,
+    aliases: &'a BTreeMap<String, String>,
+    values: Vec<String>,
+}
+
+impl PhaseDetailContextLiteralCollector<'_> {
+    fn collect_expr(&mut self, expr: &syn::Expr) {
+        collect_string_values_from_expr(self.rel, self.aliases, expr, &mut self.values);
+    }
+}
+
+impl<'ast> Visit<'ast> for PhaseDetailContextLiteralCollector<'_> {
+    fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+        if attrs_include_test_only_cfg(&node.attrs) {
+            return;
+        }
+        visit::visit_item_mod(self, node);
+    }
+
+    fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+        if attrs_include_test_only_cfg(&node.attrs) {
+            return;
+        }
+        visit::visit_item_fn(self, node);
+    }
+
+    fn visit_expr_assign(&mut self, node: &'ast syn::ExprAssign) {
+        if expr_mentions_phase_detail(&node.left) {
+            self.collect_expr(&node.right);
+        }
+        visit::visit_expr_assign(self, node);
+    }
+
+    fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+        if expr_mentions_phase_detail(&node.left) {
+            self.collect_expr(&node.right);
+        }
+        if expr_mentions_phase_detail(&node.right) {
+            self.collect_expr(&node.left);
+        }
+        visit::visit_expr_binary(self, node);
+    }
+
+    fn visit_expr_match(&mut self, node: &'ast syn::ExprMatch) {
+        if expr_mentions_phase_detail(&node.expr) {
+            for arm in &node.arms {
+                collect_string_values_from_pat(&arm.pat, &mut self.values);
+                if let Some((_if_token, guard)) = &arm.guard {
+                    self.collect_expr(guard);
+                }
+            }
+        }
+        visit::visit_expr_match(self, node);
+    }
+
+    fn visit_field_value(&mut self, node: &'ast syn::FieldValue) {
+        if matches!(&node.member, syn::Member::Named(ident) if ident == "phase_detail") {
+            self.collect_expr(&node.expr);
+        }
+        visit::visit_field_value(self, node);
+    }
+
+    fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = node.func.as_ref()
+            && path_mentions_phase_detail(&path.path)
+        {
+            for arg in &node.args {
+                self.collect_expr(arg);
+            }
+        }
+        visit::visit_expr_call(self, node);
+    }
+
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        if node.method == "phase_detail" {
+            for arg in &node.args {
+                self.collect_expr(arg);
+            }
+        }
+        visit::visit_expr_method_call(self, node);
+    }
+
+    fn visit_local(&mut self, node: &'ast syn::Local) {
+        if pat_mentions_phase_detail(&node.pat)
+            && let Some(init) = &node.init
+        {
+            self.collect_expr(&init.expr);
+        }
+        visit::visit_local(self, node);
+    }
+}
+
+pub fn phase_detail_context_literal_violations(
+    rel: &str,
+    source: &str,
+    known_phase_details: &[String],
+) -> Vec<String> {
+    let known_phase_details = known_phase_details
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let syntax = parse_rust_source(rel, source);
+    let aliases = use_aliases(rel, &syntax);
+    let mut collector = PhaseDetailContextLiteralCollector {
+        rel,
+        aliases: &aliases,
+        values: Vec::new(),
+    };
+    collector.visit_file(&syntax);
+    collector
+        .values
+        .into_iter()
+        .filter_map(|literal| {
+            if literal == "phase_detail" {
+                return None;
+            }
+            (is_phase_detail_shaped_literal(&literal)
+                && !known_phase_details.contains(literal.as_str()))
+            .then(|| {
+                format!(
+                    "{rel} uses unregistered phase-detail-shaped literal `{literal}` in a phase_detail context"
+                )
+            })
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn include_test_cfg_items_for_source(rel: &str) -> bool {

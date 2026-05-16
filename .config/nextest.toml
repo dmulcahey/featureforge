@@ -1,0 +1,21 @@
+[profile.default]
+# The full FeatureForge suite includes many runtime tests that spawn isolated git
+# repos and compiled CLI processes. Current local measurement on this machine
+# shows 32 workers leaving long runtime/golden tests queued too late in the run,
+# while 64 keeps the warm full-suite test phase inside the five-minute budget.
+test-threads = 64
+
+# Printing every passing test materially slows the full local gate and makes
+# performance regressions harder to see. Keep the live stream focused on failures
+# while still surfacing slow-test data at the end of a run.
+status-level = "fail"
+final-status-level = "slow"
+
+# Runtime/golden tests below are subprocess-heavy but high-signal. When they
+# remain at default priority, nextest's lexicographic scheduling can leave them
+# until the end of a 64-way run, creating a long tail even though the tests are
+# much faster in isolation. Start them early instead of lowering coverage or
+# adding another fragmented verification command.
+[[profile.default.overrides]]
+filter = 'test(internal_only_compatibility_canonical_workflow_phase_routes_mixed_stale_matrix) | test(internal_only_compatibility_workflow_phase_keeps_branch_completion_for_non_authoritative_reviewer_failure_families) | test(internal_only_compatibility_normal_execution_commands_do_not_dirty_tracked_projection_files) | test(internal_only_compatibility_plan_execution_advance_late_stage_final_review_rerun_is_idempotent_and_conflicts_fail_closed) | test(public_replay_repaired_final_review_dispatch_drift_executes_public_advance_late_stage) | test(public_replay_stale_current_closure_ignores_superseded_dispatch_lineage_without_loop) | test(public_runtime_status_and_operator_goldens_match_post_semantic_fix_baseline)'
+priority = 100

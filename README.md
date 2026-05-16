@@ -89,7 +89,6 @@ Detailed install docs:
 Runtime state lives in `~/.featureforge/`.
 
 - preferences: `~/.featureforge/config/config.yaml`
-- session markers: `~/.featureforge/sessions/`
 - contributor field reports: `~/.featureforge/contributor-logs/`
 - project-scoped artifacts and workflow manifests: `~/.featureforge/projects/`
 
@@ -110,9 +109,7 @@ The generated `using-featureforge` skill calls `$_FEATUREFORGE_BIN workflow doct
 Execution starts from an engineering-approved plan and the exact approved plan path.
 Use `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path>` for the compact human dashboard and `$_FEATUREFORGE_BIN workflow doctor --plan <approved-plan-path> --json` for headless diagnostics; use `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` as the normal routing authority, then follow the recommended intent-level argv vector for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`. Late-stage public JSON reports `intent=advance_late_stage` plus a semantic `operation`; do not infer or invoke lower-level recording primitives from output fields.
 
-When workflow/operator reports stale or missing closure context, do not invent a repair command. If `recommended_public_command_argv` is present, invoke it exactly except for installed-control-plane rebinding: when argv[0] is `featureforge`, execute via `~/.featureforge/install/bin/featureforge` while preserving argv[1..]. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic. Otherwise satisfy `required_inputs` or run `$_FEATUREFORGE_BIN plan execution repair-review-state --plan <approved-plan-path>` only when the non-diagnostic route owns that repair lane.
-
-After `repair-review-state`, treat that command's own `recommended_public_command_argv` as the immediate reroute when present and complete that follow-up before running any extra command. If argv is absent and `next_action` is `runtime diagnostic required`, stop on the diagnostic; otherwise satisfy the typed `required_inputs` or prerequisite named by `next_action`, then rerun the command that owns the route. `recommended_command` is display-only compatibility text; do not parse it for invocation. Use `$_FEATUREFORGE_BIN plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
+Treat workflow/operator JSON `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_public_command_argv`, `recommended_public_command_template`, and `required_inputs` as the authoritative public routing contract; `recommended_command` is display-only. Execute only typed argv/template-derived public argv, and use `references/operator-route-authority.md` for the complete binding, repair, diagnostic, and late-stage route law.
 Do not manually edit `**Execution Note:**` lines to recover runtime state; execution-note markdown is projection-only.
 Do not repair runtime routing by editing tracked plan, evidence, review, readiness, QA, or strategy projection files. They are export artifacts; the event log and reducer-owned state are authoritative.
 
@@ -122,20 +119,21 @@ Task closure is enforced at task boundaries, not only at the end of the full pla
 
 - Task `N+1` may begin only after Task `N` has a current positive task-closure record.
 - dedicated-independent review loops and verification are inputs to `close-current-task`; they are not separate begin-time authority once a current positive closure exists
-- after implementation steps complete and review plus verification are ready, run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready` and use `close-current-task` as the authoritative task-closure command
-- if workflow/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep the normal path on workflow/operator plus the intent-level commands; do not route the normal path through low-level dispatch primitives
+- after implementation steps complete, run `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --external-review-result-ready --json` only when an external task-review or final-review result is already in hand; use `close-current-task` as the authoritative task-closure command once operator routes it
+- if workflow/operator reports `final_review_dispatch_required`, keep the normal path on workflow/operator plus the intent-level commands; do not route the normal path through low-level dispatch primitives
+- if workflow/operator reports retired diagnostic detail `task_review_dispatch_required`, stop on the diagnostic JSON reason codes instead of treating it as a normal routing lane
 - compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
-- `repair-review-state` returns one exact next command as `recommended_public_command_argv` when all inputs are already bound; follow that argv directly except for installed-control-plane rebinding (`featureforge` argv[0] must execute as `~/.featureforge/install/bin/featureforge`), stop when argv is absent with `next_action=runtime diagnostic required`, otherwise satisfy `required_inputs` and rerun the route owner
+- `repair-review-state` follow-up and template-binding details live in `references/operator-route-authority.md`; do not parse `recommended_command` or copy route details from memory
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is authorized without per-dispatch user-consent prompts
 
-Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):
+Late-stage completion is operator-routed, not a memorized skill chain:
 
-- `featureforge:document-release`
-- `featureforge:requesting-code-review` (terminal final review gate after document release)
-- `featureforge:qa-only` only when authoritative `QA Requirement` routing for the current plan requires it
-- `featureforge:finishing-a-development-branch`
+- after all task closures are current, query `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`
+- execute only typed `recommended_public_command_argv`; when a template needs input, rerun the same plan-bound workflow/operator query with `--input NAME=VALUE` and execute only the returned Rust-materialized argv; if no executable surface is present, stop and report the route diagnostic
+- workflow/operator may route to `featureforge:document-release`, terminal `featureforge:requesting-code-review`, `featureforge:qa-only`, or `featureforge:finishing-a-development-branch`; use those skills only when the current operator route selects them
+- route examples and binding details live in `references/operator-route-authority.md`; they do not replace workflow/operator route authority
 
 ## Project Memory
 
@@ -150,7 +148,7 @@ Completion then flows through (runtime-owned late-stage sequencing keeps `featur
 Execution strategy checkpoints are runtime-owned execution state, not planning-stage transitions.
 
 - `initial_dispatch` is required before repo-writing execution dispatch
-- `review_remediation` is recorded automatically when reviewable dispatch lineage enters remediation and when remediation reopens execution work
+- `review_remediation` is recorded automatically when reviewable runtime review state enters remediation and when remediation reopens execution work
 - `cycle_break` is recorded automatically when the same task reaches three reviewable dispatch/remediation cycles
 
 The approved plan path/revision remains fixed during execution. Runtime strategy may adjust topology, lane/worktree allocation, and remediation order without sending the workflow back to planning stages.
@@ -172,6 +170,7 @@ Reviewers should treat this strategy-checkpoint layer as intentional runtime con
 - `agents/` holds generated reviewer artifacts and reviewer source material
 - `review/` holds shared review references
 - `docs/featureforge/` holds reference docs and workflow support material for this package
+- `docs/featureforge/archive/runtime-safety-audit-history/README.md` indexes superseded runtime-safety audit loops; active docs should reference that index instead of individual per-loop files
 - `docs/archive/` holds preserved historical project artifacts, including the shipped approved specs, plans, and execution evidence for this repo
 - `tests/codex-runtime/fixtures/workflow-artifacts/` holds stable workflow-fixture inputs used by routing and contract tests
 
@@ -186,51 +185,18 @@ node scripts/gen-agent-docs.mjs
 
 The canonical deterministic validation matrix and change-scoped commands live in [docs/testing.md](docs/testing.md).
 
-Core validation:
+Use that document as the release and branch-gate source of truth; this README
+does not duplicate the command matrix.
 
-```bash
-node scripts/gen-skill-docs.mjs --check
-node scripts/gen-agent-docs.mjs --check
-node scripts/run-codex-runtime-tests.mjs
-node --test tests/evals/review-accelerator-contract.eval.mjs
-cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --all-targets --all-features --no-fail-fast
-```
-
-Installed-control-plane isolation changes use the dedicated gate:
-
-```bash
-scripts/verify-installed-control-plane-isolation.sh
-```
-
-Runtime release checks keep public-flow proof separate from internal
-compatibility coverage:
-
-```bash
-scripts/run-public-runtime-flow-tests.sh
-scripts/run-internal-runtime-compatibility-tests.sh
-```
+Installed-control-plane isolation, public/internal runtime gates, optional
+sharded Rust runs, and prebuilt refresh validation are documented as
+change-scoped sections in [docs/testing.md](docs/testing.md).
 
 The Rust verification command is intentionally the full nextest suite. It covers
 more than 1100 tests; use targeted `cargo nextest run --test ...` commands only
 while iterating on a known failure, then rerun the full command before claiming a
 task or branch is green. Keep `--no-fail-fast` so the run reports the complete
 failure set.
-
-Full Rust suite through the optional sharded helper, for explicit local
-performance investigations or when a CI/job specifically asks for it:
-
-```bash
-scripts/run-rust-tests-sharded.sh 8
-```
-
-Refresh checked-in prebuilt binaries (release-facing artifacts) when runtime packaging or binary surfaces change:
-
-```bash
-FEATUREFORGE_PREBUILT_TARGET=darwin-arm64 scripts/refresh-prebuilt-runtime.sh
-PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc FEATUREFORGE_PREBUILT_TARGET=windows-x64 FEATUREFORGE_PREBUILT_RUST_TARGET=x86_64-pc-windows-gnu scripts/refresh-prebuilt-runtime.sh
-node scripts/prebuilt-runtime-provenance.mjs verify --repo-root .
-```
 
 Full prebuilt verification always checks the manifest, source fingerprint,
 binary hashes, and denied public/control-plane strings. It executes

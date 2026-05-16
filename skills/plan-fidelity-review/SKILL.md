@@ -38,18 +38,13 @@ _featureforge_exec_public_argv() {
     "$_FEATUREFORGE_BIN" "$@"
     return $?
   fi
-  "$@"
+  echo "featureforge: refusing non-featureforge public argv: $1" >&2
+  return 2
 }
 ```
-## Installed Control Plane
+## Runtime Route Reference
 
-Live FeatureForge workflow routing is install-owned:
-- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
-- do not route live workflow commands through `./bin/featureforge`
-- do not route live workflow commands through `target/debug/featureforge`
-- do not route live workflow commands through `cargo run`
-
-When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
+This skill does not own live workflow routing. If another workflow surface gives you workflow/operator JSON, follow `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` instead of reconstructing route law here.
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -86,15 +81,15 @@ Per-skill instructions may add additional formatting rules on top of this baseli
 
 - This stage must run with an independent fresh-context subagent.
 - The reviewer must be distinct from both `featureforge:writing-plans` and `featureforge:plan-eng-review`.
-- Use `skills/plan-fidelity-review/reviewer-prompt.md` when briefing the reviewer.
+- Use skill-local `reviewer-prompt.md` when briefing the reviewer.
 - The reviewer verifies exact Requirement Index coverage, execution-topology fidelity, and task-contract fidelity for the current draft plan revision.
-- Task-contract fidelity is governed by `review/plan-task-contract.md`; missing required task fields, wrong field ordering, non-deterministic `Done when` bullets, insufficient `Context`, missing required spec references, and weak self-containment are review failures.
+- Task-contract fidelity is governed by `$_FEATUREFORGE_ROOT/review/plan-task-contract.md`; missing required task fields, wrong field ordering, non-deterministic `Done when` bullets, insufficient `Context`, missing required spec references, and weak self-containment are review failures.
 - The review artifact must record exactly these `Verified Surfaces`: `requirement_index`, `execution_topology`, `task_contract`, `task_determinism`, and `spec_reference_fidelity`.
 
 ## Review Artifact Contract
 
 - Persist exactly one review artifact at `.featureforge/reviews/YYYY-MM-DD-<feature-name>-plan-fidelity.md`.
-- When `$_FEATUREFORGE_BIN workflow status --json` or `$_FEATUREFORGE_BIN plan contract analyze-plan --format json` returns `plan_fidelity_review.required_artifact_template`, write the template's `artifact_path` using the template `content` verbatim.
+- When `$_FEATUREFORGE_BIN plan contract analyze-plan --format json` returns `plan_fidelity_review.required_artifact_template`, write the template's `artifact_path` using the template `content` verbatim.
 - Fill only the reviewer-owned placeholders in that template: reviewer id, review verdict, and findings/summary content.
 - Do not invent, rename, reorder, omit, or hand-type parseable artifact headers when a runtime template is available.
 - The artifact must include these parseable fields:

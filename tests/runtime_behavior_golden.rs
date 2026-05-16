@@ -8,6 +8,8 @@ mod git_support;
 mod process_support;
 #[path = "support/public_featureforge_cli.rs"]
 mod public_featureforge_cli;
+#[path = "support/public_runtime_contract_runner.rs"]
+mod public_runtime_contract_runner;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -35,6 +37,8 @@ const REQUIRED_SCENARIOS: &[&str] = &[
     "active_task",
     "completed_step_waiting_task_closure",
     "task_closure_recording_ready",
+    "stale_closure_repair_close_ready",
+    "transfer_handoff_required",
     "repair_review_state_required",
     "stale_targetless_reconcile",
     "blocked_runtime_bug_diagnostic",
@@ -45,6 +49,108 @@ const REQUIRED_SCENARIOS: &[&str] = &[
     "implementation_ready_after_fidelity_pass",
     "engineering_approved_missing_fidelity_gate",
 ];
+
+const ROUTE_CONTRACT_FIELDS: &[&str] = &[
+    "active_step",
+    "active_task",
+    "base_branch",
+    "blockers",
+    "blocking_records",
+    "blocking_reason_codes",
+    "blocking_scope",
+    "blocking_task",
+    "diagnostic_reason_codes",
+    "execution_command_context",
+    "execution_started",
+    "next_action",
+    "phase",
+    "phase_detail",
+    "reason_codes",
+    "recommended_public_command_argv",
+    "recommended_public_command_template",
+    "recording_context",
+    "required_follow_up",
+    "required_inputs",
+    "review_state_status",
+    "state_kind",
+    "status",
+    "public_repair_targets",
+];
+
+const STATUS_OPERATOR_ROUTE_PARITY_FIELDS: &[&str] = &[
+    "blockers",
+    "blocking_reason_codes",
+    "blocking_scope",
+    "blocking_task",
+    "execution_command_context",
+    "next_action",
+    "phase",
+    "phase_detail",
+    "public_repair_targets",
+    "recommended_public_command_argv",
+    "recommended_public_command_template",
+    "recording_context",
+    "required_follow_up",
+    "required_inputs",
+    "review_state_status",
+    "state_kind",
+];
+
+const FULL_SURFACE_ROUTE_CAPTURE_SCENARIOS: &[&str] =
+    &["not_started", "engineering_approved_missing_fidelity_gate"];
+
+#[derive(Debug, Clone, Copy)]
+enum PublicRouteCaptureSurface {
+    PlanExecutionStatus,
+    WorkflowOperator,
+    WorkflowStatus,
+}
+
+impl PublicRouteCaptureSurface {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PlanExecutionStatus => "plan execution status",
+            Self::WorkflowOperator => "workflow operator",
+            Self::WorkflowStatus => "workflow status",
+        }
+    }
+
+    fn schema_rel(self) -> &'static str {
+        match self {
+            Self::PlanExecutionStatus => "schemas/plan-execution-status.schema.json",
+            Self::WorkflowOperator => "schemas/workflow-operator.schema.json",
+            Self::WorkflowStatus => "schemas/workflow-status.schema.json",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CapturedRouteState {
+    scenario: Value,
+    plan_execution_status: Value,
+    workflow_operator: Value,
+    workflow_status: Option<Value>,
+}
+
+impl CapturedRouteState {
+    fn plan_execution_status(&self) -> &Value {
+        &self.plan_execution_status
+    }
+
+    fn workflow_operator(&self) -> &Value {
+        &self.workflow_operator
+    }
+
+    fn workflow_status(&self) -> &Value {
+        self.workflow_status
+            .as_ref()
+            .expect("scenario should include workflow status capture")
+    }
+
+    fn into_scenario(self) -> Value {
+        self.scenario
+    }
+}
 
 struct PublicCli<'a> {
     repo: &'a Path,
@@ -74,15 +180,24 @@ impl<'a> PublicCli<'a> {
         let mut merged_envs = Vec::with_capacity(envs.len() + 1);
         merged_envs.push(("CODEX_HOME", codex_home));
         merged_envs.extend_from_slice(envs);
-        let output = public_featureforge_cli::run_featureforge_with_env_control_real_cli(
-            Some(self.repo),
-            Some(self.state),
-            Some(&self.home_dir),
-            &[],
-            &merged_envs,
-            args,
-            context,
-        );
+        let output = if envs.is_empty() {
+            public_runtime_contract_runner::run_public_runtime_contract_in_process(
+                self.repo,
+                self.state,
+                args.iter().copied(),
+                context,
+            )
+        } else {
+            public_featureforge_cli::run_featureforge_with_env_control_real_cli(
+                Some(self.repo),
+                Some(self.state),
+                Some(&self.home_dir),
+                &[],
+                &merged_envs,
+                args,
+                context,
+            )
+        };
         if output.status.success() {
             let json: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
                 panic!(
@@ -367,6 +482,16 @@ fn complete_task(cli: &PublicCli<'_>, task: u32, fingerprint: &str, context: &st
 }
 
 fn close_task(cli: &PublicCli<'_>, _repo: &Path, task: u32, context: &str) -> Value {
+    close_task_with_results(cli, task, "pass", "pass", context)
+}
+
+fn close_task_with_results(
+    cli: &PublicCli<'_>,
+    task: u32,
+    review_result: &str,
+    verification_result: &str,
+    context: &str,
+) -> Value {
     let review_summary = cli
         .state
         .join(format!("runtime-golden-task-{task}-review.md"));
@@ -381,30 +506,39 @@ fn close_task(cli: &PublicCli<'_>, _repo: &Path, task: u32, context: &str) -> Va
         &verification_summary,
         &format!("Runtime golden task {task} verification passed.\n"),
     );
-    cli.json(
-        &[
-            "plan",
-            "execution",
-            "close-current-task",
-            "--plan",
-            EXEC_PLAN_REL,
-            "--task",
-            &task.to_string(),
-            "--review-result",
-            "pass",
-            "--review-summary-file",
-            review_summary
-                .to_str()
-                .expect("review summary path should be utf-8"),
-            "--verification-result",
-            "pass",
+    let task_arg = task.to_string();
+    let review_summary_arg = review_summary
+        .to_str()
+        .expect("review summary path should be utf-8")
+        .to_owned();
+    let verification_summary_arg = (verification_result != "not-run").then(|| {
+        verification_summary
+            .to_str()
+            .expect("verification summary path should be utf-8")
+            .to_owned()
+    });
+    let mut args = vec![
+        "plan",
+        "execution",
+        "close-current-task",
+        "--plan",
+        EXEC_PLAN_REL,
+        "--task",
+        task_arg.as_str(),
+        "--review-result",
+        review_result,
+        "--review-summary-file",
+        review_summary_arg.as_str(),
+        "--verification-result",
+        verification_result,
+    ];
+    if let Some(verification_summary_arg) = verification_summary_arg.as_ref() {
+        args.extend([
             "--verification-summary-file",
-            verification_summary
-                .to_str()
-                .expect("verification summary path should be utf-8"),
-        ],
-        context,
-    )
+            verification_summary_arg.as_str(),
+        ]);
+    }
+    cli.json(&args, context)
 }
 
 fn advance_branch_closure(cli: &PublicCli<'_>) {
@@ -468,7 +602,14 @@ fn materialize_projections(cli: &PublicCli<'_>, context: &str) {
     );
 }
 
-fn publish_authoritative_final_review_truth(repo: &Path, state: &Path, qa_required: bool) {
+fn synthetic_late_stage_fixture_publish_authoritative_final_review_truth(
+    repo: &Path,
+    state: &Path,
+    qa_required: bool,
+) {
+    // Synthetic late-stage fixture setup only: current public normal-path
+    // goldens cover branch/release progression, while these states preserve
+    // stable route snapshots after an external final-review result exists.
     let identity = discover_slug_identity(repo);
     let state_path = harness_state_path(state, &identity.repo_slug, &identity.branch_name);
     let mut payload =
@@ -615,6 +756,93 @@ fn publish_authoritative_final_review_truth(repo: &Path, state: &Path, qa_requir
         .expect("runtime golden final-review fixture should sync typed event authority");
 }
 
+fn synthetic_runtime_golden_update_authoritative_state_fields(
+    repo: &Path,
+    state: &Path,
+    fields: &[(&str, Value)],
+) {
+    let identity = discover_slug_identity(repo);
+    let state_path = harness_state_path(state, &identity.repo_slug, &identity.branch_name);
+    let mut payload =
+        featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(&state_path)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "event-authoritative runtime golden state `{}` should reduce: {}",
+                    state_path.display(),
+                    error.message
+                )
+            })
+            .unwrap_or_else(|| {
+                serde_json::from_str(&fs::read_to_string(&state_path).unwrap_or_else(|error| {
+                    panic!(
+                        "authoritative runtime golden state `{}` should read: {error}",
+                        state_path.display()
+                    )
+                }))
+                .expect("authoritative runtime golden state should parse")
+            });
+
+    let object = payload
+        .as_object_mut()
+        .expect("authoritative runtime golden state should be an object");
+    for (field, value) in fields {
+        object.insert((*field).to_owned(), value.clone());
+    }
+    write_file(
+        &state_path,
+        &serde_json::to_string(&payload).expect("runtime golden state should serialize"),
+    );
+    featureforge::execution::event_log::sync_fixture_event_log_for_tests(&state_path, &payload)
+        .expect("runtime golden state-field fixture should sync typed event authority");
+}
+
+fn synthetic_seed_stale_reopen_route(repo: &Path, state: &Path) {
+    append_repo_file(
+        repo,
+        "docs/runtime-golden-output-1.md",
+        "Runtime golden stale reopen route drift.",
+    );
+    synthetic_runtime_golden_update_authoritative_state_fields(
+        repo,
+        state,
+        &[
+            (
+                "current_open_step_state",
+                json!({
+                    "task": 2,
+                    "step": 1,
+                    "note_state": "Interrupted",
+                    "note_summary": "Runtime golden forward overlay must not outrank stale Task 1 boundary",
+                    "source_plan_path": EXEC_PLAN_REL,
+                    "source_plan_revision": 1,
+                    "authoritative_sequence": 30
+                }),
+            ),
+            ("active_task", Value::Null),
+            ("active_step", Value::Null),
+            ("resume_task", json!(2)),
+            ("resume_step", json!(1)),
+        ],
+    );
+}
+
+fn synthetic_mark_handoff_required(repo: &Path, state: &Path) {
+    synthetic_runtime_golden_update_authoritative_state_fields(
+        repo,
+        state,
+        &[
+            ("harness_phase", json!("handoff_required")),
+            ("handoff_required", json!(true)),
+            ("reason_codes", json!(["handoff_required"])),
+            ("active_task", Value::Null),
+            ("active_step", Value::Null),
+            ("resume_task", Value::Null),
+            ("resume_step", Value::Null),
+            ("current_open_step_state", Value::Null),
+        ],
+    );
+}
+
 fn json_string(value: &Value, key: &str) -> Option<String> {
     value
         .get(key)
@@ -667,7 +895,26 @@ fn capture_route_state(
     note: &str,
     cli: &PublicCli<'_>,
     envs: &[(&str, &str)],
-) -> Value {
+) -> CapturedRouteState {
+    capture_route_state_with_options(label, note, cli, envs, false)
+}
+
+fn capture_route_state_with_workflow_status(
+    label: &str,
+    note: &str,
+    cli: &PublicCli<'_>,
+    envs: &[(&str, &str)],
+) -> CapturedRouteState {
+    capture_route_state_with_options(label, note, cli, envs, true)
+}
+
+fn capture_route_state_with_options(
+    label: &str,
+    note: &str,
+    cli: &PublicCli<'_>,
+    envs: &[(&str, &str)],
+    include_workflow_status: bool,
+) -> CapturedRouteState {
     let status = cli.capture(
         &["plan", "execution", "status", "--plan", EXEC_PLAN_REL],
         envs,
@@ -678,18 +925,265 @@ fn capture_route_state(
         envs,
         &format!("runtime golden {label} workflow operator"),
     );
-    let workflow_status = cli.capture(
-        &["workflow", "status", "--json"],
-        envs,
-        &format!("runtime golden {label} workflow status"),
+    let plan_execution_status = route_contract_capture(
+        status,
+        cli.repo,
+        cli.state,
+        PublicRouteCaptureSurface::PlanExecutionStatus,
     );
+    let workflow_operator = route_contract_capture(
+        operator,
+        cli.repo,
+        cli.state,
+        PublicRouteCaptureSurface::WorkflowOperator,
+    );
+    let workflow_status = include_workflow_status.then(|| {
+        let workflow_status = cli.capture(
+            &["workflow", "status", "--json"],
+            envs,
+            &format!("runtime golden {label} workflow status"),
+        );
+        route_contract_capture(
+            workflow_status,
+            cli.repo,
+            cli.state,
+            PublicRouteCaptureSurface::WorkflowStatus,
+        )
+    });
+    let mut scenario = Map::new();
+    scenario.insert("label".to_owned(), json!(label));
+    scenario.insert("note".to_owned(), json!(note));
+    if full_surface_route_capture_scenario(label) {
+        scenario.insert("capture_mode".to_owned(), json!("full_surface_route"));
+        scenario.insert(
+            "plan_execution_status".to_owned(),
+            plan_execution_status.clone(),
+        );
+        scenario.insert("workflow_operator".to_owned(), workflow_operator.clone());
+    } else {
+        scenario.insert("capture_mode".to_owned(), json!("semantic_route"));
+        scenario.insert(
+            "route_semantics".to_owned(),
+            status_operator_route_semantics(label, &plan_execution_status, &workflow_operator),
+        );
+        let surface_specific =
+            status_operator_surface_specific(&plan_execution_status, &workflow_operator);
+        if !surface_specific.is_empty() {
+            scenario.insert(
+                "surface_specific".to_owned(),
+                Value::Object(surface_specific),
+            );
+        }
+    }
+    if let Some(workflow_status) = workflow_status.as_ref() {
+        scenario.insert("workflow_status".to_owned(), workflow_status.clone());
+    }
+    CapturedRouteState {
+        scenario: Value::Object(scenario),
+        plan_execution_status,
+        workflow_operator,
+        workflow_status,
+    }
+}
+
+fn full_surface_route_capture_scenario(label: &str) -> bool {
+    FULL_SURFACE_ROUTE_CAPTURE_SCENARIOS.contains(&label)
+}
+
+fn status_operator_route_semantics(
+    label: &str,
+    plan_execution_status: &Value,
+    workflow_operator: &Value,
+) -> Value {
+    let status = route_capture_json_object(plan_execution_status, "plan execution status");
+    let operator = route_capture_json_object(workflow_operator, "workflow operator");
+    let status_semantics = extract_route_fields(status, STATUS_OPERATOR_ROUTE_PARITY_FIELDS);
+    let operator_semantics = extract_route_fields(operator, STATUS_OPERATOR_ROUTE_PARITY_FIELDS);
+    assert_eq!(
+        status_semantics, operator_semantics,
+        "{label} status/operator route semantics should stay in parity"
+    );
+    Value::Object(status_semantics)
+}
+
+fn status_operator_surface_specific(
+    plan_execution_status: &Value,
+    workflow_operator: &Value,
+) -> Map<String, Value> {
+    let mut surface_specific = Map::new();
+    for (surface, capture) in [
+        ("plan_execution_status", plan_execution_status),
+        ("workflow_operator", workflow_operator),
+    ] {
+        let object = route_capture_json_object(capture, surface);
+        let fields = object
+            .iter()
+            .filter(|(key, _)| !STATUS_OPERATOR_ROUTE_PARITY_FIELDS.contains(&key.as_str()))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<Map<_, _>>();
+        if !fields.is_empty() {
+            surface_specific.insert(surface.to_owned(), Value::Object(fields));
+        }
+    }
+    surface_specific
+}
+
+fn route_capture_json_object<'a>(capture: &'a Value, context: &str) -> &'a Map<String, Value> {
+    assert!(
+        capture["ok"].as_bool() == Some(true),
+        "{context} route capture should be successful: {capture}"
+    );
+    capture["json"]
+        .as_object()
+        .unwrap_or_else(|| panic!("{context} route capture should expose json object: {capture}"))
+}
+
+fn extract_route_fields(object: &Map<String, Value>, fields: &[&str]) -> Map<String, Value> {
+    let mut extracted = Map::new();
+    for field in fields {
+        let Some(value) = object.get(*field) else {
+            continue;
+        };
+        if route_contract_value_is_empty(value) {
+            continue;
+        }
+        extracted.insert((*field).to_owned(), value.clone());
+    }
+    extracted
+}
+
+fn route_contract_capture(
+    capture: Value,
+    repo: &Path,
+    state: &Path,
+    surface: PublicRouteCaptureSurface,
+) -> Value {
+    let normalized = normalize_value_for_paths(capture, repo, state);
+    if normalized["ok"].as_bool() != Some(true) {
+        return compact_failure_capture(normalized);
+    }
+    let Some(json) = normalized.get("json").and_then(Value::as_object) else {
+        return normalized;
+    };
+    assert_required_public_fields(json, surface);
+    let mut route = Map::new();
+    for field in ROUTE_CONTRACT_FIELDS {
+        let Some(value) = json.get(*field) else {
+            continue;
+        };
+        if route_contract_value_is_empty(value) {
+            continue;
+        }
+        route.insert(
+            (*field).to_owned(),
+            strip_display_only_route_summaries(value),
+        );
+    }
     json!({
-        "label": label,
-        "note": note,
-        "plan_execution_status": normalize_value_for_paths(status, cli.repo, cli.state),
-        "workflow_operator": normalize_value_for_paths(operator, cli.repo, cli.state),
-        "workflow_status": normalize_value_for_paths(workflow_status, cli.repo, cli.state),
+        "ok": true,
+        "json": route
     })
+}
+
+fn strip_display_only_route_summaries(value: &Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .map(strip_display_only_route_summaries)
+                .collect(),
+        ),
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .filter(|(key, _)| key.as_str() != "next_public_action")
+                .map(|(key, value)| (key.clone(), strip_display_only_route_summaries(value)))
+                .collect(),
+        ),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => value.clone(),
+    }
+}
+
+fn assert_required_public_fields(json: &Map<String, Value>, surface: PublicRouteCaptureSurface) {
+    let required_fields = schema_required_fields(surface);
+    let missing = required_fields
+        .iter()
+        .filter(|field| !json.contains_key(field.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "{} output should keep schema-required public fields present before compact route capture: {missing:?}",
+        surface.label()
+    );
+}
+
+fn schema_required_fields(surface: PublicRouteCaptureSurface) -> &'static BTreeSet<String> {
+    static PLAN_EXECUTION_STATUS_REQUIRED: OnceLock<BTreeSet<String>> = OnceLock::new();
+    static WORKFLOW_OPERATOR_REQUIRED: OnceLock<BTreeSet<String>> = OnceLock::new();
+    static WORKFLOW_STATUS_REQUIRED: OnceLock<BTreeSet<String>> = OnceLock::new();
+
+    match surface {
+        PublicRouteCaptureSurface::PlanExecutionStatus => PLAN_EXECUTION_STATUS_REQUIRED
+            .get_or_init(|| load_schema_required_fields(surface.schema_rel())),
+        PublicRouteCaptureSurface::WorkflowOperator => WORKFLOW_OPERATOR_REQUIRED
+            .get_or_init(|| load_schema_required_fields(surface.schema_rel())),
+        PublicRouteCaptureSurface::WorkflowStatus => WORKFLOW_STATUS_REQUIRED
+            .get_or_init(|| load_schema_required_fields(surface.schema_rel())),
+    }
+}
+
+fn load_schema_required_fields(schema_rel: &str) -> BTreeSet<String> {
+    let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(schema_rel);
+    let schema: Value =
+        serde_json::from_str(&fs::read_to_string(&schema_path).unwrap_or_else(|error| {
+            panic!("schema `{}` should read: {error}", schema_path.display())
+        }))
+        .unwrap_or_else(|error| panic!("schema `{}` should parse: {error}", schema_path.display()));
+    schema
+        .get("required")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("schema `{schema_rel}` should declare top-level required fields"))
+        .iter()
+        .map(|field| {
+            field
+                .as_str()
+                .unwrap_or_else(|| {
+                    panic!("schema `{schema_rel}` required entries should be strings")
+                })
+                .to_owned()
+        })
+        .collect()
+}
+
+fn compact_failure_capture(capture: Value) -> Value {
+    let Some(failure) = capture.get("failure").and_then(Value::as_object) else {
+        return capture;
+    };
+    let mut compact = Map::new();
+    for field in ["code", "message", "reason", "reason_codes"] {
+        let Some(value) = failure.get(field) else {
+            continue;
+        };
+        if route_contract_value_is_empty(value) {
+            continue;
+        }
+        compact.insert(field.to_owned(), value.clone());
+    }
+    json!({
+        "ok": false,
+        "failure": compact
+    })
+}
+
+fn route_contract_value_is_empty(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(value) => value.is_empty(),
+        Value::Array(values) => values.is_empty(),
+        Value::Object(object) => object.is_empty(),
+        Value::Bool(_) | Value::Number(_) => false,
+    }
 }
 
 fn assert_capture_json_field(capture: &Value, pointer: &str, expected: &str, context: &str) {
@@ -719,22 +1213,33 @@ fn assert_capture_json_contains_reason(capture: &Value, reason: &str, context: &
     );
 }
 
-fn assert_capture_recommends(capture: &Value, command_fragment: &str, context: &str) {
+fn assert_capture_argv_contains(capture: &Value, command_fragment: &str, context: &str) {
     assert!(
         capture
-            .pointer("/json/recommended_command")
-            .and_then(Value::as_str)
-            .is_some_and(|command| command.contains(command_fragment)),
-        "{context} should recommend `{command_fragment}`: {capture}"
+            .pointer("/json/recommended_public_command_argv")
+            .and_then(Value::as_array)
+            .is_some_and(|argv| {
+                let joined = argv
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                joined.contains(command_fragment)
+                    || argv.iter().any(|part| {
+                        part.as_str()
+                            .is_some_and(|part| part.contains(command_fragment))
+                    })
+            }),
+        "{context} should expose public argv containing `{command_fragment}`: {capture}"
     );
 }
 
 fn assert_capture_requires_task_closure_inputs(capture: &Value, context: &str) {
     assert!(
         capture
-            .pointer("/json/recommended_command")
+            .pointer("/json/recommended_public_command_argv")
             .is_none_or(Value::is_null),
-        "{context} should not expose a placeholder task-closure command: {capture}"
+        "{context} should not expose placeholder task-closure argv: {capture}"
     );
     assert_eq!(
         capture.pointer("/json/required_inputs"),
@@ -765,6 +1270,29 @@ fn assert_capture_requires_task_closure_inputs(capture: &Value, context: &str) {
     );
 }
 
+fn assert_capture_requires_transfer_inputs(capture: &Value, context: &str) {
+    assert!(
+        capture
+            .pointer("/json/recommended_public_command_argv")
+            .is_none_or(Value::is_null),
+        "{context} should not expose placeholder transfer argv: {capture}"
+    );
+    assert_eq!(
+        capture.pointer("/json/required_inputs"),
+        Some(&json!([
+            {
+                "kind": "text",
+                "name": "owner"
+            },
+            {
+                "kind": "text",
+                "name": "reason"
+            }
+        ])),
+        "{context} should expose typed transfer inputs: {capture}"
+    );
+}
+
 fn collect_execution_progress_scenarios(scenarios: &mut Vec<Value>) {
     let (repo_dir, state_dir) = init_repo("runtime-golden-progress");
     let repo = repo_dir.path();
@@ -780,12 +1308,12 @@ fn collect_execution_progress_scenarios(scenarios: &mut Vec<Value>) {
         &[],
     );
     assert_capture_json_field(
-        &not_started["plan_execution_status"],
+        not_started.plan_execution_status(),
         "/json/execution_started",
         "no",
         "not_started status",
     );
-    scenarios.push(not_started);
+    scenarios.push(not_started.into_scenario());
 
     let initial_status = plan_status(&cli, "runtime golden active flow status");
     let begin = begin_task(
@@ -803,18 +1331,19 @@ fn collect_execution_progress_scenarios(scenarios: &mut Vec<Value>) {
         &[],
     );
     assert_eq!(
-        active_task["plan_execution_status"]["json"]["active_task"],
+        active_task.plan_execution_status()["json"]["active_task"],
         json!(1),
-        "active_task status should expose active_task=1: {active_task}"
+        "active_task status should expose active_task=1: {:?}",
+        active_task.plan_execution_status()
     );
-    scenarios.push(active_task);
+    scenarios.push(active_task.into_scenario());
 
     append_repo_file(
         repo,
         "docs/runtime-golden-output-1.md",
         "Runtime golden Task 1 completed output.",
     );
-    let complete = complete_task(
+    complete_task(
         &cli,
         1,
         begin["execution_fingerprint"]
@@ -829,17 +1358,12 @@ fn collect_execution_progress_scenarios(scenarios: &mut Vec<Value>) {
         &[],
     );
     assert_capture_json_field(
-        &completed["plan_execution_status"],
+        completed.plan_execution_status(),
         "/json/phase_detail",
         "task_closure_recording_ready",
         "completed step status",
     );
-    let completed = with_extra(
-        completed,
-        "completion_output",
-        normalize_value_for_paths(json!({"ok": true, "json": complete}), repo, state),
-    );
-    scenarios.push(completed);
+    scenarios.push(completed.into_scenario());
 
     let task_closure_ready = capture_route_state(
         "task_closure_recording_ready",
@@ -848,16 +1372,16 @@ fn collect_execution_progress_scenarios(scenarios: &mut Vec<Value>) {
         &[],
     );
     assert_capture_json_field(
-        &task_closure_ready["workflow_operator"],
+        task_closure_ready.workflow_operator(),
         "/json/phase_detail",
         "task_closure_recording_ready",
         "task closure operator",
     );
     assert_capture_requires_task_closure_inputs(
-        &task_closure_ready["workflow_operator"],
+        task_closure_ready.workflow_operator(),
         "task closure operator",
     );
-    scenarios.push(task_closure_ready);
+    scenarios.push(task_closure_ready.into_scenario());
 
     let close = close_task(&cli, repo, 1, "runtime golden progress close task 1");
     assert_eq!(
@@ -870,12 +1394,12 @@ fn collect_execution_progress_scenarios(scenarios: &mut Vec<Value>) {
         &cli,
         &[],
     );
-    assert_capture_recommends(
-        &begin_ready["plan_execution_status"],
+    assert_capture_argv_contains(
+        begin_ready.plan_execution_status(),
         "begin --plan",
         "begin_ready status",
     );
-    scenarios.push(begin_ready);
+    scenarios.push(begin_ready.into_scenario());
 
     append_repo_file(
         repo,
@@ -888,20 +1412,88 @@ fn collect_execution_progress_scenarios(scenarios: &mut Vec<Value>) {
         &cli,
         &[],
     );
-    assert_capture_recommends(
-        &repair_required["workflow_operator"],
+    assert_capture_argv_contains(
+        repair_required.workflow_operator(),
         "repair-review-state",
         "repair_review_state_required operator",
     );
-    scenarios.push(repair_required);
+    scenarios.push(repair_required.into_scenario());
 }
 
-fn with_extra(mut value: Value, key: &str, extra: Value) -> Value {
-    value
-        .as_object_mut()
-        .expect("scenario should be an object")
-        .insert(key.to_owned(), extra);
-    value
+fn collect_reopen_and_transfer_route_scenarios(scenarios: &mut Vec<Value>) {
+    let (repo_dir, state_dir) = init_repo("runtime-golden-reopen-route");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_execution_spec_and_plan(repo, 2, "not-required", true);
+    commit_all(repo, "runtime golden reopen route fixture");
+    let cli = PublicCli::new(repo, state);
+    run_to_closed_task(&cli, repo, 1);
+    synthetic_seed_stale_reopen_route(repo, state);
+    let repair = cli.json(
+        &[
+            "plan",
+            "execution",
+            "repair-review-state",
+            "--plan",
+            EXEC_PLAN_REL,
+        ],
+        "runtime golden reopen route repair-review-state",
+    );
+    assert_eq!(
+        repair["action"], "blocked",
+        "stale current closure repair should bind a follow-up route: {repair}"
+    );
+    let repair_close_ready = capture_route_state(
+        "stale_closure_repair_close_ready",
+        "After public repair-review-state, a stale missing-baseline boundary converges through public close-current-task",
+        &cli,
+        &[],
+    );
+    assert_capture_requires_task_closure_inputs(
+        repair_close_ready.workflow_operator(),
+        "stale_closure_repair_close_ready operator",
+    );
+    assert_capture_json_field(
+        repair_close_ready.workflow_operator(),
+        "/json/phase_detail",
+        "task_closure_recording_ready",
+        "stale_closure_repair_close_ready operator",
+    );
+    scenarios.push(repair_close_ready.into_scenario());
+
+    let (repo_dir, state_dir) = init_repo("runtime-golden-transfer-route");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_execution_spec_and_plan(repo, 1, "not-required", true);
+    commit_all(repo, "runtime golden transfer route fixture");
+    let cli = PublicCli::new(repo, state);
+    let status = plan_status(&cli, "runtime golden transfer route status before begin");
+    begin_task(
+        &cli,
+        1,
+        status["execution_fingerprint"]
+            .as_str()
+            .expect("transfer route status should expose execution fingerprint"),
+        "runtime golden transfer route begin",
+    );
+    synthetic_mark_handoff_required(repo, state);
+    let transfer_ready = capture_route_state(
+        "transfer_handoff_required",
+        "A routed handoff requirement exposes public transfer template inputs",
+        &cli,
+        &[],
+    );
+    assert_capture_json_field(
+        transfer_ready.workflow_operator(),
+        "/json/phase",
+        "handoff_required",
+        "transfer_handoff_required operator",
+    );
+    assert_capture_requires_transfer_inputs(
+        transfer_ready.workflow_operator(),
+        "transfer_handoff_required operator",
+    );
+    scenarios.push(transfer_ready.into_scenario());
 }
 
 fn collect_invariant_diagnostic_scenarios(scenarios: &mut Vec<Value>) {
@@ -922,11 +1514,11 @@ fn collect_invariant_diagnostic_scenarios(scenarios: &mut Vec<Value>) {
         )],
     );
     assert_capture_json_contains_reason(
-        &targetless["plan_execution_status"],
+        targetless.plan_execution_status(),
         "stale_unreviewed_target_missing",
         "targetless stale status",
     );
-    scenarios.push(targetless);
+    scenarios.push(targetless.into_scenario());
 
     let hidden_command = capture_route_state(
         "blocked_runtime_bug_diagnostic",
@@ -938,17 +1530,17 @@ fn collect_invariant_diagnostic_scenarios(scenarios: &mut Vec<Value>) {
         )],
     );
     assert_capture_json_field(
-        &hidden_command["plan_execution_status"],
+        hidden_command.plan_execution_status(),
         "/json/state_kind",
         "blocked_runtime_bug",
         "hidden command status",
     );
     assert_capture_json_contains_reason(
-        &hidden_command["workflow_operator"],
+        hidden_command.workflow_operator(),
         "recommended_command_hidden_or_debug",
         "hidden command operator",
     );
-    scenarios.push(hidden_command);
+    scenarios.push(hidden_command.into_scenario());
 }
 
 fn collect_review_gate_scenarios(scenarios: &mut Vec<Value>) {
@@ -958,24 +1550,24 @@ fn collect_review_gate_scenarios(scenarios: &mut Vec<Value>) {
     write_execution_spec_and_plan(repo, 2, "not-required", false);
     commit_all(repo, "runtime golden missing fidelity fixture");
     let cli = PublicCli::new(repo, state);
-    let missing_fidelity = capture_route_state(
+    let missing_fidelity = capture_route_state_with_workflow_status(
         "engineering_approved_missing_fidelity_gate",
         "Engineering Approved plans without a current fidelity artifact route back to engineering review",
         &cli,
         &[],
     );
     assert_capture_json_field(
-        &missing_fidelity["workflow_status"],
+        missing_fidelity.workflow_status(),
         "/json/status",
         "plan_review_required",
         "missing fidelity workflow status",
     );
     assert_capture_json_contains_reason(
-        &missing_fidelity["workflow_status"],
+        missing_fidelity.workflow_status(),
         "engineering_approval_missing_plan_fidelity_review",
         "missing fidelity workflow status",
     );
-    scenarios.push(missing_fidelity);
+    scenarios.push(missing_fidelity.into_scenario());
 
     let (repo_dir, state_dir) = init_repo("runtime-golden-implementation-ready");
     let repo = repo_dir.path();
@@ -983,19 +1575,19 @@ fn collect_review_gate_scenarios(scenarios: &mut Vec<Value>) {
     write_execution_spec_and_plan(repo, 2, "not-required", true);
     commit_all(repo, "runtime golden implementation ready fixture");
     let cli = PublicCli::new(repo, state);
-    let implementation_ready = capture_route_state(
+    let implementation_ready = capture_route_state_with_workflow_status(
         "implementation_ready_after_fidelity_pass",
         "Engineering Approved plan with current fidelity routes to implementation",
         &cli,
         &[],
     );
     assert_capture_json_field(
-        &implementation_ready["workflow_status"],
+        implementation_ready.workflow_status(),
         "/json/status",
         "implementation_ready",
         "implementation ready workflow status",
     );
-    scenarios.push(implementation_ready);
+    scenarios.push(implementation_ready.into_scenario());
 }
 
 fn collect_late_stage_scenarios(scenarios: &mut Vec<Value>) {
@@ -1016,12 +1608,12 @@ fn collect_late_stage_scenarios(scenarios: &mut Vec<Value>) {
         &[],
     );
     assert_capture_json_field(
-        &release_pending["plan_execution_status"],
+        release_pending.plan_execution_status(),
         "/json/phase_detail",
         "release_readiness_recording_ready",
         "release readiness status",
     );
-    scenarios.push(release_pending);
+    scenarios.push(release_pending.into_scenario());
 
     advance_release_readiness(&cli);
     materialize_projections(&cli, "runtime golden materialize after release readiness");
@@ -1032,14 +1624,14 @@ fn collect_late_stage_scenarios(scenarios: &mut Vec<Value>) {
         &[],
     );
     assert_capture_json_field(
-        &final_review_pending["workflow_operator"],
+        final_review_pending.workflow_operator(),
         "/json/phase",
         "final_review_pending",
         "final review operator",
     );
-    scenarios.push(final_review_pending);
+    scenarios.push(final_review_pending.into_scenario());
 
-    publish_authoritative_final_review_truth(repo, state, false);
+    synthetic_late_stage_fixture_publish_authoritative_final_review_truth(repo, state, false);
     let ready = capture_route_state(
         "ready_for_branch_completion",
         "Release-readiness and final review are current for a plan without required QA",
@@ -1047,12 +1639,12 @@ fn collect_late_stage_scenarios(scenarios: &mut Vec<Value>) {
         &[],
     );
     assert_capture_json_field(
-        &ready["workflow_operator"],
+        ready.workflow_operator(),
         "/json/phase",
         "ready_for_branch_completion",
         "ready for branch completion operator",
     );
-    scenarios.push(ready);
+    scenarios.push(ready.into_scenario());
 
     let (repo_dir, state_dir) = init_repo("runtime-golden-qa-pending");
     let repo = repo_dir.path();
@@ -1064,7 +1656,7 @@ fn collect_late_stage_scenarios(scenarios: &mut Vec<Value>) {
     run_to_closed_task(&cli, repo, 2);
     advance_branch_closure(&cli);
     advance_release_readiness(&cli);
-    publish_authoritative_final_review_truth(repo, state, true);
+    synthetic_late_stage_fixture_publish_authoritative_final_review_truth(repo, state, true);
     let qa_pending = capture_route_state(
         "qa_pending",
         "Release-readiness and final review are current but required QA is still pending",
@@ -1072,29 +1664,34 @@ fn collect_late_stage_scenarios(scenarios: &mut Vec<Value>) {
         &[],
     );
     assert_capture_json_field(
-        &qa_pending["workflow_operator"],
+        qa_pending.workflow_operator(),
         "/json/phase",
         "qa_pending",
         "QA pending operator",
     );
-    scenarios.push(qa_pending);
+    scenarios.push(qa_pending.into_scenario());
 }
 
 fn collect_runtime_golden() -> Value {
     let mut scenarios = Vec::new();
     collect_execution_progress_scenarios(&mut scenarios);
+    collect_reopen_and_transfer_route_scenarios(&mut scenarios);
     collect_invariant_diagnostic_scenarios(&mut scenarios);
     collect_review_gate_scenarios(&mut scenarios);
     collect_late_stage_scenarios(&mut scenarios);
     assert_required_scenarios(&scenarios);
+    assert_display_command_summaries_are_omitted(&Value::Array(scenarios.clone()));
     assert_no_token_only_blocked_follow_ups(&Value::Array(scenarios.clone()));
     json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "normalization": [
             "absolute temp repo and state paths are replaced",
             "run/chunk ids are replaced",
             "git shas and sha256 fingerprints are replaced",
-            "timestamps and generated artifact timestamp slugs are replaced"
+            "timestamps and generated artifact timestamp slugs are replaced",
+            "representative full_surface_route scenarios keep compact per-surface route-contract DTOs",
+            "semantic_route scenarios store one status/operator parity route plus surface-specific deltas",
+            "route captures omit display-only command summaries"
         ],
         "scenarios": scenarios
     })
@@ -1118,6 +1715,37 @@ fn assert_required_scenarios(scenarios: &[Value]) {
         actual, expected,
         "runtime behavior goldens must cover every Task 8 representative state"
     );
+}
+
+fn assert_display_command_summaries_are_omitted(value: &Value) {
+    let mut paths = Vec::new();
+    collect_field_paths("$", value, "recommended_command", &mut paths);
+    collect_field_paths("$", value, "next_public_action", &mut paths);
+    assert!(
+        paths.is_empty(),
+        "public route goldens should omit display-only command summaries:\n{}",
+        paths.join("\n")
+    );
+}
+
+fn collect_field_paths(path: &str, value: &Value, field: &str, paths: &mut Vec<String>) {
+    match value {
+        Value::Array(values) => {
+            for (index, value) in values.iter().enumerate() {
+                collect_field_paths(&format!("{path}[{index}]"), value, field, paths);
+            }
+        }
+        Value::Object(object) => {
+            for (key, value) in object {
+                let next = format!("{path}.{key}");
+                if key == field {
+                    paths.push(next.clone());
+                }
+                collect_field_paths(&next, value, field, paths);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn assert_no_token_only_blocked_follow_ups(value: &Value) {

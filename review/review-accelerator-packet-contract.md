@@ -22,7 +22,7 @@ Every valid section packet must include:
 - timestamp
 
 Routine findings and escalated issues must use the deterministic review finding
-shape from `review/plan-task-contract.md` whenever they identify a concrete
+shape from `$_FEATUREFORGE_ROOT/review/plan-task-contract.md` whenever they identify a concrete
 contract failure. Each finding carries `Finding ID`, `Severity`, `Task`,
 `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail: yes|no`.
 Do not use general advice when the packet can name the violated field or
@@ -35,16 +35,16 @@ Accelerated ENG section packets must also include:
 - analyze-plan boolean snapshot for `task_contract_valid`, `task_goal_valid`, `task_context_sufficient`, `task_constraints_valid`, `task_done_when_deterministic`, and `tasks_self_contained`
 - task-contract hard-fail findings for missing `Goal`, `Context`, `Constraints`, `Done when`, `Spec Coverage`, or `Files`
 - deterministic `Done when` assessment
-- required spec-reference assessment under `review/plan-task-contract.md`
+- required spec-reference assessment under `$_FEATUREFORGE_ROOT/review/plan-task-contract.md`
 - self-contained task-scope assessment
 - reuse assessment that names the existing shared implementation home, the reason no shared home exists, or the approved exception for separate implementations
 - obligation-tied hard-fail findings using canonical `DONE_WHEN_N` and `CONSTRAINT_N` IDs when those packet obligations are violated
 
-If any ENG hard-fail field is missing, malformed, or contradicts the normal `plan-eng-review` approval gate, treat the packet as invalid and fall back to normal manual review for that section.
+If any ENG hard-fail field is missing, malformed, or contradicts the normal `plan-eng-review` approval gate, treat the packet as invalid and fall back to the normal `featureforge:plan-eng-review` section review flow for that section.
 
 ## fail-closed validation rule
 
-If any required packet field is missing, malformed, internally inconsistent, or unsupported for the active review kind, treat the packet as invalid and discard it. Invalid packets must fall back to normal manual review for that section before any staged patch is applied.
+If any required packet field is missing, malformed, internally inconsistent, or unsupported for the active review kind, treat the packet as invalid and discard it. Invalid packets must fall back to the owning normal section review flow before any staged patch is applied: `featureforge:plan-ceo-review` for CEO/spec sections and `featureforge:plan-eng-review` for ENG/plan sections.
 
 ## high-judgment escalation categories
 
@@ -68,7 +68,7 @@ The reviewer subagent may analyze and draft only. Only the main review agent may
 - change `Workflow State`
 - write `CEO Approved` or `Engineering Approved`
 
-## fallback classes that map to manual review
+## fallback classes that map to normal review flows
 
 Accelerated failures must map to explicit fail-closed classes:
 
@@ -80,7 +80,7 @@ Accelerated failures must map to explicit fail-closed classes:
 - `ResumeProofFailure`
 - `UnexpectedAcceleratorFailure`
 
-All of them fall back to normal manual review with the written artifact still authoritative.
+All of them fall back to the owning normal section review flow with the written artifact still authoritative: `featureforge:plan-ceo-review` for CEO/spec sections and `featureforge:plan-eng-review` for ENG/plan sections.
 
 ## source artifact fingerprint
 

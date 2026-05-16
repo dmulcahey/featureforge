@@ -6,13 +6,13 @@ use std::path::{Component, Path, PathBuf};
 use gix::bstr::ByteSlice;
 use jiff::Timestamp;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::cli::plan_execution::{BeginArgs, CompleteArgs, ReopenArgs, StatusArgs, TransferArgs};
 use crate::cli::repo_safety::{RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg};
 use crate::contracts::harness::{
-    ExecutionTopologyDowngradeRecord, WORKTREE_LEASE_VERSION, WorktreeLease, WorktreeLeaseState,
-    read_execution_contract,
+    ExecutionContract, ExecutionTopologyDowngradeRecord, WORKTREE_LEASE_VERSION, WorktreeLease,
+    WorktreeLeaseState, parse_contract_task_step_scope, read_execution_contract,
 };
 use crate::contracts::plan::analyze_documents;
 use crate::contracts::spec::parse_spec_file;
@@ -21,7 +21,6 @@ use crate::execution::authority::{
     ensure_preflight_authoritative_bootstrap,
     ensure_preflight_authoritative_bootstrap_with_existing_authority,
 };
-pub(crate) use crate::execution::closure_diagnostics::authoritative_unit_review_receipt_path;
 pub(crate) use crate::execution::closure_dispatch::{
     current_review_dispatch_id_candidate, current_review_dispatch_id_from_lineage,
     current_review_dispatch_id_if_still_current,
@@ -39,7 +38,6 @@ pub(crate) use crate::execution::context::{
 };
 pub(crate) use crate::execution::current_closure_projection::{
     TaskCurrentClosureStatus, current_task_closure_overlay_restore_required,
-    still_current_task_closure_records,
     still_current_task_closure_records_from_authoritative_state, task_current_closure_status,
 };
 use crate::execution::current_truth::{
@@ -77,37 +75,22 @@ use crate::execution::observability::REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED
 use crate::execution::query::{ExecutionRoutingState, required_follow_up_from_routing};
 pub use crate::execution::read_model::status_from_context;
 pub(crate) use crate::execution::read_model::{
-    ExecutionCommandRouteTarget, ExecutionDerivedTruth, ExecutionReadScope,
-    ExecutionReentryCurrentTaskClosureTargets, FinalReviewDispatchAuthority,
-    apply_public_read_invariants_to_status, apply_shared_routing_projection_to_read_scope,
+    ExecutionReadScope, ExecutionReentryCurrentTaskClosureTargets,
+    apply_public_read_invariants_to_read_scope, apply_shared_routing_projection_to_read_scope,
     apply_shared_routing_projection_to_read_scope_with_routing,
-    branch_closure_record_matches_plan_exemption, compute_status_blocking_records,
-    current_branch_closure_id, current_branch_closure_structural_review_state_reason,
-    current_branch_reviewed_state_id, current_final_review_dispatch_authority_for_context,
-    current_task_review_dispatch_id_for_status, derive_execution_truth_from_authority,
-    derive_execution_truth_from_authority_with_gates,
-    execution_reentry_current_task_closure_targets_from_stale_tasks,
-    execution_reentry_requires_review_state_repair, finish_review_gate_pass_branch_closure_id,
-    load_execution_read_scope, load_execution_read_scope_for_mutation,
-    missing_derived_review_state_fields, normalize_optional_overlay_value,
-    prerelease_branch_closure_refresh_required, recommended_execution_source,
-    reopen_execution_command_route_target_for_task, resolve_execution_command_route_target,
+    branch_closure_record_matches_plan_exemption,
+    current_branch_closure_structural_review_state_reason,
+    current_branch_gate_bindings_from_authoritative_state,
+    execution_reentry_current_task_closure_targets_from_inputs,
+    execution_reentry_requires_review_state_repair,
+    execution_reentry_requires_review_state_repair_with_authority, load_execution_read_scope,
+    load_execution_read_scope_for_mutation, missing_derived_review_state_fields,
+    normalize_optional_overlay_value, recommended_execution_source,
     shared_repair_review_state_reroute_decision, status_workspace_state_id,
     task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
-    usable_current_branch_closure_identity,
     usable_current_branch_closure_identity_from_authoritative_state,
     validated_current_branch_closure_identity,
-};
-pub(crate) use crate::execution::read_model_support::{
-    active_step, latest_attempt_for_step, latest_attempt_indices_by_step,
-    latest_attempted_step_for_task, latest_completed_attempts_by_file,
-    latest_completed_attempts_by_step, resolve_branch_closure_reviewed_tree_sha,
-    resolve_task_closure_reviewed_tree_sha, task_boundary_reason_code_from_message,
-    task_closure_baseline_bridge_ready_for_stale_target,
-    task_closure_baseline_candidate_can_preempt_stale_target,
-    task_closure_baseline_repair_candidate_with_stale_target,
-    task_closures_are_non_branch_contributing, task_completion_lineage_fingerprint,
-    task_latest_attempts_are_completed,
+    validated_current_branch_closure_identity_from_authoritative_state,
 };
 pub use crate::execution::runtime::{ExecutionRuntime, state_dir};
 use crate::execution::semantic_identity::{
@@ -120,6 +103,23 @@ pub use crate::execution::status::{
     GateDiagnostic, GateResult, GateState, PlanExecutionStatus, PublicExecutionCommandContext,
     PublicRecordingContext, PublicRepairTarget, PublicReviewStateTaskClosure, StatusBlockingRecord,
     write_plan_execution_schema,
+};
+pub(crate) type AuthoritativeTransitionStateRef<'a> =
+    Result<Option<&'a AuthoritativeTransitionState>, &'a JsonFailure>;
+pub(crate) use crate::execution::status_support::{
+    CurrentTaskClosureBranchRouteFacts, active_step, authoritative_completed_steps_for_context,
+    current_task_closure_branch_route_facts_from_status, latest_attempt_for_step,
+    latest_attempt_indices_by_step, latest_attempted_step_for_task,
+    latest_completed_attempts_by_file, latest_completed_attempts_by_step,
+    resolve_branch_closure_reviewed_tree_sha, resolve_task_closure_reviewed_tree_sha,
+    task_boundary_reason_code_from_message,
+    task_closure_baseline_candidate_can_preempt_stale_target,
+    task_closure_baseline_repair_candidate_with_stale_target_and_authority,
+    task_completion_lineage_fingerprint, task_latest_attempts_are_completed,
+};
+pub(super) use crate::execution::status_support::{
+    PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT, WORKFLOW_OPERATOR_JSON_DISPLAY_COMMAND,
+    public_typed_operator_route_contract,
 };
 use crate::execution::topology::{
     RecommendOutput, default_preflight_chunking_strategy, default_preflight_evaluator_policy,
@@ -134,7 +134,6 @@ use crate::execution::transitions::{
     AuthoritativeTransitionState, CurrentBrowserQaRecord, claim_step_write_authority,
     load_authoritative_transition_state,
 };
-use crate::execution::workflow_operator_requery_command;
 use crate::git::{
     commit_object_fingerprint, discover_repository,
     is_ancestor_commit as shared_is_ancestor_commit, sha256_hex,
@@ -160,10 +159,56 @@ pub(crate) use worktree_lease_truth::{
     worktree_lease_public_gate_reason_code,
 };
 
-pub(super) const PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION: &str = "The runtime proof metadata is stale or invalid. Run `featureforge plan execution repair-review-state --plan <approved-plan-path>` and follow its `recommended_public_command_argv`; do not manually edit internal proof artifacts.";
-pub(super) const PUBLIC_WORKFLOW_OPERATOR_REMEDIATION: &str = "The execution proof metadata is stale or invalid. Run `featureforge workflow operator --plan <approved-plan-path>` and follow its `recommended_public_command_argv` to replay or repair through public runtime commands.";
-pub(super) const PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION: &str = "The completed execution unit is missing current independent review proof metadata. Refresh the task boundary through the runtime-routed public `close-current-task` path; do not record internal proof artifacts directly.";
-pub(super) const PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION: &str = "The late-stage proof metadata is stale or invalid. Run `featureforge workflow operator --plan <approved-plan-path>` and follow its `recommended_public_command_argv`, which may route to the public `advance-late-stage` path.";
+pub(super) const PUBLIC_REPAIR_REVIEW_STATE_REMEDIATION: &str = concat!(
+    "The runtime proof metadata is stale or invalid. Run `featureforge workflow operator --plan <approved-plan-path> --json`; ",
+    public_typed_operator_route_contract!(),
+    "; do not manually edit internal proof artifacts."
+);
+pub(super) const PUBLIC_WORKFLOW_OPERATOR_REMEDIATION: &str = concat!(
+    "The execution proof metadata is stale or invalid. Run `featureforge workflow operator --plan <approved-plan-path> --json`; ",
+    public_typed_operator_route_contract!(),
+    "; do not manually edit proof artifacts."
+);
+pub(super) const PUBLIC_CLOSE_CURRENT_TASK_REMEDIATION: &str = concat!(
+    "The completed execution unit is missing current independent review proof metadata. Run `featureforge workflow operator --plan <approved-plan-path> --json`; ",
+    public_typed_operator_route_contract!(),
+    "; do not record internal proof artifacts directly."
+);
+pub(super) const PUBLIC_ADVANCE_LATE_STAGE_REMEDIATION: &str = concat!(
+    "The late-stage proof metadata is stale or invalid. Run `featureforge workflow operator --plan <approved-plan-path> --json`; ",
+    public_typed_operator_route_contract!(),
+    "."
+);
+
+pub(super) fn public_workflow_operator_remediation_for_plan(plan_rel: &str) -> String {
+    format!(
+        "The execution proof metadata is stale or invalid. Run `{WORKFLOW_OPERATOR_JSON_DISPLAY_COMMAND}` for `{plan_rel}`; {PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT}; do not manually edit proof artifacts."
+    )
+}
+
+pub(super) fn public_typed_operator_route_remediation(context: &str) -> String {
+    format!(
+        "{context} Run `featureforge workflow operator --plan <approved-plan-path> --json`; {PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT}."
+    )
+}
+
+pub(super) fn public_typed_operator_route_remediation_for_plan(
+    context: &str,
+    plan_rel: &str,
+) -> String {
+    format!(
+        "{context} Run `{WORKFLOW_OPERATOR_JSON_DISPLAY_COMMAND}` for `{plan_rel}`; {PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT}."
+    )
+}
+
+pub(super) fn step_completed_by_authoritative_truth(
+    step: &PlanStepState,
+    authoritative_completed_steps: Option<&BTreeSet<(u32, u32)>>,
+) -> bool {
+    authoritative_completed_steps.map_or(step.checked, |completed_steps| {
+        completed_steps.contains(&(step.task_number, step.step_number))
+    })
+}
 
 pub(crate) use artifact_finish_truth::current_test_plan_artifact_path_for_qa_recording;
 use artifact_finish_truth::{
@@ -177,6 +222,7 @@ pub use command_requests::{
     normalize_transfer_request, require_normalized_text,
 };
 pub use finish_gate::gate_finish_from_context;
+pub(crate) use finish_gate::gate_finish_from_context_with_authoritative_state;
 use finish_gate::{
     enforce_review_authoritative_late_gate_truth,
     finish_review_gate_checkpoint_matches_current_branch_closure,
@@ -191,7 +237,8 @@ pub use preflight::{
 pub use rebuild_evidence::{
     RebuildEvidenceCounts, RebuildEvidenceFilter, RebuildEvidenceOutput, RebuildEvidenceTarget,
     discover_rebuild_candidates, normalize_rebuild_evidence_request,
-    validate_v2_evidence_provenance,
+    validate_v2_evidence_provenance, validate_v2_evidence_provenance_for_completed_steps,
+    warn_v2_evidence_provenance,
 };
 pub use repo_state::{current_head_sha, current_tracked_tree_sha};
 pub(crate) use repo_state::{
@@ -200,68 +247,25 @@ pub(crate) use repo_state::{
     repo_safety_stage,
 };
 pub use review_gate::gate_review_from_context;
-pub(crate) use review_gate::persist_finish_review_gate_pass_checkpoint_for_command;
 use review_gate::{
-    evaluate_pre_checkpoint_finish_gate, gate_result_current_branch_closure_id,
-    gate_review_base_result, gate_review_from_context_internal,
-    persist_finish_review_gate_pass_checkpoint,
+    evaluate_pre_checkpoint_finish_gate, gate_review_base_result,
+    gate_review_from_context_internal, verify_completed_step_evidence_projection,
+};
+pub(crate) use review_gate::{
+    gate_review_from_context_with_authoritative_state,
+    persist_finish_review_gate_pass_checkpoint_for_command_with_authoritative_state,
 };
 pub use runtime_methods::RecordReviewDispatchOutput;
 #[cfg(test)]
 pub(crate) use runtime_methods::record_review_dispatch_blocked_output_from_gate;
 use unit_review_truth::{
-    UnitReviewReceiptExpectations, approved_unit_contract_fingerprint_for_review,
-    enforce_plain_unit_review_truth, enforce_serial_unit_review_truth, is_ancestor_commit,
-    load_authoritative_active_contract, reconcile_result_proof_fingerprint_for_review,
-    validate_authoritative_unit_review_receipt, validate_authoritative_worktree_lease_fingerprint,
-    worktree_lease_execution_context_key,
+    UnitReviewProofAuthority, UnitReviewReceiptExpectations,
+    approved_unit_contract_fingerprint_for_review, classify_unit_review_proof_authority,
+    enforce_serial_unit_review_truth, is_ancestor_commit, load_authoritative_active_contract,
+    reconcile_result_proof_fingerprint_for_review, validate_authoritative_unit_review_receipt,
+    validate_authoritative_worktree_lease_fingerprint,
+    warn_plain_unit_review_receipts_diagnostic_only, worktree_lease_execution_context_key,
 };
 use worktree_lease_truth::{
     current_run_plain_unit_review_receipt_paths, enforce_worktree_lease_binding_truth,
 };
-
-#[derive(Debug, Deserialize)]
-struct WorktreeLeaseRunIdentityProbe {
-    execution_run_id: String,
-    source_plan_path: String,
-    source_plan_revision: u32,
-}
-
-#[derive(Debug, Deserialize)]
-struct WorktreeLeaseBindingProbe {
-    execution_run_id: String,
-    lease_fingerprint: String,
-    lease_artifact_path: String,
-    #[serde(default)]
-    execution_context_key: Option<String>,
-    #[serde(default)]
-    approved_task_packet_fingerprint: Option<String>,
-    #[serde(default)]
-    approved_unit_contract_fingerprint: Option<String>,
-    #[serde(default)]
-    reconcile_result_proof_fingerprint: Option<String>,
-    #[serde(default)]
-    reviewed_checkpoint_commit_sha: Option<String>,
-    #[serde(default)]
-    reconcile_result_commit_sha: Option<String>,
-    #[serde(default)]
-    reconcile_mode: Option<String>,
-    #[serde(default)]
-    review_receipt_fingerprint: Option<String>,
-    #[serde(default)]
-    review_receipt_artifact_path: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WorktreeLeaseAuthoritativeContextProbe {
-    #[serde(default)]
-    run_identity: Option<WorktreeLeaseRunIdentityProbe>,
-    #[serde(default)]
-    repo_state_baseline_head_sha: Option<String>,
-    #[serde(default)]
-    repo_state_baseline_worktree_fingerprint: Option<String>,
-    active_worktree_lease_fingerprints: Option<Vec<String>>,
-    active_worktree_lease_bindings: Option<Vec<WorktreeLeaseBindingProbe>>,
-    #[serde(default)]
-    released_worktree_lease_records: Vec<WorktreeLeaseReleaseRecord>,
-}

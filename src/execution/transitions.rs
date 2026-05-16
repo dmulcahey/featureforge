@@ -14,11 +14,14 @@ use sha2::{Digest, Sha256};
 
 use crate::contracts::harness::parse_contract_task_step_scope;
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::branch_closure_provenance::{
+    BRANCH_CLOSURE_PROVENANCE_TASK_CLOSURE_LINEAGE,
+    branch_closure_provenance_is_late_stage_surface_exemption,
+};
 use crate::execution::current_truth::parse_late_stage_surface_only_branch_surface;
 use crate::execution::event_log::{
     append_typed_state_event_for_state_path,
-    append_typed_state_event_for_state_path_with_step_hint,
-    ensure_event_log_migrated_from_legacy_state, load_reduced_authoritative_state,
+    append_typed_state_event_for_state_path_with_step_hint, load_reduced_authoritative_state,
 };
 use crate::execution::fields::FIELD_HANDOFF_REQUIRED;
 use crate::execution::follow_up::RepairFollowUpRecord;
@@ -26,11 +29,13 @@ use crate::execution::gates::{
     ActiveContractState, GateAuthorityState, require_active_contract_state,
 };
 use crate::execution::leases::process_is_running;
+use crate::execution::migration::ensure_event_log_migrated_from_legacy_state_with_route_parity;
 use crate::execution::semantic_identity::semantic_workspace_snapshot;
 use crate::execution::state::{
     ExecutionContext, ExecutionRuntime, GateState, NoteState, latest_attempted_step_for_task,
     task_completion_lineage_fingerprint,
 };
+use crate::execution::task_scope_key::task_scope_key_task_number;
 use crate::git::sha256_hex;
 use crate::paths::{harness_branch_root, harness_state_path, write_atomic as write_atomic_file};
 
@@ -1140,7 +1145,7 @@ impl AuthoritativeTransitionState {
                     .ok_or_else(|| {
                         JsonFailure::new(
                             FailureClass::ExecutionStateNotReady,
-                            "final-review dispatch recording requires a current branch closure.",
+                            "final-review runtime state update requires a current branch closure.",
                         )
                     })?;
                 self.upsert_final_review_dispatch_lineage(
@@ -1192,7 +1197,7 @@ impl AuthoritativeTransitionState {
         ];
         let review_requirements = vec![
             String::from("dedicated_final_review"),
-            String::from("gate_finish"),
+            String::from(crate::execution::review_route_tokens::FOLLOW_UP_GATE_FINISH),
         ];
         let generated_at = Timestamp::now().to_string();
         let trigger_text = if trigger_fingerprints.is_empty() {
@@ -1854,7 +1859,10 @@ impl AuthoritativeTransitionState {
         &mut self,
         task: u32,
     ) -> Result<bool, JsonFailure> {
-        self.clear_task_review_dispatch_lineage_with_record_status(task, "stale_unreviewed")
+        self.clear_task_review_dispatch_lineage_with_record_status(
+            task,
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED,
+        )
     }
 
     pub(crate) fn clear_task_review_dispatch_lineage_for_structural_repair(
@@ -1881,7 +1889,9 @@ impl AuthoritativeTransitionState {
             json_string(&self.state_payload, "current_final_review_record_id");
         let previous_qa_record_id = json_string(&self.state_payload, "current_qa_record_id");
         if branch_closure_changed {
-            let _ = self.archive_final_review_dispatch_lineage_record("stale_unreviewed")?;
+            let _ = self.archive_final_review_dispatch_lineage_record(
+                crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED,
+            )?;
         }
         {
             let root = self.root_object_mut()?;
@@ -1988,20 +1998,18 @@ impl AuthoritativeTransitionState {
         reviewed_state_id: &str,
         contract_identity: &str,
     ) -> Result<(), JsonFailure> {
-        let root = self.root_object_mut()?;
-        root.insert(
-            String::from("current_branch_closure_id"),
+        self.insert_root_field_if_changed(
+            "current_branch_closure_id",
             Value::String(branch_closure_id.to_owned()),
-        );
-        root.insert(
-            String::from("current_branch_closure_reviewed_state_id"),
+        )?;
+        self.insert_root_field_if_changed(
+            "current_branch_closure_reviewed_state_id",
             Value::String(reviewed_state_id.to_owned()),
-        );
-        root.insert(
-            String::from("current_branch_closure_contract_identity"),
+        )?;
+        self.insert_root_field_if_changed(
+            "current_branch_closure_contract_identity",
             Value::String(contract_identity.to_owned()),
-        );
-        self.dirty = true;
+        )?;
         Ok(())
     }
 
@@ -2228,32 +2236,30 @@ impl AuthoritativeTransitionState {
         &mut self,
         follow_up: Option<&str>,
     ) -> Result<(), JsonFailure> {
-        let root = self.root_object_mut()?;
-        root.insert(
-            String::from("review_state_repair_follow_up"),
+        self.insert_nullable_root_field_if_changed(
+            "review_state_repair_follow_up",
             follow_up
                 .map(|value| Value::String(value.to_owned()))
                 .unwrap_or(Value::Null),
-        );
+        )?;
         if follow_up.is_none() {
-            root.insert(
-                String::from("review_state_repair_follow_up_record"),
+            self.insert_nullable_root_field_if_changed(
+                "review_state_repair_follow_up_record",
                 Value::Null,
-            );
-            root.insert(
-                String::from("review_state_repair_follow_up_task"),
+            )?;
+            self.insert_nullable_root_field_if_changed(
+                "review_state_repair_follow_up_task",
                 Value::Null,
-            );
-            root.insert(
-                String::from("review_state_repair_follow_up_step"),
+            )?;
+            self.insert_nullable_root_field_if_changed(
+                "review_state_repair_follow_up_step",
                 Value::Null,
-            );
-            root.insert(
-                String::from("review_state_repair_follow_up_closure_record_id"),
+            )?;
+            self.insert_nullable_root_field_if_changed(
+                "review_state_repair_follow_up_closure_record_id",
                 Value::Null,
-            );
+            )?;
         }
-        self.dirty = true;
         Ok(())
     }
 
@@ -2261,8 +2267,7 @@ impl AuthoritativeTransitionState {
         &mut self,
         record: Option<&RepairFollowUpRecord>,
     ) -> Result<(), JsonFailure> {
-        let root = self.root_object_mut()?;
-        root.insert(String::from("review_state_repair_follow_up"), Value::Null);
+        self.insert_nullable_root_field_if_changed("review_state_repair_follow_up", Value::Null)?;
         let serialized_record = record
             .map(serde_json::to_value)
             .transpose()
@@ -2273,32 +2278,31 @@ impl AuthoritativeTransitionState {
                 )
             })?
             .unwrap_or(Value::Null);
-        root.insert(
-            String::from("review_state_repair_follow_up_record"),
+        self.insert_nullable_root_field_if_changed(
+            "review_state_repair_follow_up_record",
             serialized_record,
-        );
-        root.insert(
-            String::from("review_state_repair_follow_up_task"),
+        )?;
+        self.insert_nullable_root_field_if_changed(
+            "review_state_repair_follow_up_task",
             record
                 .and_then(|record| record.target_task)
                 .map(|value| Value::Number(value.into()))
                 .unwrap_or(Value::Null),
-        );
-        root.insert(
-            String::from("review_state_repair_follow_up_step"),
+        )?;
+        self.insert_nullable_root_field_if_changed(
+            "review_state_repair_follow_up_step",
             record
                 .and_then(|record| record.target_step)
                 .map(|value| Value::Number(value.into()))
                 .unwrap_or(Value::Null),
-        );
-        root.insert(
-            String::from("review_state_repair_follow_up_closure_record_id"),
+        )?;
+        self.insert_nullable_root_field_if_changed(
+            "review_state_repair_follow_up_closure_record_id",
             record
                 .and_then(|record| record.target_record_id.as_deref())
                 .map(|value| Value::String(value.to_owned()))
                 .unwrap_or(Value::Null),
-        );
-        self.dirty = true;
+        )?;
         Ok(())
     }
 
@@ -2893,7 +2897,9 @@ impl AuthoritativeTransitionState {
             .as_deref()
             .is_none_or(|value| value != record_id);
         if release_record_changed {
-            let _ = self.archive_final_review_dispatch_lineage_record("stale_unreviewed")?;
+            let _ = self.archive_final_review_dispatch_lineage_record(
+                crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED,
+            )?;
         }
         let root = self.root_object_mut()?;
         root.insert(
@@ -3407,7 +3413,10 @@ impl AuthoritativeTransitionState {
         &mut self,
         tasks: impl IntoIterator<Item = u32>,
     ) -> Result<(), JsonFailure> {
-        self.remove_current_task_closure_results_with_record_status(tasks, "stale_unreviewed")
+        self.remove_current_task_closure_results_with_record_status(
+            tasks,
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED,
+        )
     }
 
     pub(crate) fn clear_current_task_closure_results_for_structural_repair(
@@ -3690,9 +3699,7 @@ impl AuthoritativeTransitionState {
                 records
                     .iter()
                     .map(|(scope_key, payload)| {
-                        let task = scope_key
-                            .strip_prefix("task-")
-                            .and_then(|task| task.parse::<u32>().ok());
+                        let task = task_scope_key_task_number(scope_key);
                         let closure_record_id = json_string(payload, "closure_record_id");
                         let record = task.and_then(|task| {
                             payload.as_object().and_then(|payload| {
@@ -3721,8 +3728,7 @@ impl AuthoritativeTransitionState {
                 records
                     .keys()
                     .filter_map(|key| {
-                        key.strip_prefix("task-")
-                            .and_then(|task| task.parse::<u32>().ok())
+                        task_scope_key_task_number(key)
                             .and_then(|task| self.raw_current_task_closure_result(task))
                             .map(|record| (record.task, record))
                     })
@@ -3865,9 +3871,7 @@ impl AuthoritativeTransitionState {
                 records
                     .iter()
                     .filter_map(|(scope_key, payload)| {
-                        let parsed_task = scope_key
-                            .strip_prefix("task-")
-                            .and_then(|task| task.parse::<u32>().ok());
+                        let parsed_task = task_scope_key_task_number(scope_key);
                         parsed_task
                             .is_none()
                             .then(|| (scope_key.clone(), payload.clone()))
@@ -3960,14 +3964,14 @@ impl AuthoritativeTransitionState {
             json_string_array_strict(&payload_value, "source_task_closure_ids")?;
         let _ = json_string_array_strict(&payload_value, "superseded_branch_closure_ids")?;
         match provenance_basis.as_str() {
-            "task_closure_lineage" => {
+            BRANCH_CLOSURE_PROVENANCE_TASK_CLOSURE_LINEAGE => {
                 if source_task_closure_ids.is_empty()
                     || effective_reviewed_branch_surface != "repo_tracked_content"
                 {
                     return None;
                 }
             }
-            "task_closure_lineage_plus_late_stage_surface_exemption" => {
+            basis if branch_closure_provenance_is_late_stage_surface_exemption(basis) => {
                 if source_task_closure_ids.is_empty() {
                     if !well_formed_late_stage_surface_only_branch_surface(
                         &effective_reviewed_branch_surface,
@@ -4161,12 +4165,10 @@ impl AuthoritativeTransitionState {
                 records
                     .keys()
                     .filter_map(|key| {
-                        key.strip_prefix("task-")
-                            .and_then(|task| task.parse::<u32>().ok())
-                            .and_then(|task| {
-                                self.raw_task_closure_negative_result(task)
-                                    .map(|record| (task, record))
-                            })
+                        task_scope_key_task_number(key).and_then(|task| {
+                            self.raw_task_closure_negative_result(task)
+                                .map(|record| (task, record))
+                        })
                     })
                     .collect::<BTreeMap<_, _>>()
             })
@@ -4509,19 +4511,17 @@ impl AuthoritativeTransitionState {
 
     fn clear_task_dispatch_credits(&mut self) -> Result<Vec<u32>, JsonFailure> {
         let credits = self.dispatch_credit_counts_mut()?;
-        let keys = credits
-            .keys()
-            .filter(|key| key.starts_with("task-"))
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut keys = Vec::new();
+        let mut tasks = Vec::new();
+        for key in credits.keys() {
+            if let Some(task) = task_scope_key_task_number(key) {
+                keys.push(key.clone());
+                tasks.push(task);
+            }
+        }
         if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let tasks = keys
-            .iter()
-            .filter_map(|key| key.strip_prefix("task-"))
-            .filter_map(|value| value.parse::<u32>().ok())
-            .collect::<Vec<_>>();
         for key in keys {
             credits.remove(&key);
         }
@@ -4643,6 +4643,37 @@ impl AuthoritativeTransitionState {
             )
         })
     }
+
+    fn insert_root_field_if_changed(
+        &mut self,
+        field: &str,
+        value: Value,
+    ) -> Result<bool, JsonFailure> {
+        let root = self.root_object_mut()?;
+        if root.get(field) == Some(&value) {
+            return Ok(false);
+        }
+        root.insert(field.to_owned(), value);
+        self.dirty = true;
+        Ok(true)
+    }
+
+    fn insert_nullable_root_field_if_changed(
+        &mut self,
+        field: &str,
+        value: Value,
+    ) -> Result<bool, JsonFailure> {
+        let root = self.root_object_mut()?;
+        if value.is_null() && !root.contains_key(field) {
+            return Ok(false);
+        }
+        if root.get(field) == Some(&value) {
+            return Ok(false);
+        }
+        root.insert(field.to_owned(), value);
+        self.dirty = true;
+        Ok(true)
+    }
 }
 
 fn late_stage_record_matches_current_branch_identity(
@@ -4756,7 +4787,11 @@ fn load_authoritative_transition_state_internal(
             }
         };
     }
-    ensure_event_log_migrated_from_legacy_state(&context.runtime, &state_path)?;
+    ensure_event_log_migrated_from_legacy_state_with_route_parity(
+        &context.runtime,
+        &state_path,
+        Some(context.plan_rel.as_str()),
+    )?;
     let expected_cache_stamp = authoritative_state_cache_stamp(&state_path);
     let cached = authoritative_state_payload_cache()
         .lock()
@@ -4933,7 +4968,7 @@ pub(crate) fn authoritative_state_optional_string_field_for_runtime(
 ) -> Result<Option<Option<String>>, JsonFailure> {
     let state_path =
         harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
-    ensure_event_log_migrated_from_legacy_state(runtime, &state_path)?;
+    ensure_event_log_migrated_from_legacy_state_with_route_parity(runtime, &state_path, None)?;
     let Some(state_payload) = load_reduced_authoritative_state(runtime)? else {
         return Ok(None);
     };
@@ -5411,6 +5446,9 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    use crate::execution::follow_up::{
+        RepairFollowUpKind, RepairFollowUpRecord, RepairTargetScope,
+    };
     use crate::execution::state::ExecutionRuntime;
     use crate::paths::harness_branch_root;
     use serde_json::{Value, json};
@@ -5625,6 +5663,233 @@ mod tests {
     }
 
     #[test]
+    fn branch_closure_overlay_and_repair_follow_up_setters_are_idempotent() {
+        let mut authoritative_state =
+            transition_state_with_current_branch_closure("branch-closure-current");
+
+        authoritative_state
+            .restore_current_branch_closure_overlay_fields(
+                "branch-closure-current",
+                "git_tree:current",
+                "branch-contract-current",
+            )
+            .expect("same branch-closure overlay should restore cleanly");
+        assert!(
+            !authoritative_state.dirty,
+            "restoring identical branch-closure overlay fields must not mark state dirty"
+        );
+
+        authoritative_state
+            .restore_current_branch_closure_overlay_fields(
+                "branch-closure-current",
+                "git_tree:refreshed",
+                "branch-contract-current",
+            )
+            .expect("changed branch-closure overlay should restore cleanly");
+        assert!(
+            authoritative_state.dirty,
+            "changed branch-closure overlay fields must mark state dirty"
+        );
+        authoritative_state.dirty = false;
+        authoritative_state
+            .restore_current_branch_closure_overlay_fields(
+                "branch-closure-current",
+                "git_tree:refreshed",
+                "branch-contract-current",
+            )
+            .expect("same refreshed branch-closure overlay should restore cleanly");
+        assert!(
+            !authoritative_state.dirty,
+            "replaying identical restored branch-closure overlay fields must be a no-op"
+        );
+
+        authoritative_state
+            .set_review_state_repair_follow_up(None)
+            .expect("missing legacy repair follow-up fields should be clearable");
+        assert!(
+            !authoritative_state.dirty,
+            "missing legacy repair follow-up fields are already semantically clear"
+        );
+        authoritative_state.state_payload["review_state_repair_follow_up"] =
+            Value::String(String::from("advance_late_stage"));
+        authoritative_state.state_payload["review_state_repair_follow_up_record"] =
+            json!({"kind": "advance_late_stage"});
+        authoritative_state.state_payload["review_state_repair_follow_up_task"] = Value::from(2);
+        authoritative_state.state_payload["review_state_repair_follow_up_step"] = Value::from(3);
+        authoritative_state.state_payload["review_state_repair_follow_up_closure_record_id"] =
+            Value::from("branch-closure-current");
+        authoritative_state
+            .set_review_state_repair_follow_up(None)
+            .expect("stale legacy repair follow-up fields should be clearable");
+        assert!(
+            authoritative_state.dirty,
+            "clearing populated repair follow-up fields should mark state dirty"
+        );
+        authoritative_state.dirty = false;
+        authoritative_state
+            .set_review_state_repair_follow_up(None)
+            .expect("already-null legacy repair follow-up fields should be clearable");
+        assert!(
+            !authoritative_state.dirty,
+            "replaying identical legacy repair follow-up clearing must be a no-op"
+        );
+
+        let follow_up_record = RepairFollowUpRecord {
+            kind: RepairFollowUpKind::AdvanceLateStage,
+            target_scope: RepairTargetScope::BranchClosure,
+            target_task: None,
+            target_step: None,
+            target_record_id: Some(String::from("branch-closure-current")),
+            semantic_workspace_state_id: None,
+            source_route_decision_hash: Some(String::from("route-decision-hash")),
+            created_sequence: 42,
+            created_at: None,
+            expires_on_plan_fingerprint_change: true,
+        };
+        authoritative_state
+            .set_review_state_repair_follow_up_record(Some(&follow_up_record))
+            .expect("repair follow-up record should serialize");
+        assert!(
+            authoritative_state.dirty,
+            "new repair follow-up record should mark state dirty"
+        );
+        authoritative_state.dirty = false;
+        authoritative_state
+            .set_review_state_repair_follow_up_record(Some(&follow_up_record))
+            .expect("same repair follow-up record should serialize");
+        assert!(
+            !authoritative_state.dirty,
+            "replaying identical repair follow-up record must be a no-op"
+        );
+        authoritative_state
+            .set_review_state_repair_follow_up_record(None)
+            .expect("repair follow-up record should clear");
+        assert!(
+            authoritative_state.dirty,
+            "clearing a populated repair follow-up record should mark state dirty"
+        );
+        authoritative_state.dirty = false;
+        authoritative_state
+            .set_review_state_repair_follow_up_record(None)
+            .expect("already-clear repair follow-up record should clear");
+        assert!(
+            !authoritative_state.dirty,
+            "replaying identical repair follow-up record clearing must be a no-op"
+        );
+    }
+
+    #[test]
+    fn already_current_branch_closure_repair_replay_does_not_append_event() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
+        let state_path = tempdir.path().join("authoritative-state.json");
+        let events_path = state_path.with_file_name("events.jsonl");
+        let follow_up_record = RepairFollowUpRecord {
+            kind: RepairFollowUpKind::AdvanceLateStage,
+            target_scope: RepairTargetScope::BranchClosure,
+            target_task: None,
+            target_step: None,
+            target_record_id: Some(String::from("branch-closure-current")),
+            semantic_workspace_state_id: None,
+            source_route_decision_hash: Some(String::from("route-decision-hash")),
+            created_sequence: 77,
+            created_at: None,
+            expires_on_plan_fingerprint_change: true,
+        };
+        let follow_up_payload =
+            serde_json::to_value(&follow_up_record).expect("follow-up record should serialize");
+        let mut first_repair = AuthoritativeTransitionState {
+            state_path: state_path.clone(),
+            state_payload: json!({
+                "latest_authoritative_sequence": 77,
+                "source_plan_path": "docs/featureforge/plans/example.md",
+                "source_plan_revision": 1,
+                "run_identity": {
+                    "execution_run_id": "run-idempotent-branch-repair"
+                },
+                "current_branch_closure_id": "branch-closure-current",
+                "current_branch_closure_reviewed_state_id": "git_tree:stale",
+                "current_branch_closure_contract_identity": "branch-contract-stale",
+                "review_state_repair_follow_up": Value::Null,
+                "review_state_repair_follow_up_record": follow_up_payload,
+                "review_state_repair_follow_up_task": Value::Null,
+                "review_state_repair_follow_up_step": Value::Null,
+                "review_state_repair_follow_up_closure_record_id": "branch-closure-current",
+            }),
+            phase: None,
+            active_contract: None,
+            dirty: false,
+        };
+
+        first_repair
+            .restore_current_branch_closure_overlay_fields(
+                "branch-closure-current",
+                "git_tree:current",
+                "branch-contract-current",
+            )
+            .expect("first branch-closure repair should restore stale overlay fields");
+        first_repair
+            .set_review_state_repair_follow_up(None)
+            .expect("first branch-closure repair should clear stale follow-up fields");
+        assert!(
+            first_repair.dirty,
+            "first already-current branch-closure repair must persist restored fields"
+        );
+        let sequence_after_first_repair =
+            first_repair.state_payload["latest_authoritative_sequence"].clone();
+        first_repair
+            .persist_if_dirty_with_failpoint_and_command(None, "advance_late_stage")
+            .expect("first already-current repair should append an authoritative event");
+        let event_log_after_first = fs::read_to_string(&events_path)
+            .expect("first already-current repair should create an event log");
+        let event_count_after_first = event_log_after_first.lines().count();
+        assert_eq!(
+            event_count_after_first, 1,
+            "first already-current branch-closure repair should append exactly one event"
+        );
+
+        let mut second_repair = AuthoritativeTransitionState {
+            state_path,
+            state_payload: first_repair.state_payload.clone(),
+            phase: None,
+            active_contract: None,
+            dirty: false,
+        };
+        second_repair
+            .restore_current_branch_closure_overlay_fields(
+                "branch-closure-current",
+                "git_tree:current",
+                "branch-contract-current",
+            )
+            .expect("second branch-closure repair should accept already-current overlay fields");
+        second_repair
+            .set_review_state_repair_follow_up(None)
+            .expect("second branch-closure repair should accept already-clear follow-up fields");
+        assert!(
+            !second_repair.dirty,
+            "second already-current branch-closure repair must be a transition no-op"
+        );
+        let second_outcome = second_repair
+            .persist_if_dirty_with_failpoint_and_command_outcome(None, "advance_late_stage")
+            .expect("second already-current repair no-op persist should succeed");
+        assert!(
+            !second_outcome.authoritative_event_committed,
+            "second already-current branch-closure repair must not append an authoritative event"
+        );
+        assert_eq!(
+            second_repair.state_payload["latest_authoritative_sequence"],
+            sequence_after_first_repair,
+            "second already-current branch-closure repair must not bump authoritative sequence"
+        );
+        let event_log_after_second = fs::read_to_string(&events_path)
+            .expect("second already-current repair should leave the event log readable");
+        assert_eq!(
+            event_log_after_second.lines().count(),
+            event_count_after_first,
+            "second already-current branch-closure repair must not grow the event log"
+        );
+    }
+
+    #[test]
     fn finish_review_checkpoint_requires_the_same_current_branch_closure() {
         let mut authoritative_state =
             transition_state_with_current_branch_closure("branch-closure-new");
@@ -5754,8 +6019,14 @@ mod tests {
             .values()
             .find(|record| record["dispatch_id"] == "dispatch-stale")
             .expect("cleared dispatch lineage should remain in history");
-        assert_eq!(stale_record["record_status"], "stale_unreviewed");
-        assert_eq!(stale_record["status"], "stale_unreviewed");
+        assert_eq!(
+            stale_record["record_status"],
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
+        );
+        assert_eq!(
+            stale_record["status"],
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
+        );
     }
 
     #[test]
@@ -5786,7 +6057,7 @@ mod tests {
 
         assert!(
             authoritative_state.state_payload["final_review_dispatch_lineage"].is_null(),
-            "current final-review dispatch lineage should be cleared after branch reclosure"
+            "current final-review runtime state should be cleared after branch reclosure"
         );
         let history = authoritative_state.state_payload["final_review_dispatch_lineage_history"]
             .as_object()
@@ -5794,9 +6065,15 @@ mod tests {
         let stale_record = history
             .values()
             .find(|record| record["dispatch_id"] == "dispatch-final")
-            .expect("previous final-review dispatch lineage should remain in history");
-        assert_eq!(stale_record["record_status"], "stale_unreviewed");
-        assert_eq!(stale_record["status"], "stale_unreviewed");
+            .expect("previous final-review runtime state should remain in history");
+        assert_eq!(
+            stale_record["record_status"],
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
+        );
+        assert_eq!(
+            stale_record["status"],
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
+        );
     }
 
     #[test]
@@ -6377,7 +6654,7 @@ mod tests {
         );
         assert!(
             authoritative_state.state_payload["final_review_dispatch_lineage"].is_null(),
-            "current final-review dispatch lineage should be cleared"
+            "current final-review runtime state should be cleared"
         );
         assert!(
             authoritative_state.state_payload["finish_review_gate_pass_branch_closure_id"]
@@ -6687,11 +6964,11 @@ mod tests {
         );
         assert_eq!(
             authoritative_state.state_payload["task_closure_record_history"]["task-closure-old"]["record_status"],
-            "stale_unreviewed"
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
         );
         assert_eq!(
             authoritative_state.state_payload["task_closure_record_history"]["task-closure-old"]["closure_status"],
-            "stale_unreviewed"
+            crate::execution::review_route_tokens::REVIEW_STATE_STALE_UNREVIEWED
         );
     }
 

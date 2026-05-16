@@ -13,10 +13,15 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use featureforge::cli::plan_execution::StatusArgs;
-use featureforge::execution::query::{
-    ExecutionRoutingState, query_review_state, query_workflow_execution_state,
-    query_workflow_routing_state_for_runtime,
+use featureforge::diagnostics::FailureClass;
+use featureforge::execution::{
+    phase,
+    query::{
+        ExecutionRoutingState, query_review_state, query_workflow_execution_state,
+        query_workflow_routing_state_for_runtime,
+    },
 };
+use featureforge::paths::harness_state_path;
 use runtime_support::execution_runtime;
 use serde_json::Value;
 use workflow_support::{
@@ -153,6 +158,48 @@ fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
     process_support::run_checked(checkout, "git checkout fixture branch");
 }
 
+fn authoritative_harness_state_path(repo: &Path, state: &Path) -> PathBuf {
+    let runtime = execution_runtime(repo, state);
+    harness_state_path(state, &runtime.repo_slug, &runtime.branch_name)
+}
+
+fn synthetic_authoritative_harness_state(repo: &Path, state: &Path) -> Value {
+    let state_path = authoritative_harness_state_path(repo, state);
+    featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(&state_path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "event-authoritative query fixture state should reduce for {}: {}",
+                state_path.display(),
+                error.message
+            )
+        })
+        .unwrap_or_else(|| {
+            let source = fs::read_to_string(&state_path)
+                .expect("authoritative harness state should be readable");
+            serde_json::from_str(&source)
+                .expect("authoritative harness state should remain valid json")
+        })
+}
+
+fn rewrite_authority_as_legacy_state_only(repo: &Path, state: &Path) -> PathBuf {
+    let state_path = authoritative_harness_state_path(repo, state);
+    let payload = synthetic_authoritative_harness_state(repo, state);
+    for sibling in ["events.jsonl", "state.legacy.json"] {
+        let path = state_path.with_file_name(sibling);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("{} should be removable: {error}", path.display()),
+        }
+    }
+    fs::write(
+        &state_path,
+        serde_json::to_string_pretty(&payload).expect("legacy state should serialize"),
+    )
+    .expect("legacy state should write");
+    state_path
+}
+
 fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, operator: &Value) {
     assert_eq!(
         operator["phase"],
@@ -189,11 +236,6 @@ fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, ope
         operator["next_action"],
         Value::from(routing.next_action.clone()),
         "routing next action should match workflow/operator",
-    );
-    assert_eq!(
-        operator.get("recommended_command").and_then(Value::as_str),
-        routing.recommended_command.as_deref(),
-        "routing recommended command should match workflow/operator",
     );
     assert_eq!(
         operator.get("blocking_scope").and_then(Value::as_str),
@@ -420,7 +462,7 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
 }
 
 #[test]
-fn query_boundary_reports_empty_review_state_before_execution_starts() {
+fn internal_semantic_query_boundary_reports_empty_review_state_before_execution_starts() {
     let (repo_dir, state_dir) = init_repo("execution-query-empty-review-state");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -498,7 +540,7 @@ fn query_boundary_reports_empty_review_state_before_execution_starts() {
 }
 
 #[test]
-fn routing_snapshot_matches_workflow_operator_output_before_execution_starts() {
+fn internal_semantic_routing_snapshot_matches_workflow_operator_output_before_execution_starts() {
     let (repo_dir, state_dir) = init_repo("execution-query-routing-snapshot");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -520,7 +562,8 @@ fn routing_snapshot_matches_workflow_operator_output_before_execution_starts() {
 }
 
 #[test]
-fn routing_snapshot_matches_workflow_operator_execution_command_context_payload() {
+fn internal_semantic_routing_snapshot_matches_workflow_operator_execution_command_context_payload()
+{
     let (repo_dir, state_dir) = init_repo("execution-query-active-command-context");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -546,7 +589,49 @@ fn routing_snapshot_matches_workflow_operator_execution_command_context_payload(
 }
 
 #[test]
-fn runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocked() {
+fn internal_semantic_legacy_migration_route_parity_is_checked_by_query_adapter() {
+    let (repo_dir, state_dir) = init_repo("execution-query-legacy-migration-route-parity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_execution_in_progress(repo, state);
+    let state_path = rewrite_authority_as_legacy_state_only(repo, state);
+
+    let plan = PathBuf::from(PLAN_REL);
+    let runtime = execution_runtime(repo, state);
+    query_workflow_routing_state_for_runtime(&runtime, Some(&plan), false)
+        .expect("initial legacy migration route parity should succeed");
+
+    let backup_path = state_path.with_file_name("state.legacy.json");
+    let mut legacy_backup: Value = serde_json::from_str(
+        &fs::read_to_string(&backup_path).expect("legacy migration backup should be readable"),
+    )
+    .expect("legacy migration backup should be valid json");
+    legacy_backup["harness_phase"] = Value::from(phase::PHASE_READY_FOR_BRANCH_COMPLETION);
+    if let Some(root) = legacy_backup.as_object_mut() {
+        root.remove("current_open_step_state");
+    }
+    fs::write(
+        &backup_path,
+        serde_json::to_string_pretty(&legacy_backup)
+            .expect("mutated legacy backup should serialize"),
+    )
+    .expect("mutated legacy backup should write");
+
+    let error = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), false)
+        .expect_err("query adapter should reject route parity drift in migration-only event logs");
+    assert_eq!(error.error_class, FailureClass::BlockedRuntimeBug.as_str());
+    assert!(
+        error
+            .message
+            .contains("event-log migration route parity mismatch"),
+        "route parity mismatch should be explicit, got {}",
+        error.message
+    );
+}
+
+#[test]
+fn internal_semantic_runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocked()
+ {
     let (repo_dir, state_dir) = init_repo("execution-query-fs07-task-review-dispatch-blocked");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -578,7 +663,10 @@ fn runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocke
     )
     .expect("review-state query should succeed for FS-07 task-review-dispatch blocked fixture");
 
-    assert_eq!(routing.phase_detail, "task_closure_recording_ready");
+    assert_eq!(
+        routing.phase_detail,
+        phase::DETAIL_TASK_CLOSURE_RECORDING_READY
+    );
     assert_routing_parity_with_operator_json(&routing, &operator);
     assert_eq!(
         status["phase_detail"], operator["phase_detail"],

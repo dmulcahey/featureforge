@@ -102,11 +102,11 @@ pub fn rebuild_evidence(
         let target = execute_rebuild_candidate_projection_only(&request, candidate);
         match target.status.as_str() {
             "rebuilt" => counts.rebuilt += 1,
-            "manual_required" => counts.manual += 1,
+            "projection_only" => counts.manual += 1,
             "failed" => {
                 counts.failed += 1;
                 match target.failure_class.as_deref() {
-                    Some("manual_required") => {
+                    Some("projection_export_not_progress_route") => {
                         saw_strict_manual_failure = true;
                     }
                     Some(failure_class) if is_rebuild_precondition_failure(failure_class) => {

@@ -9,10 +9,15 @@
           "type": "string"
         },
         "next_public_action": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NextPublicAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional display-only blocker action summary; not executable."
         },
         "record_id": {
           "type": [
@@ -47,19 +52,50 @@
     "NextPublicAction": {
       "properties": {
         "args_template": {
+          "description": "Display-only legacy argument template summary; not executable.",
           "type": [
             "string",
             "null"
           ]
         },
         "command": {
+          "description": "Display-only legacy command summary; not executable.",
           "type": "string"
+        },
+        "display_only": {
+          "default": true,
+          "description": "Legacy compatibility marker; nested command fields are display-only.",
+          "type": "boolean"
         }
       },
       "required": [
         "command"
       ],
       "type": "object"
+    },
+    "PublicCommandInputBinding": {
+      "properties": {
+        "flag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/PublicCommandInputBindingKind"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "PublicCommandInputBindingKind": {
+      "enum": [
+        "flag",
+        "virtual"
+      ],
+      "type": "string"
     },
     "PublicCommandInputKind": {
       "enum": [
@@ -98,6 +134,130 @@
         "kind"
       ],
       "type": "object"
+    },
+    "PublicCommandTemplate": {
+      "properties": {
+        "base_argv": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command_kind": {
+          "description": "Public command intent label for a template; not executable by itself.",
+          "type": "string"
+        },
+        "input_bindings": {
+          "items": {
+            "$ref": "#/$defs/PublicCommandTemplateInput"
+          },
+          "type": "array"
+        },
+        "required_input_names": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "command_kind",
+        "base_argv",
+        "required_input_names",
+        "input_bindings"
+      ],
+      "type": "object"
+    },
+    "PublicCommandTemplateInput": {
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/PublicCommandInputBinding"
+        },
+        "kind": {
+          "$ref": "#/$defs/PublicCommandInputKind"
+        },
+        "must_exist": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "required_when": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shell_escape_by_caller": {
+          "type": "boolean"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "binding",
+        "shell_escape_by_caller"
+      ],
+      "type": "object"
+    },
+    "PublicRepairTarget": {
+      "properties": {
+        "command_kind": {
+          "$ref": "#/$defs/PublicRepairTargetCommandKindSchema"
+        },
+        "expires_when_fingerprint_changes": {
+          "type": "boolean"
+        },
+        "reason_code": {
+          "type": "string"
+        },
+        "source_record_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "step": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "task": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "command_kind",
+        "reason_code",
+        "expires_when_fingerprint_changes"
+      ],
+      "type": "object"
+    },
+    "PublicRepairTargetCommandKindSchema": {
+      "enum": [
+        "begin",
+        "complete",
+        "reopen",
+        "transfer",
+        "close-current-task",
+        "repair-review-state",
+        "advance-late-stage"
+      ],
+      "type": "string"
     },
     "RuntimeProvenance": {
       "properties": {
@@ -279,7 +439,7 @@
         "hand off",
         "pivot / return to planning",
         "refresh test plan",
-        "repair review state / reenter execution",
+        "repair review state",
         "resolve release blocker",
         "run QA",
         "run verification",
@@ -290,39 +450,40 @@
     "WorkflowOperatorPhaseDetailSchema": {
       "enum": [
         "blocked_runtime_bug",
+        "branch_closure_recording_required_for_release_readiness",
         "execution_in_progress",
         "execution_preflight_required",
         "execution_reentry_required",
-        "task_review_result_pending",
-        "task_closure_recording_ready",
-        "branch_closure_recording_required_for_release_readiness",
-        "release_readiness_recording_ready",
-        "release_blocker_resolution_required",
         "final_review_dispatch_required",
         "final_review_outcome_pending",
         "final_review_recording_ready",
-        "qa_recording_required",
-        "runtime_reconcile_required",
-        "test_plan_refresh_required",
-        "finish_review_gate_ready",
         "finish_completion_gate_ready",
+        "finish_review_gate_ready",
         "handoff_recording_required",
-        "planning_reentry_required"
+        "planning_reentry_required",
+        "qa_recording_required",
+        "release_blocker_resolution_required",
+        "release_readiness_recording_ready",
+        "runtime_reconcile_required",
+        "task_closure_recording_ready",
+        "task_review_result_pending",
+        "test_plan_refresh_required"
       ],
       "type": "string"
     },
     "WorkflowOperatorPhaseSchema": {
       "enum": [
         "blocked",
+        "document_release_pending",
         "executing",
         "execution_preflight",
-        "task_closure_pending",
-        "document_release_pending",
         "final_review_pending",
+        "handoff_required",
+        "implementation_handoff",
+        "pivot_required",
         "qa_pending",
         "ready_for_branch_completion",
-        "handoff_required",
-        "pivot_required"
+        "task_closure_pending"
       ],
       "type": "string"
     },
@@ -377,6 +538,7 @@
         "waiting_external_input",
         "terminal",
         "blocked_runtime_bug",
+        "planning_reentry_required",
         "runtime_reconcile_required"
       ],
       "type": "string"
@@ -525,6 +687,12 @@
       },
       "type": "array"
     },
+    "diagnostic_reason_codes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "blocking_scope": {
       "type": [
         "string",
@@ -555,7 +723,8 @@
       ]
     },
     "next_action": {
-      "$ref": "#/$defs/WorkflowOperatorNextActionSchema"
+      "$ref": "#/$defs/WorkflowOperatorNextActionSchema",
+      "description": "Display-only route diagnostic label; not executable."
     },
     "next_public_action": {
       "anyOf": [
@@ -565,7 +734,8 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Optional display-only public route action summary; not executable."
     },
     "phase": {
       "$ref": "#/$defs/WorkflowOperatorPhaseSchema"
@@ -578,6 +748,12 @@
     },
     "projection_mode": {
       "type": "string"
+    },
+    "public_repair_targets": {
+      "items": {
+        "$ref": "#/$defs/PublicRepairTarget"
+      },
+      "type": "array"
     },
     "qa_requirement": {
       "anyOf": [
@@ -596,11 +772,11 @@
       ]
     },
     "recommended_command": {
-      "description": "Display-only compatibility summary; do not parse or execute this string. Use recommended_public_command_argv when present.",
+      "description": "Display-only compatibility summary; not executable.",
       "type": "string"
     },
     "recommended_public_command_argv": {
-      "description": "Executable public command argv authority when present. Run these tokens as argv instead of parsing recommended_command.",
+      "description": "Executable public command argv when present.",
       "items": {
         "type": "string"
       },
@@ -609,11 +785,22 @@
         "null"
       ]
     },
+    "recommended_public_command_template": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublicCommandTemplate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Non-executable public command template for input-required routes."
+    },
     "recording_context": {
       "$ref": "#/$defs/WorkflowOperatorRecordingContext"
     },
     "required_inputs": {
-      "description": "Parseable input contract for the routed public command when executable argv cannot be emitted yet.",
+      "description": "Input names required to materialize a public command template.",
       "items": {
         "$ref": "#/$defs/PublicCommandInputRequirement"
       },

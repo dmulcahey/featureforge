@@ -23,9 +23,9 @@ use process_support::run;
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-25-cli-parse-boundary-design.md";
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-25-cli-parse-boundary.md";
 
-fn internal_execution_flag_rejected_message(flag: &str, command: &str) -> String {
+fn internal_execution_flag_rejected_message(flag_description: &str, command: &str) -> String {
     format!(
-        "{flag} is an internal compatibility flag and is not available in normal public execution. It exists only for temporary migration support for pre-public dispatch and branch-closure identifiers and should be removed when internal migration coverage no longer requires explicit dispatch or branch-closure ids. Run {command} without it."
+        "{flag_description} is an internal compatibility flag and is not available in normal public execution. It exists only for temporary migration support for pre-public dispatch and branch-closure identifiers and should be removed when internal migration coverage no longer requires explicit dispatch or branch-closure ids. Run {command} without it."
     )
 }
 
@@ -183,7 +183,7 @@ fn internal_only_compatibility_close_current_task_rejects_hidden_dispatch_id_wit
     assert_eq!(
         json["message"],
         Value::from(internal_execution_flag_rejected_message(
-            concat!("--dispatch", "-id"),
+            "the dispatch-lineage compatibility input",
             "close-current-task"
         ))
     );
@@ -197,7 +197,7 @@ fn internal_only_compatibility_advance_late_stage_rejects_hidden_lineage_flags_w
             concat!("--dispatch", "-id"),
             "dispatch-001",
             internal_execution_flag_rejected_message(
-                concat!("--dispatch", "-id"),
+                "the dispatch-lineage compatibility input",
                 "advance-late-stage",
             ),
         ),
@@ -205,7 +205,7 @@ fn internal_only_compatibility_advance_late_stage_rejects_hidden_lineage_flags_w
             concat!("--branch", "-closure-id"),
             "branch-closure-001",
             internal_execution_flag_rejected_message(
-                concat!("--branch", "-closure-id"),
+                "the branch-closure compatibility input",
                 "advance-late-stage",
             ),
         ),

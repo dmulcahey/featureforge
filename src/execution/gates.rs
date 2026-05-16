@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
 use serde::Deserialize;
 
@@ -16,6 +15,9 @@ use crate::execution::context::{
 use crate::execution::event_log::load_reduced_authoritative_state;
 use crate::execution::internal_args::{GateContractArgs, GateEvaluatorArgs, GateHandoffArgs};
 use crate::execution::state::{ExecutionContext, ExecutionRuntime, GateResult, GateState};
+use crate::execution::status_support::{
+    PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT, WORKFLOW_OPERATOR_JSON_DISPLAY_COMMAND,
+};
 use crate::git::sha256_hex;
 use crate::paths::{
     harness_authoritative_artifact_path, harness_authoritative_artifacts_dir, harness_state_path,
@@ -28,6 +30,27 @@ const HARNESS_OWNED_PRODUCERS: &[&str] = &[
     "featureforge:spec_compliance",
     "featureforge:code_quality",
 ];
+
+pub(crate) fn public_gate_remediation(
+    context: &ExecutionContext,
+    action: impl AsRef<str>,
+) -> String {
+    public_gate_remediation_for_plan(&context.plan_rel, action)
+}
+
+pub(crate) fn public_gate_remediation_for_plan(plan_rel: &str, action: impl AsRef<str>) -> String {
+    let diagnostic_context = action.as_ref().trim().trim_end_matches('.');
+    let mut remediation = format!(
+        "Query workflow/operator JSON for the approved plan by running `{WORKFLOW_OPERATOR_JSON_DISPLAY_COMMAND}` for `{plan_rel}`; {PUBLIC_TYPED_OPERATOR_ROUTE_CONTRACT}."
+    );
+    if !diagnostic_context.is_empty() {
+        remediation.push_str(" Diagnostic context: ");
+        remediation.push_str(diagnostic_context);
+        remediation.push('.');
+    }
+    remediation.push_str(" Do not hand-edit or reconstruct proof artifacts.");
+    remediation
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct GateAuthorityState {
@@ -85,7 +108,10 @@ pub fn gate_contract_from_context(
                 FailureClass::ContractMismatch,
                 "contract_artifact_unreadable",
                 error.to_string(),
-                "Provide a readable execution contract artifact and retry gate-contract.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the execution contract artifact through the routed public workflow",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -100,18 +126,24 @@ pub fn gate_contract_from_context(
                     "Could not read execution contract artifact {}: {error}",
                     artifact_abs.display()
                 ),
-                "Provide a readable execution contract artifact and retry gate-contract.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the execution contract artifact through the routed public workflow",
+                ),
             );
             return Ok(gate.finish());
         }
     };
     if verify_declared_fingerprint(
         &contract_source,
-        "Contract Fingerprint",
-        &contract.contract_fingerprint,
-        "contract_fingerprint_unverifiable",
-        "contract_fingerprint_mismatch",
-        "contract",
+        DeclaredFingerprintValidation {
+            header_label: "Contract Fingerprint",
+            declared_fingerprint: &contract.contract_fingerprint,
+            unverifiable_reason_code: "contract_fingerprint_unverifiable",
+            mismatch_reason_code: "contract_fingerprint_mismatch",
+            artifact_label: "contract",
+            plan_rel: &context.plan_rel,
+        },
         &mut gate,
     )
     .is_none()
@@ -124,6 +156,7 @@ pub fn gate_contract_from_context(
         &contract.generated_by,
         FailureClass::NonHarnessProvenance,
         "contract_non_harness_provenance",
+        &context.plan_rel,
         &mut gate,
     );
     validate_contract_authority_state(context, &contract, &mut gate);
@@ -152,7 +185,10 @@ pub fn gate_evaluator_from_context(
                 FailureClass::EvaluationMismatch,
                 "evaluation_artifact_unreadable",
                 error.to_string(),
-                "Provide a readable evaluation artifact and retry gate-evaluator.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the evaluation artifact through the routed public workflow",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -167,18 +203,24 @@ pub fn gate_evaluator_from_context(
                     "Could not read evaluation report artifact {}: {error}",
                     artifact_abs.display()
                 ),
-                "Provide a readable evaluation artifact and retry gate-evaluator.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the evaluation artifact through the routed public workflow",
+                ),
             );
             return Ok(gate.finish());
         }
     };
     if verify_declared_fingerprint(
         &report_source,
-        "Report Fingerprint",
-        &report.report_fingerprint,
-        "evaluation_fingerprint_unverifiable",
-        "evaluation_fingerprint_mismatch",
-        "evaluation",
+        DeclaredFingerprintValidation {
+            header_label: "Report Fingerprint",
+            declared_fingerprint: &report.report_fingerprint,
+            unverifiable_reason_code: "evaluation_fingerprint_unverifiable",
+            mismatch_reason_code: "evaluation_fingerprint_mismatch",
+            artifact_label: "evaluation",
+            plan_rel: &context.plan_rel,
+        },
         &mut gate,
     )
     .is_none()
@@ -191,6 +233,7 @@ pub fn gate_evaluator_from_context(
         &report.generated_by,
         FailureClass::NonHarnessProvenance,
         "evaluation_non_harness_provenance",
+        &context.plan_rel,
         &mut gate,
     );
     validate_evaluator_authority_state(context, &report, &mut gate);
@@ -200,7 +243,10 @@ pub fn gate_evaluator_from_context(
             FailureClass::EvaluationMismatch,
             "evaluation_verdict_illegal",
             "Evaluation verdict must be pass, fail, or blocked.",
-            "Regenerate the evaluation report with a legal verdict.",
+            public_gate_remediation(
+                context,
+                "Refresh the evaluation report with a legal verdict",
+            ),
         );
     }
     if !matches!(
@@ -211,7 +257,10 @@ pub fn gate_evaluator_from_context(
             FailureClass::EvaluationMismatch,
             "evaluation_recommended_action_illegal",
             "Evaluation recommended_action must be continue, repair, pivot, handoff, or escalate.",
-            "Regenerate the evaluation report with a legal recommended_action.",
+            public_gate_remediation(
+                context,
+                "Refresh the evaluation report with a legal recommended_action",
+            ),
         );
     }
 
@@ -240,7 +289,10 @@ pub fn gate_handoff_from_context(
                 FailureClass::MissingRequiredHandoff,
                 "handoff_artifact_unreadable",
                 error.to_string(),
-                "Provide a readable execution handoff artifact and retry gate-handoff.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the execution handoff artifact through the routed public workflow",
+                ),
             );
             return Ok(gate.finish());
         }
@@ -255,18 +307,24 @@ pub fn gate_handoff_from_context(
                     "Could not read execution handoff artifact {}: {error}",
                     artifact_abs.display()
                 ),
-                "Provide a readable execution handoff artifact and retry gate-handoff.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the execution handoff artifact through the routed public workflow",
+                ),
             );
             return Ok(gate.finish());
         }
     };
     if verify_declared_fingerprint(
         &handoff_source,
-        "Handoff Fingerprint",
-        &handoff.handoff_fingerprint,
-        "handoff_fingerprint_unverifiable",
-        "handoff_fingerprint_mismatch",
-        "handoff",
+        DeclaredFingerprintValidation {
+            header_label: "Handoff Fingerprint",
+            declared_fingerprint: &handoff.handoff_fingerprint,
+            unverifiable_reason_code: "handoff_fingerprint_unverifiable",
+            mismatch_reason_code: "handoff_fingerprint_mismatch",
+            artifact_label: "handoff",
+            plan_rel: &context.plan_rel,
+        },
         &mut gate,
     )
     .is_none()
@@ -279,6 +337,7 @@ pub fn gate_handoff_from_context(
         &handoff.generated_by,
         FailureClass::NonHarnessProvenance,
         "handoff_non_harness_provenance",
+        &context.plan_rel,
         &mut gate,
     );
     validate_handoff_authority_state(context, &handoff, &mut gate);
@@ -288,7 +347,10 @@ pub fn gate_handoff_from_context(
             FailureClass::MissingRequiredHandoff,
             "handoff_unresolved_criteria_missing_findings",
             "Execution handoff with unresolved criteria must include open findings.",
-            "Regenerate the handoff with concrete unresolved findings.",
+            public_gate_remediation(
+                context,
+                "Refresh the handoff with concrete unresolved findings",
+            ),
         );
     }
 
@@ -319,7 +381,10 @@ pub(crate) fn validate_contract_provenance(
             FailureClass::StaleProvenance,
             "contract_plan_provenance_mismatch",
             "Execution contract does not match the current approved plan path/revision.",
-            "Regenerate the contract for the current approved plan revision.",
+            public_gate_remediation(
+                context,
+                "Refresh the contract for the current approved plan revision",
+            ),
         );
     }
     if contract.source_spec_path != context.plan_document.source_spec_path
@@ -329,7 +394,10 @@ pub(crate) fn validate_contract_provenance(
             FailureClass::StaleProvenance,
             "contract_spec_provenance_mismatch",
             "Execution contract does not match the current approved source spec path/revision.",
-            "Regenerate the contract for the current approved spec revision.",
+            public_gate_remediation(
+                context,
+                "Refresh the contract for the current approved spec revision",
+            ),
         );
     }
     let expected_plan_fingerprint = hash_contract_plan(&context.plan_source);
@@ -338,7 +406,10 @@ pub(crate) fn validate_contract_provenance(
             FailureClass::StaleProvenance,
             "contract_plan_fingerprint_mismatch",
             "Execution contract plan fingerprint no longer matches the approved plan source.",
-            "Regenerate the contract for the current approved plan source.",
+            public_gate_remediation(
+                context,
+                "Refresh the contract for the current approved plan source",
+            ),
         );
     }
     let expected_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
@@ -347,7 +418,10 @@ pub(crate) fn validate_contract_provenance(
             FailureClass::StaleProvenance,
             "contract_spec_fingerprint_mismatch",
             "Execution contract source spec fingerprint no longer matches the approved source spec content.",
-            "Regenerate the contract for the current approved source spec content.",
+            public_gate_remediation(
+                context,
+                "Refresh the contract for the current approved source spec content",
+            ),
         );
     }
     validate_contract_scope_against_approved_plan(
@@ -379,7 +453,10 @@ fn validate_contract_scope_against_approved_plan(
                 FailureClass::ContractMismatch,
                 "contract_covered_step_malformed",
                 "Execution contract covered_steps entries must use `Task <n> Step <m>` scope format.",
-                "Regenerate the contract with canonical covered_steps scope labels.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the contract with canonical covered_steps scope labels",
+                ),
             );
             continue;
         };
@@ -388,7 +465,10 @@ fn validate_contract_scope_against_approved_plan(
                 FailureClass::ContractMismatch,
                 "contract_covered_step_out_of_scope",
                 "Execution contract covered_steps includes steps outside the approved plan slice.",
-                "Regenerate the contract with covered_steps that map only to approved plan task/step pairs.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the contract with covered_steps that map only to approved plan task/step pairs",
+                ),
             );
             continue;
         }
@@ -405,7 +485,10 @@ fn validate_contract_scope_against_approved_plan(
                         "Execution contract criterion `{}` uses a malformed covered_steps entry.",
                         criterion.criterion_id
                     ),
-                    "Regenerate criteria covered_steps using `Task <n> Step <m>` labels.",
+                    public_gate_remediation(
+                        context,
+                        "Refresh criteria covered_steps using `Task <n> Step <m>` labels",
+                    ),
                 );
                 continue;
             };
@@ -417,7 +500,10 @@ fn validate_contract_scope_against_approved_plan(
                         "Execution contract criterion `{}` covered_steps is outside the approved plan slice.",
                         criterion.criterion_id
                     ),
-                    "Regenerate criteria covered_steps so every criterion scope maps to approved contract scope in the active plan slice.",
+                    public_gate_remediation(
+                        context,
+                        "Refresh criteria covered_steps so every criterion scope maps to approved contract scope in the active plan slice",
+                    ),
                 );
             }
         }
@@ -433,7 +519,10 @@ fn validate_contract_scope_against_approved_plan(
                         "Execution contract evidence requirement `{}` uses a malformed covered_steps entry.",
                         requirement.evidence_requirement_id
                     ),
-                    "Regenerate evidence requirement covered_steps using `Task <n> Step <m>` labels.",
+                    public_gate_remediation(
+                        context,
+                        "Update evidence requirement covered_steps using `Task <n> Step <m>` labels",
+                    ),
                 );
                 continue;
             };
@@ -445,7 +534,10 @@ fn validate_contract_scope_against_approved_plan(
                         "Execution contract evidence requirement `{}` covered_steps is outside the approved plan slice.",
                         requirement.evidence_requirement_id
                     ),
-                    "Regenerate evidence requirement covered_steps so every requirement scope maps to approved contract scope in the active plan slice.",
+                    public_gate_remediation(
+                        context,
+                        "Update evidence requirement covered_steps so every requirement scope maps to approved contract scope in the active plan slice",
+                    ),
                 );
             }
         }
@@ -473,7 +565,10 @@ fn validate_contract_scope_against_approved_plan(
             FailureClass::StaleProvenance,
             "contract_task_packet_scope_mismatch",
             "Execution contract source task packet fingerprints do not match the approved plan slice coverage scope.",
-            "Regenerate the contract so source task packet fingerprints resolve from the approved plan/slice task coverage.",
+            public_gate_remediation(
+                context,
+                "Refresh the contract so source task packet fingerprints resolve from the approved plan/slice task coverage",
+            ),
         );
     }
 }
@@ -490,7 +585,10 @@ pub(crate) fn validate_report_provenance(
             FailureClass::StaleProvenance,
             "evaluation_plan_provenance_mismatch",
             "Evaluation report does not match the current approved plan path/revision.",
-            "Regenerate the report for the current approved plan revision.",
+            public_gate_remediation(
+                context,
+                "Refresh the report for the current approved plan revision",
+            ),
         );
     }
     let expected_plan_fingerprint = hash_contract_plan(&context.plan_source);
@@ -499,7 +597,10 @@ pub(crate) fn validate_report_provenance(
             FailureClass::StaleProvenance,
             "evaluation_plan_fingerprint_mismatch",
             "Evaluation report plan fingerprint no longer matches the approved plan source.",
-            "Regenerate the report for the current approved plan source.",
+            public_gate_remediation(
+                context,
+                "Refresh the report for the current approved plan source",
+            ),
         );
     }
 }
@@ -516,7 +617,10 @@ pub(crate) fn validate_handoff_provenance(
             FailureClass::StaleProvenance,
             "handoff_plan_provenance_mismatch",
             "Execution handoff does not match the current approved plan path/revision.",
-            "Regenerate the handoff for the current approved plan revision.",
+            public_gate_remediation(
+                context,
+                "Refresh the handoff for the current approved plan revision",
+            ),
         );
     }
 }
@@ -525,6 +629,7 @@ pub(crate) fn validate_harness_provenance(
     generated_by: &str,
     failure_class: FailureClass,
     reason_code: &str,
+    plan_rel: &str,
     gate: &mut GateState,
 ) {
     let generated_by = generated_by.trim();
@@ -533,7 +638,10 @@ pub(crate) fn validate_harness_provenance(
             failure_class,
             reason_code,
             "Artifact was not generated by a harness-owned featureforge producer.",
-            "Regenerate the artifact through a harness-owned featureforge command.",
+            public_gate_remediation_for_plan(
+                plan_rel,
+                "Refresh the artifact through a harness-owned public workflow",
+            ),
         );
     }
 }
@@ -558,7 +666,10 @@ fn validate_evaluator_authority_state(
             FailureClass::IllegalHarnessPhase,
             "evaluation_illegal_phase",
             "Evaluation artifacts are only legal while the harness phase is executing, evaluating, or repairing.",
-            "Advance the harness into an evaluation-ready phase before running gate-evaluator.",
+            public_gate_remediation(
+                context,
+                "Return to the public route that advances the harness into an evaluation-ready phase",
+            ),
         );
     }
 
@@ -567,7 +678,10 @@ fn validate_evaluator_authority_state(
             FailureClass::DependencyIndexMismatch,
             "evaluation_contract_fingerprint_mismatch",
             "Evaluation report depends on a contract fingerprint that is not the active authoritative contract.",
-            "Regenerate the evaluation report from the currently active authoritative contract.",
+            public_gate_remediation(
+                context,
+                "Refresh the evaluation report from the currently active authoritative contract",
+            ),
         );
     }
 
@@ -580,7 +694,10 @@ fn validate_evaluator_authority_state(
             FailureClass::EvaluationMismatch,
             "evaluator_kind_not_required",
             "Evaluation report evaluator_kind is not required by the active authoritative harness contract state.",
-            "Run only evaluators listed in required_evaluator_kinds for the active contract.",
+            public_gate_remediation(
+                context,
+                "Refresh the evaluation report with an evaluator_kind listed in required_evaluator_kinds for the active contract",
+            ),
         );
     }
 
@@ -588,6 +705,7 @@ fn validate_evaluator_authority_state(
         report.authoritative_sequence,
         state.latest_authoritative_sequence(),
         gate,
+        &context.plan_rel,
         "evaluation",
     );
     validate_evaluator_semantics(context, report, &active_contract.contract, gate);
@@ -610,7 +728,10 @@ fn validate_contract_authority_state(
             FailureClass::IllegalHarnessPhase,
             "contract_illegal_phase",
             "Execution contract approval and recording are only legal while the authoritative harness phase is contract_pending_approval.",
-            "Advance the harness to contract_pending_approval (after execution_preflight acceptance) before running gate-contract or record-contract.",
+            public_gate_remediation(
+                context,
+                "Return to the public route that advances the harness to contract_pending_approval after execution_preflight acceptance",
+            ),
         );
     }
 
@@ -618,6 +739,7 @@ fn validate_contract_authority_state(
         contract.authoritative_sequence,
         state.latest_authoritative_sequence(),
         gate,
+        &context.plan_rel,
         "contract",
     );
 }
@@ -642,7 +764,10 @@ fn validate_handoff_authority_state(
             FailureClass::IllegalHarnessPhase,
             "handoff_illegal_phase",
             "Execution handoff artifacts are only legal while the authoritative harness phase is handoff_required.",
-            "Advance the harness to handoff_required before running gate-handoff.",
+            public_gate_remediation(
+                context,
+                "Return to the public route that advances the harness to handoff_required",
+            ),
         );
     }
 
@@ -651,7 +776,10 @@ fn validate_handoff_authority_state(
             FailureClass::MissingRequiredHandoff,
             "handoff_not_required",
             "Authoritative harness state does not currently require a handoff artifact.",
-            "Require handoff in authoritative state before publishing an execution handoff.",
+            public_gate_remediation(
+                context,
+                "Return to the public route that determines whether handoff is required in authoritative state",
+            ),
         );
     }
 
@@ -660,7 +788,10 @@ fn validate_handoff_authority_state(
             FailureClass::DependencyIndexMismatch,
             "handoff_contract_fingerprint_mismatch",
             "Execution handoff depends on a contract fingerprint that is not the active authoritative contract.",
-            "Regenerate the handoff artifact from the active authoritative contract.",
+            public_gate_remediation(
+                context,
+                "Refresh the handoff artifact from the active authoritative contract",
+            ),
         );
     }
 
@@ -668,9 +799,11 @@ fn validate_handoff_authority_state(
         handoff.authoritative_sequence,
         state.latest_authoritative_sequence(),
         gate,
+        &context.plan_rel,
         "handoff",
     );
     validate_handoff_semantics(
+        context,
         handoff,
         &active_contract.contract,
         &state.open_failed_criteria,
@@ -697,7 +830,10 @@ fn load_gate_authority_state(
                     "No authoritative harness state was found at {}.",
                     state_path.display()
                 ),
-                "Publish authoritative harness state before contract, evaluator, or handoff gate commands.",
+                public_gate_remediation(
+                    context,
+                    "Return to the public route that publishes authoritative harness state before artifact gates",
+                ),
             );
             return None;
         }
@@ -710,7 +846,10 @@ fn load_gate_authority_state(
                     state_path.display(),
                     error.message
                 ),
-                "Restore authoritative harness state readability and retry the gate command.",
+                public_gate_remediation(
+                    context,
+                    "Restore authoritative harness state readability through the owning public workflow",
+                ),
             );
             return None;
         }
@@ -726,7 +865,10 @@ fn load_gate_authority_state(
                     "Authoritative reduced state is malformed in {}: {error}",
                     state_path.display()
                 ),
-                "Repair the authoritative harness state and republish valid authoritative execution state before gating artifacts.",
+                public_gate_remediation(
+                    context,
+                    "Repair the authoritative harness state and republish valid authoritative execution state before gating artifacts",
+                ),
             );
             None
         }
@@ -754,7 +896,10 @@ pub(crate) fn require_active_contract_state(
             FailureClass::NonAuthoritativeArtifact,
             "active_contract_missing",
             "Authoritative harness state is missing active_contract_path.",
-            "Publish authoritative state with a valid active_contract_path before evaluator or handoff gates.",
+            public_gate_remediation(
+                context,
+                "Return to the public route that publishes authoritative state with a valid active_contract_path before evaluator or handoff gates",
+            ),
         );
         return None;
     };
@@ -763,7 +908,10 @@ pub(crate) fn require_active_contract_state(
             FailureClass::NonAuthoritativeArtifact,
             "active_contract_missing",
             "Authoritative harness state is missing active_contract_fingerprint.",
-            "Publish authoritative state with a valid active_contract_fingerprint before evaluator or handoff gates.",
+            public_gate_remediation(
+                context,
+                "Return to the public route that publishes authoritative state with a valid active_contract_fingerprint before evaluator or handoff gates",
+            ),
         );
         return None;
     };
@@ -773,7 +921,10 @@ pub(crate) fn require_active_contract_state(
             FailureClass::NonAuthoritativeArtifact,
             "active_contract_missing",
             "Authoritative harness state active_contract_path must reference an authoritative artifact file name.",
-            "Repair active_contract_path to point at the authoritative artifact file name and retry the gate command.",
+            public_gate_remediation(
+                context,
+                "Repair active_contract_path through the owning public workflow so it points at the authoritative artifact file name",
+            ),
         );
         return None;
     }
@@ -784,7 +935,10 @@ pub(crate) fn require_active_contract_state(
             FailureClass::NonAuthoritativeArtifact,
             "active_contract_fingerprint_mismatch",
             "Authoritative harness state active_contract_path does not match the active contract fingerprint-derived authoritative artifact path.",
-            "Republish authoritative harness state so active_contract_path and active_contract_fingerprint refer to the same authoritative artifact.",
+            public_gate_remediation(
+                context,
+                "Republish authoritative harness state so active_contract_path and active_contract_fingerprint refer to the same authoritative artifact",
+            ),
         );
         return None;
     }
@@ -803,7 +957,10 @@ pub(crate) fn require_active_contract_state(
                 "Active authoritative contract path does not exist: {}",
                 active_contract_abs.display()
             ),
-            "Restore the active authoritative contract artifact before evaluator or handoff gates.",
+            public_gate_remediation(
+                context,
+                "Restore the active authoritative contract artifact before evaluator or handoff gates",
+            ),
         );
         return None;
     }
@@ -818,7 +975,10 @@ pub(crate) fn require_active_contract_state(
                     "Could not read active authoritative contract {}: {error}",
                     active_contract_abs.display()
                 ),
-                "Restore the active authoritative contract artifact readability before evaluator or handoff gates.",
+                public_gate_remediation(
+                    context,
+                    "Restore the active authoritative contract artifact readability before evaluator or handoff gates",
+                ),
             );
             return None;
         }
@@ -834,7 +994,10 @@ pub(crate) fn require_active_contract_state(
                     "Active authoritative contract {} is malformed: {error}",
                     active_contract_abs.display()
                 ),
-                "Repair the active authoritative contract artifact and retry evaluator or handoff gates.",
+                public_gate_remediation(
+                    context,
+                    "Repair the active authoritative contract artifact through the owning public workflow",
+                ),
             );
             return None;
         }
@@ -842,11 +1005,14 @@ pub(crate) fn require_active_contract_state(
 
     let canonical_contract_fingerprint = verify_declared_fingerprint(
         &contract_source,
-        "Contract Fingerprint",
-        &contract.contract_fingerprint,
-        "active_contract_fingerprint_mismatch",
-        "active_contract_fingerprint_mismatch",
-        "active contract",
+        DeclaredFingerprintValidation {
+            header_label: "Contract Fingerprint",
+            declared_fingerprint: &contract.contract_fingerprint,
+            unverifiable_reason_code: "active_contract_fingerprint_mismatch",
+            mismatch_reason_code: "active_contract_fingerprint_mismatch",
+            artifact_label: "active contract",
+            plan_rel: &context.plan_rel,
+        },
         gate,
     )?;
 
@@ -855,7 +1021,10 @@ pub(crate) fn require_active_contract_state(
             FailureClass::NonAuthoritativeArtifact,
             "active_contract_fingerprint_mismatch",
             "Authoritative harness state active_contract_fingerprint does not match active contract content at active_contract_path.",
-            "Republish authoritative harness state so active_contract_fingerprint matches the active contract artifact content.",
+            public_gate_remediation(
+                context,
+                "Republish authoritative harness state so active_contract_fingerprint matches the active contract artifact content",
+            ),
         );
         return None;
     }
@@ -865,6 +1034,7 @@ pub(crate) fn require_active_contract_state(
         &contract.generated_by,
         FailureClass::NonHarnessProvenance,
         "active_contract_non_harness_provenance",
+        &context.plan_rel,
         gate,
     );
 
@@ -878,6 +1048,7 @@ fn validate_authoritative_ordering(
     candidate_sequence: u64,
     latest_authoritative_sequence: u64,
     gate: &mut GateState,
+    plan_rel: &str,
     artifact_label: &str,
 ) {
     if candidate_sequence < latest_authoritative_sequence {
@@ -887,7 +1058,10 @@ fn validate_authoritative_ordering(
             format!(
                 "Candidate {artifact_label} authoritative_sequence {candidate_sequence} is older than latest authoritative sequence {latest_authoritative_sequence}."
             ),
-            "Regenerate the artifact with a fresh authoritative sequence before rerunning the gate command.",
+            public_gate_remediation_for_plan(
+                plan_rel,
+                "Refresh the artifact with a fresh authoritative sequence before rerunning the public route",
+            ),
         );
     }
 }
@@ -931,7 +1105,10 @@ pub(crate) fn validate_evaluator_semantics(
                 FailureClass::EvaluationMismatch,
                 "evaluation_criterion_status_illegal",
                 "Evaluation criterion status must be pass, fail, or blocked.",
-                "Regenerate criterion_results with legal criterion statuses.",
+                public_gate_remediation(
+                    context,
+                    "Refresh criterion_results with legal criterion statuses",
+                ),
             );
         }
         let Some(contract_criterion) = contract_criteria.get(result.criterion_id.as_str()) else {
@@ -939,7 +1116,10 @@ pub(crate) fn validate_evaluator_semantics(
                 FailureClass::EvaluationMismatch,
                 "evaluation_unknown_criterion_id",
                 "Evaluation report includes a criterion_id that is not declared in the active contract criteria.",
-                "Regenerate the report so criterion_results reference only active contract criteria.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the report so criterion_results reference only active contract criteria",
+                ),
             );
             continue;
         };
@@ -953,7 +1133,10 @@ pub(crate) fn validate_evaluator_semantics(
                 FailureClass::EvaluationMismatch,
                 "evaluation_criterion_evaluator_mismatch",
                 "Evaluation report includes criterion results that are not owned by this evaluator kind in the active contract.",
-                "Regenerate criterion_results so each criterion belongs to the current evaluator kind.",
+                public_gate_remediation(
+                    context,
+                    "Refresh criterion_results so each criterion belongs to the current evaluator kind",
+                ),
             );
         }
 
@@ -966,7 +1149,10 @@ pub(crate) fn validate_evaluator_semantics(
                 FailureClass::EvaluationMismatch,
                 "evaluation_requirement_mapping_invalid",
                 "Criterion result requirement_ids are not a subset of the active contract criterion requirement mappings.",
-                "Regenerate criterion_results with requirement_ids mapped to the active contract criterion.",
+                public_gate_remediation(
+                    context,
+                    "Refresh criterion_results with requirement_ids mapped to the active contract criterion",
+                ),
             );
         }
         if !result
@@ -978,7 +1164,10 @@ pub(crate) fn validate_evaluator_semantics(
                 FailureClass::EvaluationMismatch,
                 "evaluation_covered_step_mapping_invalid",
                 "Criterion result covered_steps are not a subset of the active contract criterion covered steps.",
-                "Regenerate criterion_results with covered_steps mapped to the active contract criterion.",
+                public_gate_remediation(
+                    context,
+                    "Refresh criterion_results with covered_steps mapped to the active contract criterion",
+                ),
             );
         }
         if matches!(result.status.as_str(), "fail" | "blocked")
@@ -988,7 +1177,10 @@ pub(crate) fn validate_evaluator_semantics(
                 FailureClass::EvaluationMismatch,
                 "evaluation_non_passing_scope_incomplete",
                 "Failing or blocked criterion results must include requirement_ids and covered_steps.",
-                "Regenerate failing criterion_results with explicit requirement and covered-step mappings.",
+                public_gate_remediation(
+                    context,
+                    "Refresh failing criterion_results with explicit requirement and covered-step mappings",
+                ),
             );
         }
         if matches!(result.status.as_str(), "fail" | "blocked")
@@ -1001,7 +1193,10 @@ pub(crate) fn validate_evaluator_semantics(
                 FailureClass::EvaluationMismatch,
                 "evaluation_non_passing_affected_steps_missing",
                 "Failing or blocked criterion_results covered_steps must be represented in affected_steps.",
-                "Regenerate affected_steps to include every covered step from fail/blocked criterion_results.",
+                public_gate_remediation(
+                    context,
+                    "Refresh affected_steps to include every covered step from fail/blocked criterion_results",
+                ),
             );
         }
 
@@ -1011,7 +1206,10 @@ pub(crate) fn validate_evaluator_semantics(
                     FailureClass::EvaluationMismatch,
                     "evaluation_criterion_evidence_ref_missing",
                     "Criterion result references an evidence ref id that is not present in evidence_refs[].",
-                    "Regenerate criterion_results so all referenced evidence refs are declared in evidence_refs[].",
+                    public_gate_remediation(
+                        context,
+                        "Refresh criterion_results so all referenced evidence refs are declared in evidence_refs[]",
+                    ),
                 );
             }
         }
@@ -1023,7 +1221,10 @@ pub(crate) fn validate_evaluator_semantics(
                 FailureClass::EvaluationMismatch,
                 "evaluation_missing_criterion_result",
                 "Evaluation report is missing a criterion result required by the active contract and evaluator kind.",
-                "Regenerate the report with criterion_results for every contract criterion assigned to this evaluator.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the report with criterion_results for every contract criterion assigned to this evaluator",
+                ),
             );
         }
     }
@@ -1037,7 +1238,10 @@ pub(crate) fn validate_evaluator_semantics(
             FailureClass::EvaluationMismatch,
             "evaluation_affected_step_out_of_scope",
             "Evaluation report affected_steps contains steps outside the active contract coverage scope.",
-            "Regenerate affected_steps using only active contract covered_steps.",
+            public_gate_remediation(
+                context,
+                "Refresh affected_steps using only active contract covered_steps",
+            ),
         );
     }
 
@@ -1051,7 +1255,10 @@ pub(crate) fn validate_evaluator_semantics(
             FailureClass::EvaluationMismatch,
             "evaluation_pass_contains_non_passing_criteria",
             "Evaluation verdict is pass but criterion_results still include fail or blocked statuses.",
-            "Regenerate the report so a pass verdict has only passing criterion_results.",
+            public_gate_remediation(
+                context,
+                "Refresh the report so a pass verdict has only passing criterion_results",
+            ),
         );
     }
     if matches!(report.verdict.as_str(), "fail" | "blocked")
@@ -1064,7 +1271,10 @@ pub(crate) fn validate_evaluator_semantics(
             FailureClass::EvaluationMismatch,
             "evaluation_non_pass_verdict_all_pass_criteria",
             "Evaluation verdict is fail or blocked but every criterion_result status is pass.",
-            "Regenerate the report so fail/blocked verdicts include at least one non-passing criterion_result.",
+            public_gate_remediation(
+                context,
+                "Refresh the report so fail/blocked verdicts include at least one non-passing criterion_result",
+            ),
         );
     }
 
@@ -1079,6 +1289,7 @@ pub(crate) fn validate_evaluator_semantics(
 
     for reference in &report.evidence_refs {
         validate_evidence_ref(
+            context,
             reference,
             authoritative_artifact_fingerprints.as_ref(),
             gate,
@@ -1089,7 +1300,10 @@ pub(crate) fn validate_evaluator_semantics(
                     FailureClass::EvaluationMismatch,
                     "evaluation_unknown_evidence_requirement",
                     "Evaluation evidence ref references an unknown contract evidence requirement id.",
-                    "Regenerate evidence_refs so evidence_requirement_ids map to active contract evidence requirements.",
+                    public_gate_remediation(
+                        context,
+                        "Update evidence_refs so evidence_requirement_ids map to active contract evidence requirements",
+                    ),
                 );
             }
         }
@@ -1170,7 +1384,10 @@ pub(crate) fn validate_evaluator_semantics(
                     FailureClass::EvaluationMismatch,
                     "invalid_evidence_satisfaction_rule",
                     "Active contract uses an unsupported evidence satisfaction_rule.",
-                    "Repair the active contract evidence requirement satisfaction_rule to one of all_of, any_of, or per_step.",
+                    public_gate_remediation(
+                        context,
+                        "Repair the active contract evidence requirement satisfaction_rule to one of all_of, any_of, or per_step",
+                    ),
                 );
                 false
             }
@@ -1184,13 +1401,17 @@ pub(crate) fn validate_evaluator_semantics(
                     "Required evidence requirement `{}` is unsatisfied by evaluation evidence refs.",
                     requirement.evidence_requirement_id
                 ),
-                "Provide evidence refs that satisfy every required contract evidence requirement.",
+                public_gate_remediation(
+                    context,
+                    "Update evidence refs so every required contract evidence requirement is satisfied",
+                ),
             );
         }
     }
 }
 
 pub(crate) fn validate_handoff_semantics(
+    context: &ExecutionContext,
     handoff: &ExecutionHandoff,
     contract: &ExecutionContract,
     authoritative_open_failed_criteria: &[String],
@@ -1213,7 +1434,10 @@ pub(crate) fn validate_handoff_semantics(
             FailureClass::MissingRequiredHandoff,
             "handoff_phase_mismatch",
             "Execution handoff must declare harness_phase handoff_required while satisfying handoff gate policy.",
-            "Regenerate the handoff with Harness Phase set to handoff_required.",
+            public_gate_remediation(
+                context,
+                "Refresh the handoff with Harness Phase set to handoff_required",
+            ),
         );
     }
 
@@ -1223,7 +1447,10 @@ pub(crate) fn validate_handoff_semantics(
                 FailureClass::MissingRequiredHandoff,
                 "handoff_unknown_open_criterion",
                 "Execution handoff open_criteria references a criterion that is not in the active contract.",
-                "Regenerate open_criteria so each criterion id exists in the active contract.",
+                public_gate_remediation(
+                    context,
+                    "Refresh open_criteria so each criterion id exists in the active contract",
+                ),
             );
         }
     }
@@ -1233,7 +1460,10 @@ pub(crate) fn validate_handoff_semantics(
                 FailureClass::MissingRequiredHandoff,
                 "handoff_unknown_satisfied_criterion",
                 "Execution handoff satisfied_criteria references a criterion that is not in the active contract.",
-                "Regenerate satisfied_criteria so each criterion id exists in the active contract.",
+                public_gate_remediation(
+                    context,
+                    "Refresh satisfied_criteria so each criterion id exists in the active contract",
+                ),
             );
         }
     }
@@ -1247,7 +1477,10 @@ pub(crate) fn validate_handoff_semantics(
             FailureClass::MissingRequiredHandoff,
             "handoff_criteria_overlap",
             "Execution handoff may not mark the same criterion as both open and satisfied.",
-            "Regenerate the handoff so open_criteria and satisfied_criteria are disjoint.",
+            public_gate_remediation(
+                context,
+                "Refresh the handoff so open_criteria and satisfied_criteria are disjoint",
+            ),
         );
     }
 
@@ -1262,7 +1495,10 @@ pub(crate) fn validate_handoff_semantics(
                 FailureClass::MissingRequiredHandoff,
                 "handoff_unresolved_criteria_missing",
                 "Execution handoff omitted unresolved criteria that remain open in authoritative state.",
-                "Regenerate the handoff with open_criteria and open_findings for each unresolved authoritative criterion.",
+                public_gate_remediation(
+                    context,
+                    "Refresh the handoff with open_criteria and open_findings for each unresolved authoritative criterion",
+                ),
             );
         }
     }
@@ -1274,7 +1510,10 @@ pub(crate) fn validate_handoff_semantics(
             FailureClass::MissingRequiredHandoff,
             "handoff_unresolved_criteria_superset",
             "Execution handoff open_criteria contains unresolved criteria that are not open in authoritative state.",
-            "Regenerate the handoff so open_criteria exactly matches authoritative unresolved criteria.",
+            public_gate_remediation(
+                context,
+                "Refresh the handoff so open_criteria exactly matches authoritative unresolved criteria",
+            ),
         );
     }
     if !authoritative_open.is_empty() && handoff.open_findings.is_empty() {
@@ -1282,19 +1521,24 @@ pub(crate) fn validate_handoff_semantics(
             FailureClass::MissingRequiredHandoff,
             "handoff_unresolved_criteria_missing_findings",
             "Execution handoff must include open findings when unresolved criteria remain open.",
-            "Regenerate the handoff with concrete open findings for unresolved criteria.",
+            public_gate_remediation(
+                context,
+                "Refresh the handoff with concrete open findings for unresolved criteria",
+            ),
         );
     }
 }
 
 fn validate_evidence_ref(
+    context: &ExecutionContext,
     reference: &crate::contracts::harness::EvaluationEvidenceRef,
     authoritative_artifact_fingerprints: Option<&AuthoritativeArtifactFingerprints>,
     gate: &mut GateState,
 ) {
     match reference.kind.as_str() {
-        "code_location" => validate_repo_source(reference, gate),
+        "code_location" => validate_repo_source(context, reference, gate),
         "command_output" => validate_artifact_source(
+            context,
             reference,
             "command_artifact:",
             authoritative_artifact_fingerprints,
@@ -1302,6 +1546,7 @@ fn validate_evidence_ref(
             gate,
         ),
         "test_result" => validate_artifact_source(
+            context,
             reference,
             "test_artifact:",
             authoritative_artifact_fingerprints,
@@ -1309,6 +1554,7 @@ fn validate_evidence_ref(
             gate,
         ),
         "artifact_ref" => validate_artifact_source(
+            context,
             reference,
             "artifact:",
             authoritative_artifact_fingerprints,
@@ -1316,6 +1562,7 @@ fn validate_evidence_ref(
             gate,
         ),
         "browser_capture" => validate_artifact_source(
+            context,
             reference,
             "browser_artifact:",
             authoritative_artifact_fingerprints,
@@ -1326,12 +1573,16 @@ fn validate_evidence_ref(
             FailureClass::EvaluationMismatch,
             "evaluation_evidence_kind_unsupported",
             "Evaluation evidence ref kind is unsupported.",
-            "Regenerate evidence_refs using supported kinds: code_location, command_output, test_result, artifact_ref, browser_capture.",
+            public_gate_remediation(
+                context,
+                "Update evidence_refs using supported kinds: code_location, command_output, test_result, artifact_ref, browser_capture",
+            ),
         ),
     }
 }
 
 fn validate_repo_source(
+    context: &ExecutionContext,
     reference: &crate::contracts::harness::EvaluationEvidenceRef,
     gate: &mut GateState,
 ) {
@@ -1340,7 +1591,7 @@ fn validate_repo_source(
             FailureClass::EvaluationMismatch,
             "evaluation_evidence_source_invalid",
             "Evaluation code_location evidence source must use repo:<relative_path>[#L<line>] locator grammar.",
-            "Regenerate evidence_refs with a valid repo locator.",
+            public_gate_remediation(context, "Update evidence_refs with a valid repo locator"),
         );
         return;
     };
@@ -1354,7 +1605,10 @@ fn validate_repo_source(
             FailureClass::EvaluationMismatch,
             "evaluation_evidence_source_invalid",
             "Evaluation repo evidence source path is not a normalized repo-relative path.",
-            "Regenerate repo evidence sources with normalized repo-relative paths.",
+            public_gate_remediation(
+                context,
+                "Update repo evidence sources with normalized repo-relative paths",
+            ),
         );
     }
     if let Some(line) = line_part
@@ -1368,12 +1622,16 @@ fn validate_repo_source(
             FailureClass::EvaluationMismatch,
             "evaluation_evidence_source_invalid",
             "Evaluation repo evidence source line suffix must be #L<positive-integer>.",
-            "Regenerate repo evidence sources with valid #L line suffixes.",
+            public_gate_remediation(
+                context,
+                "Update repo evidence sources with valid #L line suffixes",
+            ),
         );
     }
 }
 
 fn validate_artifact_source(
+    context: &ExecutionContext,
     reference: &crate::contracts::harness::EvaluationEvidenceRef,
     prefix: &str,
     authoritative_artifact_fingerprints: Option<&AuthoritativeArtifactFingerprints>,
@@ -1385,7 +1643,10 @@ fn validate_artifact_source(
             FailureClass::EvaluationMismatch,
             "evaluation_evidence_source_invalid",
             "Evaluation evidence source uses an invalid locator prefix for its kind.",
-            "Regenerate evidence_refs with kind-compatible source locator prefixes.",
+            public_gate_remediation(
+                context,
+                "Update evidence_refs with kind-compatible source locator prefixes",
+            ),
         );
         return;
     };
@@ -1396,7 +1657,10 @@ fn validate_artifact_source(
             FailureClass::EvaluationMismatch,
             "evaluation_evidence_artifact_ref_noncanonical",
             "Artifact-backed evidence sources must resolve via canonical artifact fingerprint.",
-            "Regenerate evidence source locators to use canonical artifact fingerprints.",
+            public_gate_remediation(
+                context,
+                "Update evidence source locators to use canonical artifact fingerprints",
+            ),
         );
         return;
     }
@@ -1406,7 +1670,10 @@ fn validate_artifact_source(
             FailureClass::EvaluationMismatch,
             "evaluation_evidence_artifact_ref_unresolved",
             "Artifact-backed evidence ref could not resolve against authoritative artifacts.",
-            "Publish authoritative artifacts first, then regenerate evidence refs so artifact-backed locators resolve to authoritative artifact fingerprints.",
+            public_gate_remediation(
+                context,
+                "Publish authoritative artifacts through the owning public workflow so artifact-backed locators resolve to authoritative artifact fingerprints",
+            ),
         );
         return;
     };
@@ -1429,7 +1696,10 @@ fn validate_artifact_source(
             FailureClass::EvaluationMismatch,
             "evaluation_evidence_artifact_ref_unresolved",
             "Artifact-backed evidence ref does not resolve to an authoritative artifact fingerprint.",
-            "Regenerate evidence refs so each artifact-backed locator resolves to a published authoritative artifact fingerprint.",
+            public_gate_remediation(
+                context,
+                "Update evidence refs so each artifact-backed locator resolves to a published authoritative artifact fingerprint",
+            ),
         );
     }
 }
@@ -1472,6 +1742,15 @@ struct AuthoritativeArtifactIdentity {
     artifact_kind: AuthoritativePublicArtifactKind,
 }
 
+struct DeclaredFingerprintValidation<'a> {
+    header_label: &'a str,
+    declared_fingerprint: &'a str,
+    unverifiable_reason_code: &'a str,
+    mismatch_reason_code: &'a str,
+    artifact_label: &'a str,
+    plan_rel: &'a str,
+}
+
 fn load_authoritative_artifact_fingerprints(
     context: &ExecutionContext,
     gate: &mut GateState,
@@ -1491,7 +1770,10 @@ fn load_authoritative_artifact_fingerprints(
                     "Could not read authoritative artifacts directory {}: {error}",
                     artifacts_dir.display()
                 ),
-                "Restore authoritative artifact storage readability before validating artifact-backed evidence refs.",
+                public_gate_remediation(
+                    context,
+                    "Restore authoritative artifact storage readability before validating artifact-backed evidence refs",
+                ),
             );
             return None;
         }
@@ -1511,7 +1793,10 @@ fn load_authoritative_artifact_fingerprints(
                         "Could not enumerate authoritative artifacts in {}: {error}",
                         artifacts_dir.display()
                     ),
-                    "Restore authoritative artifact storage readability before validating artifact-backed evidence refs.",
+                    public_gate_remediation(
+                        context,
+                        "Restore authoritative artifact storage readability before validating artifact-backed evidence refs",
+                    ),
                 );
                 return None;
             }
@@ -1530,7 +1815,10 @@ fn load_authoritative_artifact_fingerprints(
                             "Could not read authoritative artifact {}: {error}",
                             entry.path().display()
                         ),
-                        "Restore authoritative artifact storage readability before validating artifact-backed evidence refs.",
+                        public_gate_remediation(
+                            context,
+                            "Restore authoritative artifact storage readability before validating artifact-backed evidence refs",
+                        ),
                     );
                     return None;
                 }
@@ -1643,36 +1931,44 @@ fn verify_authoritative_public_artifact(
 
 fn verify_declared_fingerprint(
     source: &str,
-    header_label: &str,
-    declared_fingerprint: &str,
-    unverifiable_reason_code: &str,
-    mismatch_reason_code: &str,
-    artifact_label: &str,
+    validation: DeclaredFingerprintValidation<'_>,
     gate: &mut GateState,
 ) -> Option<String> {
     let Some(canonical_fingerprint) =
-        canonical_fingerprint_without_header_value(source, header_label)
+        canonical_fingerprint_without_header_value(source, validation.header_label)
     else {
         gate.fail(
             FailureClass::ArtifactIntegrityMismatch,
-            unverifiable_reason_code,
+            validation.unverifiable_reason_code,
             format!(
-                "Could not recompute canonical {artifact_label} fingerprint because `{header_label}` is missing or malformed."
+                "Could not recompute canonical {} fingerprint because `{}` is missing or malformed.",
+                validation.artifact_label, validation.header_label
             ),
-            format!("Regenerate the {artifact_label} artifact with a valid `{header_label}` header."),
+            public_gate_remediation_for_plan(
+                validation.plan_rel,
+                format!(
+                    "Refresh the {} artifact with a valid `{}` header",
+                    validation.artifact_label, validation.header_label
+                ),
+            ),
         );
         return None;
     };
 
-    if canonical_fingerprint != declared_fingerprint {
+    if canonical_fingerprint != validation.declared_fingerprint {
         gate.fail(
             FailureClass::ArtifactIntegrityMismatch,
-            mismatch_reason_code,
+            validation.mismatch_reason_code,
             format!(
-                "Declared {artifact_label} fingerprint does not match canonical content-derived fingerprint."
+                "Declared {} fingerprint does not match canonical content-derived fingerprint.",
+                validation.artifact_label
             ),
-            format!(
-                "Regenerate the {artifact_label} artifact and ensure `{header_label}` is computed from canonical content."
+            public_gate_remediation_for_plan(
+                validation.plan_rel,
+                format!(
+                    "Refresh the {} artifact and ensure `{}` is computed from canonical content",
+                    validation.artifact_label, validation.header_label
+                ),
             ),
         );
         return None;
@@ -1710,4 +2006,46 @@ fn canonical_fingerprint_without_header_value(source: &str, header_label: &str) 
     }
 
     replaced.then(|| sha256_hex(canonical_source.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_gate_remediation_starts_with_public_operator_query() {
+        let remediation = public_gate_remediation_for_plan(
+            "docs/featureforge/plans/example.md",
+            "Repair authoritative harness state.",
+        );
+
+        assert!(
+            remediation.starts_with(
+                "Query workflow/operator JSON for the approved plan by running `featureforge workflow operator --plan <approved-plan-path> --json` for `docs/featureforge/plans/example.md`"
+            ),
+            "gate remediation should make the public operator query the first visible action: {remediation}"
+        );
+        assert!(
+            remediation.contains("follow `recommended_public_command_argv` when present"),
+            "gate remediation should preserve typed public route guidance: {remediation}"
+        );
+        assert!(
+            remediation.contains("Diagnostic context: Repair authoritative harness state."),
+            "artifact-specific repair text should be diagnostic context only: {remediation}"
+        );
+        assert!(
+            remediation.ends_with("Do not hand-edit or reconstruct proof artifacts."),
+            "gate remediation should end with the manual-artifact edit prohibition: {remediation}"
+        );
+    }
+
+    #[test]
+    fn public_gate_remediation_omits_empty_diagnostic_context() {
+        let remediation = public_gate_remediation_for_plan("plan.md", "   . ");
+
+        assert!(
+            !remediation.contains("Diagnostic context:"),
+            "empty gate remediation context should not render a diagnostic sentence: {remediation}"
+        );
+    }
 }

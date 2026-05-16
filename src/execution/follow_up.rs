@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+use crate::execution::gate_reason_codes::finish_review_gate_already_current_reason_code;
+use crate::execution::review_route_tokens::{
+    FOLLOW_UP_ADVANCE_LATE_STAGE, FOLLOW_UP_CLOSE_CURRENT_TASK, FOLLOW_UP_EXECUTION_REENTRY,
+    FOLLOW_UP_GATE_FINISH, FOLLOW_UP_GATE_REVIEW, FOLLOW_UP_RECORD_HANDOFF,
+    FOLLOW_UP_REPAIR_REVIEW_STATE, FOLLOW_UP_REQUEST_EXTERNAL_REVIEW,
+    FOLLOW_UP_RESOLVE_RELEASE_BLOCKER, FOLLOW_UP_RUN_VERIFICATION,
+    FOLLOW_UP_WAIT_FOR_EXTERNAL_REVIEW_RESULT,
+};
 use crate::git::sha256_hex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +23,27 @@ pub(crate) enum FollowUpKind {
     RecordHandoff,
     GateReview,
     GateFinish,
+}
+
+const PUBLIC_FOLLOW_UP_KINDS: &[FollowUpKind] = &[
+    FollowUpKind::RepairReviewState,
+    FollowUpKind::AdvanceLateStage,
+    FollowUpKind::ExecutionReentry,
+    FollowUpKind::CloseCurrentTask,
+    FollowUpKind::RequestExternalReview,
+    FollowUpKind::WaitForExternalReviewResult,
+    FollowUpKind::RunVerification,
+    FollowUpKind::ResolveReleaseBlocker,
+    FollowUpKind::RecordHandoff,
+    FollowUpKind::GateReview,
+    FollowUpKind::GateFinish,
+];
+
+pub fn public_follow_up_tokens() -> impl Iterator<Item = &'static str> {
+    PUBLIC_FOLLOW_UP_KINDS
+        .iter()
+        .copied()
+        .map(FollowUpKind::public_token)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +130,7 @@ const FOLLOW_UP_ALIAS_RULES: &[FollowUpAliasRule] = &[
         persisted_repair_kind: Some(FollowUpKind::AdvanceLateStage),
     },
     FollowUpAliasRule {
-        token: "advance_late_stage",
+        token: FOLLOW_UP_ADVANCE_LATE_STAGE,
         public_kind: Some(FollowUpKind::AdvanceLateStage),
         persisted_repair_kind: Some(FollowUpKind::AdvanceLateStage),
     },
@@ -111,42 +140,42 @@ const FOLLOW_UP_ALIAS_RULES: &[FollowUpAliasRule] = &[
         persisted_repair_kind: Some(FollowUpKind::CloseCurrentTask),
     },
     FollowUpAliasRule {
-        token: "close_current_task",
+        token: FOLLOW_UP_CLOSE_CURRENT_TASK,
         public_kind: Some(FollowUpKind::CloseCurrentTask),
         persisted_repair_kind: Some(FollowUpKind::CloseCurrentTask),
     },
     FollowUpAliasRule {
-        token: "execution_reentry",
+        token: FOLLOW_UP_EXECUTION_REENTRY,
         public_kind: Some(FollowUpKind::ExecutionReentry),
         persisted_repair_kind: Some(FollowUpKind::ExecutionReentry),
     },
     FollowUpAliasRule {
-        token: "request_external_review",
+        token: FOLLOW_UP_REQUEST_EXTERNAL_REVIEW,
         public_kind: Some(FollowUpKind::RequestExternalReview),
         persisted_repair_kind: Some(FollowUpKind::RequestExternalReview),
     },
     FollowUpAliasRule {
-        token: "wait_for_external_review_result",
+        token: FOLLOW_UP_WAIT_FOR_EXTERNAL_REVIEW_RESULT,
         public_kind: Some(FollowUpKind::WaitForExternalReviewResult),
         persisted_repair_kind: Some(FollowUpKind::WaitForExternalReviewResult),
     },
     FollowUpAliasRule {
-        token: "run_verification",
+        token: FOLLOW_UP_RUN_VERIFICATION,
         public_kind: Some(FollowUpKind::RunVerification),
         persisted_repair_kind: Some(FollowUpKind::RunVerification),
     },
     FollowUpAliasRule {
-        token: "resolve_release_blocker",
+        token: FOLLOW_UP_RESOLVE_RELEASE_BLOCKER,
         public_kind: Some(FollowUpKind::ResolveReleaseBlocker),
         persisted_repair_kind: Some(FollowUpKind::ResolveReleaseBlocker),
     },
     FollowUpAliasRule {
-        token: "record_handoff",
+        token: FOLLOW_UP_RECORD_HANDOFF,
         public_kind: Some(FollowUpKind::RecordHandoff),
         persisted_repair_kind: Some(FollowUpKind::RecordHandoff),
     },
     FollowUpAliasRule {
-        token: "repair_review_state",
+        token: FOLLOW_UP_REPAIR_REVIEW_STATE,
         public_kind: Some(FollowUpKind::RepairReviewState),
         persisted_repair_kind: Some(FollowUpKind::RepairReviewState),
     },
@@ -156,12 +185,12 @@ const FOLLOW_UP_ALIAS_RULES: &[FollowUpAliasRule] = &[
         persisted_repair_kind: Some(FollowUpKind::RepairReviewState),
     },
     FollowUpAliasRule {
-        token: "gate_review",
+        token: FOLLOW_UP_GATE_REVIEW,
         public_kind: Some(FollowUpKind::GateReview),
         persisted_repair_kind: Some(FollowUpKind::GateReview),
     },
     FollowUpAliasRule {
-        token: "gate_finish",
+        token: FOLLOW_UP_GATE_FINISH,
         public_kind: Some(FollowUpKind::GateFinish),
         persisted_repair_kind: Some(FollowUpKind::GateFinish),
     },
@@ -170,17 +199,17 @@ const FOLLOW_UP_ALIAS_RULES: &[FollowUpAliasRule] = &[
 impl FollowUpKind {
     pub(crate) fn public_token(self) -> &'static str {
         match self {
-            Self::RepairReviewState => "repair_review_state",
-            Self::AdvanceLateStage => "advance_late_stage",
-            Self::ExecutionReentry => "execution_reentry",
-            Self::CloseCurrentTask => "close_current_task",
-            Self::RequestExternalReview => "request_external_review",
-            Self::WaitForExternalReviewResult => "wait_for_external_review_result",
-            Self::RunVerification => "run_verification",
-            Self::ResolveReleaseBlocker => "resolve_release_blocker",
-            Self::RecordHandoff => "record_handoff",
-            Self::GateReview => "gate_review",
-            Self::GateFinish => "gate_finish",
+            Self::RepairReviewState => FOLLOW_UP_REPAIR_REVIEW_STATE,
+            Self::AdvanceLateStage => FOLLOW_UP_ADVANCE_LATE_STAGE,
+            Self::ExecutionReentry => FOLLOW_UP_EXECUTION_REENTRY,
+            Self::CloseCurrentTask => FOLLOW_UP_CLOSE_CURRENT_TASK,
+            Self::RequestExternalReview => FOLLOW_UP_REQUEST_EXTERNAL_REVIEW,
+            Self::WaitForExternalReviewResult => FOLLOW_UP_WAIT_FOR_EXTERNAL_REVIEW_RESULT,
+            Self::RunVerification => FOLLOW_UP_RUN_VERIFICATION,
+            Self::ResolveReleaseBlocker => FOLLOW_UP_RESOLVE_RELEASE_BLOCKER,
+            Self::RecordHandoff => FOLLOW_UP_RECORD_HANDOFF,
+            Self::GateReview => FOLLOW_UP_GATE_REVIEW,
+            Self::GateFinish => FOLLOW_UP_GATE_FINISH,
         }
     }
 
@@ -208,36 +237,20 @@ impl FollowUpKind {
 }
 
 impl RepairFollowUpKind {
-    pub(crate) fn from_public_follow_up(kind: FollowUpKind) -> Self {
-        match kind {
-            FollowUpKind::RepairReviewState => Self::RepairReviewState,
-            FollowUpKind::AdvanceLateStage => Self::AdvanceLateStage,
-            FollowUpKind::ExecutionReentry => Self::ExecutionReentry,
-            FollowUpKind::CloseCurrentTask => Self::CloseTask,
-            FollowUpKind::RequestExternalReview => Self::RequestExternalReview,
-            FollowUpKind::WaitForExternalReviewResult => Self::WaitForExternalReviewResult,
-            FollowUpKind::RunVerification => Self::RunVerification,
-            FollowUpKind::ResolveReleaseBlocker => Self::ResolveReleaseBlocker,
-            FollowUpKind::RecordHandoff => Self::RecordHandoff,
-            FollowUpKind::GateReview => Self::GateReview,
-            FollowUpKind::GateFinish => Self::GateFinish,
-        }
-    }
-
     pub(crate) fn from_persisted_token(token: &str) -> Option<Self> {
         match token.trim() {
             "record_branch_closure" | "branch_closure" => Some(Self::RecordBranchClosure),
-            "advance_late_stage" => Some(Self::AdvanceLateStage),
-            "record_task_closure" | "close_current_task" => Some(Self::CloseTask),
-            "execution_reentry" => Some(Self::ExecutionReentry),
-            "repair_review_state" | "record_pivot" => Some(Self::RepairReviewState),
-            "request_external_review" => Some(Self::RequestExternalReview),
-            "wait_for_external_review_result" => Some(Self::WaitForExternalReviewResult),
-            "run_verification" => Some(Self::RunVerification),
-            "resolve_release_blocker" => Some(Self::ResolveReleaseBlocker),
-            "record_handoff" => Some(Self::RecordHandoff),
-            "gate_review" => Some(Self::GateReview),
-            "gate_finish" => Some(Self::GateFinish),
+            FOLLOW_UP_ADVANCE_LATE_STAGE => Some(Self::AdvanceLateStage),
+            "record_task_closure" | FOLLOW_UP_CLOSE_CURRENT_TASK => Some(Self::CloseTask),
+            FOLLOW_UP_EXECUTION_REENTRY => Some(Self::ExecutionReentry),
+            FOLLOW_UP_REPAIR_REVIEW_STATE | "record_pivot" => Some(Self::RepairReviewState),
+            FOLLOW_UP_REQUEST_EXTERNAL_REVIEW => Some(Self::RequestExternalReview),
+            FOLLOW_UP_WAIT_FOR_EXTERNAL_REVIEW_RESULT => Some(Self::WaitForExternalReviewResult),
+            FOLLOW_UP_RUN_VERIFICATION => Some(Self::RunVerification),
+            FOLLOW_UP_RESOLVE_RELEASE_BLOCKER => Some(Self::ResolveReleaseBlocker),
+            FOLLOW_UP_RECORD_HANDOFF => Some(Self::RecordHandoff),
+            FOLLOW_UP_GATE_REVIEW => Some(Self::GateReview),
+            FOLLOW_UP_GATE_FINISH => Some(Self::GateFinish),
             _ => None,
         }
     }
@@ -245,27 +258,45 @@ impl RepairFollowUpKind {
     pub(crate) fn persisted_token(self) -> &'static str {
         match self {
             Self::RecordBranchClosure => "record_branch_closure",
-            Self::AdvanceLateStage => "advance_late_stage",
+            Self::AdvanceLateStage => FOLLOW_UP_ADVANCE_LATE_STAGE,
             Self::RecordFinalReview => "record_final_review",
             Self::RecordQa => "record_qa",
             Self::CloseTask => "record_task_closure",
-            Self::RepairReviewState => "repair_review_state",
-            Self::ExecutionReentry => "execution_reentry",
-            Self::RequestExternalReview => "request_external_review",
-            Self::WaitForExternalReviewResult => "wait_for_external_review_result",
-            Self::RunVerification => "run_verification",
-            Self::ResolveReleaseBlocker => "resolve_release_blocker",
-            Self::RecordHandoff => "record_handoff",
-            Self::GateReview => "gate_review",
-            Self::GateFinish => "gate_finish",
+            Self::RepairReviewState => FOLLOW_UP_REPAIR_REVIEW_STATE,
+            Self::ExecutionReentry => FOLLOW_UP_EXECUTION_REENTRY,
+            Self::RequestExternalReview => FOLLOW_UP_REQUEST_EXTERNAL_REVIEW,
+            Self::WaitForExternalReviewResult => FOLLOW_UP_WAIT_FOR_EXTERNAL_REVIEW_RESULT,
+            Self::RunVerification => FOLLOW_UP_RUN_VERIFICATION,
+            Self::ResolveReleaseBlocker => FOLLOW_UP_RESOLVE_RELEASE_BLOCKER,
+            Self::RecordHandoff => FOLLOW_UP_RECORD_HANDOFF,
+            Self::GateReview => FOLLOW_UP_GATE_REVIEW,
+            Self::GateFinish => FOLLOW_UP_GATE_FINISH,
         }
     }
 
     pub(crate) fn public_token(self) -> &'static str {
         match self {
-            Self::RecordBranchClosure | Self::AdvanceLateStage => "advance_late_stage",
-            Self::CloseTask => "close_current_task",
+            Self::RecordBranchClosure | Self::AdvanceLateStage => FOLLOW_UP_ADVANCE_LATE_STAGE,
+            Self::CloseTask => FOLLOW_UP_CLOSE_CURRENT_TASK,
             other => other.persisted_token(),
+        }
+    }
+
+    pub(crate) fn target_scope(self) -> RepairTargetScope {
+        match self {
+            Self::RecordBranchClosure | Self::AdvanceLateStage | Self::ResolveReleaseBlocker => {
+                RepairTargetScope::BranchClosure
+            }
+            Self::RecordFinalReview
+            | Self::RequestExternalReview
+            | Self::WaitForExternalReviewResult
+            | Self::GateReview
+            | Self::GateFinish => RepairTargetScope::FinalReview,
+            Self::RecordQa | Self::RunVerification => RepairTargetScope::Qa,
+            Self::CloseTask => RepairTargetScope::TaskClosure,
+            Self::RepairReviewState | Self::ExecutionReentry | Self::RecordHandoff => {
+                RepairTargetScope::ExecutionStep
+            }
         }
     }
 }
@@ -358,13 +389,31 @@ pub(crate) fn direct_gate_follow_up_from_reason_codes<'a>(
     routing_required_follow_up: Option<FollowUpKind>,
 ) -> Option<FollowUpKind> {
     let reason_codes = reason_codes.into_iter().collect::<Vec<_>>();
-    if reason_codes.contains(&"finish_review_gate_already_current") {
+    if reason_codes.iter().copied().any(|code| {
+        matches!(
+            code,
+            crate::execution::phase::DETAIL_BRANCH_CLOSURE_RECORDING_REQUIRED_FOR_RELEASE_READINESS
+                | crate::execution::phase::DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED
+                | crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY
+        )
+    }) {
+        return routing_required_follow_up.or(Some(FollowUpKind::AdvanceLateStage));
+    }
+    if reason_codes
+        .iter()
+        .copied()
+        .any(finish_review_gate_already_current_reason_code)
+    {
         return Some(FollowUpKind::GateFinish);
     }
     if reason_codes.contains(&"finish_review_gate_checkpoint_missing") {
         return Some(FollowUpKind::GateReview);
     }
-    if reason_codes.contains(&"current_task_closure_overlay_restore_required") {
+    if reason_codes
+        .iter()
+        .copied()
+        .any(crate::execution::closure_diagnostics::task_boundary_overlay_restore_reason_code)
+    {
         return Some(FollowUpKind::RepairReviewState);
     }
     if reason_codes.contains(&"current_branch_reviewed_state_id_missing") {
@@ -382,14 +431,9 @@ pub(crate) fn direct_gate_follow_up_from_reason_codes<'a>(
 fn task_review_result_requires_verification<'a>(
     reason_codes: impl IntoIterator<Item = &'a str>,
 ) -> bool {
-    reason_codes.into_iter().any(|reason_code| {
-        matches!(
-            reason_code,
-            "prior_task_verification_missing"
-                | "prior_task_verification_missing_legacy"
-                | "task_verification_summary_malformed"
-        )
-    })
+    reason_codes.into_iter().any(
+        crate::execution::closure_diagnostics::task_boundary_verification_diagnostic_reason_code,
+    )
 }
 
 #[cfg(test)]
@@ -400,28 +444,32 @@ mod tests {
         normalize_public_routing_follow_up_token,
     };
     use crate::execution::command_eligibility::hidden_command_tokens;
+    use crate::execution::review_route_tokens::{
+        FOLLOW_UP_ADVANCE_LATE_STAGE, FOLLOW_UP_EXECUTION_REENTRY, FOLLOW_UP_REPAIR_REVIEW_STATE,
+        REVIEW_STATE_STALE_UNREVIEWED,
+    };
 
     #[test]
     fn public_routing_aliases_are_canonicalized_once() {
         for alias in [
             "record_branch_closure",
             "branch_closure",
-            "advance_late_stage",
+            FOLLOW_UP_ADVANCE_LATE_STAGE,
         ] {
             assert_eq!(
                 normalize_public_routing_follow_up_token(Some(alias)),
-                Some("advance_late_stage")
+                Some(FOLLOW_UP_ADVANCE_LATE_STAGE)
             );
         }
-        for alias in ["record_task_closure", "execution_reentry"] {
+        for alias in ["record_task_closure", FOLLOW_UP_EXECUTION_REENTRY] {
             assert_eq!(
                 normalize_public_routing_follow_up_token(Some(alias)),
-                Some("execution_reentry")
+                Some(FOLLOW_UP_EXECUTION_REENTRY)
             );
         }
         assert_eq!(
             normalize_public_routing_follow_up_token(Some("record_pivot")),
-            Some("repair_review_state")
+            Some(FOLLOW_UP_REPAIR_REVIEW_STATE)
         );
     }
 
@@ -438,7 +486,7 @@ mod tests {
         assert_eq!(
             direct_gate_follow_up_from_reason_codes(
                 ["unfinished_steps_remaining"],
-                Some("stale_unreviewed"),
+                Some(REVIEW_STATE_STALE_UNREVIEWED),
                 None,
             ),
             Some(FollowUpKind::RepairReviewState)
@@ -451,13 +499,29 @@ mod tests {
             ),
             None
         );
+        assert_eq!(
+            direct_gate_follow_up_from_reason_codes(
+                [crate::execution::review_route_tokens::REASON_DERIVED_REVIEW_STATE_MISSING],
+                Some("stale_unreviewed"),
+                Some(FollowUpKind::RepairReviewState),
+            ),
+            None
+        );
+        assert_eq!(
+            direct_gate_follow_up_from_reason_codes(
+                [crate::execution::phase::DETAIL_RELEASE_READINESS_RECORDING_READY],
+                Some("clean"),
+                None,
+            ),
+            Some(FollowUpKind::AdvanceLateStage)
+        );
     }
 
     #[test]
     fn persisted_repair_aliases_preserve_projection_repair_intent() {
         assert_eq!(
             normalize_persisted_repair_follow_up_token(Some("record_branch_closure")),
-            Some("advance_late_stage")
+            Some(FOLLOW_UP_ADVANCE_LATE_STAGE)
         );
         assert_eq!(
             normalize_persisted_repair_follow_up_token(Some("record_task_closure")),
@@ -465,7 +529,7 @@ mod tests {
         );
         assert_eq!(
             normalize_persisted_repair_follow_up_token(Some("record_pivot")),
-            Some("repair_review_state")
+            Some(FOLLOW_UP_REPAIR_REVIEW_STATE)
         );
     }
 
@@ -474,7 +538,7 @@ mod tests {
         assert_eq!(
             follow_up_from_phase_detail(
                 crate::execution::phase::DETAIL_TASK_REVIEW_RESULT_PENDING,
-                ["prior_task_verification_missing"]
+                [crate::execution::closure_diagnostics::TASK_BOUNDARY_DIAGNOSTIC_REASON_PRIOR_TASK_VERIFICATION_MISSING]
             ),
             Some(FollowUpKind::RunVerification)
         );
@@ -497,11 +561,11 @@ mod tests {
     #[test]
     fn public_follow_up_templates_do_not_surface_removed_hidden_commands() {
         for follow_up in [
-            "repair_review_state",
-            "advance_late_stage",
+            FOLLOW_UP_REPAIR_REVIEW_STATE,
+            FOLLOW_UP_ADVANCE_LATE_STAGE,
             "resolve_release_blocker",
             "record_handoff",
-            "execution_reentry",
+            FOLLOW_UP_EXECUTION_REENTRY,
             "request_external_review",
             "wait_for_external_review_result",
             "run_verification",
@@ -510,7 +574,7 @@ mod tests {
                 .expect("public follow-up should expose a public command template");
             for hidden_token in hidden_command_tokens() {
                 assert!(
-                    !template.contains(hidden_token),
+                    !template.contains(hidden_token.as_str()),
                     "{follow_up} exposed hidden command token {hidden_token}: {template}"
                 );
             }

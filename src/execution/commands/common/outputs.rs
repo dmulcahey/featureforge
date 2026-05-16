@@ -1,5 +1,17 @@
-use super::*;
+use std::path::Path;
+
+use serde::Serialize;
+
+use crate::cli::plan_execution::{AdvanceLateStageArgs, CloseCurrentTaskArgs};
+use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::command_eligibility::PublicCommandInputRequirement;
+use crate::execution::command_model::task_closure_negative_result_blocks_current_reviewed_state;
+use crate::execution::public_command_types::{
+    RecommendedPublicCommandArgv, RecommendedPublicCommandTemplate,
+};
+use crate::execution::recording::resolve_current_task_closure_postconditions_for_current_workspace;
+use crate::execution::state::ExecutionContext;
+use crate::execution::transitions::{AuthoritativeTransitionState, CurrentTaskClosureRecord};
 
 pub(in crate::execution::commands) const TASK_CLOSURE_RECORDED_TRACE: &str =
     "Recorded or refreshed the current task closure from authoritative review state.";
@@ -22,6 +34,8 @@ pub struct CloseCurrentTaskOutput {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: RecommendedPublicCommandArgv,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_template: RecommendedPublicCommandTemplate,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -60,7 +74,7 @@ pub(in crate::execution::commands) fn internal_execution_flags_enabled() -> bool
 }
 
 pub(in crate::execution::commands) fn require_internal_execution_flag_allowed(
-    flag: &str,
+    flag_description: &str,
     command: &str,
 ) -> Result<(), JsonFailure> {
     if internal_execution_flags_enabled() {
@@ -69,7 +83,7 @@ pub(in crate::execution::commands) fn require_internal_execution_flag_allowed(
     Err(JsonFailure::new(
         FailureClass::InvalidCommandInput,
         format!(
-            "{flag} is an internal compatibility flag and is not available in normal public execution. It exists only for {INTERNAL_EXECUTION_FLAGS_COMPATIBILITY_REASON} and should be removed when {INTERNAL_EXECUTION_FLAGS_EXPIRY_CONDITION}. Run {command} without it."
+            "{flag_description} is an internal compatibility flag and is not available in normal public execution. It exists only for {INTERNAL_EXECUTION_FLAGS_COMPATIBILITY_REASON} and should be removed when {INTERNAL_EXECUTION_FLAGS_EXPIRY_CONDITION}. Run {command} without it."
         ),
     ))
 }
@@ -78,7 +92,10 @@ pub(in crate::execution::commands) fn require_close_current_task_public_flags(
     args: &CloseCurrentTaskArgs,
 ) -> Result<(), JsonFailure> {
     if args.dispatch_id.is_some() {
-        require_internal_execution_flag_allowed("--dispatch-id", "close-current-task")?;
+        require_internal_execution_flag_allowed(
+            "the dispatch-lineage compatibility input",
+            "close-current-task",
+        )?;
     }
     Ok(())
 }
@@ -87,10 +104,16 @@ pub(in crate::execution::commands) fn require_advance_late_stage_public_flags(
     args: &AdvanceLateStageArgs,
 ) -> Result<(), JsonFailure> {
     if args.dispatch_id.is_some() {
-        require_internal_execution_flag_allowed("--dispatch-id", "advance-late-stage")?;
+        require_internal_execution_flag_allowed(
+            "the dispatch-lineage compatibility input",
+            "advance-late-stage",
+        )?;
     }
     if args.branch_closure_id.is_some() {
-        require_internal_execution_flag_allowed("--branch-closure-id", "advance-late-stage")?;
+        require_internal_execution_flag_allowed(
+            "the branch-closure compatibility input",
+            "advance-late-stage",
+        )?;
     }
     Ok(())
 }
@@ -114,6 +137,7 @@ pub(in crate::execution::commands) fn close_current_task_already_current_output(
         code: None,
         recommended_command: None,
         recommended_public_command_argv: None,
+        recommended_public_command_template: None,
         required_inputs: Vec::new(),
         rederive_via_workflow_operator: None,
         required_follow_up: None,
@@ -192,6 +216,8 @@ pub struct RecordBranchClosureOutput {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: RecommendedPublicCommandArgv,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_template: RecommendedPublicCommandTemplate,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -219,6 +245,8 @@ pub struct AdvanceLateStageOutput {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: RecommendedPublicCommandArgv,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_template: RecommendedPublicCommandTemplate,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -239,6 +267,8 @@ pub struct RecordQaOutput {
     pub recommended_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: RecommendedPublicCommandArgv,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_template: RecommendedPublicCommandTemplate,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -282,6 +312,8 @@ pub(in crate::execution::commands) struct BlockedCloseCurrentTaskOutputContext<'
     pub(in crate::execution::commands) recommended_command: Option<String>,
     pub(in crate::execution::commands) recommended_public_command_argv:
         RecommendedPublicCommandArgv,
+    pub(in crate::execution::commands) recommended_public_command_template:
+        RecommendedPublicCommandTemplate,
     pub(in crate::execution::commands) required_inputs: Vec<PublicCommandInputRequirement>,
     pub(in crate::execution::commands) rederive_via_workflow_operator: Option<bool>,
     pub(in crate::execution::commands) required_follow_up: Option<String>,

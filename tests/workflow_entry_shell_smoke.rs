@@ -26,7 +26,6 @@ struct PublicRouteSnapshot {
     phase_detail: Option<String>,
     review_state_status: String,
     next_action: String,
-    recommended_command: Option<String>,
     blocking_task: Option<u32>,
     blocking_scope: Option<String>,
     external_wait_state: Option<String>,
@@ -63,10 +62,6 @@ fn public_route_snapshot(value: &Value) -> PublicRouteSnapshot {
             .map(str::to_owned),
         review_state_status,
         next_action,
-        recommended_command: value
-            .get("recommended_command")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
         blocking_task: value
             .get("blocking_task")
             .and_then(Value::as_u64)
@@ -309,7 +304,7 @@ fn harness_state_file_path(repo: &Path, state: &Path) -> std::path::PathBuf {
     harness_state_path(state, &identity.repo_slug, &identity.branch_name)
 }
 
-fn read_authoritative_harness_state(repo: &Path, state: &Path, purpose: &str) -> Value {
+fn synthetic_read_authoritative_harness_state(repo: &Path, state: &Path, purpose: &str) -> Value {
     let state_path = harness_state_file_path(repo, state);
     featureforge::execution::event_log::load_reduced_authoritative_state_for_tests(&state_path)
         .unwrap_or_else(|error| {
@@ -328,7 +323,7 @@ fn read_authoritative_harness_state(repo: &Path, state: &Path, purpose: &str) ->
         })
 }
 
-fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
+fn synthetic_write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
     let state_path = harness_state_file_path(repo, state);
     if let Some(parent) = state_path.parent() {
         fs::create_dir_all(parent).expect("harness state parent should be creatable");
@@ -681,11 +676,12 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     setup_task_boundary_blocked_case(repo, state, plan_rel);
 
-    let mut harness_state_json = read_authoritative_harness_state(repo, state, "FS-09 mutation");
+    let mut harness_state_json =
+        synthetic_read_authoritative_harness_state(repo, state, "FS-09 mutation");
     harness_state_json["current_task_closure_records"] = serde_json::json!({});
     harness_state_json["strategy_review_dispatch_lineage"] = serde_json::json!({});
     harness_state_json["review_state_repair_follow_up"] = Value::from("execution_reentry");
-    write_harness_state_payload(repo, state, &harness_state_json);
+    synthetic_write_harness_state_payload(repo, state, &harness_state_json);
 
     let repair = run_plan_execution_json(
         repo,
@@ -780,6 +776,13 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
     assert_doctor_text_does_not_route_to_recover(
         &String::from_utf8_lossy(&doctor_external_ready_text.stdout),
         "FS-09 external-ready task-closure recording route",
+    );
+    let doctor_external_ready_stdout = String::from_utf8_lossy(&doctor_external_ready_text.stdout);
+    assert!(
+        doctor_external_ready_stdout.contains(
+            "featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready --json"
+        ),
+        "FS-09 external-ready workflow doctor text should route execution guidance through operator JSON with the external-ready hint:\n{doctor_external_ready_stdout}"
     );
 }
 
@@ -953,7 +956,7 @@ fn fs16_doctor_text_sanitizes_control_payload_plan_path_without_mutating_json() 
 }
 
 #[test]
-fn fs17_doctor_public_entrypoints_keep_single_context_build_path() {
+fn internal_semantic_fs17_doctor_public_entrypoints_keep_single_context_build_path() {
     let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/workflow/operator.rs");
     let source = fs::read_to_string(&source_path)
         .unwrap_or_else(|error| panic!("operator source should be readable: {error}"));

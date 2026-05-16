@@ -38,18 +38,13 @@ _featureforge_exec_public_argv() {
     "$_FEATUREFORGE_BIN" "$@"
     return $?
   fi
-  "$@"
+  echo "featureforge: refusing non-featureforge public argv: $1" >&2
+  return 2
 }
 ```
-## Installed Control Plane
+## Runtime Route Reference
 
-Live FeatureForge workflow routing is install-owned:
-- use only `$_FEATUREFORGE_BIN` for live workflow control-plane commands
-- do not route live workflow commands through `./bin/featureforge`
-- do not route live workflow commands through `target/debug/featureforge`
-- do not route live workflow commands through `cargo run`
-
-When a helper returns `recommended_public_command_argv`, treat it as exact argv. If `recommended_public_command_argv[0] == "featureforge"`, execute through the installed runtime by replacing argv[0] with `$_FEATUREFORGE_BIN` (for example via `_featureforge_exec_public_argv ...`).
+This skill does not own live workflow routing. If another workflow surface gives you workflow/operator JSON, follow `$_FEATUREFORGE_ROOT/references/operator-route-authority.md` instead of reconstructing route law here.
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -93,9 +88,9 @@ Use upstream ProjectMemory as source material only. In FeatureForge, project mem
 - Do not turn `issues.md` into a live tracker, daily status log, or execution checklist.
 - If existing memory content is partially valid, preserve the valid content and create or normalize only the missing boundary pieces unless the user explicitly asks for a rewrite.
 
-Read `authority-boundaries.md` before broad setup or repair work.
-Read `examples.md` before writing new entries.
-Reuse the seed layouts in `references/` when creating missing files.
+Read skill-local `authority-boundaries.md` before broad setup or repair work.
+Read skill-local `examples.md` before writing new entries.
+Reuse the seed layouts in skill-local `references/` when creating missing files.
 
 ## Protected-Branch Repo-Write Gate
 
@@ -105,7 +100,7 @@ Before editing repo-visible memory files, run the shared repo-safety preflight f
 $_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:project-memory --task-id <current-memory-update> --path <repo-relative-path> --write-target repo-file-write
 ```
 
-- If the helper returns `allowed`, continue with the memory write.
+- If the repo-safety check returns `allowed`, continue with the memory write.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact memory-update scope.
 - If the user explicitly approves the protected-branch memory write, approve the full memory scope you intend to use on that branch, including each repo-relative path you will edit:
 
@@ -122,7 +117,7 @@ $_FEATUREFORGE_BIN repo-safety check --intent write --stage featureforge:project
 1. Read `docs/project_notes/README.md` if it exists. If it does not exist, treat setup as boundary creation first.
 2. Identify the authoritative source for the memory you want to add or repair.
 3. Distill only the durable takeaway. Prefer short bullets plus backlinks over copied prose.
-4. Apply the reject vocabulary from `authority-boundaries.md` when content drifts:
+4. Apply the reject vocabulary from skill-local `authority-boundaries.md` when content drifts:
    - `SecretLikeContent`
    - `AuthorityConflict`
    - `TrackerDrift`

@@ -2,141 +2,63 @@ use std::fs;
 use std::path::Path;
 
 use schemars::{JsonSchema, schema_for};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
+use crate::contracts::plan::PLAN_QA_REQUIREMENT_VALUES;
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::command_eligibility::{PublicCommand, PublicCommandInputRequirement};
+use crate::execution::command_eligibility::{
+    PUBLIC_EXECUTION_COMMAND_KIND_VALUES, PUBLIC_REPAIR_TARGET_COMMAND_KIND_VALUES, PublicCommand,
+    PublicCommandInputRequirement,
+};
 use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, ChunkingStrategy, DownstreamFreshnessState,
     EvaluationVerdict, EvaluatorKind, EvaluatorPolicyName, ExecutionRunId, HarnessPhase,
     ResetPolicy,
 };
+use crate::execution::next_action::PUBLIC_NEXT_ACTION_VALUES;
 use crate::execution::phase::{
     DETAIL_FINAL_REVIEW_RECORDING_READY, DETAIL_RELEASE_BLOCKER_RESOLUTION_REQUIRED,
     DETAIL_RELEASE_READINESS_RECORDING_READY, DETAIL_TASK_CLOSURE_RECORDING_READY, PHASE_EXECUTING,
-    PUBLIC_STATUS_PHASE_VALUES, RECORDING_CONTEXT_PHASE_DETAILS,
+    PLAN_EXECUTION_STATUS_PHASE_DETAIL_VALUES, PUBLIC_STATUS_PHASE_VALUES,
+    RECORDING_CONTEXT_PHASE_DETAILS,
 };
-use crate::execution::public_command_types::RecommendedPublicCommandArgv;
-use crate::execution::router::{
+use crate::execution::public_command_types::{
+    RecommendedPublicCommandArgv, RecommendedPublicCommandTemplate,
+};
+use crate::execution::review_route_tokens::{
+    PUBLIC_REVIEW_STATE_STATUS_VALUES, REQUIRED_FOLLOW_UP_SCHEMA_VALUES,
+};
+use crate::execution::route_plan::PUBLIC_STATE_KIND_VALUES;
+use crate::execution::route_plan::{
     Blocker as RuntimeBlocker, NextPublicAction as RuntimeNextPublicAction,
 };
 use crate::execution::runtime_provenance::RuntimeProvenance;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum ReviewStateStatusSchema {
-    Clean,
-    StaleUnreviewed,
-    MissingCurrentClosure,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum PhaseDetailSchema {
-    BlockedRuntimeBug,
-    BranchClosureRecordingRequiredForReleaseReadiness,
-    ExecutionInProgress,
-    ExecutionPreflightRequired,
-    ExecutionReentryRequired,
-    FinalReviewDispatchRequired,
-    FinalReviewOutcomePending,
-    FinalReviewRecordingReady,
-    FinishCompletionGateReady,
-    FinishReviewGateReady,
-    HandoffRecordingRequired,
-    PlanningReentryRequired,
-    QaRecordingRequired,
-    ReleaseBlockerResolutionRequired,
-    ReleaseReadinessRecordingReady,
-    RuntimeReconcileRequired,
-    TaskClosureRecordingReady,
-    TaskReviewResultPending,
-    TestPlanRefreshRequired,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum StateKindSchema {
-    ActionablePublicCommand,
-    WaitingExternalInput,
-    Terminal,
-    BlockedRuntimeBug,
-    RuntimeReconcileRequired,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-enum QaRequirementSchema {
-    #[serde(rename = "required")]
-    Required,
-    #[serde(rename = "not-required")]
-    NotRequired,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum ExecutionCommandKindSchema {
-    Begin,
-    Complete,
-    Reopen,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-enum PublicRepairTargetCommandKindSchema {
-    Begin,
-    Complete,
-    Reopen,
-    Transfer,
-    CloseCurrentTask,
-    RepairReviewState,
-    AdvanceLateStage,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum RequiredFollowUpSchema {
-    ExecutionReentry,
-    RepairReviewState,
-    RequestExternalReview,
-    RunVerification,
-    AdvanceLateStage,
-    ResolveReleaseBlocker,
-    RecordHandoff,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-enum NextActionSchema {
-    #[serde(rename = "advance late stage")]
-    AdvanceLateStage,
-    #[serde(rename = "finish branch")]
-    FinishBranch,
-    #[serde(rename = "close current task")]
-    CloseCurrentTask,
-    #[serde(rename = "continue execution")]
-    ContinueExecution,
-    #[serde(rename = "runtime diagnostic required")]
-    RuntimeDiagnosticRequired,
-    #[serde(rename = "request final review")]
-    RequestFinalReview,
-    #[serde(rename = "execution reentry required")]
-    ExecutionReentryRequired,
-    #[serde(rename = "hand off")]
-    HandOff,
-    #[serde(rename = "pivot / return to planning")]
-    PivotReturnToPlanning,
-    #[serde(rename = "refresh test plan")]
-    RefreshTestPlan,
-    #[serde(rename = "repair review state / reenter execution")]
-    RepairReviewStateReenterExecution,
-    #[serde(rename = "resolve release blocker")]
-    ResolveReleaseBlocker,
-    #[serde(rename = "run QA")]
-    RunQa,
-    #[serde(rename = "wait for external review result")]
-    WaitForExternalReviewResult,
-    #[serde(rename = "run verification")]
-    RunVerification,
-}
+pub const REQUIRED_FOLLOW_UP_SCHEMA_DESCRIPTION: &str =
+    "Required follow-up intent token; record_handoff is compatibility metadata, not executable.";
+pub const PUBLIC_COMMAND_TEMPLATE_KIND_SCHEMA_DESCRIPTION: &str =
+    "Public command intent label for a template; not executable by itself.";
+pub const RECOMMENDED_COMMAND_SCHEMA_DESCRIPTION: &str =
+    "Display-only compatibility summary; not executable.";
+pub const RECOMMENDED_PUBLIC_COMMAND_ARGV_SCHEMA_DESCRIPTION: &str =
+    "Executable public command argv when present.";
+pub const PLAN_EXECUTION_STATUS_RECOMMENDED_PUBLIC_COMMAND_ARGV_SCHEMA_DESCRIPTION: &str = "Diagnostic mirror of operator-derived public command argv when present; workflow operator JSON remains the normal executable route authority.";
+pub const RECOMMENDED_PUBLIC_COMMAND_TEMPLATE_SCHEMA_DESCRIPTION: &str =
+    "Non-executable public command template for input-required routes.";
+pub const REQUIRED_INPUTS_SCHEMA_DESCRIPTION: &str =
+    "Input names required to materialize a public command template.";
+pub const NEXT_ACTION_SCHEMA_DESCRIPTION: &str =
+    "Display-only route diagnostic label; not executable.";
+pub const NEXT_PUBLIC_ACTION_DISPLAY_ONLY_SCHEMA_DESCRIPTION: &str =
+    "Legacy compatibility marker; nested command fields are display-only.";
+pub const NEXT_PUBLIC_ACTION_COMMAND_SCHEMA_DESCRIPTION: &str =
+    "Display-only legacy command summary; not executable.";
+pub const NEXT_PUBLIC_ACTION_ARGS_TEMPLATE_SCHEMA_DESCRIPTION: &str =
+    "Display-only legacy argument template summary; not executable.";
+pub const ROUTE_NEXT_PUBLIC_ACTION_SCHEMA_DESCRIPTION: &str =
+    "Optional display-only public route action summary; not executable.";
+pub const BLOCKER_NEXT_PUBLIC_ACTION_SCHEMA_DESCRIPTION: &str =
+    "Optional display-only blocker action summary; not executable.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PlanExecutionStatus {
@@ -166,7 +88,6 @@ pub struct PlanExecutionStatus {
     pub current_qa_branch_closure_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_qa_result: Option<String>,
-    #[schemars(with = "Option<QaRequirementSchema>")]
     pub qa_requirement: Option<String>,
     pub latest_authoritative_sequence: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -213,9 +134,7 @@ pub struct PlanExecutionStatus {
     pub last_strategy_checkpoint_fingerprint: Option<String>,
     pub strategy_checkpoint_kind: String,
     pub strategy_reset_required: bool,
-    #[schemars(with = "PhaseDetailSchema")]
     pub phase_detail: String,
-    #[schemars(with = "ReviewStateStatusSchema")]
     pub review_state_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "PublicRecordingContext")]
@@ -236,7 +155,6 @@ pub struct PlanExecutionStatus {
     pub blocking_reason_codes: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub projection_diagnostics: Vec<String>,
-    #[schemars(with = "StateKindSchema")]
     pub state_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_public_action: Option<RuntimeNextPublicAction>,
@@ -247,13 +165,14 @@ pub struct PlanExecutionStatus {
     pub semantic_workspace_tree_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_workspace_tree_id: Option<String>,
-    #[schemars(with = "NextActionSchema")]
     pub next_action: String,
     #[serde(skip)]
     #[schemars(skip)]
     pub recommended_public_command: Option<PublicCommand>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_public_command_argv: RecommendedPublicCommandArgv,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_template: RecommendedPublicCommandTemplate,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -300,6 +219,8 @@ pub struct GateResult {
     pub current_branch_closure_id: Option<String>,
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
     pub recommended_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_public_command_template: RecommendedPublicCommandTemplate,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -326,6 +247,7 @@ pub struct GateState {
     pub current_branch_closure_id: Option<String>,
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
     pub recommended_command: Option<String>,
+    pub recommended_public_command_template: RecommendedPublicCommandTemplate,
     pub required_inputs: Vec<PublicCommandInputRequirement>,
     pub rederive_via_workflow_operator: Option<bool>,
 }
@@ -345,6 +267,7 @@ impl Default for GateState {
             current_branch_closure_id: None,
             finish_review_gate_pass_branch_closure_id: None,
             recommended_command: None,
+            recommended_public_command_template: None,
             required_inputs: Vec::new(),
             rederive_via_workflow_operator: None,
         }
@@ -367,6 +290,7 @@ impl GateState {
             finish_review_gate_pass_branch_closure_id: result
                 .finish_review_gate_pass_branch_closure_id,
             recommended_command: result.recommended_command,
+            recommended_public_command_template: result.recommended_public_command_template,
             required_inputs: result.required_inputs,
             rederive_via_workflow_operator: result.rederive_via_workflow_operator,
         }
@@ -422,6 +346,7 @@ impl GateState {
             finish_review_gate_pass_branch_closure_id: self
                 .finish_review_gate_pass_branch_closure_id,
             recommended_command: self.recommended_command,
+            recommended_public_command_template: self.recommended_public_command_template,
             required_inputs: self.required_inputs,
             rederive_via_workflow_operator: self.rederive_via_workflow_operator,
         }
@@ -436,7 +361,6 @@ pub struct StatusBlockingRecord {
     pub record_type: String,
     pub record_id: Option<String>,
     pub review_state_status: String,
-    #[schemars(with = "Option<RequiredFollowUpSchema>")]
     pub required_follow_up: Option<String>,
     pub message: String,
 }
@@ -462,7 +386,6 @@ pub struct PublicRecordingContext {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PublicExecutionCommandContext {
-    #[schemars(with = "ExecutionCommandKindSchema")]
     pub command_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_number: Option<u32>,
@@ -472,7 +395,6 @@ pub struct PublicExecutionCommandContext {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PublicRepairTarget {
-    #[schemars(with = "PublicRepairTargetCommandKindSchema")]
     pub command_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<u32>,
@@ -512,9 +434,13 @@ pub fn write_plan_execution_schema(output_dir: &Path) -> Result<(), JsonFailure>
             )
         });
     }
-    inject_plan_execution_phase_schema(&mut schema_json)?;
+    inject_plan_execution_route_vocabulary_schemas(&mut schema_json)?;
     tighten_plan_execution_public_context_schemas(&mut schema_json)?;
+    tighten_public_repair_target_schema(&mut schema_json)?;
     tighten_plan_execution_routing_field_schemas(&mut schema_json)?;
+    annotate_plan_execution_required_follow_up_schema(&mut schema_json)?;
+    annotate_plan_execution_public_command_template_schema(&mut schema_json)?;
+    annotate_plan_execution_next_public_action_schema(&mut schema_json)?;
     tighten_plan_execution_phase_bound_recording_context_contracts(&mut schema_json)?;
     let payload = serde_json::to_string_pretty(&schema_json).map_err(|error| {
         JsonFailure::new(
@@ -535,7 +461,7 @@ pub fn write_plan_execution_schema(output_dir: &Path) -> Result<(), JsonFailure>
     Ok(())
 }
 
-fn inject_plan_execution_phase_schema(
+fn inject_plan_execution_route_vocabulary_schemas(
     schema_json: &mut serde_json::Value,
 ) -> Result<(), JsonFailure> {
     let root = schema_json.as_object_mut().ok_or_else(|| {
@@ -553,12 +479,34 @@ fn inject_plan_execution_phase_schema(
                 "Plan execution schema is missing `$defs`.",
             )
         })?;
-    defs.insert(
-        String::from("PublicStatusPhaseSchema"),
-        serde_json::json!({
-            "enum": PUBLIC_STATUS_PHASE_VALUES,
-            "type": "string"
-        }),
+    insert_string_enum_definition(defs, "PublicStatusPhaseSchema", PUBLIC_STATUS_PHASE_VALUES);
+    insert_string_enum_definition(
+        defs,
+        "PhaseDetailSchema",
+        PLAN_EXECUTION_STATUS_PHASE_DETAIL_VALUES,
+    );
+    insert_string_enum_definition(
+        defs,
+        "ReviewStateStatusSchema",
+        PUBLIC_REVIEW_STATE_STATUS_VALUES,
+    );
+    insert_string_enum_definition(defs, "StateKindSchema", PUBLIC_STATE_KIND_VALUES);
+    insert_string_enum_definition(defs, "QaRequirementSchema", PLAN_QA_REQUIREMENT_VALUES);
+    insert_string_enum_definition(defs, "NextActionSchema", PUBLIC_NEXT_ACTION_VALUES);
+    insert_string_enum_definition(
+        defs,
+        "RequiredFollowUpSchema",
+        REQUIRED_FOLLOW_UP_SCHEMA_VALUES,
+    );
+    insert_string_enum_definition(
+        defs,
+        "ExecutionCommandKindSchema",
+        PUBLIC_EXECUTION_COMMAND_KIND_VALUES,
+    );
+    insert_string_enum_definition(
+        defs,
+        "PublicRepairTargetCommandKindSchema",
+        PUBLIC_REPAIR_TARGET_COMMAND_KIND_VALUES,
     );
     let properties = root
         .get_mut("properties")
@@ -578,7 +526,71 @@ fn inject_plan_execution_phase_schema(
             ]
         }),
     );
+    set_schema_property_ref(properties, "phase_detail", "PhaseDetailSchema")?;
+    set_schema_property_ref(properties, "review_state_status", "ReviewStateStatusSchema")?;
+    set_schema_property_ref(properties, "state_kind", "StateKindSchema")?;
+    set_schema_property_ref(properties, "next_action", "NextActionSchema")?;
+    set_schema_property_nullable_ref(properties, "qa_requirement", "QaRequirementSchema")?;
     Ok(())
+}
+
+fn insert_string_enum_definition(
+    defs: &mut serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    values: &[&str],
+) {
+    defs.insert(
+        String::from(name),
+        serde_json::json!({
+            "enum": values,
+            "type": "string"
+        }),
+    );
+}
+
+fn set_schema_property_ref(
+    properties: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    def_name: &str,
+) -> Result<(), JsonFailure> {
+    require_schema_property(properties, field)?;
+    properties.insert(
+        String::from(field),
+        serde_json::json!({ "$ref": format!("#/$defs/{def_name}") }),
+    );
+    Ok(())
+}
+
+fn set_schema_property_nullable_ref(
+    properties: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    def_name: &str,
+) -> Result<(), JsonFailure> {
+    require_schema_property(properties, field)?;
+    properties.insert(
+        String::from(field),
+        serde_json::json!({
+            "anyOf": [
+                { "$ref": format!("#/$defs/{def_name}") },
+                { "type": "null" }
+            ]
+        }),
+    );
+    Ok(())
+}
+
+fn require_schema_property(
+    properties: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<(), JsonFailure> {
+    if properties.contains_key(field) {
+        Ok(())
+    } else {
+        Err(JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            format!("Plan execution schema is missing `{field}`."),
+        ))
+    }
 }
 
 fn tighten_plan_execution_public_context_schemas(
@@ -629,20 +641,31 @@ fn tighten_plan_execution_routing_field_schemas(
             )
         })?;
     tighten_schema_property_type(properties, "recommended_command", "string")?;
+    annotate_schema_property(properties, "next_action", NEXT_ACTION_SCHEMA_DESCRIPTION)?;
+    annotate_schema_property(
+        properties,
+        "next_public_action",
+        ROUTE_NEXT_PUBLIC_ACTION_SCHEMA_DESCRIPTION,
+    )?;
     annotate_schema_property(
         properties,
         "recommended_command",
-        "Display-only compatibility summary; do not parse or execute this string. Use recommended_public_command_argv when present.",
+        RECOMMENDED_COMMAND_SCHEMA_DESCRIPTION,
     )?;
     annotate_schema_property(
         properties,
         "recommended_public_command_argv",
-        "Executable public command argv authority when present. Run these tokens as argv instead of parsing recommended_command.",
+        PLAN_EXECUTION_STATUS_RECOMMENDED_PUBLIC_COMMAND_ARGV_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_schema_property(
+        properties,
+        "recommended_public_command_template",
+        RECOMMENDED_PUBLIC_COMMAND_TEMPLATE_SCHEMA_DESCRIPTION,
     )?;
     annotate_schema_property(
         properties,
         "required_inputs",
-        "Parseable input contract for the routed public command when executable argv cannot be emitted yet.",
+        REQUIRED_INPUTS_SCHEMA_DESCRIPTION,
     )?;
     Ok(())
 }
@@ -665,6 +688,135 @@ fn annotate_schema_property(
         String::from("description"),
         serde_json::Value::from(description),
     );
+    Ok(())
+}
+
+fn annotate_plan_execution_required_follow_up_schema(
+    schema_json: &mut serde_json::Value,
+) -> Result<(), JsonFailure> {
+    set_required_follow_up_record_schema(schema_json)?;
+    let required_follow_up = schema_json
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|defs| defs.get_mut("RequiredFollowUpSchema"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing `RequiredFollowUpSchema`.",
+            )
+        })?;
+    required_follow_up.insert(
+        String::from("description"),
+        serde_json::Value::from(REQUIRED_FOLLOW_UP_SCHEMA_DESCRIPTION),
+    );
+    Ok(())
+}
+
+fn set_required_follow_up_record_schema(
+    schema_json: &mut serde_json::Value,
+) -> Result<(), JsonFailure> {
+    let properties = schema_json
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|defs| defs.get_mut("StatusBlockingRecord"))
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|schema| schema.get_mut("properties"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing `StatusBlockingRecord.properties`.",
+            )
+        })?;
+    set_schema_property_nullable_ref(properties, "required_follow_up", "RequiredFollowUpSchema")
+}
+
+fn annotate_plan_execution_public_command_template_schema(
+    schema_json: &mut serde_json::Value,
+) -> Result<(), JsonFailure> {
+    let properties = schema_json
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|defs| defs.get_mut("PublicCommandTemplate"))
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|schema| schema.get_mut("properties"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing `PublicCommandTemplate.properties`.",
+            )
+        })?;
+    annotate_schema_property(
+        properties,
+        "command_kind",
+        PUBLIC_COMMAND_TEMPLATE_KIND_SCHEMA_DESCRIPTION,
+    )?;
+    Ok(())
+}
+
+fn annotate_plan_execution_next_public_action_schema(
+    schema_json: &mut serde_json::Value,
+) -> Result<(), JsonFailure> {
+    let defs = schema_json
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing `$defs`.",
+            )
+        })?;
+    let next_public_action = defs
+        .get_mut("NextPublicAction")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing `NextPublicAction`.",
+            )
+        })?;
+    let properties = next_public_action
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution NextPublicAction schema is missing `properties`.",
+            )
+        })?;
+    annotate_schema_property(
+        properties,
+        "display_only",
+        NEXT_PUBLIC_ACTION_DISPLAY_ONLY_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_schema_property(
+        properties,
+        "command",
+        NEXT_PUBLIC_ACTION_COMMAND_SCHEMA_DESCRIPTION,
+    )?;
+    annotate_schema_property(
+        properties,
+        "args_template",
+        NEXT_PUBLIC_ACTION_ARGS_TEMPLATE_SCHEMA_DESCRIPTION,
+    )?;
+    let blocker_properties = defs
+        .get_mut("Blocker")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|blocker| blocker.get_mut("properties"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing `Blocker.properties`.",
+            )
+        })?;
+    annotate_schema_property(
+        blocker_properties,
+        "next_public_action",
+        BLOCKER_NEXT_PUBLIC_ACTION_SCHEMA_DESCRIPTION,
+    )?;
     Ok(())
 }
 
@@ -719,6 +871,7 @@ fn tighten_public_execution_command_context_schema(
         })?;
     tighten_schema_property_type(properties, "task_number", "integer")?;
     tighten_schema_property_type(properties, "step_id", "integer")?;
+    set_schema_property_ref(properties, "command_kind", "ExecutionCommandKindSchema")?;
     schema.insert(
         String::from("required"),
         serde_json::json!(["command_kind", "task_number", "step_id"]),
@@ -758,6 +911,29 @@ fn tighten_public_recording_context_schema(
         ]),
     );
     Ok(())
+}
+
+fn tighten_public_repair_target_schema(
+    schema_json: &mut serde_json::Value,
+) -> Result<(), JsonFailure> {
+    let properties = schema_json
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|defs| defs.get_mut("PublicRepairTarget"))
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|schema| schema.get_mut("properties"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing `PublicRepairTarget.properties`.",
+            )
+        })?;
+    set_schema_property_ref(
+        properties,
+        "command_kind",
+        "PublicRepairTargetCommandKindSchema",
+    )
 }
 
 fn tighten_schema_property_type(
@@ -900,4 +1076,105 @@ fn append_phase_field_forbidden_outside_const_phase(
         }
     }));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use serde_json::Value;
+
+    use super::*;
+
+    fn unique_temp_dir(label: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("featureforge-{label}-{nanos}"))
+    }
+
+    fn schema_enum_values(schema: &Value, pointer: &str) -> Vec<String> {
+        schema
+            .pointer(pointer)
+            .and_then(|value| value.get("enum"))
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("schema pointer `{pointer}` should expose enum values"))
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .unwrap_or_else(|| {
+                        panic!("schema pointer `{pointer}` should contain only string enum values")
+                    })
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    fn assert_schema_enum_matches(schema: &Value, pointer: &str, expected: &[&str]) {
+        assert_eq!(
+            schema_enum_values(schema, pointer),
+            expected
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>(),
+            "schema enum `{pointer}` should be derived from its runtime owner constants"
+        );
+    }
+
+    #[test]
+    fn plan_execution_schema_enums_match_runtime_owner_constants() {
+        let output_dir = unique_temp_dir("plan-execution-owner-vocab");
+        write_plan_execution_schema(&output_dir).expect("plan execution schema should write");
+        let schema: Value = serde_json::from_str(
+            &fs::read_to_string(output_dir.join("plan-execution-status.schema.json"))
+                .expect("plan execution schema should read"),
+        )
+        .expect("plan execution schema should parse");
+
+        assert_schema_enum_matches(
+            &schema,
+            "/$defs/PublicStatusPhaseSchema",
+            PUBLIC_STATUS_PHASE_VALUES,
+        );
+        assert_schema_enum_matches(
+            &schema,
+            "/$defs/PhaseDetailSchema",
+            PLAN_EXECUTION_STATUS_PHASE_DETAIL_VALUES,
+        );
+        assert_schema_enum_matches(
+            &schema,
+            "/$defs/ReviewStateStatusSchema",
+            PUBLIC_REVIEW_STATE_STATUS_VALUES,
+        );
+        assert_schema_enum_matches(&schema, "/$defs/StateKindSchema", PUBLIC_STATE_KIND_VALUES);
+        assert_schema_enum_matches(
+            &schema,
+            "/$defs/QaRequirementSchema",
+            PLAN_QA_REQUIREMENT_VALUES,
+        );
+        assert_schema_enum_matches(
+            &schema,
+            "/$defs/NextActionSchema",
+            PUBLIC_NEXT_ACTION_VALUES,
+        );
+        assert_schema_enum_matches(
+            &schema,
+            "/$defs/RequiredFollowUpSchema",
+            REQUIRED_FOLLOW_UP_SCHEMA_VALUES,
+        );
+        assert_schema_enum_matches(
+            &schema,
+            "/$defs/ExecutionCommandKindSchema",
+            PUBLIC_EXECUTION_COMMAND_KIND_VALUES,
+        );
+        assert_schema_enum_matches(
+            &schema,
+            "/$defs/PublicRepairTargetCommandKindSchema",
+            PUBLIC_REPAIR_TARGET_COMMAND_KIND_VALUES,
+        );
+
+        let _ = fs::remove_dir_all(output_dir);
+    }
 }
